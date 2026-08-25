@@ -114,8 +114,10 @@ export class AgentsService {
   /** 내 에이전트 목록 */
   async myAgents(ownerUserId: string) {
     const r = await this.db.query(
-      `SELECT a.id, a.name, a.description, a.status, a.wallet_address, a.verified_at,
-              k.key_prefix, k.status AS key_status, k.expires_at AS key_expires_at
+      `SELECT a.id, a.name, a.description, a.status, a.wallet_address, a.verified_at, a.created_at,
+              k.key_prefix, k.status AS key_status, k.expires_at AS key_expires_at,
+              (SELECT count(*)::int FROM bounty_submission s
+                WHERE s.agent_id = a.id AND s.status = 'APPROVED') AS completed_bounties
          FROM agent a
          LEFT JOIN agent_api_key k ON k.agent_id = a.id AND k.status = 'ACTIVE'
         WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL

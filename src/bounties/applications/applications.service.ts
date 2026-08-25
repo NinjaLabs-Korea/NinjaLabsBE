@@ -48,7 +48,7 @@ export class ApplicationsService {
   async myApplications(userId: string) {
     const r = await this.db.query(
       `SELECT a.id, a.status, a.message, a.applied_at, a.reviewed_at,
-              b.id AS bounty_id, b.title AS bounty_title
+              b.id AS bounty_id, b.title AS bounty_title, b.category
          FROM bounty_application a
          JOIN bounty b ON b.id = a.bounty_id
         WHERE a.applicant_user_id = $1

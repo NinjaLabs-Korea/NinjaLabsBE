@@ -12,6 +12,9 @@ const { readdirSync, readFileSync } = require('fs');
 const { join } = require('path');
 const { Pool } = require('pg');
 
+// NestJS 밖에서 단독 실행되므로 .env를 직접 로드한다
+require('dotenv').config({ path: join(__dirname, '..', '.env') });
+
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) {

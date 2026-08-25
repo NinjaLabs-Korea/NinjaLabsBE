@@ -3,14 +3,18 @@ import {
   Controller,
   Get,
   HttpCode,
-  NotImplementedException,
   Post,
+  Query,
   Req,
+  Res,
+  UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import { IsNotEmpty } from 'class-validator';
-import { Request } from 'express';
-import { AuthService } from './auth.service';
+import { Request, Response } from 'express';
+import { AuthGuard } from './auth.guard';
+import { AuthService, SessionUser } from './auth.service';
 
 class RefreshDto {
   @IsNotEmpty()
@@ -19,25 +23,53 @@ class RefreshDto {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly config: ConfigService,
+  ) {}
 
-  /**
-   * GET /auth/google — 구글 동의 화면으로 리다이렉트
-   * TODO(구현): GOOGLE_CLIENT_ID로 authorization URL 조립 후 302
-   */
+  /** GET /auth/google — 구글 동의 화면으로 리다이렉트 */
   @Get('google')
-  googleRedirect() {
-    throw new NotImplementedException('TODO: redirect to Google OAuth consent screen');
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  async googleRedirect(@Res() res: Response) {
+    const state = await this.auth.issueOauthState();
+    res.redirect(this.auth.buildGoogleAuthUrl(state));
   }
 
   /**
    * GET /auth/google/callback — code 교환 → 세션 발급 → FE로 리다이렉트
-   * TODO(구현): code→token 교환, upsertGoogleUser, issueSession,
-   *             AUTH_SUCCESS_REDIRECT로 리다이렉트 (httpOnly 쿠키 or 쿼리 전달은 FE와 합의)
+   * 토큰은 URL fragment(#)로 전달 — fragment는 서버로 전송되지 않아 로그에 남지 않고,
+   * FE 계약(refresh를 body로 보내는 방식)상 FE JS가 토큰을 직접 보관해야 한다.
    */
   @Get('google/callback')
-  googleCallback() {
-    throw new NotImplementedException('TODO: exchange code, issue session');
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  async googleCallback(
+    @Query('code') code: string | undefined,
+    @Query('state') state: string | undefined,
+    @Query('error') error: string | undefined,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const fe = this.config.get<string>('AUTH_SUCCESS_REDIRECT') ?? 'http://localhost:3000/';
+    if (error || !code || !state) {
+      return res.redirect(`${fe}#error=${encodeURIComponent(error ?? 'MISSING_CODE')}`);
+    }
+    try {
+      await this.auth.verifyOauthState(state);
+      const { googleId, email } = await this.auth.exchangeGoogleCode(code);
+      const user = await this.auth.upsertGoogleUser(googleId, email);
+      const { accessToken, refreshToken } = await this.auth.issueSession(
+        user.id,
+        user.is_admin,
+        req.ip,
+        req.headers['user-agent'],
+      );
+      const params = new URLSearchParams({ accessToken, refreshToken });
+      return res.redirect(`${fe}#${params}`);
+    } catch {
+      // 실패 사유를 FE에 상세 노출하지 않는다 (code/state 탈취 시도 힌트 방지)
+      return res.redirect(`${fe}#error=AUTH_FAILED`);
+    }
   }
 
   /** POST /auth/refresh — 토큰 재발급 (refresh token 회전: 응답의 새 refreshToken으로 교체 필수) */
@@ -55,9 +87,10 @@ export class AuthController {
     await this.auth.revoke(dto.refreshToken);
   }
 
-  /** GET /auth/me — 현재 세션 유저 (AuthGuard 적용 예시는 users 모듈 참고) */
+  /** GET /auth/me — 현재 세션 유저 프로필 + 온보딩/지갑/NFT 상태 */
   @Get('me')
-  me(@Req() _req: Request) {
-    throw new NotImplementedException('TODO: return current session user profile');
+  @UseGuards(AuthGuard)
+  me(@Req() req: Request & { user: SessionUser }) {
+    return this.auth.getMe(req.user.userId);
   }
 }

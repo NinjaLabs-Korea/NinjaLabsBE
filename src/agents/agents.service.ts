@@ -1,9 +1,11 @@
 import {
   ConflictException,
   Injectable,
-  NotImplementedException,
+  NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
+import { verifyAdr36Signature } from '../common/crypto/adr36';
 import { DatabaseService } from '../common/database/database.service';
 
 /**
@@ -26,7 +28,12 @@ export class AgentsService {
          RETURNING id`,
         [ownerUserId, name, description ?? null, publicKey, walletAddress],
       );
-      return { agentId: r.rows[0].id, status: 'PENDING_VERIFICATION' };
+      return {
+        agentId: r.rows[0].id,
+        status: 'PENDING_VERIFICATION',
+        // 에이전트 지갑 키로 이 메시지를 ADR-36 서명해 /agents/:id/verify로 제출
+        verificationMessage: AgentsService.verificationMessage(r.rows[0].id, ownerUserId),
+      };
     } catch (err: unknown) {
       if ((err as { code?: string }).code === '23505') {
         throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
@@ -36,13 +43,62 @@ export class AgentsService {
   }
 
   /**
-   * TODO(구현): 주인 지갑 서명 검증 → ACTIVE 전환 → API key 발급
+   * 소유 증명 메시지 — agentId + 소유 유저에 결정론적으로 바인딩되어
+   * 다른 에이전트/유저로의 서명 재사용이 불가능하다.
+   */
+  static verificationMessage(agentId: string, ownerUserId: string): string {
+    return [
+      'NinjaLabs AI 에이전트 등록 검증',
+      `agentId: ${agentId}`,
+      `owner: ${ownerUserId}`,
+      '이 서명은 트랜잭션을 발생시키지 않으며 가스비가 들지 않습니다.',
+    ].join('\n');
+  }
+
+  /**
+   * 에이전트 지갑 서명 검증 → ACTIVE 전환 → API key 발급
+   * 등록 시 저장한 public_key로 검증하므로 서명 주체 = 에이전트 지갑 키 소유자.
    * 검증 성공 시에만 API key를 반환한다 (원문은 이 응답 1회뿐).
    */
-  async verifyAndIssueKey(_ownerUserId: string, _agentId: string, _signature: string) {
-    throw new NotImplementedException(
-      'TODO: verify owner wallet signature, set agent ACTIVE, then issue API key',
+  async verifyAndIssueKey(ownerUserId: string, agentId: string, signature: string) {
+    const r = await this.db.query<{
+      status: string;
+      public_key: string;
+      wallet_address: string;
+    }>(
+      `SELECT status, public_key, wallet_address FROM agent
+        WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL`,
+      [agentId, ownerUserId],
     );
+    if (!r.rowCount) throw new NotFoundException('AGENT_NOT_FOUND');
+    const agent = r.rows[0];
+    if (agent.status !== 'PENDING_VERIFICATION') {
+      throw new ConflictException('AGENT_ALREADY_VERIFIED');
+    }
+
+    const message = AgentsService.verificationMessage(agentId, ownerUserId);
+    // verifyAdr36Signature가 public_key → wallet_address 파생 일치까지 함께 검증한다
+    if (!verifyAdr36Signature(agent.wallet_address, message, agent.public_key, signature)) {
+      throw new UnauthorizedException('INVALID_SIGNATURE');
+    }
+
+    const key = this.generateApiKey();
+    const expires = await this.db.tx(async (tx) => {
+      await tx.query(
+        `UPDATE agent SET status = 'ACTIVE', verified_at = now() WHERE id = $1`,
+        [agentId],
+      );
+      // 만료 90일 — decisions.md MVP 디폴트
+      const k = await tx.query<{ expires_at: string }>(
+        `INSERT INTO agent_api_key (agent_id, key_prefix, key_hash, expires_at)
+         VALUES ($1, $2, $3, now() + interval '90 days')
+         RETURNING expires_at`,
+        [agentId, key.prefix, key.hash],
+      );
+      return k.rows[0].expires_at;
+    });
+
+    return { agentId, status: 'ACTIVE', apiKey: key.raw, expiresAt: expires };
   }
 
   /** API key 생성 헬퍼 — nj_ 프리픽스 + 랜덤, DB엔 sha256 해시만 */

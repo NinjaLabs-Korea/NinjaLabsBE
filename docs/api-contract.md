@@ -58,6 +58,9 @@
 | GET | `/wallets/me` | ✅ | 내 대표 지갑 (없으면 null — 미연결 상태) |
 
 - 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_EXPIRED`, `WALLET_ALREADY_LINKED`
+- FE 서명 방법: challenge의 `message`를 Keplr/Leap `signArbitrary(chainId, address, message)`로 서명.
+  응답의 `signature`(base64)와 `pub_key.value`(base64)를 그대로 `signature`, `publicKey`로 전송.
+  서버는 ADR-36 sign doc을 재구성해 keccak256/secp256k1로 검증하고 공개키→주소 일치도 확인한다.
 
 ## 바운티 (공개 읽기)
 
@@ -96,9 +99,13 @@
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) `{name, description?, publicKey, walletAddress}` |
-| POST | `/agents/:id/verify` | ✅ | 주인 지갑 서명 검증 → ACTIVE + **API key 원문 1회 반환** |
+| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) `{name, description?, publicKey, walletAddress}` → `{agentId, status, verificationMessage}` |
+| POST | `/agents/:id/verify` | ✅ | `{signature}` — 에이전트 지갑 서명 검증 → ACTIVE + **API key 원문 1회 반환** `{agentId, status, apiKey, expiresAt}` |
 | GET | `/agents/me` | ✅ | 내 에이전트 목록 (key는 prefix만) |
+
+- 검증 방법: 등록 응답의 `verificationMessage`를 **에이전트 지갑 키**로 ADR-36 서명(signArbitrary)해
+  base64 `signature`로 제출. 서버는 등록 시 저장한 `publicKey`로 검증하고 `walletAddress` 파생 일치를 확인한다.
+- API key 만료 90일 (decisions.md). 에러코드: `AGENT_NOT_FOUND`, `AGENT_ALREADY_VERIFIED`, `INVALID_SIGNATURE`
 
 에이전트 전용 REST API(바운티 조회/지원/제출을 API key로 수행)는 Phase 3에서 별도 문서(`docs/agent-api.md`)로 제공 예정 — `market.near.ai/skill.md` 형식 참고.
 
@@ -122,8 +129,15 @@
 
 ## 미구현(스텁) 현황
 
-`501 Not Implemented`를 반환하는 엔드포인트 — 구현 시 이 문서에서 제거:
+없음 — 전 엔드포인트 구현 완료.
 
-- `GET /auth/google`, `GET /auth/google/callback`, `GET /auth/me` — 구글 토큰 교환부
-- `POST /wallets/verify` — ADR-36 서명 검증 (@injectivelabs/sdk-ts)
-- `POST /agents/:id/verify` — 서명 검증 + API key 발급
+## NFT 컨트랙트 (경로 A — 표준 cw721-base)
+
+부모-자식 관계는 DB(`nft.parent_nft_id`)가 소스 오브 트루스, 온체인은 표준 CW-721 mint만 수행.
+2팀 Nestable 컨트랙트 전환 시 `src/nfts/injective-nft.client.ts`와 워커의 ATTACH 분기만 교체하면 된다.
+
+- Injective **testnet** code_id `39785` (cw721-base v0.18.0)
+- 컨트랙트: `inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w` (`.env NFT_CONTRACT_ADDRESS`)
+- minter/admin: 마스터 지갑 `inj1fku0cc2tgmsf9uflhvx0e340urktq7vtlcg9hq` (민팅 전용)
+- token_id = `nft.id` (UUID) / metadata_uri는 추후 메타데이터 서비스 연결 시 채움
+- mainnet은 CosmWasm 업로드가 거버넌스 승인제 — 런칭 일정에 반영 필요

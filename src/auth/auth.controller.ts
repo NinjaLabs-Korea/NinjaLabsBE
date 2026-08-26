@@ -37,12 +37,43 @@ export class AuthController {
     private readonly config: ConfigService,
   ) {}
 
+  private authSuccessRedirect(requested?: string): string {
+    const fallback = this.config.get<string>('AUTH_SUCCESS_REDIRECT') ?? 'http://localhost:3000/';
+    if (!requested) return fallback;
+
+    try {
+      const fallbackUrl = new URL(fallback);
+      const allowedOrigins = new Set([
+        fallbackUrl.origin,
+        ...(this.config.get<string>('AUTH_ALLOWED_REDIRECT_ORIGINS') ?? '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .map((value) => new URL(value).origin),
+      ]);
+      const requestedUrl = new URL(requested);
+      if (!allowedOrigins.has(requestedUrl.origin)) return fallback;
+      return `${requestedUrl.origin}/`;
+    } catch {
+      return fallback;
+    }
+  }
+
   /** GET /auth/google — 구글 동의 화면으로 리다이렉트 */
   @Get('google')
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
-  async googleRedirect(@Query('trace') traceId: string | undefined, @Res() res: Response) {
-    onboardingLog(this.logger, 'oauth.redirect.requested', { traceId });
-    const state = await this.auth.issueOauthState(traceId);
+  async googleRedirect(
+    @Query('trace') traceId: string | undefined,
+    @Query('returnTo') returnTo: string | undefined,
+    @Res() res: Response,
+  ) {
+    const redirectUrl = this.authSuccessRedirect(returnTo);
+    onboardingLog(this.logger, 'oauth.redirect.requested', {
+      traceId,
+      requestedReturnOrigin: returnTo ? this.safeOrigin(returnTo) : null,
+      selectedReturnOrigin: this.safeOrigin(redirectUrl),
+    });
+    const state = await this.auth.issueOauthState(traceId, redirectUrl);
     onboardingLog(this.logger, 'oauth.redirect.ready', { traceId });
     res.redirect(this.auth.buildGoogleAuthUrl(state));
   }
@@ -61,7 +92,7 @@ export class AuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const fe = this.config.get<string>('AUTH_SUCCESS_REDIRECT') ?? 'http://localhost:3000/';
+    let fe = this.authSuccessRedirect();
     onboardingLog(this.logger, 'oauth.callback.received', {
       hasCode: Boolean(code),
       hasState: Boolean(state),
@@ -74,7 +105,9 @@ export class AuthController {
       return res.redirect(`${fe}#error=${encodeURIComponent(error ?? 'MISSING_CODE')}`);
     }
     try {
-      const traceId = await this.auth.verifyOauthState(state);
+      const oauthState = await this.auth.verifyOauthState(state);
+      const traceId = oauthState.traceId;
+      fe = this.authSuccessRedirect(oauthState.redirectUrl);
       onboardingLog(this.logger, 'oauth.state.verified', { traceId });
       const { googleId, email } = await this.auth.exchangeGoogleCode(code);
       onboardingLog(this.logger, 'oauth.google.exchange.succeeded', { traceId });
@@ -99,6 +132,14 @@ export class AuthController {
       onboardingError(this.logger, 'oauth.callback.failed', caught);
       // 실패 사유를 FE에 상세 노출하지 않는다 (code/state 탈취 시도 힌트 방지)
       return res.redirect(`${fe}#error=AUTH_FAILED`);
+    }
+  }
+
+  private safeOrigin(value: string): string | null {
+    try {
+      return new URL(value).origin;
+    } catch {
+      return null;
     }
   }
 

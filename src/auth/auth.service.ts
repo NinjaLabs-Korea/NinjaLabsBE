@@ -13,6 +13,11 @@ export interface SessionUser {
   isAdmin: boolean;
 }
 
+export interface OAuthState {
+  traceId?: string;
+  redirectUrl?: string;
+}
+
 /**
  * 인증 흐름 (Google OAuth → 자체 JWT 세션)
  *
@@ -40,16 +45,19 @@ export class AuthService {
    * CSRF 방어용 state — 서명된 단기 JWT라 서버 측 저장소/쿠키 없이 검증 가능.
    * 콜백에서 서명·만료·용도(p)를 확인한다.
    */
-  async issueOauthState(traceId?: string): Promise<string> {
+  async issueOauthState(traceId?: string, redirectUrl?: string): Promise<string> {
     const safeTraceId = traceId && /^[a-zA-Z0-9-]{1,64}$/.test(traceId) ? traceId : undefined;
-    return this.jwt.signAsync({ p: 'gstate', t: safeTraceId }, { expiresIn: '10m' });
+    return this.jwt.signAsync(
+      { p: 'gstate', t: safeTraceId, r: redirectUrl },
+      { expiresIn: '10m' },
+    );
   }
 
-  async verifyOauthState(state: string): Promise<string | undefined> {
+  async verifyOauthState(state: string): Promise<OAuthState> {
     try {
-      const payload = await this.jwt.verifyAsync<{ p?: string; t?: string }>(state);
+      const payload = await this.jwt.verifyAsync<{ p?: string; t?: string; r?: string }>(state);
       if (payload.p !== 'gstate') throw new Error('wrong purpose');
-      return payload.t;
+      return { traceId: payload.t, redirectUrl: payload.r };
     } catch {
       throw new UnauthorizedException('INVALID_OAUTH_STATE');
     }

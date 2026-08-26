@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   Post,
   Query,
@@ -89,6 +90,7 @@ export class AuthController {
 
   /** GET /auth/me — 현재 세션 유저 프로필 + 온보딩/지갑/NFT 상태 */
   @Get('me')
+  @Header('Cache-Control', 'no-store, private')
   @UseGuards(AuthGuard)
   me(@Req() req: Request & { user: SessionUser }) {
     return this.auth.getMe(req.user.userId);

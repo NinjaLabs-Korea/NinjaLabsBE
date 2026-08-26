@@ -40,14 +40,16 @@ export class AuthService {
    * CSRF 방어용 state — 서명된 단기 JWT라 서버 측 저장소/쿠키 없이 검증 가능.
    * 콜백에서 서명·만료·용도(p)를 확인한다.
    */
-  async issueOauthState(): Promise<string> {
-    return this.jwt.signAsync({ p: 'gstate' }, { expiresIn: '10m' });
+  async issueOauthState(traceId?: string): Promise<string> {
+    const safeTraceId = traceId && /^[a-zA-Z0-9-]{1,64}$/.test(traceId) ? traceId : undefined;
+    return this.jwt.signAsync({ p: 'gstate', t: safeTraceId }, { expiresIn: '10m' });
   }
 
-  async verifyOauthState(state: string): Promise<void> {
+  async verifyOauthState(state: string): Promise<string | undefined> {
     try {
-      const payload = await this.jwt.verifyAsync<{ p?: string }>(state);
+      const payload = await this.jwt.verifyAsync<{ p?: string; t?: string }>(state);
       if (payload.p !== 'gstate') throw new Error('wrong purpose');
+      return payload.t;
     } catch {
       throw new UnauthorizedException('INVALID_OAUTH_STATE');
     }
@@ -147,7 +149,8 @@ export class AuthService {
   /** 구글 프로필로 유저를 찾거나 생성한다 */
   async upsertGoogleUser(googleId: string, email: string) {
     const found = await this.db.query(
-      `SELECT id, is_admin FROM "user" WHERE google_id = $1 AND deleted_at IS NULL`,
+      `SELECT id, is_admin, onboarding_step, onboarding_completed_at
+         FROM "user" WHERE google_id = $1 AND deleted_at IS NULL`,
       [googleId],
     );
     if (found.rowCount) return found.rows[0];
@@ -157,7 +160,7 @@ export class AuthService {
     const created = await this.db.query(
       `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step)
        VALUES ($1, $2, $3, '', 2)
-       RETURNING id, is_admin`,
+       RETURNING id, is_admin, onboarding_step, onboarding_completed_at`,
       [googleId, email, `user_${randomBytes(4).toString('hex')}`],
     );
     return created.rows[0];

@@ -4,6 +4,7 @@ import {
   Get,
   Header,
   HttpCode,
+  Logger,
   Post,
   Query,
   Req,
@@ -14,6 +15,11 @@ import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import { IsNotEmpty } from 'class-validator';
 import { Request, Response } from 'express';
+import {
+  onboardingError,
+  onboardingLog,
+  requestTraceId,
+} from '../common/logging/onboarding-log';
 import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
 
@@ -24,6 +30,8 @@ class RefreshDto {
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly auth: AuthService,
     private readonly config: ConfigService,
@@ -32,8 +40,10 @@ export class AuthController {
   /** GET /auth/google — 구글 동의 화면으로 리다이렉트 */
   @Get('google')
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
-  async googleRedirect(@Res() res: Response) {
-    const state = await this.auth.issueOauthState();
+  async googleRedirect(@Query('trace') traceId: string | undefined, @Res() res: Response) {
+    onboardingLog(this.logger, 'oauth.redirect.requested', { traceId });
+    const state = await this.auth.issueOauthState(traceId);
+    onboardingLog(this.logger, 'oauth.redirect.ready', { traceId });
     res.redirect(this.auth.buildGoogleAuthUrl(state));
   }
 
@@ -52,22 +62,41 @@ export class AuthController {
     @Res() res: Response,
   ) {
     const fe = this.config.get<string>('AUTH_SUCCESS_REDIRECT') ?? 'http://localhost:3000/';
+    onboardingLog(this.logger, 'oauth.callback.received', {
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+      providerError: error ?? null,
+    });
     if (error || !code || !state) {
+      onboardingLog(this.logger, 'oauth.callback.rejected', {
+        reason: error ?? 'MISSING_CODE_OR_STATE',
+      });
       return res.redirect(`${fe}#error=${encodeURIComponent(error ?? 'MISSING_CODE')}`);
     }
     try {
-      await this.auth.verifyOauthState(state);
+      const traceId = await this.auth.verifyOauthState(state);
+      onboardingLog(this.logger, 'oauth.state.verified', { traceId });
       const { googleId, email } = await this.auth.exchangeGoogleCode(code);
+      onboardingLog(this.logger, 'oauth.google.exchange.succeeded', { traceId });
       const user = await this.auth.upsertGoogleUser(googleId, email);
+      onboardingLog(this.logger, 'oauth.user.resolved', {
+        traceId,
+        userId: user.id,
+        onboardingStep: user.onboarding_step,
+        onboardingCompleted: user.onboarding_completed_at !== null,
+      });
       const { accessToken, refreshToken } = await this.auth.issueSession(
         user.id,
         user.is_admin,
         req.ip,
         req.headers['user-agent'],
       );
+      onboardingLog(this.logger, 'oauth.session.issued', { traceId, userId: user.id });
       const params = new URLSearchParams({ accessToken, refreshToken });
+      onboardingLog(this.logger, 'oauth.callback.redirecting', { traceId, userId: user.id });
       return res.redirect(`${fe}#${params}`);
-    } catch {
+    } catch (caught) {
+      onboardingError(this.logger, 'oauth.callback.failed', caught);
       // 실패 사유를 FE에 상세 노출하지 않는다 (code/state 탈취 시도 힌트 방지)
       return res.redirect(`${fe}#error=AUTH_FAILED`);
     }
@@ -77,8 +106,17 @@ export class AuthController {
   @Post('refresh')
   @Throttle({ default: { ttl: 60_000, limit: 10 } }) // 무차별 대입 방어
   @HttpCode(200)
-  refresh(@Body() dto: RefreshDto, @Req() req: Request) {
-    return this.auth.refresh(dto.refreshToken, req.ip, req.headers['user-agent']);
+  async refresh(@Body() dto: RefreshDto, @Req() req: Request) {
+    const traceId = requestTraceId(req.headers);
+    onboardingLog(this.logger, 'session.refresh.requested', { traceId });
+    try {
+      const session = await this.auth.refresh(dto.refreshToken, req.ip, req.headers['user-agent']);
+      onboardingLog(this.logger, 'session.refresh.succeeded', { traceId });
+      return session;
+    } catch (caught) {
+      onboardingError(this.logger, 'session.refresh.failed', caught, { traceId });
+      throw caught;
+    }
   }
 
   /** POST /auth/logout — refresh 세션 폐기 */
@@ -92,7 +130,26 @@ export class AuthController {
   @Get('me')
   @Header('Cache-Control', 'no-store, private')
   @UseGuards(AuthGuard)
-  me(@Req() req: Request & { user: SessionUser }) {
-    return this.auth.getMe(req.user.userId);
+  async me(@Req() req: Request & { user: SessionUser }) {
+    const traceId = requestTraceId(req.headers);
+    onboardingLog(this.logger, 'session.me.requested', { traceId, userId: req.user.userId });
+    try {
+      const me = await this.auth.getMe(req.user.userId);
+      onboardingLog(this.logger, 'session.me.succeeded', {
+        traceId,
+        userId: req.user.userId,
+        onboardingStep: me.onboardingStep,
+        onboardingCompleted: me.onboardingCompleted,
+        walletLinked: me.wallet !== null,
+        nftStatus: me.nft?.status ?? null,
+      });
+      return me;
+    } catch (caught) {
+      onboardingError(this.logger, 'session.me.failed', caught, {
+        traceId,
+        userId: req.user.userId,
+      });
+      throw caught;
+    }
   }
 }

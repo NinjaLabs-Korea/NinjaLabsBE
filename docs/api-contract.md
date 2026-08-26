@@ -54,13 +54,16 @@
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
 | POST | `/wallets/challenge` | ✅ | `{address}` → `{nonce, message, expiresAt}` (5분 만료, 1회용) |
-| POST | `/wallets/verify` | ✅ | `{address, signature, publicKey}` → 검증 성공 시 지갑 저장 + NFT 민팅 잡 등록 |
+| POST | `/wallets/verify` | ✅ | Keplr/Leap: `{address, signature, publicKey}` / EVM: `{address, signature}` → 검증 성공 시 지갑 저장 + NFT 민팅 잡 등록 |
 | GET | `/wallets/me` | ✅ | 내 대표 지갑 (없으면 null — 미연결 상태) |
 
 - 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_EXPIRED`, `WALLET_ALREADY_LINKED`
-- FE 서명 방법: challenge의 `message`를 Keplr/Leap `signArbitrary(chainId, address, message)`로 서명.
+- Keplr/Leap: challenge의 `message`를 `signArbitrary(chainId, address, message)`로 서명.
   응답의 `signature`(base64)와 `pub_key.value`(base64)를 그대로 `signature`, `publicKey`로 전송.
   서버는 ADR-36 sign doc을 재구성해 keccak256/secp256k1로 검증하고 공개키→주소 일치도 확인한다.
+- MetaMask 등 EVM 지갑: challenge의 `message`를 EIP-191 `personal_sign`으로 서명하고
+  0x `address`와 hex `signature`를 전송한다. 서버는 서명자를 복구한 뒤 대응되는 `inj1` 주소로
+  정규화해 저장하므로 CW-721 NFT의 수신 주소로도 사용할 수 있다.
 
 ## 바운티 (공개 읽기)
 

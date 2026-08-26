@@ -72,16 +72,22 @@ export class UsersService {
     const u = user.rows[0];
 
     const completedBounties = await this.db.query(
-      `SELECT b.id, b.title, b.category, s.reviewed_at AS completed_at
+      `SELECT b.id, b.title, b.category, s.reviewed_at AS completed_at,
+              COALESCE(json_agg(json_build_object(
+                'amount', r.amount::text,
+                'symbol', r.display_symbol
+              ) ORDER BY r.created_at) FILTER (WHERE r.id IS NOT NULL), '[]') AS rewards
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id
+         LEFT JOIN bounty_reward r ON r.bounty_id = b.id
         WHERE s.submitter_user_id = $1 AND s.status = 'APPROVED'
+        GROUP BY s.id, b.id
         ORDER BY s.reviewed_at DESC`,
       [u.id],
     );
 
     const agents = await this.db.query(
-      `SELECT a.id, a.name, a.description,
+      `SELECT a.id, a.name, a.description, a.status, a.wallet_address,
               COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title))
                        FILTER (WHERE b.id IS NOT NULL), '[]') AS completed_bounties
          FROM agent a

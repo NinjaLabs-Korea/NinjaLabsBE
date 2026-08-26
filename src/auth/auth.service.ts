@@ -152,10 +152,11 @@ export class AuthService {
     );
     if (found.rowCount) return found.rows[0];
 
-    // 닉네임은 온보딩 3단계에서 입력받으므로 임시값으로 생성
+    // Google 인증(1단계)은 완료됐으므로 다음 화면인 지갑 연결(2단계)부터 시작한다.
+    // 닉네임은 온보딩 3단계에서 입력받으므로 임시값으로 생성한다.
     const created = await this.db.query(
       `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step)
-       VALUES ($1, $2, $3, '', 1)
+       VALUES ($1, $2, $3, '', 2)
        RETURNING id, is_admin`,
       [googleId, email, `user_${randomBytes(4).toString('hex')}`],
     );

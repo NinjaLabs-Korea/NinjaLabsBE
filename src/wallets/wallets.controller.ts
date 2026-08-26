@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
-import { IsNotEmpty } from 'class-validator';
+import { IsNotEmpty, IsOptional } from 'class-validator';
 import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { SessionUser } from '../auth/auth.service';
@@ -17,8 +17,9 @@ class VerifyDto {
   @IsNotEmpty()
   signature!: string;
 
+  @IsOptional()
   @IsNotEmpty()
-  publicKey!: string;
+  publicKey?: string;
 }
 
 @Controller('wallets')

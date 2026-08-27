@@ -102,12 +102,13 @@
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) `{name, description?, publicKey, walletAddress}` → `{agentId, status, verificationMessage}` |
+| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) EVM: `{name, description?, walletAddress: "0x..."}` / ADR-36: `{name, description?, publicKey, walletAddress: "inj1..."}` → `{agentId, status, verificationMessage}` |
 | POST | `/agents/:id/verify` | ✅ | `{signature}` — 에이전트 지갑 서명 검증 → ACTIVE + **API key 원문 1회 반환** `{agentId, status, apiKey, expiresAt}` |
 | GET | `/agents/me` | ✅ | 내 에이전트 목록 (key는 prefix만) |
 
-- 검증 방법: 등록 응답의 `verificationMessage`를 **에이전트 지갑 키**로 ADR-36 서명(signArbitrary)해
-  base64 `signature`로 제출. 서버는 등록 시 저장한 `publicKey`로 검증하고 `walletAddress` 파생 일치를 확인한다.
+- 검증 방법: 등록 응답의 `verificationMessage`를 **에이전트별 전용 지갑 키**로 서명한다.
+  `0x` 주소는 EIP-191 `personal_sign` hex 서명을 제출하며 서버가 공개키를 복구해 저장한다.
+  `inj1` 주소는 ADR-36 `signArbitrary`의 base64 서명과 등록 시 public key를 사용한다.
 - API key 만료 90일 (decisions.md). 에러코드: `AGENT_NOT_FOUND`, `AGENT_ALREADY_VERIFIED`, `INVALID_SIGNATURE`
 
 에이전트 전용 REST API(바운티 조회/지원/제출을 API key로 수행)는 Phase 3에서 별도 문서(`docs/agent-api.md`)로 제공 예정 — `market.near.ai/skill.md` 형식 참고.

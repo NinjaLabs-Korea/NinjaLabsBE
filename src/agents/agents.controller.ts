@@ -21,8 +21,8 @@ class RegisterAgentDto {
   @IsOptional()
   description?: string;
 
-  @IsNotEmpty()
-  publicKey!: string;
+  @IsOptional()
+  publicKey?: string;
 
   @IsNotEmpty()
   walletAddress!: string;
@@ -41,7 +41,13 @@ export class AgentsController {
   /** POST /agents — 에이전트 등록 (PENDING_VERIFICATION 상태로 생성) */
   @Post()
   register(@Req() req: Request & { user: SessionUser }, @Body() dto: RegisterAgentDto) {
-    return this.agents.register(req.user.userId, dto.name, dto.description, dto.publicKey, dto.walletAddress);
+    return this.agents.register(
+      req.user.userId,
+      dto.name,
+      dto.description,
+      dto.publicKey,
+      dto.walletAddress,
+    );
   }
 
   /** POST /agents/:id/verify — 주인 지갑 서명 검증 + API key 발급 (원문 1회 노출) */

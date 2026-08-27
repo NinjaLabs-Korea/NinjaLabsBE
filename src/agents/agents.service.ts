@@ -1,11 +1,14 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
+import { getAddress, isAddress } from 'ethers';
 import { verifyAdr36Signature } from '../common/crypto/adr36';
+import { recoverEip191PublicKey } from '../common/crypto/eip191';
 import { DatabaseService } from '../common/database/database.service';
 
 /**
@@ -20,13 +23,28 @@ import { DatabaseService } from '../common/database/database.service';
 export class AgentsService {
   constructor(private readonly db: DatabaseService) {}
 
-  async register(ownerUserId: string, name: string, description: string | undefined, publicKey: string, walletAddress: string) {
+  async register(
+    ownerUserId: string,
+    name: string,
+    description: string | undefined,
+    publicKey: string | undefined,
+    walletAddress: string,
+  ) {
+    const isEvm = walletAddress.trim().startsWith('0x');
+    if (isEvm && !isAddress(walletAddress.trim())) {
+      throw new BadRequestException('INVALID_AGENT_WALLET_ADDRESS');
+    }
+    if (!isEvm && (!walletAddress.trim().startsWith('inj1') || !publicKey)) {
+      throw new BadRequestException('AGENT_PUBLIC_KEY_REQUIRED');
+    }
+    const normalizedAddress = isEvm ? getAddress(walletAddress.trim()) : walletAddress.trim();
+
     try {
       const r = await this.db.query<{ id: string }>(
         `INSERT INTO agent (owner_user_id, name, description, public_key, wallet_address)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING id`,
-        [ownerUserId, name, description ?? null, publicKey, walletAddress],
+        [ownerUserId, name, description ?? null, publicKey ?? null, normalizedAddress],
       );
       return {
         agentId: r.rows[0].id,
@@ -36,6 +54,22 @@ export class AgentsService {
       };
     } catch (err: unknown) {
       if ((err as { code?: string }).code === '23505') {
+        const pending = await this.db.query<{ id: string }>(
+          `SELECT id FROM agent
+            WHERE owner_user_id = $1 AND wallet_address = $2
+              AND status = 'PENDING_VERIFICATION' AND deleted_at IS NULL`,
+          [ownerUserId, normalizedAddress],
+        );
+        if (pending.rowCount) {
+          return {
+            agentId: pending.rows[0].id,
+            status: 'PENDING_VERIFICATION',
+            verificationMessage: AgentsService.verificationMessage(
+              pending.rows[0].id,
+              ownerUserId,
+            ),
+          };
+        }
         throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
       }
       throw err;
@@ -63,7 +97,7 @@ export class AgentsService {
   async verifyAndIssueKey(ownerUserId: string, agentId: string, signature: string) {
     const r = await this.db.query<{
       status: string;
-      public_key: string;
+      public_key: string | null;
       wallet_address: string;
     }>(
       `SELECT status, public_key, wallet_address FROM agent
@@ -77,16 +111,25 @@ export class AgentsService {
     }
 
     const message = AgentsService.verificationMessage(agentId, ownerUserId);
-    // verifyAdr36Signature가 public_key → wallet_address 파생 일치까지 함께 검증한다
-    if (!verifyAdr36Signature(agent.wallet_address, message, agent.public_key, signature)) {
+    const isEvm = agent.wallet_address.startsWith('0x');
+    const recoveredPublicKey = isEvm
+      ? recoverEip191PublicKey(agent.wallet_address, message, signature)
+      : null;
+    const verified = isEvm
+      ? recoveredPublicKey !== null
+      : Boolean(agent.public_key) &&
+        verifyAdr36Signature(agent.wallet_address, message, agent.public_key!, signature);
+    if (!verified) {
       throw new UnauthorizedException('INVALID_SIGNATURE');
     }
 
     const key = this.generateApiKey();
     const expires = await this.db.tx(async (tx) => {
       await tx.query(
-        `UPDATE agent SET status = 'ACTIVE', verified_at = now() WHERE id = $1`,
-        [agentId],
+        `UPDATE agent
+            SET status = 'ACTIVE', verified_at = now(), public_key = COALESCE($2, public_key)
+          WHERE id = $1`,
+        [agentId, recoveredPublicKey],
       );
       // 만료 90일 — decisions.md MVP 디폴트
       const k = await tx.query<{ expires_at: string }>(

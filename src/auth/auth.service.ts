@@ -176,16 +176,14 @@ export class AuthService {
 
   /** JWT access + refresh 발급, refresh 해시는 auth_session에 저장 */
   async issueSession(userId: string, isAdmin: boolean, ip?: string, userAgent?: string) {
-    const accessToken = await this.jwt.signAsync({ sub: userId, adm: isAdmin });
-    const refreshToken = randomBytes(48).toString('base64url');
-    const refreshHash = createHash('sha256').update(refreshToken).digest('hex');
+    const session = await this.createSessionTokens(userId, isAdmin);
 
     await this.db.query(
       `INSERT INTO auth_session (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
        VALUES ($1, $2, $3, $4, now() + interval '14 days')`,
-      [userId, refreshHash, ip ?? null, userAgent ?? null],
+      [userId, session.refreshHash, ip ?? null, userAgent ?? null],
     );
-    return { accessToken, refreshToken };
+    return { accessToken: session.accessToken, refreshToken: session.refreshToken };
   }
 
   /**
@@ -196,20 +194,40 @@ export class AuthService {
    */
   async refresh(refreshToken: string, ip?: string, userAgent?: string) {
     const hash = createHash('sha256').update(refreshToken).digest('hex');
-    const session = await this.db.query<{ id: string; user_id: string; is_admin: boolean }>(
-      `SELECT s.id, s.user_id, u.is_admin
-         FROM auth_session s JOIN "user" u ON u.id = s.user_id
-        WHERE s.refresh_token_hash = $1
-          AND s.revoked_at IS NULL
-          AND s.expires_at > now()`,
-      [hash],
-    );
-    if (!session.rowCount) throw new UnauthorizedException('INVALID_REFRESH_TOKEN');
-    const { id, user_id, is_admin } = session.rows[0];
+    return this.db.tx(async (tx) => {
+      // 유효한 기존 세션을 조건부 UPDATE로 선점한다. 같은 토큰의 동시 요청 중
+      // 첫 요청만 row를 반환하고, 나머지는 커밋 이후 조건 재평가에서 거부된다.
+      const consumed = await tx.query<{ user_id: string; is_admin: boolean }>(
+        `UPDATE auth_session AS s
+            SET revoked_at = now()
+           FROM "user" AS u
+          WHERE s.refresh_token_hash = $1
+            AND s.user_id = u.id
+            AND s.revoked_at IS NULL
+            AND s.expires_at > now()
+          RETURNING s.user_id, u.is_admin`,
+        [hash],
+      );
+      if (consumed.rowCount !== 1) {
+        throw new UnauthorizedException('INVALID_REFRESH_TOKEN');
+      }
 
-    // 구 세션 폐기 후 새 세션 발급 (원자적 회전)
-    await this.db.query(`UPDATE auth_session SET revoked_at = now() WHERE id = $1`, [id]);
-    return this.issueSession(user_id, is_admin, ip, userAgent);
+      const { user_id, is_admin } = consumed.rows[0];
+      const next = await this.createSessionTokens(user_id, is_admin);
+      await tx.query(
+        `INSERT INTO auth_session (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
+         VALUES ($1, $2, $3, $4, now() + interval '14 days')`,
+        [user_id, next.refreshHash, ip ?? null, userAgent ?? null],
+      );
+      return { accessToken: next.accessToken, refreshToken: next.refreshToken };
+    });
+  }
+
+  private async createSessionTokens(userId: string, isAdmin: boolean) {
+    const accessToken = await this.jwt.signAsync({ sub: userId, adm: isAdmin });
+    const refreshToken = randomBytes(48).toString('base64url');
+    const refreshHash = createHash('sha256').update(refreshToken).digest('hex');
+    return { accessToken, refreshToken, refreshHash };
   }
 
   /** 세션 폐기 (로그아웃) */

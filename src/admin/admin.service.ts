@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
 
 @Injectable()
@@ -9,11 +9,13 @@ export class AdminService {
   /** 이메일/닉네임으로 유저 검색 */
   async searchUsers(q: string) {
     const r = await this.db.query(
-      `SELECT id, email, nickname, status, is_member, member_role, created_at
-         FROM "user"
-        WHERE deleted_at IS NULL
-          AND (email ILIKE '%' || $1 || '%' OR nickname ILIKE '%' || $1 || '%')
-        ORDER BY created_at DESC
+      `SELECT u.id, u.email, u.nickname, u.status, u.is_member, u.member_role,
+              u.member_display_order, u.created_at, w.address AS wallet_address
+         FROM "user" u
+         LEFT JOIN wallet w ON w.user_id = u.id AND w.is_primary = true AND w.disconnected_at IS NULL
+        WHERE u.deleted_at IS NULL
+          AND (u.email ILIKE '%' || $1 || '%' OR u.nickname ILIKE '%' || $1 || '%')
+        ORDER BY u.created_at DESC
         LIMIT 30`,
       [q],
     );
@@ -37,6 +39,21 @@ export class AdminService {
   }
 
   // ── 바운티 관리 ────────────────────────────────────────
+  async listBounties() {
+    const r = await this.db.query(
+      `SELECT b.*,
+              COALESCE(json_agg(json_build_object(
+                'symbol', rw.display_symbol, 'amount', rw.amount::text, 'tokenType', rw.token_type
+              )) FILTER (WHERE rw.id IS NOT NULL), '[]') AS rewards
+         FROM bounty b
+         LEFT JOIN bounty_reward rw ON rw.bounty_id = b.id
+        WHERE b.deleted_at IS NULL
+        GROUP BY b.id
+        ORDER BY b.created_at DESC`,
+    );
+    return r.rows;
+  }
+
   /** 바운티 등록 (DRAFT). 보상 정보 포함 시 bounty_reward 동시 생성 */
   async createBounty(adminId: string, input: {
     title: string; sponsorName: string; summary: string; description: string;
@@ -45,6 +62,17 @@ export class AdminService {
     submissionDeadline: string; applicationDeadline?: string;
     reward?: { tokenType: string; tokenDenom?: string; tokenContractAddress?: string; displaySymbol: string; amount: string };
   }) {
+    const reward = input.reward ? {
+      ...input.reward,
+      tokenDenom: input.reward.tokenDenom
+        ?? (input.reward.displaySymbol === 'USDC' ? process.env.USDC_DENOM : undefined),
+    } : undefined;
+    if (reward?.tokenType === 'NATIVE' && !reward.tokenDenom) {
+      throw new BadRequestException('REWARD_TOKEN_DENOM_REQUIRED');
+    }
+    if (reward?.tokenType === 'CW20' && !reward.tokenContractAddress) {
+      throw new BadRequestException('REWARD_TOKEN_CONTRACT_REQUIRED');
+    }
     return this.db.tx(async (tx) => {
       const b = await tx.query<{ id: string }>(
         `INSERT INTO bounty
@@ -60,14 +88,14 @@ export class AdminService {
       );
       const bountyId = b.rows[0].id;
 
-      if (input.reward) {
+      if (reward) {
         await tx.query(
           `INSERT INTO bounty_reward
              (bounty_id, token_type, token_denom, token_contract_address, display_symbol, amount, custody_address)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [bountyId, input.reward.tokenType, input.reward.tokenDenom ?? null,
-           input.reward.tokenContractAddress ?? null, input.reward.displaySymbol,
-           input.reward.amount, process.env.REWARD_MULTISIG_ADDRESS ?? 'PENDING_MULTISIG_SETUP'],
+          [bountyId, reward.tokenType, reward.tokenDenom ?? null,
+           reward.tokenContractAddress ?? null, reward.displaySymbol,
+           reward.amount, process.env.REWARD_MULTISIG_ADDRESS ?? 'PENDING_MULTISIG_SETUP'],
         );
         // 보상이 있으면 선입금 대기 상태로
         await tx.query(`UPDATE bounty SET status = 'FUNDING_PENDING' WHERE id = $1`, [bountyId]);
@@ -76,6 +104,41 @@ export class AdminService {
       await this.audit(adminId, 'BOUNTY_CREATED', 'bounty', bountyId, tx);
       return { id: bountyId };
     });
+  }
+
+  async updateBounty(bountyId: string, input: {
+    title?: string; sponsorName?: string; summary?: string; description?: string;
+    requirements?: string; evaluationCriteria?: string; category?: string;
+    applicationRequired?: boolean; maxWinners?: number; submissionDeadline?: string;
+    applicationDeadline?: string | null;
+  }, adminId: string) {
+    const fields: Array<[string, unknown]> = [
+      ['title', input.title], ['sponsor_name', input.sponsorName], ['summary', input.summary],
+      ['description', input.description], ['requirements', input.requirements],
+      ['evaluation_criteria', input.evaluationCriteria], ['category', input.category],
+      ['application_required', input.applicationRequired], ['max_winners', input.maxWinners],
+      ['submission_deadline', input.submissionDeadline], ['application_deadline', input.applicationDeadline],
+    ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
+    if (!fields.length) return { id: bountyId };
+    const values = fields.map(([, value]) => value);
+    const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
+    const r = await this.db.query(
+      `UPDATE bounty SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
+      [bountyId, ...values],
+    );
+    if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+    await this.audit(adminId, 'BOUNTY_UPDATED', 'bounty', bountyId);
+    return r.rows[0];
+  }
+
+  async deleteBounty(bountyId: string, adminId: string) {
+    const r = await this.db.query(
+      `UPDATE bounty SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+      [bountyId],
+    );
+    if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+    await this.audit(adminId, 'BOUNTY_DELETED', 'bounty', bountyId);
+    return r.rows[0];
   }
 
   /** 바운티 상태 전환 (허용된 전이만) */
@@ -162,6 +225,15 @@ export class AdminService {
   }
 
   // ── 공지 관리 ──────────────────────────────────────────
+  async listNotices() {
+    const r = await this.db.query(
+      `SELECT id, title, summary, body, category, thumbnail_url, external_url,
+              status, published_at, created_at
+         FROM notice WHERE deleted_at IS NULL ORDER BY created_at DESC`,
+    );
+    return r.rows;
+  }
+
   async createNotice(adminId: string, input: {
     title: string; summary?: string; body: string; category: string;
     thumbnailUrl?: string; externalUrl?: string; publish?: boolean;
@@ -179,7 +251,49 @@ export class AdminService {
     return r.rows[0];
   }
 
+  async updateNotice(noticeId: string, input: {
+    title?: string; summary?: string; body?: string; category?: string;
+    thumbnailUrl?: string; externalUrl?: string; publish?: boolean;
+  }, adminId: string) {
+    const fields: Array<[string, unknown]> = [
+      ['title', input.title], ['summary', input.summary], ['body', input.body],
+      ['category', input.category], ['thumbnail_url', input.thumbnailUrl], ['external_url', input.externalUrl],
+    ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
+    if (input.publish !== undefined) {
+      fields.push(['status', input.publish ? 'PUBLISHED' : 'DRAFT']);
+      fields.push(['published_at', input.publish ? new Date() : null]);
+    }
+    if (!fields.length) return { id: noticeId };
+    const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
+    const r = await this.db.query(
+      `UPDATE notice SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
+      [noticeId, ...fields.map(([, value]) => value)],
+    );
+    if (!r.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
+    await this.audit(adminId, 'NOTICE_UPDATED', 'notice', noticeId);
+    return r.rows[0];
+  }
+
+  async deleteNotice(noticeId: string, adminId: string) {
+    const r = await this.db.query(
+      `UPDATE notice SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+      [noticeId],
+    );
+    if (!r.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
+    await this.audit(adminId, 'NOTICE_DELETED', 'notice', noticeId);
+    return r.rows[0];
+  }
+
   // ── Hall of Fame 하이라이트 관리 ───────────────────────
+  async listHighlights() {
+    const r = await this.db.query(
+      `SELECT id, type, title, description, image_url, link_url, bounty_id,
+              display_order, is_published, published_at
+         FROM platform_highlight ORDER BY display_order, created_at DESC`,
+    );
+    return r.rows;
+  }
+
   async createHighlight(adminId: string, input: {
     type: string; title: string; description: string;
     imageUrl?: string; linkUrl?: string; bountyId?: string;
@@ -196,6 +310,36 @@ export class AdminService {
        input.publish ? new Date() : null],
     );
     await this.audit(adminId, 'HIGHLIGHT_CREATED', 'platform_highlight', r.rows[0].id);
+    return r.rows[0];
+  }
+
+  async updateHighlight(highlightId: string, input: {
+    type?: string; title?: string; description?: string; imageUrl?: string;
+    linkUrl?: string; displayOrder?: number; publish?: boolean;
+  }, adminId: string) {
+    const fields: Array<[string, unknown]> = [
+      ['type', input.type], ['title', input.title], ['description', input.description],
+      ['image_url', input.imageUrl], ['link_url', input.linkUrl], ['display_order', input.displayOrder],
+    ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
+    if (input.publish !== undefined) {
+      fields.push(['is_published', input.publish]);
+      fields.push(['published_at', input.publish ? new Date() : null]);
+    }
+    if (!fields.length) return { id: highlightId };
+    const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
+    const r = await this.db.query(
+      `UPDATE platform_highlight SET ${assignments} WHERE id = $1 RETURNING id, is_published`,
+      [highlightId, ...fields.map(([, value]) => value)],
+    );
+    if (!r.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
+    await this.audit(adminId, 'HIGHLIGHT_UPDATED', 'platform_highlight', highlightId);
+    return r.rows[0];
+  }
+
+  async deleteHighlight(highlightId: string, adminId: string) {
+    const r = await this.db.query(`DELETE FROM platform_highlight WHERE id = $1 RETURNING id`, [highlightId]);
+    if (!r.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
+    await this.audit(adminId, 'HIGHLIGHT_DELETED', 'platform_highlight', highlightId);
     return r.rows[0];
   }
 

@@ -57,6 +57,7 @@ class CreateBountyDto {
     tokenType: string;
     tokenDenom?: string;
     tokenContractAddress?: string;
+    evmChainId?: number;
     displaySymbol: string;
     amount: string;
   };

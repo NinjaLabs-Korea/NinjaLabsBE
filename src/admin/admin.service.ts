@@ -43,7 +43,8 @@ export class AdminService {
     const r = await this.db.query(
       `SELECT b.*,
               COALESCE(json_agg(json_build_object(
-                'symbol', rw.display_symbol, 'amount', rw.amount::text, 'tokenType', rw.token_type
+                'symbol', rw.display_symbol, 'amount', rw.amount::text, 'tokenType', rw.token_type,
+                'tokenContractAddress', rw.token_contract_address, 'evmChainId', rw.evm_chain_id
               )) FILTER (WHERE rw.id IS NOT NULL), '[]') AS rewards
          FROM bounty b
          LEFT JOIN bounty_reward rw ON rw.bounty_id = b.id
@@ -60,18 +61,32 @@ export class AdminService {
     requirements: string; evaluationCriteria: string; category: string;
     applicationRequired: boolean; maxWinners: number;
     submissionDeadline: string; applicationDeadline?: string;
-    reward?: { tokenType: string; tokenDenom?: string; tokenContractAddress?: string; displaySymbol: string; amount: string };
+    reward?: { tokenType: string; tokenDenom?: string; tokenContractAddress?: string; evmChainId?: number; displaySymbol: string; amount: string };
   }) {
-    const reward = input.reward ? {
+    const configuredUsdcAddress = process.env.USDC_EVM_CONTRACT_ADDRESS;
+    const configuredEvmChainId = Number(process.env.INJECTIVE_EVM_CHAIN_ID);
+    const isUsdc = input.reward?.displaySymbol.toUpperCase() === 'USDC';
+    if (isUsdc && (!configuredUsdcAddress || !/^0x[0-9a-fA-F]{40}$/.test(configuredUsdcAddress))) {
+      throw new BadRequestException('USDC_EVM_CONTRACT_NOT_CONFIGURED');
+    }
+    if (isUsdc && ![1439, 1776].includes(configuredEvmChainId)) {
+      throw new BadRequestException('INJECTIVE_EVM_CHAIN_NOT_CONFIGURED');
+    }
+    const reward = input.reward ? (isUsdc ? {
       ...input.reward,
-      tokenDenom: input.reward.tokenDenom
-        ?? (input.reward.displaySymbol === 'USDC' ? process.env.USDC_DENOM : undefined),
-    } : undefined;
+      tokenType: 'ERC20',
+      tokenDenom: `erc20:${configuredUsdcAddress!.toLowerCase()}`,
+      tokenContractAddress: configuredUsdcAddress,
+      evmChainId: configuredEvmChainId,
+    } : input.reward) : undefined;
     if (reward?.tokenType === 'NATIVE' && !reward.tokenDenom) {
       throw new BadRequestException('REWARD_TOKEN_DENOM_REQUIRED');
     }
     if (reward?.tokenType === 'CW20' && !reward.tokenContractAddress) {
       throw new BadRequestException('REWARD_TOKEN_CONTRACT_REQUIRED');
+    }
+    if (reward?.tokenType === 'ERC20' && (!reward.tokenContractAddress || !reward.evmChainId)) {
+      throw new BadRequestException('REWARD_EVM_METADATA_REQUIRED');
     }
     return this.db.tx(async (tx) => {
       const b = await tx.query<{ id: string }>(
@@ -91,11 +106,13 @@ export class AdminService {
       if (reward) {
         await tx.query(
           `INSERT INTO bounty_reward
-             (bounty_id, token_type, token_denom, token_contract_address, display_symbol, amount, custody_address)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+             (bounty_id, token_type, token_denom, token_contract_address, evm_chain_id,
+              display_symbol, amount, custody_address)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [bountyId, reward.tokenType, reward.tokenDenom ?? null,
-           reward.tokenContractAddress ?? null, reward.displaySymbol,
-           reward.amount, process.env.REWARD_MULTISIG_ADDRESS ?? 'PENDING_MULTISIG_SETUP'],
+           reward.tokenContractAddress ?? null, reward.evmChainId ?? null,
+           reward.displaySymbol, reward.amount,
+           process.env.REWARD_MULTISIG_ADDRESS ?? 'PENDING_MULTISIG_SETUP'],
         );
         // 보상이 있으면 선입금 대기 상태로
         await tx.query(`UPDATE bounty SET status = 'FUNDING_PENDING' WHERE id = $1`, [bountyId]);

@@ -12,6 +12,8 @@ export default defineRailway(() => {
       JWT_ACCESS_TTL: "15m",
       JWT_REFRESH_TTL: "14d",
       INJECTIVE_NETWORK: "testnet",
+      INJECTIVE_EVM_CHAIN_ID: "1439",
+      USDC_EVM_CONTRACT_ADDRESS: "0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d",
       NFT_CONTRACT_ADDRESS: "inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w",
       CORS_ORIGINS: "https://ninjalabsfe.vercel.app,http://localhost:3000",
       GOOGLE_CALLBACK_URL:

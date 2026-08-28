@@ -140,6 +140,11 @@
 | DELETE | `/admin/highlights/:id` | 하이라이트 삭제 |
 | GET | `/admin/audit-logs?entityType=&entityId=` | 감사 로그 |
 
+USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심볼이 `USDC`이면 서버가
+`INJECTIVE_EVM_CHAIN_ID`와 `USDC_EVM_CONTRACT_ADDRESS`를 소스 오브 트루스로 사용해
+`tokenType=ERC20`, `tokenContractAddress`, `evmChainId`, 그리고 Cosmos 호환
+`tokenDenom=erc20:<lowercase address>`를 기록한다. 금액은 6자리 최소 단위 정수다.
+
 ## 미구현(스텁) 현황
 
 없음 — 전 엔드포인트 구현 완료.

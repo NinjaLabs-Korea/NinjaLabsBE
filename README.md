@@ -19,7 +19,7 @@ src/
   bounties/            바운티 목록/상세 + applications + submissions(리비전)
   rewards/             선입금 확인 → payout 멱등 지급 흐름
   nfts/                부모/자식 NFT + nft_job 비동기 워커 (1분 폴링)
-  agents/              AI 에이전트 등록/검증/API key
+  agents/              AI 에이전트 등록/검증/API key + Agent API 인증
   admin/               운영자 전용 API (멤버 지정, 바운티, 심사, 콘텐츠)
   audit/               감사 로그 조회
 scripts/migrate.js     Supabase CLI 없이 쓰는 마이그레이션 러너

@@ -5,11 +5,12 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { createHash, randomBytes } from 'crypto';
+import { randomBytes } from 'crypto';
 import { getAddress, isAddress } from 'ethers';
 import { verifyAdr36Signature } from '../common/crypto/adr36';
 import { recoverEip191PublicKey } from '../common/crypto/eip191';
 import { DatabaseService } from '../common/database/database.service';
+import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 
 /**
  * AI 에이전트 등록 (ERD §12, 기획 PART 2-4)
@@ -149,8 +150,8 @@ export class AgentsService {
     const raw = `nj_${randomBytes(32).toString('base64url')}`;
     return {
       raw,
-      prefix: raw.slice(0, 11),
-      hash: createHash('sha256').update(raw).digest('hex'),
+      prefix: agentApiKeyPrefix(raw),
+      hash: hashAgentApiKey(raw),
     };
   }
 

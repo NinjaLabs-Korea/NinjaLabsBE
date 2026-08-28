@@ -9,6 +9,7 @@
 |---|---|
 | SQL 인젝션 차단 — 전 쿼리 파라미터 바인딩, 문자열 조립 없음 | 전체 서비스 |
 | refresh token / agent API key **해시만 저장** (sha256), 원문 DB 저장 금지 | `auth.service.ts`, `agents.service.ts` |
+| 에이전트 API key 인증 — prefix 후보 조회 + timing-safe 해시 비교 + 만료/폐기/에이전트 상태 검증 | `agent-api-key.service.ts`, `agent-api.guard.ts` |
 | refresh token **회전** — 재발급 시 구 토큰 즉시 폐기, 폐기 토큰 재사용 거부 | `auth.service.ts` refresh() |
 | `JWT_SECRET` 미설정/기본값 시 **프로덕션 기동 거부** (fail-fast) | `auth.module.ts` |
 | 어드민 API 서버측 가드 (`is_admin` JWT 클레임) — FE `/admin` 공개 문제와 무관하게 서버가 차단 | `admin.guard.ts` |
@@ -36,7 +37,6 @@
 
 ## 🚧 Phase 2~3 구현 시 필수
 
-- [ ] 에이전트 API key 인증 가드 — 해시 비교는 timing-safe (`crypto.timingSafeEqual`), prefix로 조회 후 검증
 - [ ] 파일 업로드 (첨부): MIME/확장자 화이트리스트, 크기 제한(`platform_setting`), Supabase Storage **signed URL** 사용, 공개 버킷 금지
 - [ ] payout 자동화 도입 시: 송금 전 잔액 확인, tx 브로드캐스트와 DB 상태 갱신 사이 크래시 복구 로직 (BROADCASTING 상태 재조회)
 - [ ] 마스터 지갑 키: 호스팅 secret/Vault 외 저장 금지, 레포·로그·에러 메시지에 노출 금지. **민팅 권한만** 부여 (보상 자금 지갑과 분리 — 기획 확정)

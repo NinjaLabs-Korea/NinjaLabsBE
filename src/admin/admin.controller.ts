@@ -1,9 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -91,6 +93,40 @@ class CreateHighlightDto {
   @IsOptional() @IsBoolean() publish?: boolean;
 }
 
+class UpdateBountyDto {
+  @IsOptional() title?: string;
+  @IsOptional() sponsorName?: string;
+  @IsOptional() summary?: string;
+  @IsOptional() description?: string;
+  @IsOptional() requirements?: string;
+  @IsOptional() evaluationCriteria?: string;
+  @IsOptional() @IsIn(['DEV', 'DESIGN', 'CONTENT', 'OTHER']) category?: string;
+  @IsOptional() @IsBoolean() applicationRequired?: boolean;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) maxWinners?: number;
+  @IsOptional() submissionDeadline?: string;
+  @IsOptional() applicationDeadline?: string | null;
+}
+
+class UpdateNoticeDto {
+  @IsOptional() title?: string;
+  @IsOptional() summary?: string;
+  @IsOptional() body?: string;
+  @IsOptional() @IsIn(['NINJALABS', 'INJECTIVE_ECOSYSTEM', 'EVENT', 'RECRUITMENT', 'OTHER']) category?: string;
+  @IsOptional() thumbnailUrl?: string;
+  @IsOptional() externalUrl?: string;
+  @IsOptional() @IsBoolean() publish?: boolean;
+}
+
+class UpdateHighlightDto {
+  @IsOptional() @IsIn(['MILESTONE', 'FEATURED_BOUNTY', 'PROJECT', 'PARTNERSHIP', 'AWARD', 'OTHER']) type?: string;
+  @IsOptional() title?: string;
+  @IsOptional() description?: string;
+  @IsOptional() imageUrl?: string;
+  @IsOptional() linkUrl?: string;
+  @IsOptional() @Type(() => Number) @IsInt() displayOrder?: number;
+  @IsOptional() @IsBoolean() publish?: boolean;
+}
+
 class ConfirmDepositDto {
   @IsNotEmpty() txHash!: string;
   @IsNotEmpty() depositedAmount!: string;
@@ -132,9 +168,28 @@ export class AdminController {
   }
 
   // ── 바운티 ─────────────────────────────────────────────
+  @Get('bounties')
+  listBounties() {
+    return this.admin.listBounties();
+  }
+
   @Post('bounties')
   createBounty(@Req() req: AuthedRequest, @Body() dto: CreateBountyDto) {
     return this.admin.createBounty(req.user.userId, dto);
+  }
+
+  @Patch('bounties/:id')
+  updateBounty(
+    @Param('id', ParseUUIDPipe) bountyId: string,
+    @Req() req: AuthedRequest,
+    @Body() dto: UpdateBountyDto,
+  ) {
+    return this.admin.updateBounty(bountyId, dto, req.user.userId);
+  }
+
+  @Delete('bounties/:id')
+  deleteBounty(@Param('id', ParseUUIDPipe) bountyId: string, @Req() req: AuthedRequest) {
+    return this.admin.deleteBounty(bountyId, req.user.userId);
   }
 
   @Post('bounties/:id/transition')
@@ -195,13 +250,51 @@ export class AdminController {
   }
 
   // ── 콘텐츠 ─────────────────────────────────────────────
+  @Get('notices')
+  listNotices() {
+    return this.admin.listNotices();
+  }
+
   @Post('notices')
   createNotice(@Req() req: AuthedRequest, @Body() dto: CreateNoticeDto) {
     return this.admin.createNotice(req.user.userId, dto);
   }
 
+  @Patch('notices/:id')
+  updateNotice(
+    @Param('id', ParseUUIDPipe) noticeId: string,
+    @Req() req: AuthedRequest,
+    @Body() dto: UpdateNoticeDto,
+  ) {
+    return this.admin.updateNotice(noticeId, dto, req.user.userId);
+  }
+
+  @Delete('notices/:id')
+  deleteNotice(@Param('id', ParseUUIDPipe) noticeId: string, @Req() req: AuthedRequest) {
+    return this.admin.deleteNotice(noticeId, req.user.userId);
+  }
+
+  @Get('highlights')
+  listHighlights() {
+    return this.admin.listHighlights();
+  }
+
   @Post('highlights')
   createHighlight(@Req() req: AuthedRequest, @Body() dto: CreateHighlightDto) {
     return this.admin.createHighlight(req.user.userId, dto);
+  }
+
+  @Patch('highlights/:id')
+  updateHighlight(
+    @Param('id', ParseUUIDPipe) highlightId: string,
+    @Req() req: AuthedRequest,
+    @Body() dto: UpdateHighlightDto,
+  ) {
+    return this.admin.updateHighlight(highlightId, dto, req.user.userId);
+  }
+
+  @Delete('highlights/:id')
+  deleteHighlight(@Param('id', ParseUUIDPipe) highlightId: string, @Req() req: AuthedRequest) {
+    return this.admin.deleteHighlight(highlightId, req.user.userId);
   }
 }

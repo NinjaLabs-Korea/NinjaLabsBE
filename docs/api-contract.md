@@ -119,7 +119,10 @@
 |---|---|---|
 | GET | `/admin/users?q=` | 이메일/닉네임 유저 검색 |
 | POST | `/admin/users/:id/member` | 멤버 지정/해제 `{isMember, role?, displayOrder?}` |
+| GET | `/admin/bounties` | 삭제되지 않은 전체 바운티 목록 (DRAFT 포함) |
 | POST | `/admin/bounties` | 바운티 등록 (보상 포함 시 FUNDING_PENDING으로) |
+| PATCH | `/admin/bounties/:id` | 바운티 기본 정보 수정 |
+| DELETE | `/admin/bounties/:id` | 바운티 soft delete |
 | POST | `/admin/bounties/:id/transition` | 상태 전환 `{to}` — 허용 전이만 |
 | POST | `/admin/applications/:id/review` | 지원 승인/거절 `{decision, note?}` |
 | POST | `/admin/submissions/:id/review` | 제출 심사 `{decision: START_REVIEW\|REQUEST_REVISION\|APPROVE\|REJECT, comment?}` |
@@ -127,8 +130,14 @@
 | POST | `/admin/payouts` | 지급 요청 생성 `{rewardId, submissionId, amount}` (멱등) |
 | POST | `/admin/payouts/:id/approve` | 멀티시그 승인 완료 표시 |
 | POST | `/admin/payouts/:id/paid` | 송금 완료 기록 `{txHash}` |
+| GET | `/admin/notices` | 초안 포함 전체 공지 목록 |
 | POST | `/admin/notices` | 공지 작성 `{..., publish?}` |
+| PATCH | `/admin/notices/:id` | 공지 수정/발행 상태 변경 |
+| DELETE | `/admin/notices/:id` | 공지 soft delete |
+| GET | `/admin/highlights` | 비공개 포함 전체 하이라이트 목록 |
 | POST | `/admin/highlights` | 하이라이트 등록 |
+| PATCH | `/admin/highlights/:id` | 하이라이트 수정/발행 상태 변경 |
+| DELETE | `/admin/highlights/:id` | 하이라이트 삭제 |
 | GET | `/admin/audit-logs?entityType=&entityId=` | 감사 로그 |
 
 ## 미구현(스텁) 현황

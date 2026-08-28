@@ -28,7 +28,8 @@ export class BountiesService {
               b.application_required, b.max_winners,
               b.application_deadline, b.submission_deadline, b.opened_at,
               COALESCE(json_agg(json_build_object(
-                'symbol', r.display_symbol, 'amount', r.amount::text, 'tokenType', r.token_type
+                'symbol', r.display_symbol, 'amount', r.amount::text, 'tokenType', r.token_type,
+                'tokenContractAddress', r.token_contract_address, 'evmChainId', r.evm_chain_id
               )) FILTER (WHERE r.id IS NOT NULL), '[]') AS rewards
          FROM bounty b
          LEFT JOIN bounty_reward r ON r.bounty_id = b.id
@@ -53,7 +54,8 @@ export class BountiesService {
       `SELECT b.*,
               COALESCE(json_agg(DISTINCT jsonb_build_object(
                 'symbol', rw.display_symbol, 'amount', rw.amount::text,
-                'tokenType', rw.token_type, 'status', rw.status
+                'tokenType', rw.token_type, 'tokenContractAddress', rw.token_contract_address,
+                'evmChainId', rw.evm_chain_id, 'status', rw.status
               )) FILTER (WHERE rw.id IS NOT NULL), '[]') AS rewards,
               COALESCE(json_agg(DISTINCT jsonb_build_object(
                 'id', a.id, 'fileName', a.file_name, 'fileUrl', a.file_url

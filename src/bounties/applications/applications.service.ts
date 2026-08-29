@@ -15,8 +15,25 @@ export class ApplicationsService {
   constructor(private readonly db: DatabaseService) {}
 
   async apply(bountyId: string, userId: string, message: string, portfolioUrl?: string) {
-    const bounty = await this.db.query<{ application_required: boolean; status: string }>(
-      `SELECT application_required, status FROM bounty
+    return this.applyForActor(bountyId, { userId }, message, portfolioUrl);
+  }
+
+  async applyAsAgent(bountyId: string, agentId: string, message: string, portfolioUrl?: string) {
+    return this.applyForActor(bountyId, { agentId }, message, portfolioUrl);
+  }
+
+  private async applyForActor(
+    bountyId: string,
+    actor: { userId: string } | { agentId: string },
+    message: string,
+    portfolioUrl?: string,
+  ) {
+    const bounty = await this.db.query<{
+      application_required: boolean;
+      submission_mode: string;
+      status: string;
+    }>(
+      `SELECT application_required, submission_mode, status FROM bounty
         WHERE id = $1 AND deleted_at IS NULL`,
       [bountyId],
     );
@@ -27,13 +44,22 @@ export class ApplicationsService {
     if (bounty.rows[0].status !== 'OPEN') {
       throw new BadRequestException('BOUNTY_NOT_OPEN');
     }
+    const isAgent = 'agentId' in actor;
+    if (bounty.rows[0].submission_mode === 'AGENT' && !isAgent) {
+      throw new BadRequestException('AGENT_SUBMISSION_REQUIRED');
+    }
+    if (bounty.rows[0].submission_mode === 'DIRECT' && isAgent) {
+      throw new BadRequestException('DIRECT_SUBMISSION_REQUIRED');
+    }
 
     try {
       const r = await this.db.query(
-        `INSERT INTO bounty_application (bounty_id, applicant_user_id, message, portfolio_url)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO bounty_application
+           (bounty_id, applicant_user_id, agent_id, message, portfolio_url)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING id, status, applied_at`,
-        [bountyId, userId, message, portfolioUrl ?? null],
+        [bountyId, isAgent ? null : actor.userId, isAgent ? actor.agentId : null,
+         message, portfolioUrl ?? null],
       );
       return r.rows[0];
     } catch (err: unknown) {

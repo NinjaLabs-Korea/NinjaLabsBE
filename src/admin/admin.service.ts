@@ -59,8 +59,9 @@ export class AdminService {
   async createBounty(adminId: string, input: {
     title: string; sponsorName: string; summary: string; description: string;
     requirements: string; evaluationCriteria: string; category: string;
-    applicationRequired: boolean; maxWinners: number;
+    applicationRequired: boolean; submissionMode: string; maxWinners: number;
     submissionDeadline: string; applicationDeadline?: string;
+    coverImageUrl?: string;
     reward?: { tokenType: string; tokenDenom?: string; tokenContractAddress?: string; evmChainId?: number; displaySymbol: string; amount: string };
   }) {
     const configuredUsdcAddress = process.env.USDC_EVM_CONTRACT_ADDRESS;
@@ -93,13 +94,14 @@ export class AdminService {
         `INSERT INTO bounty
            (created_by, sponsor_name, title, summary, description, requirements,
             evaluation_criteria, category, application_required, max_winners,
-            submission_deadline, application_deadline)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            submission_deadline, application_deadline, cover_image_url, submission_mode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING id`,
         [adminId, input.sponsorName, input.title, input.summary, input.description,
          input.requirements, input.evaluationCriteria, input.category,
          input.applicationRequired, input.maxWinners,
-         input.submissionDeadline, input.applicationDeadline ?? null],
+         input.submissionDeadline, input.applicationDeadline ?? null,
+         input.coverImageUrl ?? null, input.submissionMode],
       );
       const bountyId = b.rows[0].id;
 
@@ -126,8 +128,9 @@ export class AdminService {
   async updateBounty(bountyId: string, input: {
     title?: string; sponsorName?: string; summary?: string; description?: string;
     requirements?: string; evaluationCriteria?: string; category?: string;
-    applicationRequired?: boolean; maxWinners?: number; submissionDeadline?: string;
-    applicationDeadline?: string | null;
+    applicationRequired?: boolean; submissionMode?: string; maxWinners?: number;
+    submissionDeadline?: string; applicationDeadline?: string | null;
+    coverImageUrl?: string | null;
   }, adminId: string) {
     const fields: Array<[string, unknown]> = [
       ['title', input.title], ['sponsor_name', input.sponsorName], ['summary', input.summary],
@@ -135,6 +138,7 @@ export class AdminService {
       ['evaluation_criteria', input.evaluationCriteria], ['category', input.category],
       ['application_required', input.applicationRequired], ['max_winners', input.maxWinners],
       ['submission_deadline', input.submissionDeadline], ['application_deadline', input.applicationDeadline],
+      ['submission_mode', input.submissionMode], ['cover_image_url', input.coverImageUrl],
     ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
     if (!fields.length) return { id: bountyId };
     const values = fields.map(([, value]) => value);

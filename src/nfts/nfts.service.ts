@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { PoolClient } from 'pg';
 import { DatabaseService } from '../common/database/database.service';
 
 /**
@@ -38,12 +39,27 @@ export class NftsService {
 
   /** 자식 NFT 레코드 생성 + 민팅/attach 잡 등록 (제출물 승인 시 호출) */
   async enqueueChildMint(userId: string, walletId: string, bountyId: string, submissionId: string) {
+    return this.db.tx((tx) => this.enqueueChildMintInTransaction(
+      tx,
+      userId,
+      walletId,
+      bountyId,
+      submissionId,
+    ));
+  }
+
+  async enqueueChildMintInTransaction(
+    tx: PoolClient,
+    userId: string,
+    walletId: string,
+    bountyId: string,
+    submissionId: string,
+  ) {
     const contract = process.env.NFT_CONTRACT_ADDRESS ?? 'PENDING_CONTRACT_DEPLOY';
-    return this.db.tx(async (tx) => {
-      const parent = await tx.query<{ id: string }>(
-        `SELECT id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`,
-        [userId],
-      );
+    const parent = await tx.query<{ id: string }>(
+      `SELECT id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`,
+      [userId],
+    );
       // 부모 NFT 미보유(지갑 미연결 등)면 부모부터 재유도 — decisions.md 참고
       const parentId = parent.rowCount ? parent.rows[0].id : null;
 
@@ -62,8 +78,7 @@ export class NftsService {
          ON CONFLICT (idempotency_key) DO NOTHING`,
         [nftId, `mint-child:${submissionId}`],
       );
-      return { nftId, parentId };
-    });
+    return { nftId, parentId };
   }
 
   /** 유저의 NFT 목록 (프로필 페이지용) */

@@ -17,6 +17,7 @@ import { NftsModule } from './nfts/nfts.module';
 import { AgentsModule } from './agents/agents.module';
 import { AdminModule } from './admin/admin.module';
 import { AuditModule } from './audit/audit.module';
+import { MediaModule } from './media/media.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { AuditModule } from './audit/audit.module';
     AgentsModule,
     AdminModule,
     AuditModule,
+    MediaModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

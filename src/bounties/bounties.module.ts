@@ -11,6 +11,6 @@ import { SubmissionsService } from './submissions/submissions.service';
   imports: [AuthModule],
   controllers: [BountiesController, ApplicationsController, SubmissionsController],
   providers: [BountiesService, ApplicationsService, SubmissionsService],
-  exports: [BountiesService],
+  exports: [BountiesService, ApplicationsService, SubmissionsService],
 })
 export class BountiesModule {}

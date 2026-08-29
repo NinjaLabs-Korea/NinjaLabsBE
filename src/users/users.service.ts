@@ -98,10 +98,22 @@ export class UsersService {
       [u.id],
     );
 
+    const nfts = await this.db.query(
+      `SELECT n.id, n.nft_type, n.status, n.contract_address, n.token_id,
+              n.metadata_uri, n.mint_tx_hash, n.attach_tx_hash,
+              n.minted_at, n.attached_at, b.title AS bounty_title
+         FROM nft n
+         LEFT JOIN bounty b ON b.id = n.bounty_id
+        WHERE n.owner_user_id = $1
+        ORDER BY n.created_at`,
+      [u.id],
+    );
+
     return {
       ...u,
       completedBounties: completedBounties.rows,
       agents: agents.rows,
+      nfts: nfts.rows,
     };
   }
 }

@@ -25,7 +25,7 @@ export class BountiesService {
 
     const items = await this.db.query(
       `SELECT b.id, b.title, b.summary, b.sponsor_name, b.category, b.status,
-              b.application_required, b.max_winners,
+              b.application_required, b.submission_mode, b.cover_image_url, b.max_winners,
               b.application_deadline, b.submission_deadline, b.opened_at,
               COALESCE(json_agg(json_build_object(
                 'symbol', r.display_symbol, 'amount', r.amount::text, 'tokenType', r.token_type,

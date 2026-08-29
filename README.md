@@ -16,6 +16,7 @@ src/
   members/             공식 멤버 탭 (공개)
   notices/             공지/소식 (공개 읽기)
   highlights/          Hall of Fame 큐레이션 + 자동 집계 지표
+  media/               관리자 이미지 업로드 + 공개 immutable 조회
   bounties/            바운티 목록/상세 + applications + submissions(리비전)
   rewards/             선입금 확인 → payout 멱등 지급 흐름
   nfts/                부모/자식 NFT + nft_job 비동기 워커 (1분 폴링)
@@ -41,4 +42,3 @@ npm run start:dev           # http://localhost:4000
 ```
 
 Supabase 프로젝트 생성 후 `Project Settings → Database → Connection string`을 `DATABASE_URL`에 넣으면 된다. Supabase CLI를 쓰는 팀이면 `npm run migrate` 대신 `supabase db push`도 가능 (마이그레이션 디렉터리 규칙 호환).
-

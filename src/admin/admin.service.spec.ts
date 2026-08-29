@@ -16,6 +16,7 @@ describe('AdminService EVM rewards', () => {
     title: 'USDC bounty', sponsorName: 'Ninja Labs', summary: 'summary',
     description: 'description', requirements: 'requirements',
     evaluationCriteria: 'criteria', category: 'DEV', applicationRequired: false,
+    submissionMode: 'DIRECT',
     maxWinners: 1, submissionDeadline: '2026-09-30T00:00:00.000Z',
     reward: { tokenType: 'ERC20', displaySymbol: 'USDC', amount: '12500000' },
   };

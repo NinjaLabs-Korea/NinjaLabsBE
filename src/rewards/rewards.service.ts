@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
+import { NftsService } from '../nfts/nfts.service';
 
 /**
  * MVP 보상 흐름 (ERD §10)
@@ -11,7 +12,10 @@ import { DatabaseService } from '../common/database/database.service';
  */
 @Injectable()
 export class RewardsService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly nfts: NftsService,
+  ) {}
 
   /** 운영자: 선입금 확인 처리 → 보상 FUNDED, 바운티 OPEN 전환은 admin 쪽에서 */
   async confirmDeposit(rewardId: string, txHash: string, depositedAmount: string, adminId: string) {
@@ -32,7 +36,8 @@ export class RewardsService {
     const wallet = await this.db.query<{ wallet_id: string }>(
       `SELECT w.id AS wallet_id
          FROM bounty_submission s
-         JOIN wallet w ON w.user_id = s.submitter_user_id
+         LEFT JOIN agent a ON a.id = s.agent_id
+         JOIN wallet w ON w.user_id = COALESCE(s.submitter_user_id, a.owner_user_id)
               AND w.is_primary = true AND w.disconnected_at IS NULL
         WHERE s.id = $1 AND s.status = 'APPROVED'`,
       [submissionId],
@@ -76,15 +81,47 @@ export class RewardsService {
 
   /** 운영자: 송금 완료 기록 (tx hash) */
   async markPaid(payoutId: string, txHash: string, adminId: string) {
-    const r = await this.db.query(
-      `UPDATE payout SET status = 'PAID', payout_tx_hash = $2, paid_at = now()
-        WHERE id = $1 AND status IN ('APPROVED', 'BROADCASTING')
-        RETURNING id, status, payout_tx_hash`,
-      [payoutId, txHash],
-    );
-    if (!r.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
-    await this.audit(adminId, 'PAYOUT_PAID', 'payout', payoutId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const payout = await tx.query<{
+        id: string;
+        status: string;
+        payout_tx_hash: string;
+        submission_id: string;
+        recipient_wallet_id: string;
+      }>(
+        `UPDATE payout SET status = 'PAID', payout_tx_hash = $2, paid_at = now()
+          WHERE id = $1 AND status IN ('APPROVED', 'BROADCASTING')
+          RETURNING id, status, payout_tx_hash, submission_id, recipient_wallet_id`,
+        [payoutId, txHash],
+      );
+      if (!payout.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
+
+      const submission = await tx.query<{ owner_user_id: string; bounty_id: string }>(
+        `SELECT COALESCE(s.submitter_user_id, a.owner_user_id) AS owner_user_id,
+                s.bounty_id
+           FROM bounty_submission s
+           LEFT JOIN agent a ON a.id = s.agent_id
+          WHERE s.id = $1 AND s.status = 'APPROVED'`,
+        [payout.rows[0].submission_id],
+      );
+      if (!submission.rowCount || !submission.rows[0].owner_user_id) {
+        throw new NotFoundException('APPROVED_SUBMISSION_NOT_FOUND');
+      }
+
+      await this.nfts.enqueueChildMintInTransaction(
+        tx,
+        submission.rows[0].owner_user_id,
+        payout.rows[0].recipient_wallet_id,
+        submission.rows[0].bounty_id,
+        payout.rows[0].submission_id,
+      );
+      await tx.query(
+        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id)
+         VALUES ($1, 'PAYOUT_PAID', 'payout', $2)`,
+        [adminId, payoutId],
+      );
+      return payout.rows[0];
+    });
   }
 
   private async audit(actorId: string, action: string, entityType: string, entityId: string) {

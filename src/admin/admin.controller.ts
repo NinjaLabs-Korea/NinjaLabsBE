@@ -50,9 +50,11 @@ class CreateBountyDto {
   @IsNotEmpty() evaluationCriteria!: string;
   @IsIn(['DEV', 'DESIGN', 'CONTENT', 'OTHER']) category!: string;
   @IsBoolean() applicationRequired!: boolean;
+  @IsIn(['DIRECT', 'AGENT']) submissionMode!: string;
   @Type(() => Number) @IsInt() @Min(1) maxWinners!: number;
   @IsNotEmpty() submissionDeadline!: string;
   @IsOptional() applicationDeadline?: string;
+  @IsOptional() coverImageUrl?: string;
   @IsOptional() reward?: {
     tokenType: string;
     tokenDenom?: string;
@@ -103,9 +105,11 @@ class UpdateBountyDto {
   @IsOptional() evaluationCriteria?: string;
   @IsOptional() @IsIn(['DEV', 'DESIGN', 'CONTENT', 'OTHER']) category?: string;
   @IsOptional() @IsBoolean() applicationRequired?: boolean;
+  @IsOptional() @IsIn(['DIRECT', 'AGENT']) submissionMode?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) maxWinners?: number;
   @IsOptional() submissionDeadline?: string;
   @IsOptional() applicationDeadline?: string | null;
+  @IsOptional() coverImageUrl?: string | null;
 }
 
 class UpdateNoticeDto {

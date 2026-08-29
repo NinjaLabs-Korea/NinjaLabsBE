@@ -47,7 +47,7 @@
 | GET | `/users/check-nickname?nickname=` | - | `{available: boolean}` — 즉시 중복 검증 |
 | POST | `/users/me/profile` | ✅ | `{nickname, bio, tags[]}` 전부 필수 (온보딩 3단계) |
 | POST | `/users/me/complete-onboarding` | ✅ | 온보딩 완료 플래그 |
-| GET | `/users/:nickname` | - | 공개 프로필: 기본정보 + 완료 바운티 + 에이전트 |
+| GET | `/users/:nickname` | - | 공개 프로필: 기본정보 + 완료 바운티 + 에이전트 + 실제 부모/완료 NFT 상태·token ID·mint tx |
 
 ## 지갑 (온보딩 2단계)
 
@@ -69,7 +69,7 @@
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| GET | `/bounties?page=&category=&status=` | - | 목록 (DRAFT/FUNDING_PENDING 비노출) + 보상 요약 |
+| GET | `/bounties?page=&category=&status=` | - | 목록 (DRAFT/FUNDING_PENDING 비노출) + 보상, `cover_image_url`, `submission_mode` |
 | GET | `/bounties/:id` | - | 상세 + 보상 + 첨부 |
 
 ## 바운티 참여 (행동 — 인증 필요)
@@ -87,6 +87,8 @@
 - 지원형인데 APPROVED 지원서 없음 → 403 `APPLICATION_NOT_APPROVED`
 - 마감 후 (REVISION_REQUESTED 아님) → 400 `DEADLINE_PASSED`
 - APPROVED/REJECTED 확정 후 → 409 `SUBMISSION_FINALIZED`
+- `submission_mode=AGENT`에 사용자 JWT 경로 호출 → 400 `AGENT_SUBMISSION_REQUIRED`
+- `submission_mode=DIRECT`에 Agent API key 경로 호출 → 400 `DIRECT_SUBMISSION_REQUIRED`
 
 ## 커뮤니티 (공개 읽기)
 
@@ -106,14 +108,15 @@
 | POST | `/agents/:id/verify` | ✅ | `{signature}` — 에이전트 지갑 서명 검증 → ACTIVE + **API key 원문 1회 반환** `{agentId, status, apiKey, expiresAt}` |
 | GET | `/agents/me` | ✅ | 내 에이전트 목록 (key는 prefix만) |
 | GET | `/agent-api/v1/me` | Agent API key | 인증된 에이전트 자기 정보 (`Authorization: Bearer nj_...`) |
+| POST | `/agent-api/v1/bounties/:id/applications` | Agent API key | 에이전트 전용 지원형 신청 |
+| POST | `/agent-api/v1/bounties/:id/submissions` | Agent API key | 에이전트 전용 제출/재제출 |
 
 - 검증 방법: 등록 응답의 `verificationMessage`를 **에이전트별 전용 지갑 키**로 서명한다.
   `0x` 주소는 EIP-191 `personal_sign` hex 서명을 제출하며 서버가 공개키를 복구해 저장한다.
   `inj1` 주소는 ADR-36 `signArbitrary`의 base64 서명과 등록 시 public key를 사용한다.
 - API key 만료 90일 (decisions.md). 에러코드: `AGENT_NOT_FOUND`, `AGENT_ALREADY_VERIFIED`, `INVALID_SIGNATURE`
 
-에이전트 전용 REST API 인증 계약은 `docs/agent-api.md`를 따른다. 바운티 조회/지원/제출은
-후속 단계에서 이 인증 기반 위에 추가한다.
+에이전트 전용 REST API 인증 및 지원/제출 계약은 `docs/agent-api.md`를 따른다.
 
 ## 어드민 (AdminGuard — is_admin 필수)
 
@@ -121,8 +124,9 @@
 |---|---|---|
 | GET | `/admin/users?q=` | 이메일/닉네임 유저 검색 |
 | POST | `/admin/users/:id/member` | 멤버 지정/해제 `{isMember, role?, displayOrder?}` |
+| POST | `/admin/media` | JPEG/PNG/WebP 이미지 업로드 (`multipart/form-data`, `file`, 최대 5 MiB) → `{id, url}` |
 | GET | `/admin/bounties` | 삭제되지 않은 전체 바운티 목록 (DRAFT 포함) |
-| POST | `/admin/bounties` | 바운티 등록 (보상 포함 시 FUNDING_PENDING으로) |
+| POST | `/admin/bounties` | 바운티 등록 (`submissionMode`, `coverImageUrl?`; 보상 포함 시 FUNDING_PENDING으로) |
 | PATCH | `/admin/bounties/:id` | 바운티 기본 정보 수정 |
 | DELETE | `/admin/bounties/:id` | 바운티 soft delete |
 | POST | `/admin/bounties/:id/transition` | 상태 전환 `{to}` — 허용 전이만 |
@@ -142,6 +146,9 @@
 | DELETE | `/admin/highlights/:id` | 하이라이트 삭제 |
 | GET | `/admin/audit-logs?entityType=&entityId=` | 감사 로그 |
 
+`GET /media/:id`는 인증 없이 업로드 원본을 immutable cache header와 함께 반환한다. 파일 MIME과
+signature는 업로드 시 검증되며 DB의 `media_asset`이 원본 데이터와 URL의 소스 오브 트루스다.
+
 USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심볼이 `USDC`이면 서버가
 `INJECTIVE_EVM_CHAIN_ID`와 `USDC_EVM_CONTRACT_ADDRESS`를 소스 오브 트루스로 사용해
 `tokenType=ERC20`, `tokenContractAddress`, `evmChainId`, 그리고 Cosmos 호환
@@ -160,4 +167,5 @@ USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심
 - 컨트랙트: `inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w` (`.env NFT_CONTRACT_ADDRESS`)
 - minter/admin: 마스터 지갑 `inj1fku0cc2tgmsf9uflhvx0e340urktq7vtlcg9hq` (민팅 전용)
 - token_id = `nft.id` (UUID) / metadata_uri는 추후 메타데이터 서비스 연결 시 채움
+- payout을 PAID로 기록하는 트랜잭션에서 완료 자식 NFT와 mint job도 멱등 생성한다.
 - mainnet은 CosmWasm 업로드가 거버넌스 승인제 — 런칭 일정에 반영 필요

@@ -16,6 +16,7 @@ export interface SessionUser {
 export interface OAuthState {
   traceId?: string;
   redirectUrl?: string;
+  codeChallenge: string;
 }
 
 /**
@@ -25,7 +26,8 @@ export interface OAuthState {
  * 2. 구글이 /auth/google/callback 으로 code 전달
  * 3. 백엔드가 code를 토큰으로 교환, google_id/email 획득
  * 4. user upsert (신규면 온보딩 단계 1로 생성)
- * 5. access token(JWT) + refresh token 발급, refresh는 해시만 auth_session에 저장
+ * 5. 브라우저 challenge에 연결된 일회용 코드 전달 (URL에 세션 토큰 없음)
+ * 6. POST /auth/exchange로 코드를 소비하고 세션 발급, refresh는 해시만 저장
  */
 @Injectable()
 export class AuthService {
@@ -45,19 +47,24 @@ export class AuthService {
    * CSRF 방어용 state — 서명된 단기 JWT라 서버 측 저장소/쿠키 없이 검증 가능.
    * 콜백에서 서명·만료·용도(p)를 확인한다.
    */
-  async issueOauthState(traceId?: string, redirectUrl?: string): Promise<string> {
+  async issueOauthState(traceId: string | undefined, redirectUrl: string, codeChallenge: string): Promise<string> {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(codeChallenge)) {
+      throw new UnauthorizedException('INVALID_CODE_CHALLENGE');
+    }
     const safeTraceId = traceId && /^[a-zA-Z0-9-]{1,64}$/.test(traceId) ? traceId : undefined;
     return this.jwt.signAsync(
-      { p: 'gstate', t: safeTraceId, r: redirectUrl },
+      { p: 'gstate', t: safeTraceId, r: redirectUrl, c: codeChallenge },
       { expiresIn: '10m' },
     );
   }
 
   async verifyOauthState(state: string): Promise<OAuthState> {
     try {
-      const payload = await this.jwt.verifyAsync<{ p?: string; t?: string; r?: string }>(state);
-      if (payload.p !== 'gstate') throw new Error('wrong purpose');
-      return { traceId: payload.t, redirectUrl: payload.r };
+      const payload = await this.jwt.verifyAsync<{ p?: string; t?: string; r?: string; c?: string }>(state);
+      if (payload.p !== 'gstate' || !payload.c || !/^[A-Za-z0-9_-]{43}$/.test(payload.c)) {
+        throw new Error('invalid state');
+      }
+      return { traceId: payload.t, redirectUrl: payload.r, codeChallenge: payload.c };
     } catch {
       throw new UnauthorizedException('INVALID_OAUTH_STATE');
     }
@@ -172,6 +179,46 @@ export class AuthService {
       [googleId, email, `user_${randomBytes(4).toString('hex')}`],
     );
     return created.rows[0];
+  }
+
+  /** OAuth callback carries only a 60-second code bound to the initiating browser. */
+  async issueLoginCode(userId: string, codeChallenge: string): Promise<string> {
+    const code = randomBytes(32).toString('base64url');
+    await this.db.query('DELETE FROM oauth_login_code WHERE expires_at <= now()');
+    await this.db.query(
+      `INSERT INTO oauth_login_code (code_hash, user_id, code_challenge)
+       VALUES ($1, $2, $3)`,
+      [createHash('sha256').update(code).digest('hex'), userId, codeChallenge],
+    );
+    return code;
+  }
+
+  async exchangeLoginCode(code: string, codeVerifier: string, ip?: string, userAgent?: string) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(code) || !/^[A-Za-z0-9._~-]{43,128}$/.test(codeVerifier)) {
+      throw new UnauthorizedException('INVALID_LOGIN_CODE');
+    }
+    const codeHash = createHash('sha256').update(code).digest('hex');
+    const challenge = createHash('sha256').update(codeVerifier).digest('base64url');
+    return this.db.tx(async (tx) => {
+      // Conditional DELETE atomically consumes the code, including across server replicas.
+      const consumed = await tx.query<{ user_id: string; is_admin: boolean }>(
+        `DELETE FROM oauth_login_code AS c USING "user" AS u
+          WHERE c.code_hash = $1 AND c.code_challenge = $2
+            AND c.expires_at > now() AND c.user_id = u.id
+            AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
+          RETURNING c.user_id, u.is_admin`,
+        [codeHash, challenge],
+      );
+      if (consumed.rowCount !== 1) throw new UnauthorizedException('INVALID_LOGIN_CODE');
+      const { user_id, is_admin } = consumed.rows[0];
+      const session = await this.createSessionTokens(user_id, is_admin);
+      await tx.query(
+        `INSERT INTO auth_session (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
+         VALUES ($1, $2, $3, $4, now() + interval '14 days')`,
+        [user_id, session.refreshHash, ip ?? null, userAgent ?? null],
+      );
+      return { accessToken: session.accessToken, refreshToken: session.refreshToken };
+    });
   }
 
   /** JWT access + refresh 발급, refresh 해시는 auth_session에 저장 */

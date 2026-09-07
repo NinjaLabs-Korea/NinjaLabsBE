@@ -16,11 +16,23 @@
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| GET | `/auth/google` | - | 구글 동의 화면으로 리다이렉트 |
-| GET | `/auth/google/callback` | - | code 교환 → 세션 발급 → FE로 리다이렉트 |
-| POST | `/auth/refresh` | - | `{refreshToken}` → `{accessToken}` |
+| GET | `/auth/google` | - | `codeChallenge`(S256, 필수), `returnTo`, `trace` → 구글 동의 화면 |
+| GET | `/auth/google/callback` | - | Google code 교환 → FE `/auth/callback#loginCode=...` |
+| POST | `/auth/exchange` | - | `{code, codeVerifier}` → `{accessToken, refreshToken}`; `Cache-Control: no-store, private` |
+| POST | `/auth/refresh` | - | `{refreshToken}` → `{accessToken, refreshToken}` (회전) |
 | POST | `/auth/logout` | - | `{refreshToken}` → 204 |
 | GET | `/auth/me` | ✅ | 현재 유저 프로필 + 온보딩/지갑 상태 |
+
+로그인 시 FE는 탭의 `sessionStorage`에 랜덤 verifier를 저장하고 SHA-256/base64url
+challenge만 `/auth/google`에 보낸다. BE는 challenge를 서명된 OAuth state에 연결한다.
+콜백 URL에는 access/refresh token을 넣지 않는다. 대신 60초 동안 유효한 일회용 코드를
+전달하며 DB에는 코드 해시만 저장한다. FE는 URL fragment를 먼저 지운 뒤 코드와 verifier를
+POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 같은 트랜잭션에서 소비되므로
+재사용할 수 없다. 만료·다른 verifier·비활성 계정은 `401 INVALID_LOGIN_CODE`로 거부한다.
+
+배포 순서: **새 FE 배포 → `0013_oauth_login_codes.sql` 마이그레이션 적용 → 새 BE 배포**.
+새 FE는 순차 배포 중 이전 BE의 토큰 fragment도 수거·삭제한다. 새 BE는 challenge가 없는
+이전 FE의 로그인 시작 요청을 거부하므로 이전 프론트 탭은 새로고침 후 다시 로그인해야 한다.
 
 `/auth/me` 응답 (FE 헤더/온보딩 분기에 필요한 모든 상태):
 

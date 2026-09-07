@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
-import { IsNotEmpty } from 'class-validator';
+import { IsNotEmpty, Matches } from 'class-validator';
 import { Request, Response } from 'express';
 import {
   onboardingError,
@@ -26,6 +26,14 @@ import { AuthService, SessionUser } from './auth.service';
 class RefreshDto {
   @IsNotEmpty()
   refreshToken!: string;
+}
+
+class LoginCodeDto {
+  @Matches(/^[A-Za-z0-9_-]{43}$/)
+  code!: string;
+
+  @Matches(/^[A-Za-z0-9._~-]{43,128}$/)
+  codeVerifier!: string;
 }
 
 @Controller('auth')
@@ -65,6 +73,7 @@ export class AuthController {
   async googleRedirect(
     @Query('trace') traceId: string | undefined,
     @Query('returnTo') returnTo: string | undefined,
+    @Query('codeChallenge') codeChallenge: string | undefined,
     @Res() res: Response,
   ) {
     const redirectUrl = this.authSuccessRedirect(returnTo);
@@ -73,17 +82,18 @@ export class AuthController {
       requestedReturnOrigin: returnTo ? this.safeOrigin(returnTo) : null,
       selectedReturnOrigin: this.safeOrigin(redirectUrl),
     });
-    const state = await this.auth.issueOauthState(traceId, redirectUrl);
+    const state = await this.auth.issueOauthState(traceId, redirectUrl, codeChallenge ?? '');
     onboardingLog(this.logger, 'oauth.redirect.ready', { traceId });
     res.redirect(this.auth.buildGoogleAuthUrl(state));
   }
 
   /**
-   * GET /auth/google/callback — code 교환 → 세션 발급 → FE로 리다이렉트
-   * 토큰은 URL fragment(#)로 전달 — fragment는 서버로 전송되지 않아 로그에 남지 않고,
-   * FE 계약(refresh를 body로 보내는 방식)상 FE JS가 토큰을 직접 보관해야 한다.
+   * GET /auth/google/callback — Google code 교환 → 일회용 로그인 코드 → FE.
+   * Access/refresh tokens are returned only by POST /auth/exchange, never in a URL.
    */
   @Get('google/callback')
+  @Header('Cache-Control', 'no-store')
+  @Header('Referrer-Policy', 'no-referrer')
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   async googleCallback(
     @Query('code') code: string | undefined,
@@ -102,7 +112,7 @@ export class AuthController {
       onboardingLog(this.logger, 'oauth.callback.rejected', {
         reason: error ?? 'MISSING_CODE_OR_STATE',
       });
-      return res.redirect(`${fe}#error=${encodeURIComponent(error ?? 'MISSING_CODE')}`);
+      return res.redirect(this.loginCallbackUrl(fe, { error: 'AUTH_FAILED' }));
     }
     try {
       const oauthState = await this.auth.verifyOauthState(state);
@@ -118,21 +128,28 @@ export class AuthController {
         onboardingStep: user.onboarding_step,
         onboardingCompleted: user.onboarding_completed_at !== null,
       });
-      const { accessToken, refreshToken } = await this.auth.issueSession(
-        user.id,
-        user.is_admin,
-        req.ip,
-        req.headers['user-agent'],
-      );
-      onboardingLog(this.logger, 'oauth.session.issued', { traceId, userId: user.id });
-      const params = new URLSearchParams({ accessToken, refreshToken });
+      const loginCode = await this.auth.issueLoginCode(user.id, oauthState.codeChallenge);
       onboardingLog(this.logger, 'oauth.callback.redirecting', { traceId, userId: user.id });
-      return res.redirect(`${fe}#${params}`);
+      return res.redirect(this.loginCallbackUrl(fe, { loginCode }));
     } catch (caught) {
       onboardingError(this.logger, 'oauth.callback.failed', caught);
       // 실패 사유를 FE에 상세 노출하지 않는다 (code/state 탈취 시도 힌트 방지)
-      return res.redirect(`${fe}#error=AUTH_FAILED`);
+      return res.redirect(this.loginCallbackUrl(fe, { error: 'AUTH_FAILED' }));
     }
+  }
+
+  private loginCallbackUrl(fe: string, params: Record<string, string>): string {
+    const url = new URL('/auth/callback', fe);
+    url.hash = new URLSearchParams(params).toString();
+    return url.toString();
+  }
+
+  @Post('exchange')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store, private')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  exchange(@Body() dto: LoginCodeDto, @Req() req: Request) {
+    return this.auth.exchangeLoginCode(dto.code, dto.codeVerifier, req.ip, req.headers['user-agent']);
   }
 
   private safeOrigin(value: string): string | null {

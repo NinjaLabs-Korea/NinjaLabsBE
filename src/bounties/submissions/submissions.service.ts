@@ -50,7 +50,9 @@ export class SubmissionsService {
       );
       if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
       const b = bounty.rows[0];
-      if (b.status !== 'OPEN') throw new BadRequestException('BOUNTY_NOT_OPEN');
+      // 신규 제출은 OPEN에서만. 마감·심사 단계에서는 수정 요청을 받은 제출물의 재제출만 허용한다.
+      const inReviewPhase = b.status === 'SUBMISSION_CLOSED' || b.status === 'IN_REVIEW';
+      if (b.status !== 'OPEN' && !inReviewPhase) throw new BadRequestException('BOUNTY_NOT_OPEN');
       const isAgent = 'agentId' in actor;
       if (b.submission_mode === 'AGENT' && !isAgent) {
         throw new BadRequestException('AGENT_SUBMISSION_REQUIRED');
@@ -80,6 +82,10 @@ export class SubmissionsService {
             AND ${isAgent ? 'agent_id' : 'submitter_user_id'} = $2 FOR UPDATE`,
         [bountyId, isAgent ? actor.agentId : actor.userId],
       );
+
+      if (inReviewPhase && existing.rows[0]?.status !== 'REVISION_REQUESTED') {
+        throw new BadRequestException('BOUNTY_NOT_OPEN');
+      }
 
       const deadlinePassed = new Date(b.submission_deadline) < new Date();
 

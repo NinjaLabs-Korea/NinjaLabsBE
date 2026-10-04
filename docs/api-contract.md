@@ -141,9 +141,9 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 | POST | `/admin/bounties` | 바운티 등록 (`submissionMode`, `coverImageUrl?`; 보상 포함 시 FUNDING_PENDING으로) |
 | PATCH | `/admin/bounties/:id` | 바운티 기본 정보 수정 |
 | DELETE | `/admin/bounties/:id` | 바운티 soft delete |
-| POST | `/admin/bounties/:id/transition` | 상태 전환 `{to}` — 허용 전이만 |
+| POST | `/admin/bounties/:id/transition` | 상태 전환 `{to}` — 허용 전이만 (위반 시 409 `INVALID_TRANSITION:FROM->TO`). `COMPLETED`는 승인된 제출물 ≥1 (`NO_APPROVED_SUBMISSION`), 미결 제출물 0 (`SUBMISSIONS_PENDING_REVIEW`)일 때만 |
 | POST | `/admin/applications/:id/review` | 지원 승인/거절 `{decision, note?}` |
-| POST | `/admin/submissions/:id/review` | 제출 심사 `{decision: START_REVIEW\|REQUEST_REVISION\|APPROVE\|REJECT, comment?}` |
+| POST | `/admin/submissions/:id/review` | 제출 심사 `{decision: START_REVIEW\|REQUEST_REVISION\|APPROVE\|REJECT, comment?}` — 순서: `SUBMITTED/RESUBMITTED` → `START_REVIEW` → `IN_REVIEW` → 결정 (위반 시 409 `INVALID_REVIEW_ORDER:STATUS->DECISION`). 확정 제출물·완료/취소 바운티 심사 불가 (`BOUNTY_NOT_REVIEWABLE:STATUS`), 승인 수 ≤ `max_winners` (`MAX_WINNERS_REACHED`). `SUBMISSION_CLOSED`/`IN_REVIEW` 바운티에서는 `REVISION_REQUESTED` 제출물의 재제출만 허용 |
 | POST | `/admin/rewards/:id/confirm-deposit` | 선입금 확인 `{txHash, depositedAmount}` |
 | POST | `/admin/payouts` | 지급 요청 생성 `{rewardId, submissionId, amount}` (멱등) |
 | POST | `/admin/payouts/:id/approve` | 멀티시그 승인 완료 표시 |

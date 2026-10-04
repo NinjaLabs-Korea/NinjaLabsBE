@@ -1,5 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
+
+/** 아직 결론이 나지 않은 제출물 상태 — 바운티 완료를 막는다. */
+const PENDING_SUBMISSION_STATUSES = `'SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED'`;
+/** 제출물 심사가 가능한 바운티 상태 (완료·취소 이후에는 심사 결과를 바꿀 수 없다). */
+const REVIEWABLE_BOUNTY_STATUSES = ['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'];
 
 @Injectable()
 export class AdminService {
@@ -171,27 +176,46 @@ export class AdminService {
       SUBMISSION_CLOSED: ['IN_REVIEW'],
       IN_REVIEW: ['COMPLETED'],
     };
-    const cur = await this.db.query<{ status: string }>(
-      `SELECT status FROM bounty WHERE id = $1 AND deleted_at IS NULL`,
-      [bountyId],
-    );
-    if (!cur.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    const from = cur.rows[0].status;
-    if (!allowed[from]?.includes(to)) {
-      throw new NotFoundException(`INVALID_TRANSITION:${from}->${to}`);
-    }
-    const stamp: Record<string, string> = {
-      OPEN: 'opened_at',
-      IN_REVIEW: 'review_started_at',
-      COMPLETED: 'completed_at',
-    };
-    const stampCol = stamp[to] ? `, ${stamp[to]} = now()` : '';
-    await this.db.query(
-      `UPDATE bounty SET status = $2${stampCol} WHERE id = $1`,
-      [bountyId, to],
-    );
-    await this.audit(adminId, `BOUNTY_${to}`, 'bounty', bountyId);
-    return { id: bountyId, status: to };
+    return this.db.tx(async (tx) => {
+      const cur = await tx.query<{ status: string }>(
+        `SELECT status FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [bountyId],
+      );
+      if (!cur.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      const from = cur.rows[0].status;
+      if (!allowed[from]?.includes(to)) {
+        throw new ConflictException(`INVALID_TRANSITION:${from}->${to}`);
+      }
+
+      // 완료 가드: 승인된 제출물이 있어야 하고, 심사 중이거나 수정 대기 중인 제출물이 남아 있으면 안 된다.
+      if (to === 'COMPLETED') {
+        const counts = await tx.query<{ approved: string; pending: string }>(
+          `SELECT count(*) FILTER (WHERE status = 'APPROVED') AS approved,
+                  count(*) FILTER (WHERE status IN (${PENDING_SUBMISSION_STATUSES})) AS pending
+             FROM bounty_submission WHERE bounty_id = $1`,
+          [bountyId],
+        );
+        if (Number(counts.rows[0].approved) === 0) {
+          throw new ConflictException('NO_APPROVED_SUBMISSION');
+        }
+        if (Number(counts.rows[0].pending) > 0) {
+          throw new ConflictException('SUBMISSIONS_PENDING_REVIEW');
+        }
+      }
+
+      const stamp: Record<string, string> = {
+        OPEN: 'opened_at',
+        IN_REVIEW: 'review_started_at',
+        COMPLETED: 'completed_at',
+      };
+      const stampCol = stamp[to] ? `, ${stamp[to]} = now()` : '';
+      await tx.query(
+        `UPDATE bounty SET status = $2${stampCol} WHERE id = $1`,
+        [bountyId, to],
+      );
+      await this.audit(adminId, `BOUNTY_${to}`, 'bounty', bountyId, tx);
+      return { id: bountyId, status: to };
+    });
   }
 
   // ── 지원서 심사 ────────────────────────────────────────
@@ -209,30 +233,60 @@ export class AdminService {
   }
 
   // ── 제출물 심사 ────────────────────────────────────────
+  /**
+   * 심사 순서: SUBMITTED/RESUBMITTED → START_REVIEW → IN_REVIEW → APPROVE | REJECT | REQUEST_REVISION.
+   * 확정(APPROVED/REJECTED)된 제출물과 완료·취소된 바운티의 제출물은 다시 심사할 수 없고,
+   * 승인 수는 바운티의 max_winners를 넘을 수 없다.
+   */
   async reviewSubmission(submissionId: string, decision: string, comment: string | undefined, adminId: string) {
-    const statusMap: Record<string, string> = {
-      START_REVIEW: 'IN_REVIEW',
-      REQUEST_REVISION: 'REVISION_REQUESTED',
-      APPROVE: 'APPROVED',
-      REJECT: 'REJECTED',
+    const transitions: Record<string, { from: string[]; to: string }> = {
+      START_REVIEW: { from: ['SUBMITTED', 'RESUBMITTED'], to: 'IN_REVIEW' },
+      REQUEST_REVISION: { from: ['IN_REVIEW'], to: 'REVISION_REQUESTED' },
+      APPROVE: { from: ['IN_REVIEW'], to: 'APPROVED' },
+      REJECT: { from: ['IN_REVIEW'], to: 'REJECTED' },
     };
-    const newStatus = statusMap[decision];
-    if (!newStatus) throw new NotFoundException('INVALID_DECISION');
+    const transition = transitions[decision];
+    if (!transition) throw new BadRequestException('INVALID_DECISION');
 
     return this.db.tx(async (tx) => {
-      const sub = await tx.query<{ id: string; current_revision_no: number }>(
-        `SELECT id, current_revision_no FROM bounty_submission WHERE id = $1 FOR UPDATE`,
+      const sub = await tx.query<{
+        id: string; status: string; current_revision_no: number;
+        bounty_id: string; bounty_status: string; max_winners: number;
+      }>(
+        `SELECT s.id, s.status, s.current_revision_no, s.bounty_id,
+                b.status AS bounty_status, b.max_winners
+           FROM bounty_submission s
+           JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL
+          WHERE s.id = $1
+          FOR UPDATE OF s, b`,
         [submissionId],
       );
       if (!sub.rowCount) throw new NotFoundException('SUBMISSION_NOT_FOUND');
+      const current = sub.rows[0];
+
+      if (!REVIEWABLE_BOUNTY_STATUSES.includes(current.bounty_status)) {
+        throw new ConflictException(`BOUNTY_NOT_REVIEWABLE:${current.bounty_status}`);
+      }
+      if (!transition.from.includes(current.status)) {
+        throw new ConflictException(`INVALID_REVIEW_ORDER:${current.status}->${decision}`);
+      }
+      if (decision === 'APPROVE') {
+        const approved = await tx.query<{ count: string }>(
+          `SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`,
+          [current.bounty_id],
+        );
+        if (Number(approved.rows[0].count) >= current.max_winners) {
+          throw new ConflictException('MAX_WINNERS_REACHED');
+        }
+      }
 
       await tx.query(
         `UPDATE bounty_submission SET status = $2, reviewed_at = now() WHERE id = $1`,
-        [submissionId, newStatus],
+        [submissionId, transition.to],
       );
       const rev = await tx.query<{ id: string }>(
         `SELECT id FROM submission_revision WHERE submission_id = $1 AND revision_no = $2`,
-        [submissionId, sub.rows[0].current_revision_no],
+        [submissionId, current.current_revision_no],
       );
       await tx.query(
         `INSERT INTO submission_review (submission_id, revision_id, reviewer_id, decision, comment)
@@ -241,7 +295,7 @@ export class AdminService {
       );
       await this.audit(adminId, `SUBMISSION_${decision}`, 'bounty_submission', submissionId, tx);
       // APPROVE 시 후속 흐름(payout 요청 → NFT 민팅)은 rewards/nfts 모듈에서 별도 호출
-      return { id: submissionId, status: newStatus };
+      return { id: submissionId, status: transition.to };
     });
   }
 

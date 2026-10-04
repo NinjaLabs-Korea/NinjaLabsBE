@@ -50,7 +50,7 @@ export class SubmissionsService {
       );
       if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
       const b = bounty.rows[0];
-      if (b.status !== 'OPEN') throw new BadRequestException('BOUNTY_NOT_OPEN');
+      if (!['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'].includes(b.status)) throw new BadRequestException('BOUNTY_NOT_OPEN');
       const isAgent = 'agentId' in actor;
       if (b.submission_mode === 'AGENT' && !isAgent) {
         throw new BadRequestException('AGENT_SUBMISSION_REQUIRED');
@@ -84,6 +84,7 @@ export class SubmissionsService {
       const deadlinePassed = new Date(b.submission_deadline) < new Date();
 
       if (!existing.rowCount) {
+        if (b.status !== 'OPEN') throw new BadRequestException('BOUNTY_NOT_OPEN');
         if (deadlinePassed) throw new BadRequestException('DEADLINE_PASSED');
         const created = await tx.query<{ id: string }>(
           `INSERT INTO bounty_submission
@@ -109,6 +110,9 @@ export class SubmissionsService {
       }
 
       const sub = existing.rows[0];
+      if (b.status !== 'OPEN' && sub.status !== 'REVISION_REQUESTED') {
+        throw new BadRequestException('BOUNTY_NOT_OPEN');
+      }
       // 마감 후에는 REVISION_REQUESTED 상태에서만 재제출 허용
       if (deadlinePassed && sub.status !== 'REVISION_REQUESTED') {
         throw new BadRequestException('DEADLINE_PASSED');
@@ -144,9 +148,18 @@ export class SubmissionsService {
   async mySubmissions(userId: string) {
     const r = await this.db.query(
       `SELECT s.id, s.status, s.current_revision_no, s.submitted_at, s.last_resubmitted_at,
-              b.id AS bounty_id, b.title AS bounty_title
+              b.id AS bounty_id, b.title AS bounty_title, b.category,
+              CASE WHEN NOT EXISTS (SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = b.id) THEN 'NONE'
+                WHEN EXISTS (SELECT 1 FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
+                  WHERE p.submission_id = s.id AND rw.bounty_id = b.id AND p.status = 'PAID')
+                  AND NOT EXISTS (SELECT 1 FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
+                    WHERE p.submission_id = s.id AND rw.bounty_id = b.id AND p.status <> 'PAID') THEN 'PAID'
+                ELSE 'PENDING' END AS payment_status, s.description,
+              review.comment AS review_comment
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id
+         LEFT JOIN LATERAL (SELECT comment FROM submission_review WHERE submission_id = s.id
+                            ORDER BY created_at DESC LIMIT 1) review ON true
         WHERE s.submitter_user_id = $1
         ORDER BY s.submitted_at DESC`,
       [userId],

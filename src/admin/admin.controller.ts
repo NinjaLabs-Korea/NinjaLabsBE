@@ -19,6 +19,9 @@ import {
   IsOptional,
   IsUUID,
   Min,
+  IsString,
+  Matches,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Request } from 'express';
@@ -71,6 +74,7 @@ class ReviewApplicationDto {
 }
 
 class ReviewSubmissionDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) revisionNo?: number;
   @IsIn(['START_REVIEW', 'REQUEST_REVISION', 'APPROVE', 'REJECT']) decision!: string;
   @IsOptional() comment?: string;
 }
@@ -133,18 +137,18 @@ class UpdateHighlightDto {
 }
 
 class ConfirmDepositDto {
-  @IsNotEmpty() txHash!: string;
-  @IsNotEmpty() depositedAmount!: string;
+  @IsString() @Matches(/\S/) @MaxLength(255) txHash!: string;
+  @IsString() @Matches(/^[1-9][0-9]{0,77}$/) depositedAmount!: string;
 }
 
 class RequestPayoutDto {
   @IsUUID() rewardId!: string;
   @IsUUID() submissionId!: string;
-  @IsNotEmpty() amount!: string;
+  @IsString() @Matches(/^[1-9][0-9]{0,77}$/) amount!: string;
 }
 
 class MarkPaidDto {
-  @IsNotEmpty() txHash!: string;
+  @IsString() @Matches(/\S/) @MaxLength(255) txHash!: string;
 }
 
 type AuthedRequest = Request & { user: SessionUser };
@@ -176,6 +180,11 @@ export class AdminController {
   @Get('bounties')
   listBounties() {
     return this.admin.listBounties();
+  }
+
+  @Get('bounties/:id/operations')
+  getBountyOperations(@Param('id', ParseUUIDPipe) bountyId: string) {
+    return this.admin.getBountyOperations(bountyId);
   }
 
   @Post('bounties')
@@ -222,7 +231,7 @@ export class AdminController {
     @Req() req: AuthedRequest,
     @Body() dto: ReviewSubmissionDto,
   ) {
-    return this.admin.reviewSubmission(submissionId, dto.decision, dto.comment, req.user.userId);
+    return this.admin.reviewSubmission(submissionId, dto.decision, dto.comment, req.user.userId, dto.revisionNo);
   }
 
   // ── 보상 ───────────────────────────────────────────────

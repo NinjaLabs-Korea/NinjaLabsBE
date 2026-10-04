@@ -181,3 +181,25 @@ USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심
 - token_id = `nft.id` (UUID) / metadata_uri는 추후 메타데이터 서비스 연결 시 채움
 - payout을 PAID로 기록하는 트랜잭션에서 완료 자식 NFT와 mint job도 멱등 생성한다.
 - mainnet은 CosmWasm 업로드가 거버넌스 승인제 — 런칭 일정에 반영 필요
+
+## Admin bounty operations
+
+- `GET /admin/bounties/:id/operations` (AdminGuard): returns `{ bounty, applications, submissions, rewards, payouts }`. Rows include IDs and raw status codes. Applications include actor names, messages, portfolio URLs and review notes. Submissions include actor names, work/repository URLs, commit SHA, current revision number and latest feedback. Reward and payout amounts are **integer strings in minimum token units**; payout rows include recipient wallet addresses. These fields are admin-only.
+- `POST /admin/submissions/:id/review` additionally accepts optional positive integer `revisionNo`. A mismatch returns `SUBMISSION_REVISION_CHANGED`. Finalized submissions cannot be reviewed again; submissions waiting for revisions may only be rejected with feedback. `REQUEST_REVISION` requires nonblank `comment`.
+- Opening a bounty with an unconfirmed reward returns `REWARD_NOT_FUNDED`. Deposit confirmation requires a positive integer amount covering the reward.
+- Payout requests require a funded reward and an approved submission from that same bounty with a primary linked wallet. Allocations are serialized by locking the reward; pending and paid allocations cannot exceed the confirmed deposit. Duplicate submission/reward pairs return `PAYOUT_ALREADY_REQUESTED`.
+- Requested revisions can be resubmitted in `OPEN`, `SUBMISSION_CLOSED` or `IN_REVIEW`, including after the deadline. Other new/updated submissions require open intake (and the existing deadline rules).
+- `GET /submissions/me` now includes bounty `category`, submission `description`, and latest `review_comment` for participant feedback.
+
+The frontend operations page records **manual multisig** deposits, approvals and completed payments using the existing admin POST endpoints. It does not broadcast transactions.
+
+
+### Bounty lifecycle and review safeguards
+
+- Operations now returns `bounty.submission_deadline`, `bounty.application_deadline`, `lifecycle.blockers` keyed by target status, and submission `revisions`/`reviews` arrays. Blockers are advisory snapshots; transition checks run again under a bounty row lock.
+- OPEN requires funded rewards and a future submission deadline. SUBMISSION_CLOSED/IN_REVIEW can reopen to OPEN, preserving first-open/review timestamps.
+- Closing requires resolving pending applications. Before the deadline it also requires every approved participant to have submitted; after the deadline missed submissions do not prevent closing.
+- Application creation checks both deadlines; approval requires OPEN and an unexpired submission deadline. Legacy pending applications can be rejected after closing.
+- COMPLETED requires no pending applications, no unresolved submissions (including revision requests), every approved winner in a rewarded bounty to have a recorded PAID payout, and no unpaid payout records. No-reward bounties skip the payment requirement.
+- Completed/cancelled bounties cannot accept application/submission reviews or new payout requests. A requested revision can be rejected with feedback if it will not be delivered.
+- `/applications/me` includes `review_note`; `/submissions/me` includes `payment_status` NONE/PENDING/PAID. Approval of work alone is not payment or bounty completion.

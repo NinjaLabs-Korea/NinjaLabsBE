@@ -28,52 +28,55 @@ export class ApplicationsService {
     message: string,
     portfolioUrl?: string,
   ) {
-    const bounty = await this.db.query<{
-      application_required: boolean;
-      submission_mode: string;
-      status: string;
-    }>(
-      `SELECT application_required, submission_mode, status FROM bounty
-        WHERE id = $1 AND deleted_at IS NULL`,
-      [bountyId],
-    );
-    if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    if (!bounty.rows[0].application_required) {
-      throw new BadRequestException('SUBMISSION_TYPE_BOUNTY'); // 제출형은 바로 제출
-    }
-    if (bounty.rows[0].status !== 'OPEN') {
-      throw new BadRequestException('BOUNTY_NOT_OPEN');
-    }
-    const isAgent = 'agentId' in actor;
-    if (bounty.rows[0].submission_mode === 'AGENT' && !isAgent) {
-      throw new BadRequestException('AGENT_SUBMISSION_REQUIRED');
-    }
-    if (bounty.rows[0].submission_mode === 'DIRECT' && isAgent) {
-      throw new BadRequestException('DIRECT_SUBMISSION_REQUIRED');
-    }
-
-    try {
-      const r = await this.db.query(
-        `INSERT INTO bounty_application
-           (bounty_id, applicant_user_id, agent_id, message, portfolio_url)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, status, applied_at`,
-        [bountyId, isAgent ? null : actor.userId, isAgent ? actor.agentId : null,
-         message, portfolioUrl ?? null],
+    return this.db.tx(async (tx) => {
+      const bounty = await tx.query<{
+        application_required: boolean;
+        submission_mode: string;
+        status: string; submission_deadline: string; application_deadline: string | null;
+      }>(
+        `SELECT application_required, submission_mode, status, submission_deadline, application_deadline FROM bounty
+          WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [bountyId],
       );
-      return r.rows[0];
-    } catch (err: unknown) {
-      if ((err as { code?: string }).code === '23505') {
-        throw new ConflictException('ALREADY_APPLIED');
+      if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      if (!bounty.rows[0].application_required) {
+        throw new BadRequestException('SUBMISSION_TYPE_BOUNTY'); // 제출형은 바로 제출
       }
-      throw err;
-    }
+      if (bounty.rows[0].status !== 'OPEN') {
+        throw new BadRequestException('BOUNTY_NOT_OPEN');
+      }
+      if ([bounty.rows[0].submission_deadline, bounty.rows[0].application_deadline].some((date) => date && new Date(date).getTime() <= Date.now())) throw new BadRequestException('APPLICATION_DEADLINE_PASSED');
+      const isAgent = 'agentId' in actor;
+      if (bounty.rows[0].submission_mode === 'AGENT' && !isAgent) {
+        throw new BadRequestException('AGENT_SUBMISSION_REQUIRED');
+      }
+      if (bounty.rows[0].submission_mode === 'DIRECT' && isAgent) {
+        throw new BadRequestException('DIRECT_SUBMISSION_REQUIRED');
+      }
+
+      try {
+        const r = await tx.query(
+          `INSERT INTO bounty_application
+             (bounty_id, applicant_user_id, agent_id, message, portfolio_url)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, status, applied_at`,
+          [bountyId, isAgent ? null : actor.userId, isAgent ? actor.agentId : null,
+           message, portfolioUrl ?? null],
+        );
+        return r.rows[0];
+      } catch (err: unknown) {
+        if ((err as { code?: string }).code === '23505') {
+          throw new ConflictException('ALREADY_APPLIED');
+        }
+        throw err;
+      }
+    });
   }
 
   /** 내 지원 내역 */
   async myApplications(userId: string) {
     const r = await this.db.query(
-      `SELECT a.id, a.status, a.message, a.applied_at, a.reviewed_at,
+      `SELECT a.id, a.status, a.message, a.applied_at, a.reviewed_at, a.review_note,
               b.id AS bounty_id, b.title AS bounty_title, b.category
          FROM bounty_application a
          JOIN bounty b ON b.id = a.bounty_id

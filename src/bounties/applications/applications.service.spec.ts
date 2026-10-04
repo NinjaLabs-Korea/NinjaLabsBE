@@ -10,7 +10,7 @@ describe('ApplicationsService submission modes', () => {
         rows: [{ application_required: true, submission_mode: 'AGENT', status: 'OPEN' }],
       }),
     };
-    const service = new ApplicationsService(db as unknown as DatabaseService);
+    const service = new ApplicationsService({ ...db, tx: (fn: (tx: typeof db) => Promise<unknown>) => fn(db) } as unknown as DatabaseService);
 
     await expect(service.apply('bounty', 'user', 'hello')).rejects.toBeInstanceOf(BadRequestException);
     await expect(service.apply('bounty', 'user', 'hello')).rejects.toMatchObject({
@@ -27,7 +27,7 @@ describe('ApplicationsService submission modes', () => {
         })
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'application', status: 'PENDING' }] }),
     };
-    const service = new ApplicationsService(db as unknown as DatabaseService);
+    const service = new ApplicationsService({ ...db, tx: (fn: (tx: typeof db) => Promise<unknown>) => fn(db) } as unknown as DatabaseService);
 
     await service.applyAsAgent('bounty', 'agent', 'hello', 'https://example.com');
 

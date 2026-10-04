@@ -56,3 +56,48 @@ describe('AdminService EVM rewards', () => {
     await expect(service.createBounty('admin', input)).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+describe('AdminService review safeguards', () => {
+  function setup(status: string, revision = 2) {
+    const query = jest.fn()
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'OPEN' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'sub', status, current_revision_no: revision }] })
+      .mockResolvedValue({ rowCount: 1, rows: [{ id: 'revision' }] });
+    return { query, service: new AdminService({ tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query }) } as never) };
+  }
+  it.each(['APPROVED', 'REJECTED', 'WITHDRAWN', 'REVISION_REQUESTED'])('does not overwrite %s submissions', async (status) => {
+    const { service, query } = setup(status);
+    await expect(service.reviewSubmission('sub', 'APPROVE', undefined, 'admin', 2)).rejects.toThrow('SUBMISSION_NOT_REVIEWABLE');
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+  it('rejects a review of an outdated revision', async () => {
+    await expect(setup('RESUBMITTED', 3).service.reviewSubmission('sub', 'APPROVE', undefined, 'admin', 2)).rejects.toThrow('SUBMISSION_REVISION_CHANGED');
+  });
+  it('requires actionable feedback for revision requests', async () => {
+    await expect(setup('IN_REVIEW').service.reviewSubmission('sub', 'REQUEST_REVISION', ' ', 'admin', 2)).rejects.toThrow('REVISION_COMMENT_REQUIRED');
+  });
+  it('records the review and audit for the current revision', async () => {
+    const { service, query } = setup('IN_REVIEW');
+    await expect(service.reviewSubmission('sub', 'REQUEST_REVISION', 'Add tests', 'admin', 2)).resolves.toEqual({ id: 'sub', status: 'REVISION_REQUESTED' });
+    expect(query.mock.calls[4][0]).toContain('INSERT INTO submission_review');
+    expect(query.mock.calls[5][0]).toContain('INSERT INTO audit_log');
+  });
+  it('prevents opening a bounty with an unconfirmed reward deposit', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'FUNDING_PENDING' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ unfunded: 1 }] });
+    await expect(new AdminService({ query, tx: (fn: (tx: { query: jest.Mock }) => Promise<unknown>) => fn({ query }) } as never).transitionBounty('bounty', 'OPEN', 'admin')).rejects.toThrow('Bad Request Exception');
+  });
+});
+
+
+describe('Abandoned revision requests', () => {
+  it('can reject a requested revision with feedback so completion is not permanently blocked', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'IN_REVIEW' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'sub', status: 'REVISION_REQUESTED', current_revision_no: 2 }] })
+      .mockResolvedValue({ rowCount: 1, rows: [{ id: 'revision' }] });
+    const service = new AdminService({ tx: (fn: (tx: { query: jest.Mock }) => Promise<unknown>) => fn({ query }) } as never);
+    await expect(service.reviewSubmission('sub', 'REJECT', 'Revision was not delivered', 'admin', 2)).resolves.toMatchObject({ status: 'REJECTED' });
+  });
+});

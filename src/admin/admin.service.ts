@@ -55,6 +55,53 @@ export class AdminService {
     return r.rows;
   }
 
+  /** Admin-only operational data; never expose review notes or wallets publicly. */
+  async getBountyOperations(bountyId: string) {
+    const bounty = await this.db.query(
+      `SELECT id, title, status, submission_deadline, application_deadline FROM bounty WHERE id = $1 AND deleted_at IS NULL`, [bountyId],
+    );
+    if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+    const [applications, submissions, rewards, payouts] = await Promise.all([
+      this.db.query(
+        `SELECT ap.id, ap.status, ap.message, ap.portfolio_url, ap.review_note, ap.applied_at,
+                COALESCE(a.name, u.nickname) AS actor_name
+           FROM bounty_application ap
+           LEFT JOIN "user" u ON u.id = ap.applicant_user_id
+           LEFT JOIN agent a ON a.id = ap.agent_id
+          WHERE ap.bounty_id = $1 ORDER BY ap.applied_at DESC`, [bountyId]),
+      this.db.query(
+        `SELECT s.id, s.status, s.submission_url, s.description, s.repository_url, s.commit_sha,
+                s.current_revision_no, s.submitted_at, COALESCE(a.name, u.nickname) AS actor_name,
+                review.comment AS review_comment,
+                COALESCE((SELECT json_agg(json_build_object('revision_no', r.revision_no,
+                  'submission_url', r.submission_url, 'description', r.description,
+                  'repository_url', r.repository_url, 'commit_sha', r.commit_sha, 'created_at', r.created_at)
+                  ORDER BY r.revision_no DESC) FROM submission_revision r WHERE r.submission_id = s.id), '[]') AS revisions,
+                COALESCE((SELECT json_agg(json_build_object('revision_no', r.revision_no,
+                  'decision', v.decision, 'comment', v.comment, 'created_at', v.created_at)
+                  ORDER BY v.created_at DESC) FROM submission_review v LEFT JOIN submission_revision r ON r.id = v.revision_id
+                  WHERE v.submission_id = s.id), '[]') AS reviews
+           FROM bounty_submission s
+           LEFT JOIN "user" u ON u.id = s.submitter_user_id
+           LEFT JOIN agent a ON a.id = s.agent_id
+           LEFT JOIN LATERAL (SELECT comment FROM submission_review WHERE submission_id = s.id
+                              ORDER BY created_at DESC LIMIT 1) review ON true
+          WHERE s.bounty_id = $1 ORDER BY s.submitted_at DESC`, [bountyId]),
+      this.db.query(
+        `SELECT id, status, display_symbol, amount::text, deposited_amount::text,
+                custody_address, deposit_tx_hash, token_contract_address, evm_chain_id
+           FROM bounty_reward WHERE bounty_id = $1 ORDER BY created_at`, [bountyId]),
+      this.db.query(
+        `SELECT p.id, p.bounty_reward_id, p.submission_id, p.status, p.amount::text,
+                p.payout_tx_hash, w.address AS recipient_address, rw.display_symbol
+           FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
+           JOIN wallet w ON w.id = p.recipient_wallet_id
+          WHERE rw.bounty_id = $1 ORDER BY p.requested_at DESC`, [bountyId]),
+    ]);
+    return { lifecycle: await this.lifecycle(this.db, bountyId, bounty.rows[0] as { status: string; submission_deadline: string }), bounty: bounty.rows[0], applications: applications.rows, submissions: submissions.rows,
+      rewards: rewards.rows, payouts: payouts.rows };
+  }
+
   /** 바운티 등록 (DRAFT). 보상 정보 포함 시 bounty_reward 동시 생성 */
   async createBounty(adminId: string, input: {
     title: string; sponsorName: string; summary: string; description: string;
@@ -162,54 +209,82 @@ export class AdminService {
     return r.rows[0];
   }
 
-  /** 바운티 상태 전환 (허용된 전이만) */
+  /** Shared server-side blockers for the operations UI and transitions. */
+  private async lifecycle(runner: Pick<DatabaseService, 'query'>, bountyId: string, bounty: { status: string; submission_deadline?: string | Date }) {
+    const r = await runner.query(`SELECT
+      (SELECT count(*)::int FROM bounty_application WHERE bounty_id = $1 AND status = 'PENDING') AS pending,
+      (SELECT count(*)::int FROM bounty_application a WHERE a.bounty_id = $1 AND a.status = 'APPROVED'
+        AND NOT EXISTS (SELECT 1 FROM bounty_submission s WHERE s.bounty_id = a.bounty_id
+          AND (s.submitter_user_id = a.applicant_user_id OR s.agent_id = a.agent_id))) AS unsubmitted,
+      (SELECT count(*)::int FROM bounty_submission WHERE bounty_id = $1
+        AND status IN ('SUBMITTED','RESUBMITTED','IN_REVIEW','REVISION_REQUESTED')) AS unresolved,
+      (SELECT count(*)::int FROM bounty_reward WHERE bounty_id = $1
+        AND status NOT IN ('FUNDED','PARTIALLY_PAID','PAID')) AS unfunded,
+      (SELECT count(*)::int FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
+        WHERE rw.bounty_id = $1 AND p.status <> 'PAID') AS unpaid,
+      (SELECT count(*)::int FROM bounty_submission s WHERE s.bounty_id = $1 AND s.status = 'APPROVED'
+        AND EXISTS (SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = $1)
+        AND NOT EXISTS (SELECT 1 FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
+          WHERE p.submission_id = s.id AND rw.bounty_id = $1 AND p.status = 'PAID')) AS unawarded`, [bountyId]);
+    const c = r.rows[0];
+    const expired = !!bounty.submission_deadline && new Date(bounty.submission_deadline).getTime() <= Date.now();
+    const blockers: Record<string, string[]> = { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [] };
+    if (expired) blockers.OPEN.push('Extend the submission deadline before opening this bounty.');
+    if (c.unfunded) blockers.OPEN.push('Confirm all reward deposits before opening this bounty.');
+    if (c.pending) {
+      blockers.SUBMISSION_CLOSED.push(`Review ${c.pending} pending application(s) before closing submissions.`);
+      blockers.COMPLETED.push(`Resolve ${c.pending} pending application(s).`);
+    }
+    if (c.unsubmitted && !expired) blockers.SUBMISSION_CLOSED.push(`${c.unsubmitted} approved participant(s) have not submitted. Wait for their work or the submission deadline.`);
+    if (c.unresolved) blockers.COMPLETED.push(`Finish ${c.unresolved} submission review(s), including requested revisions.`);
+    if (c.unpaid || c.unawarded) blockers.COMPLETED.push('Record completed payments for all approved winners and finish every pending payout.');
+    return { blockers };
+  }
+
   async transitionBounty(bountyId: string, to: string, adminId: string) {
     const allowed: Record<string, string[]> = {
-      DRAFT: ['FUNDING_PENDING', 'OPEN', 'CANCELLED'],
-      FUNDING_PENDING: ['OPEN', 'CANCELLED'],
-      OPEN: ['SUBMISSION_CLOSED', 'CANCELLED'],
-      SUBMISSION_CLOSED: ['IN_REVIEW'],
-      IN_REVIEW: ['COMPLETED'],
+      DRAFT: ['FUNDING_PENDING', 'OPEN', 'CANCELLED'], FUNDING_PENDING: ['OPEN', 'CANCELLED'],
+      OPEN: ['SUBMISSION_CLOSED', 'CANCELLED'], SUBMISSION_CLOSED: ['IN_REVIEW', 'OPEN'],
+      IN_REVIEW: ['COMPLETED', 'OPEN'],
     };
-    const cur = await this.db.query<{ status: string }>(
-      `SELECT status FROM bounty WHERE id = $1 AND deleted_at IS NULL`,
-      [bountyId],
-    );
-    if (!cur.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    const from = cur.rows[0].status;
-    if (!allowed[from]?.includes(to)) {
-      throw new NotFoundException(`INVALID_TRANSITION:${from}->${to}`);
-    }
-    const stamp: Record<string, string> = {
-      OPEN: 'opened_at',
-      IN_REVIEW: 'review_started_at',
-      COMPLETED: 'completed_at',
-    };
-    const stampCol = stamp[to] ? `, ${stamp[to]} = now()` : '';
-    await this.db.query(
-      `UPDATE bounty SET status = $2${stampCol} WHERE id = $1`,
-      [bountyId, to],
-    );
-    await this.audit(adminId, `BOUNTY_${to}`, 'bounty', bountyId);
-    return { id: bountyId, status: to };
+    return this.db.tx(async (tx) => {
+      const cur = await tx.query(`SELECT status, submission_deadline FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [bountyId]);
+      if (!cur.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      const from = cur.rows[0].status;
+      if (!allowed[from]?.includes(to)) throw new BadRequestException(`INVALID_TRANSITION:${from}->${to}`);
+      const { blockers } = await this.lifecycle(tx, bountyId, cur.rows[0] as { status: string });
+      if (blockers[to]?.length) throw new BadRequestException(blockers[to]);
+      const stamp: Record<string, string> = { OPEN: 'opened_at', IN_REVIEW: 'review_started_at', COMPLETED: 'completed_at' };
+      const stampCol = stamp[to] ? `, ${stamp[to]} = COALESCE(${stamp[to]}, now())` : '';
+      await tx.query(`UPDATE bounty SET status = $2${stampCol} WHERE id = $1`, [bountyId, to]);
+      await this.audit(adminId, `BOUNTY_${to}`, 'bounty', bountyId, tx);
+      return { id: bountyId, status: to };
+    });
   }
 
   // ── 지원서 심사 ────────────────────────────────────────
   async reviewApplication(applicationId: string, decision: 'APPROVED' | 'REJECTED', note: string | undefined, adminId: string) {
-    const r = await this.db.query(
-      `UPDATE bounty_application
-          SET status = $2, reviewed_by = $3, review_note = $4, reviewed_at = now()
-        WHERE id = $1 AND status = 'PENDING'
-        RETURNING id, status`,
-      [applicationId, decision, adminId, note ?? null],
-    );
-    if (!r.rowCount) throw new NotFoundException('APPLICATION_NOT_FOUND_OR_NOT_PENDING');
-    await this.audit(adminId, `APPLICATION_${decision}`, 'bounty_application', applicationId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const parent = await tx.query(`SELECT b.status, b.submission_deadline FROM bounty b
+        JOIN bounty_application a ON a.bounty_id = b.id
+        WHERE a.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [applicationId]);
+      if (!parent.rowCount) throw new NotFoundException('APPLICATION_NOT_FOUND_OR_NOT_PENDING');
+      const bounty = parent.rows[0];
+      if (['COMPLETED', 'CANCELLED'].includes(bounty.status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
+      if (decision === 'APPROVED' && (bounty.status !== 'OPEN' || new Date(bounty.submission_deadline).getTime() <= Date.now())) {
+        throw new BadRequestException('APPLICATION_APPROVAL_CLOSED');
+      }
+      const r = await tx.query(`UPDATE bounty_application
+        SET status = $2, reviewed_by = $3, review_note = $4, reviewed_at = now()
+        WHERE id = $1 AND status = 'PENDING' RETURNING id, status`, [applicationId, decision, adminId, note?.trim() || null]);
+      if (!r.rowCount) throw new NotFoundException('APPLICATION_NOT_FOUND_OR_NOT_PENDING');
+      await this.audit(adminId, `APPLICATION_${decision}`, 'bounty_application', applicationId, tx);
+      return r.rows[0];
+    });
   }
 
   // ── 제출물 심사 ────────────────────────────────────────
-  async reviewSubmission(submissionId: string, decision: string, comment: string | undefined, adminId: string) {
+  async reviewSubmission(submissionId: string, decision: string, comment: string | undefined, adminId: string, revisionNo?: number) {
     const statusMap: Record<string, string> = {
       START_REVIEW: 'IN_REVIEW',
       REQUEST_REVISION: 'REVISION_REQUESTED',
@@ -220,11 +295,34 @@ export class AdminService {
     if (!newStatus) throw new NotFoundException('INVALID_DECISION');
 
     return this.db.tx(async (tx) => {
-      const sub = await tx.query<{ id: string; current_revision_no: number }>(
-        `SELECT id, current_revision_no FROM bounty_submission WHERE id = $1 FOR UPDATE`,
+      const parent = await tx.query(`SELECT b.id, b.status, b.max_winners FROM bounty b JOIN bounty_submission s ON s.bounty_id = b.id
+        WHERE s.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [submissionId]);
+      if (!parent.rowCount) throw new NotFoundException('SUBMISSION_NOT_FOUND');
+      if (!['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'].includes(parent.rows[0].status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
+      const sub = await tx.query<{ id: string; status: string; current_revision_no: number }>(
+        `SELECT id, status, current_revision_no FROM bounty_submission WHERE id = $1 FOR UPDATE`,
         [submissionId],
       );
       if (!sub.rowCount) throw new NotFoundException('SUBMISSION_NOT_FOUND');
+      if (!['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW'].includes(sub.rows[0].status) && !(sub.rows[0].status === 'REVISION_REQUESTED' && decision === 'REJECT')) {
+        throw new BadRequestException('SUBMISSION_NOT_REVIEWABLE');
+      }
+      if (revisionNo !== undefined && revisionNo !== sub.rows[0].current_revision_no) {
+        throw new BadRequestException('SUBMISSION_REVISION_CHANGED');
+      }
+      if ((decision === 'REQUEST_REVISION' || (sub.rows[0].status === 'REVISION_REQUESTED' && decision === 'REJECT')) && !comment?.trim()) {
+        throw new BadRequestException('REVISION_COMMENT_REQUIRED');
+      }
+      // 승인 수는 바운티의 max_winners를 넘을 수 없다 (바운티 행 잠금으로 동시 승인도 직렬화된다).
+      if (decision === 'APPROVE') {
+        const approved = await tx.query<{ count: string }>(
+          `SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`,
+          [parent.rows[0].id],
+        );
+        if (Number(approved.rows[0].count) >= Number(parent.rows[0].max_winners)) {
+          throw new BadRequestException('MAX_WINNERS_REACHED');
+        }
+      }
 
       await tx.query(
         `UPDATE bounty_submission SET status = $2, reviewed_at = now() WHERE id = $1`,

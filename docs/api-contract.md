@@ -201,5 +201,6 @@ The frontend operations page records **manual multisig** deposits, approvals and
 - Closing requires resolving pending applications. Before the deadline it also requires every approved participant to have submitted; after the deadline missed submissions do not prevent closing.
 - Application creation checks both deadlines; approval requires OPEN and an unexpired submission deadline. Legacy pending applications can be rejected after closing.
 - COMPLETED requires no pending applications, no unresolved submissions (including revision requests), every approved winner in a rewarded bounty to have a recorded PAID payout, and no unpaid payout records. No-reward bounties skip the payment requirement.
+- `APPROVE` is capped at the bounty's `max_winners`; a further approval returns `MAX_WINNERS_REACHED`.
 - Completed/cancelled bounties cannot accept application/submission reviews or new payout requests. A requested revision can be rejected with feedback if it will not be delivered.
 - `/applications/me` includes `review_note`; `/submissions/me` includes `payment_status` NONE/PENDING/PAID. Approval of work alone is not payment or bounty completion.

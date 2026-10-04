@@ -295,7 +295,7 @@ export class AdminService {
     if (!newStatus) throw new NotFoundException('INVALID_DECISION');
 
     return this.db.tx(async (tx) => {
-      const parent = await tx.query(`SELECT b.status FROM bounty b JOIN bounty_submission s ON s.bounty_id = b.id
+      const parent = await tx.query(`SELECT b.id, b.status, b.max_winners FROM bounty b JOIN bounty_submission s ON s.bounty_id = b.id
         WHERE s.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [submissionId]);
       if (!parent.rowCount) throw new NotFoundException('SUBMISSION_NOT_FOUND');
       if (!['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'].includes(parent.rows[0].status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
@@ -312,6 +312,16 @@ export class AdminService {
       }
       if ((decision === 'REQUEST_REVISION' || (sub.rows[0].status === 'REVISION_REQUESTED' && decision === 'REJECT')) && !comment?.trim()) {
         throw new BadRequestException('REVISION_COMMENT_REQUIRED');
+      }
+      // 승인 수는 바운티의 max_winners를 넘을 수 없다 (바운티 행 잠금으로 동시 승인도 직렬화된다).
+      if (decision === 'APPROVE') {
+        const approved = await tx.query<{ count: string }>(
+          `SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`,
+          [parent.rows[0].id],
+        );
+        if (Number(approved.rows[0].count) >= Number(parent.rows[0].max_winners)) {
+          throw new BadRequestException('MAX_WINNERS_REACHED');
+        }
       }
 
       await tx.query(

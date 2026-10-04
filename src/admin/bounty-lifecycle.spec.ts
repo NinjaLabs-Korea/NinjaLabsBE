@@ -46,3 +46,25 @@ describe('Bounty lifecycle ordering', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Submission approval winner cap', () => {
+  function setupReview(maxWinners: number, approved: number) {
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes('FROM bounty b JOIN bounty_submission')) return { rowCount: 1, rows: [{ id: 'b', status: 'IN_REVIEW', max_winners: maxWinners }] };
+      if (sql.includes('SELECT id, status, current_revision_no')) return { rowCount: 1, rows: [{ id: 's', status: 'IN_REVIEW', current_revision_no: 1 }] };
+      if (sql.includes("status = 'APPROVED'")) return { rowCount: 1, rows: [{ count: String(approved) }] };
+      return { rowCount: 1, rows: [{ id: 'rev' }] };
+    });
+    return { query, service: new AdminService({ query, tx: (fn: (tx: { query: typeof query }) => Promise<unknown>) => fn({ query }) } as never) };
+  }
+
+  it('refuses to approve beyond max_winners', async () => {
+    const { service, query } = setupReview(1, 1);
+    await expect(service.reviewSubmission('s', 'APPROVE', '', 'admin', 1)).rejects.toThrow('MAX_WINNERS_REACHED');
+    expect(query.mock.calls.some(([sql]) => sql.includes('UPDATE bounty_submission'))).toBe(false);
+  });
+
+  it('approves while under max_winners', async () => {
+    await expect(setupReview(2, 1).service.reviewSubmission('s', 'APPROVE', '', 'admin', 1)).resolves.toMatchObject({ status: 'APPROVED' });
+  });
+});

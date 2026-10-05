@@ -12,7 +12,7 @@
 | 한 사용자가 여러 제출물을 낼 수 있는지 | **불가 — 1인 1제출 + 리비전** | `UNIQUE(bounty_id, submitter_user_id)` 반영됨. 복수 제출 허용 시 이 인덱스 제거 필요 |
 | 마감 후 수정 요청 기한 | 운영자가 REVISION_REQUESTED 부여한 경우만, 별도 기한 없음 | 기한 필요 시 `platform_setting`에 `submission.revision_deadline_days` 추가 |
 | 관리자 vs 스폰서 최종 승인 | **관리자(운영자)가 최종 승인** | MVP는 어드민만 심사 UI 보유. 스폰서 계정 기능은 추후 |
-| 바운티 취소 조건 | DRAFT/FUNDING_PENDING/OPEN에서만, 관리자만 | `admin.service.ts`의 전이 맵에 반영됨 |
+| 바운티 취소 조건 | DRAFT/FUNDING_PENDING/OPEN에서만, 관리자만 | `bounties/bounty-status.ts`의 전이 맵에 반영됨 |
 
 ## 보상
 
@@ -40,7 +40,7 @@
 |---|---|---|
 | 탈퇴 시 NFT/에이전트 처리 | user soft delete + agent `REVOKED` + API key `REVOKED`. NFT는 온체인이라 회수 불가 — DB 기록만 유지 | 탈퇴 트랜잭션 하나로 처리 |
 | 동일 구글 계정 재가입 | **허용** — 단 이전 활동과 연결되지 않는 새 계정 | `UNIQUE(google_id)`가 soft-deleted 행과 충돌 → 탈퇴 시 google_id에 `deleted:{ts}:` 프리픽스 부여 필요 (구현 시 주의) |
-| 멤버 해제 시 멤버 정보 | member_role/display_order NULL 처리, bio·링크는 유지 | `admin.service.ts` setMember 반영됨 |
+| 멤버 해제 시 멤버 정보 | member_role/display_order NULL 처리, bio·링크는 유지 | `members/member-admin.service.ts` setMember 반영됨 |
 | 지갑 교체 | MVP **불허** (연결 해제 후 재연결만 운영자 문의) | NFT가 지갑에 귀속되므로 교체는 NFT 이전 문제를 수반 — Phase 3 논의 |
 
 ## 에이전트

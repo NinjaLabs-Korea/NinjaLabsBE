@@ -19,7 +19,7 @@
 | DTO whitelist — 정의 안 된 필드 자동 제거 (mass assignment 방지) | `main.ts` ValidationPipe |
 | payout / nft_job **멱등키** — 중복 지급·중복 민팅 DB 레벨 차단 | `0006`, `0007` 마이그레이션 |
 | 지갑 nonce 1회용 + 5분 만료 | `wallets.service.ts`, `0002` |
-| 상태 전이 서버측 검증 (마감 후 제출, 승인 전 제출, 확정 후 수정 차단) | `submissions.service.ts`, `admin.service.ts` |
+| 상태 전이 서버측 검증 (마감 후 제출, 승인 전 제출, 확정 후 수정 차단) | `submissions.service.ts`, `bounties/bounty-status.ts`, `bounties/admin/bounty-admin.service.ts` |
 | 트랜잭션 + `FOR UPDATE` — 제출/심사 레이스 컨디션 방지 | `submissions.service.ts` |
 | 닉네임 unique 인덱스 — 중복검사~저장 레이스의 최종 방어선 (23505 → 409) | `users.service.ts` |
 | 금액 정수 저장 (DECIMAL(78,0)) — 부동소수점 오차 원천 차단 | `0006` |

@@ -1,30 +1,31 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsUUID } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsUUID, Min } from 'class-validator';
+import { Trim } from '../common/validation/trim';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { HighlightAdminService } from './highlight-admin.service';
 
 const HIGHLIGHT_TYPES = ['MILESTONE', 'FEATURED_BOUNTY', 'PROJECT', 'PARTNERSHIP', 'AWARD', 'OTHER'];
 
-class CreateHighlightDto {
+export class CreateHighlightDto {
   @IsIn(HIGHLIGHT_TYPES) type!: string;
-  @IsNotEmpty() title!: string;
-  @IsNotEmpty() description!: string;
+  @Trim() @IsNotEmpty() title!: string;
+  @Trim() @IsNotEmpty() description!: string;
   @IsOptional() imageUrl?: string;
   @IsOptional() linkUrl?: string;
   @IsOptional() @IsUUID() bountyId?: string;
-  @IsOptional() @Type(() => Number) @IsInt() displayOrder?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) displayOrder?: number;
   @IsOptional() @IsBoolean() publish?: boolean;
 }
 
-class UpdateHighlightDto {
+export class UpdateHighlightDto {
   @IsOptional() @IsIn(HIGHLIGHT_TYPES) type?: string;
-  @IsOptional() title?: string;
-  @IsOptional() description?: string;
+  @IsOptional() @Trim() @IsNotEmpty() title?: string;
+  @IsOptional() @Trim() @IsNotEmpty() description?: string;
   @IsOptional() imageUrl?: string;
   @IsOptional() linkUrl?: string;
-  @IsOptional() @Type(() => Number) @IsInt() displayOrder?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) displayOrder?: number;
   @IsOptional() @IsBoolean() publish?: boolean;
 }
 

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Unit tests mock the database; no Postgres service is needed.
+      - run: npm test
+      - run: npm run build
+
+  audit:
+    name: Dependency audit (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      # Report-only: the job stays green and known advisories surface as a warning annotation.
+      # Once the pinned dependencies are upgraded, replace this step with a plain
+      # `npm audit --omit=dev --audit-level=high` so new advisories block the PR.
+      - name: npm audit (production deps, high+)
+        run: |
+          if ! npm audit --omit=dev --audit-level=high; then
+            echo "::warning title=Dependency audit::Production dependencies have high/critical advisories. See this job's log."
+          fi

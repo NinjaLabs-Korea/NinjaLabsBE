@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../../common/database/database.service';
+import { BountyActor } from '../bounty-actor';
 import { BountyStatusPolicy } from '../bounty-status';
 
 export interface SubmitInput {
@@ -26,16 +27,16 @@ export class SubmissionsService {
   constructor(private readonly db: DatabaseService) {}
 
   async submit(bountyId: string, userId: string, input: SubmitInput) {
-    return this.submitForActor(bountyId, { userId }, input);
+    return this.submitForActor(bountyId, BountyActor.user(userId), input);
   }
 
   async submitAsAgent(bountyId: string, agentId: string, input: SubmitInput) {
-    return this.submitForActor(bountyId, { agentId }, input);
+    return this.submitForActor(bountyId, BountyActor.agent(agentId), input);
   }
 
   private async submitForActor(
     bountyId: string,
-    actor: { userId: string } | { agentId: string },
+    actor: BountyActor,
     input: SubmitInput,
   ) {
     return this.db.tx(async (tx) => {
@@ -52,13 +53,7 @@ export class SubmissionsService {
       if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
       const b = bounty.rows[0];
       if (!BountyStatusPolicy.isInProgress(b.status)) throw new BadRequestException('BOUNTY_NOT_OPEN');
-      const isAgent = 'agentId' in actor;
-      if (b.submission_mode === 'AGENT' && !isAgent) {
-        throw new BadRequestException('AGENT_SUBMISSION_REQUIRED');
-      }
-      if (b.submission_mode === 'DIRECT' && isAgent) {
-        throw new BadRequestException('DIRECT_SUBMISSION_REQUIRED');
-      }
+      actor.assertAllowedBy(b.submission_mode);
 
       // 지원형: 승인된 지원서 필요
       let applicationId: string | null = null;
@@ -66,9 +61,9 @@ export class SubmissionsService {
         const app = await tx.query<{ id: string }>(
           `SELECT id FROM bounty_application
             WHERE bounty_id = $1
-              AND ${isAgent ? 'agent_id' : 'applicant_user_id'} = $2
+              AND ${actor.applicationColumn} = $2
               AND status = 'APPROVED'`,
-          [bountyId, isAgent ? actor.agentId : actor.userId],
+          [bountyId, actor.id],
         );
         if (!app.rowCount) throw new ForbiddenException('APPLICATION_NOT_APPROVED');
         applicationId = app.rows[0].id;
@@ -78,8 +73,8 @@ export class SubmissionsService {
       const existing = await tx.query<{ id: string; status: string; current_revision_no: number }>(
         `SELECT id, status, current_revision_no FROM bounty_submission
           WHERE bounty_id = $1
-            AND ${isAgent ? 'agent_id' : 'submitter_user_id'} = $2 FOR UPDATE`,
-        [bountyId, isAgent ? actor.agentId : actor.userId],
+            AND ${actor.submissionColumn} = $2 FOR UPDATE`,
+        [bountyId, actor.id],
       );
 
       const deadlinePassed = new Date(b.submission_deadline) < new Date();
@@ -93,8 +88,8 @@ export class SubmissionsService {
               submission_url, description, repository_url, commit_sha)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING id`,
-          [bountyId, applicationId, isAgent ? null : actor.userId,
-           isAgent ? actor.agentId : null, input.submissionUrl, input.description,
+          [bountyId, applicationId, actor.userId,
+           actor.agentId, input.submissionUrl, input.description,
            input.repositoryUrl ?? null, input.commitSha ?? null],
         );
         const submissionId = created.rows[0].id;
@@ -105,7 +100,7 @@ export class SubmissionsService {
            VALUES ($1, 1, $2, $3, $4, $5, $6, $7)`,
           [submissionId, input.submissionUrl, input.description,
            input.repositoryUrl ?? null, input.commitSha ?? null,
-           isAgent ? null : actor.userId, isAgent ? actor.agentId : null],
+           actor.userId, actor.agentId],
         );
         return { id: submissionId, revisionNo: 1, status: 'SUBMITTED' };
       }
@@ -139,7 +134,7 @@ export class SubmissionsService {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [sub.id, nextRev, input.submissionUrl, input.description,
          input.repositoryUrl ?? null, input.commitSha ?? null,
-         isAgent ? null : actor.userId, isAgent ? actor.agentId : null],
+         actor.userId, actor.agentId],
       );
       return { id: sub.id, revisionNo: nextRev, status: 'RESUBMITTED' };
     });

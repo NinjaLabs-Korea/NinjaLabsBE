@@ -17,7 +17,7 @@ export class DatabaseService implements OnModuleDestroy {
       max: 10,
       // Supabase는 TLS 필수 (로컬 Postgres 개발 시 PGSSLMODE=disable)
       ssl:
-        process.env.PGSSLMODE === 'disable'
+        config.get<string>('PGSSLMODE') === 'disable'
           ? undefined
           : { rejectUnauthorized: false },
     });

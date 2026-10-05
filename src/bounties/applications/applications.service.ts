@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../../common/database/database.service';
 import { isUniqueViolation } from '../../common/database/pg-errors';
+import { BountyActor } from '../bounty-actor';
 
 /**
  * 지원형 바운티(application_required = true) 참가 신청
@@ -16,16 +17,16 @@ export class ApplicationsService {
   constructor(private readonly db: DatabaseService) {}
 
   async apply(bountyId: string, userId: string, message: string, portfolioUrl?: string) {
-    return this.applyForActor(bountyId, { userId }, message, portfolioUrl);
+    return this.applyForActor(bountyId, BountyActor.user(userId), message, portfolioUrl);
   }
 
   async applyAsAgent(bountyId: string, agentId: string, message: string, portfolioUrl?: string) {
-    return this.applyForActor(bountyId, { agentId }, message, portfolioUrl);
+    return this.applyForActor(bountyId, BountyActor.agent(agentId), message, portfolioUrl);
   }
 
   private async applyForActor(
     bountyId: string,
-    actor: { userId: string } | { agentId: string },
+    actor: BountyActor,
     message: string,
     portfolioUrl?: string,
   ) {
@@ -47,13 +48,7 @@ export class ApplicationsService {
         throw new BadRequestException('BOUNTY_NOT_OPEN');
       }
       if ([bounty.rows[0].submission_deadline, bounty.rows[0].application_deadline].some((date) => date && new Date(date).getTime() <= Date.now())) throw new BadRequestException('APPLICATION_DEADLINE_PASSED');
-      const isAgent = 'agentId' in actor;
-      if (bounty.rows[0].submission_mode === 'AGENT' && !isAgent) {
-        throw new BadRequestException('AGENT_SUBMISSION_REQUIRED');
-      }
-      if (bounty.rows[0].submission_mode === 'DIRECT' && isAgent) {
-        throw new BadRequestException('DIRECT_SUBMISSION_REQUIRED');
-      }
+      actor.assertAllowedBy(bounty.rows[0].submission_mode);
 
       try {
         const r = await tx.query(
@@ -61,7 +56,7 @@ export class ApplicationsService {
              (bounty_id, applicant_user_id, agent_id, message, portfolio_url)
            VALUES ($1, $2, $3, $4, $5)
            RETURNING id, status, applied_at`,
-          [bountyId, isAgent ? null : actor.userId, isAgent ? actor.agentId : null,
+          [bountyId, actor.userId, actor.agentId,
            message, portfolioUrl ?? null],
         );
         return r.rows[0];

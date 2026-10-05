@@ -3,11 +3,13 @@ import { ApplicationReviewService } from '../applications/application-review.ser
 import { SubmissionReviewService } from '../submissions/submission-review.service';
 import { BountyAdminService } from './bounty-admin.service';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
+import { RewardTokenResolver } from './reward-token.resolver';
+import { ConfigService } from '@nestjs/config';
 
 const adminServicesFor = (db: unknown) => {
   const audit = new AuditService(db as never);
   return {
-    bounties: new BountyAdminService(db as never, audit, new BountyLifecycleService()),
+    bounties: new BountyAdminService(db as never, audit, new BountyLifecycleService(), new RewardTokenResolver(new ConfigService())),
     applicationReviews: new ApplicationReviewService(db as never, audit),
     submissionReviews: new SubmissionReviewService(db as never, audit),
   };

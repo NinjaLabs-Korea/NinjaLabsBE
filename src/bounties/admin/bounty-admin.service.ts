@@ -3,6 +3,7 @@ import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { BountyStatusPolicy } from '../bounty-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
+import { RewardInput, RewardTokenResolver } from './reward-token.resolver';
 
 /** 운영자용 바운티 관리 — 등록/수정/삭제/상태 전이와 운영 현황 조회.
  * 전이 가능 여부는 BountyStatusPolicy, 전이 차단 사유는 BountyLifecycleService가 결정한다. */
@@ -12,6 +13,7 @@ export class BountyAdminService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly lifecycle: BountyLifecycleService,
+    private readonly rewardTokens: RewardTokenResolver,
   ) {}
 
   async list() {
@@ -84,33 +86,9 @@ export class BountyAdminService {
     applicationRequired: boolean; submissionMode: string; maxWinners: number;
     submissionDeadline: string; applicationDeadline?: string;
     coverImageUrl?: string;
-    reward?: { tokenType: string; tokenDenom?: string; tokenContractAddress?: string; evmChainId?: number; displaySymbol: string; amount: string };
+    reward?: RewardInput;
   }) {
-    const configuredUsdcAddress = process.env.USDC_EVM_CONTRACT_ADDRESS;
-    const configuredEvmChainId = Number(process.env.INJECTIVE_EVM_CHAIN_ID);
-    const isUsdc = input.reward?.displaySymbol.toUpperCase() === 'USDC';
-    if (isUsdc && (!configuredUsdcAddress || !/^0x[0-9a-fA-F]{40}$/.test(configuredUsdcAddress))) {
-      throw new BadRequestException('USDC_EVM_CONTRACT_NOT_CONFIGURED');
-    }
-    if (isUsdc && ![1439, 1776].includes(configuredEvmChainId)) {
-      throw new BadRequestException('INJECTIVE_EVM_CHAIN_NOT_CONFIGURED');
-    }
-    const reward = input.reward ? (isUsdc ? {
-      ...input.reward,
-      tokenType: 'ERC20',
-      tokenDenom: `erc20:${configuredUsdcAddress!.toLowerCase()}`,
-      tokenContractAddress: configuredUsdcAddress,
-      evmChainId: configuredEvmChainId,
-    } : input.reward) : undefined;
-    if (reward?.tokenType === 'NATIVE' && !reward.tokenDenom) {
-      throw new BadRequestException('REWARD_TOKEN_DENOM_REQUIRED');
-    }
-    if (reward?.tokenType === 'CW20' && !reward.tokenContractAddress) {
-      throw new BadRequestException('REWARD_TOKEN_CONTRACT_REQUIRED');
-    }
-    if (reward?.tokenType === 'ERC20' && (!reward.tokenContractAddress || !reward.evmChainId)) {
-      throw new BadRequestException('REWARD_EVM_METADATA_REQUIRED');
-    }
+    const reward = this.rewardTokens.resolve(input.reward);
     return this.db.tx(async (tx) => {
       const b = await tx.query<{ id: string }>(
         `INSERT INTO bounty
@@ -136,7 +114,7 @@ export class BountyAdminService {
           [bountyId, reward.tokenType, reward.tokenDenom ?? null,
            reward.tokenContractAddress ?? null, reward.evmChainId ?? null,
            reward.displaySymbol, reward.amount,
-           process.env.REWARD_MULTISIG_ADDRESS ?? 'PENDING_MULTISIG_SETUP'],
+           this.rewardTokens.custodyAddress()],
         );
         // 보상이 있으면 선입금 대기 상태로
         await tx.query(`UPDATE bounty SET status = 'FUNDING_PENDING' WHERE id = $1`, [bountyId]);

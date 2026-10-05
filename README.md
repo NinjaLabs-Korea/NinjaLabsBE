@@ -39,6 +39,9 @@ docs/
 - **감사 로그는 `AuditService.record()`로만 남긴다.** 트랜잭션 안이면 `tx`를 마지막 인자로 넘긴다.
 - **바운티 상태 문자열 배열을 직접 만들지 않는다.** `bounties/bounty-status.ts`의 `BountyStatusPolicy`를 쓴다.
 - **유니크 충돌 판별은 `isUniqueViolation(err)`** (`common/database/pg-errors.ts`).
+- **사람/에이전트 참여는 `BountyActor`로 표현한다** (`bounties/bounty-actor.ts`). `isAgent ? ... : ...` 분기를 새로 만들지 않는다.
+- **지갑 서명 검증은 `signatureSchemeFor(address).verify()`** (`common/crypto/wallet-signature.ts`). 새 지갑 종류는 구현체를 추가한다.
+- **서비스에서 `process.env`를 직접 읽지 않는다.** `ConfigService`를 주입받는다 (부트스트랩 코드 `main.ts`, `auth.module.ts` 제외).
 
 ## 시작하기
 

@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { BountyAdminController } from './admin/bounty-admin.controller';
 import { BountyAdminService } from './admin/bounty-admin.service';
 import { BountyLifecycleService } from './admin/bounty-lifecycle.service';
+import { RewardTokenResolver } from './admin/reward-token.resolver';
 import { ApplicationReviewController } from './applications/application-review.controller';
 import { ApplicationReviewService } from './applications/application-review.service';
 import { ApplicationsController } from './applications/applications.controller';
@@ -33,6 +34,7 @@ import { SubmissionsService } from './submissions/submissions.service';
     SubmissionsService,
     BountyAdminService,
     BountyLifecycleService,
+    RewardTokenResolver,
     ApplicationReviewService,
     SubmissionReviewService,
   ],

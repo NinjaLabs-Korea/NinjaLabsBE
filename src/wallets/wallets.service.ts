@@ -5,10 +5,9 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { getInjectiveAddress, getEthereumAddress } from '@injectivelabs/sdk-ts';
-import { getAddress, isAddress } from 'ethers';
+import { getAddress } from 'ethers';
 import { randomBytes } from 'crypto';
-import { verifyAdr36Signature } from '../common/crypto/adr36';
-import { verifyEip191Signature } from '../common/crypto/eip191';
+import { isEvmAddress, signatureSchemeFor } from '../common/crypto/wallet-signature';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { NftsService } from '../nfts/nfts.service';
@@ -76,7 +75,6 @@ export class WalletsService {
    */
   async verifySignature(userId: string, address: string, signature: string, pubKey?: string) {
     const normalizedAddress = this.normalizeChallengeAddress(address);
-    const isEvm = isAddress(address.trim());
     const challenge = await this.db.query<{ id: string; message: string }>(
       `SELECT id, message FROM wallet_verification_challenge
         WHERE user_id = $1 AND wallet_address = $2
@@ -88,14 +86,12 @@ export class WalletsService {
     if (!challenge.rowCount) throw new BadRequestException('CHALLENGE_EXPIRED');
     const { id: challengeId, message } = challenge.rows[0];
 
-    const valid = isEvm
-      ? verifyEip191Signature(normalizedAddress, message, signature)
-      : Boolean(pubKey) && verifyAdr36Signature(normalizedAddress, message, pubKey!, signature);
-    if (!valid) {
+    if (!signatureSchemeFor(normalizedAddress).verify({ address: normalizedAddress, message, signature, publicKey: pubKey })) {
       throw new UnauthorizedException('INVALID_SIGNATURE');
     }
 
-    const injectiveAddress = isEvm
+    // 두 서명 방식 모두 CW-721 수신에 쓰는 inj1 주소로 저장한다
+    const injectiveAddress = isEvmAddress(normalizedAddress)
       ? getInjectiveAddress(normalizedAddress)
       : normalizedAddress;
 

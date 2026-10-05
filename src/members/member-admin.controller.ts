@@ -1,11 +1,11 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, Min } from 'class-validator';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { MemberAdminService } from './member-admin.service';
 
-class SetMemberDto {
+export class SetMemberDto {
   @IsBoolean()
   isMember!: boolean;
 
@@ -16,6 +16,7 @@ class SetMemberDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(1)
   displayOrder?: number;
 }
 

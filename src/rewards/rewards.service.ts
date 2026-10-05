@@ -1,4 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
+import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
 
@@ -15,6 +17,7 @@ export class RewardsService {
   constructor(
     private readonly db: DatabaseService,
     private readonly nfts: NftsService,
+    private readonly audit: AuditService,
   ) {}
 
   /** 운영자: 선입금 확인 처리 → 보상 FUNDED, 바운티 OPEN 전환은 admin 쪽에서 */
@@ -28,7 +31,7 @@ export class RewardsService {
       [rewardId, txHash, depositedAmount],
     );
     if (!r.rowCount) throw new NotFoundException('REWARD_NOT_FOUND_OR_NOT_PENDING');
-    await this.audit(adminId, 'REWARD_DEPOSIT_CONFIRMED', 'bounty_reward', rewardId);
+    await this.audit.record(adminId, 'REWARD_DEPOSIT_CONFIRMED', 'bounty_reward', rewardId);
     return r.rows[0];
   }
 
@@ -39,7 +42,7 @@ export class RewardsService {
       const parent = await tx.query(`SELECT b.status FROM bounty b JOIN bounty_reward rw ON rw.bounty_id = b.id
         WHERE rw.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [rewardId]);
       if (!parent.rowCount) throw new NotFoundException('REWARD_NOT_FOUND');
-      if (!['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'].includes(parent.rows[0].status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
+      if (!BountyStatusPolicy.isInProgress(parent.rows[0].status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
       // Serialize allocations against the same funded pool.
       const reward = await tx.query<{ bounty_id: string; status: string; deposited_amount: string }>(
         `SELECT bounty_id, status, deposited_amount::text FROM bounty_reward WHERE id = $1 FOR UPDATE`,
@@ -75,10 +78,7 @@ export class RewardsService {
         [rewardId, submissionId, wallet.rows[0].wallet_id, amount,
          `submission:${submissionId}:reward:${rewardId}`, adminId],
       );
-      await tx.query(
-        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id)
-         VALUES ($1, 'PAYOUT_REQUESTED', 'payout', $2)`, [adminId, r.rows[0].id],
-      );
+      await this.audit.record(adminId, 'PAYOUT_REQUESTED', 'payout', r.rows[0].id, tx);
       return r.rows[0];
     });
   }
@@ -92,7 +92,7 @@ export class RewardsService {
       [payoutId, adminId],
     );
     if (!r.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
-    await this.audit(adminId, 'PAYOUT_APPROVED', 'payout', payoutId);
+    await this.audit.record(adminId, 'PAYOUT_APPROVED', 'payout', payoutId);
     return r.rows[0];
   }
 
@@ -132,11 +132,7 @@ export class RewardsService {
         submission.rows[0].bounty_id,
         payout.rows[0].submission_id,
       );
-      await tx.query(
-        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id)
-         VALUES ($1, 'PAYOUT_PAID', 'payout', $2)`,
-        [adminId, payoutId],
-      );
+      await this.audit.record(adminId, 'PAYOUT_PAID', 'payout', payoutId, tx);
       return payout.rows[0];
     });
   }
@@ -145,13 +141,5 @@ export class RewardsService {
     if (typeof amount !== 'string' || !/^[1-9][0-9]{0,77}$/.test(amount)) {
       throw new BadRequestException('INVALID_TOKEN_AMOUNT');
     }
-  }
-
-  private async audit(actorId: string, action: string, entityType: string, entityId: string) {
-    await this.db.query(
-      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id)
-       VALUES ($1, $2, $3, $4)`,
-      [actorId, action, entityType, entityId],
-    );
   }
 }

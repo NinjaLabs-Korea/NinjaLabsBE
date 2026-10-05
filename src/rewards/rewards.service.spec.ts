@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from './rewards.service';
@@ -27,6 +28,7 @@ describe('RewardsService NFT linkage', () => {
     const service = new RewardsService(
       db as unknown as DatabaseService,
       nfts as unknown as NftsService,
+      new AuditService(db as unknown as DatabaseService),
     );
 
     await expect(service.markPaid('payout', '0xtx', 'admin')).resolves.toMatchObject({ status: 'PAID' });
@@ -46,7 +48,8 @@ describe('RewardsService payout allocation', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ amount: options.allocated ?? '0' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'payout', status: 'REQUESTED' }] })
       .mockResolvedValue({ rowCount: 1, rows: [] });
-    const service = new RewardsService({ tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query }) } as never, {} as never);
+    const db = { tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query }) };
+    const service = new RewardsService(db as never, {} as never, new AuditService(db as never));
     return { service, query };
   }
   it('creates a payout against the matching bounty and audits inside the transaction', async () => {

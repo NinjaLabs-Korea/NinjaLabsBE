@@ -15,7 +15,6 @@ import { BountiesModule } from './bounties/bounties.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { NftsModule } from './nfts/nfts.module';
 import { AgentsModule } from './agents/agents.module';
-import { AdminModule } from './admin/admin.module';
 import { AuditModule } from './audit/audit.module';
 import { MediaModule } from './media/media.module';
 
@@ -38,7 +37,6 @@ import { MediaModule } from './media/media.module';
     RewardsModule,
     NftsModule,
     AgentsModule,
-    AdminModule,
     AuditModule,
     MediaModule,
   ],

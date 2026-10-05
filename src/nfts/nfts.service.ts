@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PoolClient } from 'pg';
 import { DatabaseService } from '../common/database/database.service';
 
@@ -12,11 +13,19 @@ import { DatabaseService } from '../common/database/database.service';
  */
 @Injectable()
 export class NftsService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly config: ConfigService,
+  ) {}
+
+  /** CW-721 컨트랙트 주소 — 배포 전이면 자리표시값으로 레코드만 쌓아 둔다 */
+  private contractAddress(): string {
+    return this.config.get<string>('NFT_CONTRACT_ADDRESS') ?? 'PENDING_CONTRACT_DEPLOY';
+  }
 
   /** 부모 NFT 레코드 생성 + 민팅 잡 등록 (지갑 연결 성공 시 호출) */
   async enqueueParentMint(userId: string, walletId: string) {
-    const contract = process.env.NFT_CONTRACT_ADDRESS ?? 'PENDING_CONTRACT_DEPLOY';
+    const contract = this.contractAddress();
     return this.db.tx(async (tx) => {
       const nft = await tx.query<{ id: string }>(
         `INSERT INTO nft (owner_user_id, owner_wallet_id, nft_type, contract_address)
@@ -55,7 +64,7 @@ export class NftsService {
     bountyId: string,
     submissionId: string,
   ) {
-    const contract = process.env.NFT_CONTRACT_ADDRESS ?? 'PENDING_CONTRACT_DEPLOY';
+    const contract = this.contractAddress();
     const parent = await tx.query<{ id: string }>(
       `SELECT id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`,
       [userId],

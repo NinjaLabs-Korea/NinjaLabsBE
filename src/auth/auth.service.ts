@@ -6,7 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, randomBytes } from 'crypto';
-import { DatabaseService } from '../common/database/database.service';
+import { DatabaseService, QueryRunner } from '../common/database/database.service';
 
 export interface SessionUser {
   userId: string;
@@ -212,11 +212,7 @@ export class AuthService {
       if (consumed.rowCount !== 1) throw new UnauthorizedException('INVALID_LOGIN_CODE');
       const { user_id, is_admin } = consumed.rows[0];
       const session = await this.createSessionTokens(user_id, is_admin);
-      await tx.query(
-        `INSERT INTO auth_session (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
-         VALUES ($1, $2, $3, $4, now() + interval '14 days')`,
-        [user_id, session.refreshHash, ip ?? null, userAgent ?? null],
-      );
+      await this.saveSession(tx, user_id, session.refreshHash, ip, userAgent);
       return { accessToken: session.accessToken, refreshToken: session.refreshToken };
     });
   }
@@ -225,11 +221,7 @@ export class AuthService {
   async issueSession(userId: string, isAdmin: boolean, ip?: string, userAgent?: string) {
     const session = await this.createSessionTokens(userId, isAdmin);
 
-    await this.db.query(
-      `INSERT INTO auth_session (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
-       VALUES ($1, $2, $3, $4, now() + interval '14 days')`,
-      [userId, session.refreshHash, ip ?? null, userAgent ?? null],
-    );
+    await this.saveSession(this.db, userId, session.refreshHash, ip, userAgent);
     return { accessToken: session.accessToken, refreshToken: session.refreshToken };
   }
 
@@ -261,11 +253,7 @@ export class AuthService {
 
       const { user_id, is_admin } = consumed.rows[0];
       const next = await this.createSessionTokens(user_id, is_admin);
-      await tx.query(
-        `INSERT INTO auth_session (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
-         VALUES ($1, $2, $3, $4, now() + interval '14 days')`,
-        [user_id, next.refreshHash, ip ?? null, userAgent ?? null],
-      );
+      await this.saveSession(tx, user_id, next.refreshHash, ip, userAgent);
       return { accessToken: next.accessToken, refreshToken: next.refreshToken };
     });
   }
@@ -275,6 +263,21 @@ export class AuthService {
     const refreshToken = randomBytes(48).toString('base64url');
     const refreshHash = createHash('sha256').update(refreshToken).digest('hex');
     return { accessToken, refreshToken, refreshHash };
+  }
+
+  /** refresh 세션 저장 — 원문 토큰은 저장하지 않고 해시만, 수명 14일 */
+  private async saveSession(
+    runner: QueryRunner,
+    userId: string,
+    refreshHash: string,
+    ip?: string,
+    userAgent?: string,
+  ) {
+    await runner.query(
+      `INSERT INTO auth_session (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
+       VALUES ($1, $2, $3, $4, now() + interval '14 days')`,
+      [userId, refreshHash, ip ?? null, userAgent ?? null],
+    );
   }
 
   /** 세션 폐기 (로그아웃) */

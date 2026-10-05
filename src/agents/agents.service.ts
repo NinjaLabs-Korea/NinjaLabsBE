@@ -7,9 +7,9 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { getAddress, isAddress } from 'ethers';
-import { verifyAdr36Signature } from '../common/crypto/adr36';
-import { recoverEip191PublicKey } from '../common/crypto/eip191';
+import { isEvmAddress, signatureSchemeFor } from '../common/crypto/wallet-signature';
 import { DatabaseService } from '../common/database/database.service';
+import { isUniqueViolation } from '../common/database/pg-errors';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 
 /**
@@ -31,7 +31,7 @@ export class AgentsService {
     publicKey: string | undefined,
     walletAddress: string,
   ) {
-    const isEvm = walletAddress.trim().startsWith('0x');
+    const isEvm = isEvmAddress(walletAddress);
     if (isEvm && !isAddress(walletAddress.trim())) {
       throw new BadRequestException('INVALID_AGENT_WALLET_ADDRESS');
     }
@@ -54,7 +54,7 @@ export class AgentsService {
         verificationMessage: AgentsService.verificationMessage(r.rows[0].id, ownerUserId),
       };
     } catch (err: unknown) {
-      if ((err as { code?: string }).code === '23505') {
+      if (isUniqueViolation(err)) {
         const pending = await this.db.query<{ id: string }>(
           `SELECT id FROM agent
             WHERE owner_user_id = $1 AND wallet_address = $2
@@ -112,14 +112,12 @@ export class AgentsService {
     }
 
     const message = AgentsService.verificationMessage(agentId, ownerUserId);
-    const isEvm = agent.wallet_address.startsWith('0x');
-    const recoveredPublicKey = isEvm
-      ? recoverEip191PublicKey(agent.wallet_address, message, signature)
-      : null;
-    const verified = isEvm
-      ? recoveredPublicKey !== null
-      : Boolean(agent.public_key) &&
-        verifyAdr36Signature(agent.wallet_address, message, agent.public_key!, signature);
+    const verified = signatureSchemeFor(agent.wallet_address).verify({
+      address: agent.wallet_address,
+      message,
+      signature,
+      publicKey: agent.public_key,
+    });
     if (!verified) {
       throw new UnauthorizedException('INVALID_SIGNATURE');
     }
@@ -130,7 +128,7 @@ export class AgentsService {
         `UPDATE agent
             SET status = 'ACTIVE', verified_at = now(), public_key = COALESCE($2, public_key)
           WHERE id = $1`,
-        [agentId, recoveredPublicKey],
+        [agentId, verified.publicKey],
       );
       // 만료 90일 — decisions.md MVP 디폴트
       const k = await tx.query<{ expires_at: string }>(

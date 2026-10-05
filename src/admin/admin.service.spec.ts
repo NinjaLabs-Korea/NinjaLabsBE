@@ -1,5 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
 import { AdminService } from './admin.service';
+
+const adminServiceFor = (db: unknown) => new AdminService(db as never, new AuditService(db as never));
 
 describe('AdminService EVM rewards', () => {
   const originalChainId = process.env.INJECTIVE_EVM_CHAIN_ID;
@@ -31,7 +34,7 @@ describe('AdminService EVM rewards', () => {
       }),
     };
     const db = { tx: jest.fn(async (callback: (runner: typeof tx) => unknown) => callback(tx)) };
-    const service = new AdminService(db as never);
+    const service = adminServiceFor(db);
 
     await service.createBounty('22222222-2222-4222-8222-222222222222', input);
 
@@ -51,7 +54,7 @@ describe('AdminService EVM rewards', () => {
   it('rejects USDC rewards when the EVM contract is not configured', async () => {
     process.env.INJECTIVE_EVM_CHAIN_ID = '1439';
     delete process.env.USDC_EVM_CONTRACT_ADDRESS;
-    const service = new AdminService({} as never);
+    const service = adminServiceFor({});
 
     await expect(service.createBounty('admin', input)).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -63,7 +66,7 @@ describe('AdminService review safeguards', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'OPEN' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'sub', status, current_revision_no: revision }] })
       .mockResolvedValue({ rowCount: 1, rows: [{ id: 'revision' }] });
-    return { query, service: new AdminService({ tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query }) } as never) };
+    return { query, service: adminServiceFor({ tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query }) }) };
   }
   it.each(['APPROVED', 'REJECTED', 'WITHDRAWN', 'REVISION_REQUESTED'])('does not overwrite %s submissions', async (status) => {
     const { service, query } = setup(status);
@@ -86,7 +89,7 @@ describe('AdminService review safeguards', () => {
     const query = jest.fn()
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'FUNDING_PENDING' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ unfunded: 1 }] });
-    await expect(new AdminService({ query, tx: (fn: (tx: { query: jest.Mock }) => Promise<unknown>) => fn({ query }) } as never).transitionBounty('bounty', 'OPEN', 'admin')).rejects.toThrow('Bad Request Exception');
+    await expect(adminServiceFor({ query, tx: (fn: (tx: { query: jest.Mock }) => Promise<unknown>) => fn({ query }) }).transitionBounty('bounty', 'OPEN', 'admin')).rejects.toThrow('Bad Request Exception');
   });
 });
 
@@ -97,7 +100,7 @@ describe('Abandoned revision requests', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'IN_REVIEW' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'sub', status: 'REVISION_REQUESTED', current_revision_no: 2 }] })
       .mockResolvedValue({ rowCount: 1, rows: [{ id: 'revision' }] });
-    const service = new AdminService({ tx: (fn: (tx: { query: jest.Mock }) => Promise<unknown>) => fn({ query }) } as never);
+    const service = adminServiceFor({ tx: (fn: (tx: { query: jest.Mock }) => Promise<unknown>) => fn({ query }) });
     await expect(service.reviewSubmission('sub', 'REJECT', 'Revision was not delivered', 'admin', 2)).resolves.toMatchObject({ status: 'REJECTED' });
   });
 });

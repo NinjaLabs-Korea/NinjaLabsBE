@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../../common/database/database.service';
+import { BountyStatusPolicy } from '../bounty-status';
 
 export interface SubmitInput {
   submissionUrl: string;
@@ -50,7 +51,7 @@ export class SubmissionsService {
       );
       if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
       const b = bounty.rows[0];
-      if (!['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'].includes(b.status)) throw new BadRequestException('BOUNTY_NOT_OPEN');
+      if (!BountyStatusPolicy.isInProgress(b.status)) throw new BadRequestException('BOUNTY_NOT_OPEN');
       const isAgent = 'agentId' in actor;
       if (b.submission_mode === 'AGENT' && !isAgent) {
         throw new BadRequestException('AGENT_SUBMISSION_REQUIRED');

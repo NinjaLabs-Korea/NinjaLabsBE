@@ -10,6 +10,7 @@ import { randomBytes } from 'crypto';
 import { verifyAdr36Signature } from '../common/crypto/adr36';
 import { verifyEip191Signature } from '../common/crypto/eip191';
 import { DatabaseService } from '../common/database/database.service';
+import { isUniqueViolation } from '../common/database/pg-errors';
 import { NftsService } from '../nfts/nfts.service';
 
 /**
@@ -120,7 +121,7 @@ export class WalletsService {
       });
     } catch (err: unknown) {
       // 부분 유니크 인덱스 충돌: 주소가 이미 다른 계정에 연결됐거나 내 대표 지갑이 이미 있음
-      if ((err as { code?: string }).code === '23505') {
+      if (isUniqueViolation(err)) {
         throw new ConflictException('WALLET_ALREADY_LINKED');
       }
       throw err;

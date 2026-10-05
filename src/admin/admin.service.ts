@@ -1,9 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
+import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { DatabaseService } from '../common/database/database.service';
 
 @Injectable()
 export class AdminService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly audit: AuditService,
+  ) {}
 
   // ── 유저 관리 ──────────────────────────────────────────
   /** 이메일/닉네임으로 유저 검색 */
@@ -34,7 +39,7 @@ export class AdminService {
       [userId, isMember, role ?? null, displayOrder ?? null],
     );
     if (!r.rowCount) throw new NotFoundException('USER_NOT_FOUND');
-    await this.audit(adminId, isMember ? 'USER_MEMBER_GRANTED' : 'USER_MEMBER_REVOKED', 'user', userId);
+    await this.audit.record(adminId, isMember ? 'USER_MEMBER_GRANTED' : 'USER_MEMBER_REVOKED', 'user', userId);
     return r.rows[0];
   }
 
@@ -167,7 +172,7 @@ export class AdminService {
         await tx.query(`UPDATE bounty SET status = 'FUNDING_PENDING' WHERE id = $1`, [bountyId]);
       }
 
-      await this.audit(adminId, 'BOUNTY_CREATED', 'bounty', bountyId, tx);
+      await this.audit.record(adminId, 'BOUNTY_CREATED', 'bounty', bountyId, tx);
       return { id: bountyId };
     });
   }
@@ -195,7 +200,7 @@ export class AdminService {
       [bountyId, ...values],
     );
     if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    await this.audit(adminId, 'BOUNTY_UPDATED', 'bounty', bountyId);
+    await this.audit.record(adminId, 'BOUNTY_UPDATED', 'bounty', bountyId);
     return r.rows[0];
   }
 
@@ -205,7 +210,7 @@ export class AdminService {
       [bountyId],
     );
     if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    await this.audit(adminId, 'BOUNTY_DELETED', 'bounty', bountyId);
+    await this.audit.record(adminId, 'BOUNTY_DELETED', 'bounty', bountyId);
     return r.rows[0];
   }
 
@@ -242,22 +247,17 @@ export class AdminService {
   }
 
   async transitionBounty(bountyId: string, to: string, adminId: string) {
-    const allowed: Record<string, string[]> = {
-      DRAFT: ['FUNDING_PENDING', 'OPEN', 'CANCELLED'], FUNDING_PENDING: ['OPEN', 'CANCELLED'],
-      OPEN: ['SUBMISSION_CLOSED', 'CANCELLED'], SUBMISSION_CLOSED: ['IN_REVIEW', 'OPEN'],
-      IN_REVIEW: ['COMPLETED', 'OPEN'],
-    };
     return this.db.tx(async (tx) => {
       const cur = await tx.query(`SELECT status, submission_deadline FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [bountyId]);
       if (!cur.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
       const from = cur.rows[0].status;
-      if (!allowed[from]?.includes(to)) throw new BadRequestException(`INVALID_TRANSITION:${from}->${to}`);
+      if (!BountyStatusPolicy.canTransition(from, to)) throw new BadRequestException(`INVALID_TRANSITION:${from}->${to}`);
       const { blockers } = await this.lifecycle(tx, bountyId, cur.rows[0] as { status: string });
       if (blockers[to]?.length) throw new BadRequestException(blockers[to]);
-      const stamp: Record<string, string> = { OPEN: 'opened_at', IN_REVIEW: 'review_started_at', COMPLETED: 'completed_at' };
-      const stampCol = stamp[to] ? `, ${stamp[to]} = COALESCE(${stamp[to]}, now())` : '';
+      const stamp = BountyStatusPolicy.stampColumnFor(to);
+      const stampCol = stamp ? `, ${stamp} = COALESCE(${stamp}, now())` : '';
       await tx.query(`UPDATE bounty SET status = $2${stampCol} WHERE id = $1`, [bountyId, to]);
-      await this.audit(adminId, `BOUNTY_${to}`, 'bounty', bountyId, tx);
+      await this.audit.record(adminId, `BOUNTY_${to}`, 'bounty', bountyId, tx);
       return { id: bountyId, status: to };
     });
   }
@@ -270,7 +270,7 @@ export class AdminService {
         WHERE a.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [applicationId]);
       if (!parent.rowCount) throw new NotFoundException('APPLICATION_NOT_FOUND_OR_NOT_PENDING');
       const bounty = parent.rows[0];
-      if (['COMPLETED', 'CANCELLED'].includes(bounty.status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
+      if (BountyStatusPolicy.isFinished(bounty.status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
       if (decision === 'APPROVED' && (bounty.status !== 'OPEN' || new Date(bounty.submission_deadline).getTime() <= Date.now())) {
         throw new BadRequestException('APPLICATION_APPROVAL_CLOSED');
       }
@@ -278,7 +278,7 @@ export class AdminService {
         SET status = $2, reviewed_by = $3, review_note = $4, reviewed_at = now()
         WHERE id = $1 AND status = 'PENDING' RETURNING id, status`, [applicationId, decision, adminId, note?.trim() || null]);
       if (!r.rowCount) throw new NotFoundException('APPLICATION_NOT_FOUND_OR_NOT_PENDING');
-      await this.audit(adminId, `APPLICATION_${decision}`, 'bounty_application', applicationId, tx);
+      await this.audit.record(adminId, `APPLICATION_${decision}`, 'bounty_application', applicationId, tx);
       return r.rows[0];
     });
   }
@@ -298,7 +298,7 @@ export class AdminService {
       const parent = await tx.query(`SELECT b.id, b.status, b.max_winners FROM bounty b JOIN bounty_submission s ON s.bounty_id = b.id
         WHERE s.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [submissionId]);
       if (!parent.rowCount) throw new NotFoundException('SUBMISSION_NOT_FOUND');
-      if (!['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'].includes(parent.rows[0].status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
+      if (!BountyStatusPolicy.isInProgress(parent.rows[0].status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
       const sub = await tx.query<{ id: string; status: string; current_revision_no: number }>(
         `SELECT id, status, current_revision_no FROM bounty_submission WHERE id = $1 FOR UPDATE`,
         [submissionId],
@@ -337,7 +337,7 @@ export class AdminService {
          VALUES ($1, $2, $3, $4, $5)`,
         [submissionId, rev.rows[0]?.id ?? null, adminId, decision, comment ?? null],
       );
-      await this.audit(adminId, `SUBMISSION_${decision}`, 'bounty_submission', submissionId, tx);
+      await this.audit.record(adminId, `SUBMISSION_${decision}`, 'bounty_submission', submissionId, tx);
       // APPROVE 시 후속 흐름(payout 요청 → NFT 민팅)은 rewards/nfts 모듈에서 별도 호출
       return { id: submissionId, status: newStatus };
     });
@@ -366,7 +366,7 @@ export class AdminService {
        input.publish ? 'PUBLISHED' : 'DRAFT',
        input.publish ? new Date() : null],
     );
-    await this.audit(adminId, input.publish ? 'NOTICE_PUBLISHED' : 'NOTICE_CREATED', 'notice', r.rows[0].id);
+    await this.audit.record(adminId, input.publish ? 'NOTICE_PUBLISHED' : 'NOTICE_CREATED', 'notice', r.rows[0].id);
     return r.rows[0];
   }
 
@@ -389,7 +389,7 @@ export class AdminService {
       [noticeId, ...fields.map(([, value]) => value)],
     );
     if (!r.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
-    await this.audit(adminId, 'NOTICE_UPDATED', 'notice', noticeId);
+    await this.audit.record(adminId, 'NOTICE_UPDATED', 'notice', noticeId);
     return r.rows[0];
   }
 
@@ -399,7 +399,7 @@ export class AdminService {
       [noticeId],
     );
     if (!r.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
-    await this.audit(adminId, 'NOTICE_DELETED', 'notice', noticeId);
+    await this.audit.record(adminId, 'NOTICE_DELETED', 'notice', noticeId);
     return r.rows[0];
   }
 
@@ -428,7 +428,7 @@ export class AdminService {
        input.displayOrder ?? 0, input.publish ?? false,
        input.publish ? new Date() : null],
     );
-    await this.audit(adminId, 'HIGHLIGHT_CREATED', 'platform_highlight', r.rows[0].id);
+    await this.audit.record(adminId, 'HIGHLIGHT_CREATED', 'platform_highlight', r.rows[0].id);
     return r.rows[0];
   }
 
@@ -451,30 +451,14 @@ export class AdminService {
       [highlightId, ...fields.map(([, value]) => value)],
     );
     if (!r.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
-    await this.audit(adminId, 'HIGHLIGHT_UPDATED', 'platform_highlight', highlightId);
+    await this.audit.record(adminId, 'HIGHLIGHT_UPDATED', 'platform_highlight', highlightId);
     return r.rows[0];
   }
 
   async deleteHighlight(highlightId: string, adminId: string) {
     const r = await this.db.query(`DELETE FROM platform_highlight WHERE id = $1 RETURNING id`, [highlightId]);
     if (!r.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
-    await this.audit(adminId, 'HIGHLIGHT_DELETED', 'platform_highlight', highlightId);
+    await this.audit.record(adminId, 'HIGHLIGHT_DELETED', 'platform_highlight', highlightId);
     return r.rows[0];
-  }
-
-  // ── 감사 로그 헬퍼 ─────────────────────────────────────
-  private async audit(
-    actorId: string | undefined,
-    action: string,
-    entityType: string,
-    entityId: string,
-    tx?: { query: (text: string, params?: unknown[]) => Promise<unknown> },
-  ) {
-    const runner = tx ?? this.db;
-    await runner.query(
-      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id)
-       VALUES ($1, $2, $3, $4)`,
-      [actorId ?? null, action, entityType, entityId],
-    );
   }
 }

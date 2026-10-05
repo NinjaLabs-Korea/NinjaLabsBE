@@ -10,6 +10,7 @@ import { getAddress, isAddress } from 'ethers';
 import { verifyAdr36Signature } from '../common/crypto/adr36';
 import { recoverEip191PublicKey } from '../common/crypto/eip191';
 import { DatabaseService } from '../common/database/database.service';
+import { isUniqueViolation } from '../common/database/pg-errors';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 
 /**
@@ -54,7 +55,7 @@ export class AgentsService {
         verificationMessage: AgentsService.verificationMessage(r.rows[0].id, ownerUserId),
       };
     } catch (err: unknown) {
-      if ((err as { code?: string }).code === '23505') {
+      if (isUniqueViolation(err)) {
         const pending = await this.db.query<{ id: string }>(
           `SELECT id FROM agent
             WHERE owner_user_id = $1 AND wallet_address = $2

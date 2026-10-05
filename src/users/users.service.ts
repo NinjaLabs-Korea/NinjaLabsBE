@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
+import { isUniqueViolation } from '../common/database/pg-errors';
 
 @Injectable()
 export class UsersService {
@@ -20,7 +21,7 @@ export class UsersService {
       return await this.doCompleteProfile(userId, nickname, bio, tags);
     } catch (err: unknown) {
       // 중복검사~저장 사이 레이스: unique 인덱스가 최종 방어선
-      if ((err as { code?: string }).code === '23505') {
+      if (isUniqueViolation(err)) {
         throw new ConflictException('NICKNAME_TAKEN');
       }
       throw err;

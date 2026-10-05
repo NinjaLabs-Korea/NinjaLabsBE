@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../../common/database/database.service';
+import { isUniqueViolation } from '../../common/database/pg-errors';
 
 /**
  * 지원형 바운티(application_required = true) 참가 신청
@@ -65,7 +66,7 @@ export class ApplicationsService {
         );
         return r.rows[0];
       } catch (err: unknown) {
-        if ((err as { code?: string }).code === '23505') {
+        if (isUniqueViolation(err)) {
           throw new ConflictException('ALREADY_APPLIED');
         }
         throw err;

@@ -1,4 +1,7 @@
+import { AuditService } from '../audit/audit.service';
 import { AdminService } from './admin.service';
+
+const adminServiceFor = (db: unknown) => new AdminService(db as never, new AuditService(db as never));
 import { ApplicationsService } from '../bounties/applications/applications.service';
 
 function setup(status: string, counts: Record<string, number | undefined> = {}, expired = false) {
@@ -7,7 +10,7 @@ function setup(status: string, counts: Record<string, number | undefined> = {}, 
     if (sql.includes('AS pending')) return { rowCount: 1, rows: [counts] };
     return { rowCount: 1, rows: [{ id: 'id', status: 'APPROVED' }] };
   });
-  return { query, service: new AdminService({ query, tx: (fn: (tx: { query: typeof query }) => Promise<unknown>) => fn({ query }) } as never) };
+  return { query, service: adminServiceFor({ query, tx: (fn: (tx: { query: typeof query }) => Promise<unknown>) => fn({ query }) }) };
 }
 
 describe('Bounty lifecycle ordering', () => {
@@ -55,7 +58,7 @@ describe('Submission approval winner cap', () => {
       if (sql.includes("status = 'APPROVED'")) return { rowCount: 1, rows: [{ count: String(approved) }] };
       return { rowCount: 1, rows: [{ id: 'rev' }] };
     });
-    return { query, service: new AdminService({ query, tx: (fn: (tx: { query: typeof query }) => Promise<unknown>) => fn({ query }) } as never) };
+    return { query, service: adminServiceFor({ query, tx: (fn: (tx: { query: typeof query }) => Promise<unknown>) => fn({ query }) }) };
   }
 
   it('refuses to approve beyond max_winners', async () => {

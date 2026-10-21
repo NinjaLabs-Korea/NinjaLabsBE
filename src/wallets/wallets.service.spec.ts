@@ -16,7 +16,7 @@ describe('WalletsService EVM verification', () => {
   it('verifies personal_sign, stores the canonical inj1 address, and advances onboarding', async () => {
     const signer = Wallet.createRandom();
     let challengeMessage = '';
-    const txQuery = jest.fn(async (sql: string, params: unknown[]) => {
+    const txQuery = jest.fn(async (sql: string, _params: unknown[]) => {
       if (sql.includes('INSERT INTO wallet ')) return { rowCount: 1, rows: [{ id: 'wallet-id' }] };
       return { rowCount: 1, rows: [] };
     });

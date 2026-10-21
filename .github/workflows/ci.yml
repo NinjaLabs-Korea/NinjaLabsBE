@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   verify:
-    name: Test and build
+    name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -25,6 +25,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
       # Unit tests mock the database; no Postgres service is needed.
       - run: npm test
       - run: npm run build

@@ -54,4 +54,6 @@ npm run migrate             # supabase/migrations 순서대로 적용
 npm run start:dev           # http://localhost:4000
 ```
 
+PR 전 체크: `npm run lint && npm run typecheck && npm test && npm run build` (CI와 동일).
+
 Supabase 프로젝트 생성 후 `Project Settings → Database → Connection string`을 `DATABASE_URL`에 넣으면 된다. Supabase CLI를 쓰는 팀이면 `npm run migrate` 대신 `supabase db push`도 가능 (마이그레이션 디렉터리 규칙 호환).

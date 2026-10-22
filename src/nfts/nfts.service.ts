@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PoolClient } from 'pg';
-import { DatabaseService } from '../common/database/database.service';
+import { QueryResult } from 'pg';
+import { DatabaseService, QueryRunner } from '../common/database/database.service';
 
 /**
  * NFT 도메인 (ERD §11)
@@ -58,35 +58,35 @@ export class NftsService {
   }
 
   async enqueueChildMintInTransaction(
-    tx: PoolClient,
+    tx: QueryRunner,
     userId: string,
     walletId: string,
     bountyId: string,
     submissionId: string,
   ) {
     const contract = this.contractAddress();
-    const parent = await tx.query<{ id: string }>(
+    const parent = (await tx.query(
       `SELECT id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`,
       [userId],
-    );
-      // 부모 NFT 미보유(지갑 미연결 등)면 부모부터 재유도 — decisions.md 참고
-      const parentId = parent.rowCount ? parent.rows[0].id : null;
+    )) as QueryResult<{ id: string }>;
+    // 부모 NFT 미보유(지갑 미연결 등)면 부모부터 재유도 — decisions.md 참고
+    const parentId = parent.rowCount ? parent.rows[0].id : null;
 
-      const nft = await tx.query<{ id: string }>(
-        `INSERT INTO nft (owner_user_id, owner_wallet_id, parent_nft_id, bounty_id, submission_id, nft_type, contract_address)
-         VALUES ($1, $2, $3, $4, $5, 'BOUNTY_COMPLETION_CHILD', $6)
-         ON CONFLICT DO NOTHING
-         RETURNING id`,
-        [userId, walletId, parentId, bountyId, submissionId, contract],
-      );
-      if (!nft.rowCount) return null;
-      const nftId = nft.rows[0].id;
-      await tx.query(
-        `INSERT INTO nft_job (nft_id, job_type, idempotency_key)
-         VALUES ($1, 'MINT_CHILD', $2)
-         ON CONFLICT (idempotency_key) DO NOTHING`,
-        [nftId, `mint-child:${submissionId}`],
-      );
+    const nft = (await tx.query(
+      `INSERT INTO nft (owner_user_id, owner_wallet_id, parent_nft_id, bounty_id, submission_id, nft_type, contract_address)
+       VALUES ($1, $2, $3, $4, $5, 'BOUNTY_COMPLETION_CHILD', $6)
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [userId, walletId, parentId, bountyId, submissionId, contract],
+    )) as QueryResult<{ id: string }>;
+    if (!nft.rowCount) return null;
+    const nftId = nft.rows[0].id;
+    await tx.query(
+      `INSERT INTO nft_job (nft_id, job_type, idempotency_key)
+       VALUES ($1, 'MINT_CHILD', $2)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [nftId, `mint-child:${submissionId}`],
+    );
     return { nftId, parentId };
   }
 

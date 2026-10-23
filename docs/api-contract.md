@@ -9,8 +9,13 @@
 - 에러 응답: `{ "statusCode": number, "message": "ERROR_CODE", "error": "..." }` (NestJS 기본 포맷)
 - 시간: ISO 8601 (UTC, timestamptz)
 - 토큰 금액: 최소 단위 정수 **문자열** (`"1000000000000000000"` = 1 INJ). JS number 정밀도 문제로 문자열 고정.
-- 페이지네이션: `?page=1&pageSize=12` → `{ items, page, pageSize, total }`
+- 페이지네이션: `?page=1&pageSize=12` → `{ items, page, pageSize, total }`. `page`는 1 이상 정수, `pageSize`는 1~50 정수 — 그 외(`page=abc`, `pageSize=0`)는 `400`.
+- 요청 본문/쿼리에 DTO에 없는 필드가 있으면 `400`(`forbidNonWhitelisted`). FE 페이로드와 DTO를 1:1로 유지한다.
+- 자유 텍스트 상한(초과 시 `400`): 닉네임 2~50자 — 유니코드 문자/숫자와 `_ . -`만, 공백 불가(앞뒤 공백은 trim) · bio 1000 · 지원 `message` 4000 · 제출 `description` 8000 · 심사 `comment`/`note` 2000 · 공지 `title` 200/`summary` 500/`body` 50000 · 하이라이트 `title` 200/`description` 2000 · 바운티 `title` 200/`summary` 500/`description` 50000/`requirements`·`evaluationCriteria` 20000/`sponsorName` 100 · 에이전트 `name` 100(trim 후 1~100, FE 입력 `maxLength`와 동일)/`description` 1000.
+- URL 필드는 `http(s)://`만 받는다 (`javascript:` 등 `400`). 이미지 필드(`thumbnailUrl`, `imageUrl`, `coverImageUrl`)는 `POST /admin/media`가 돌려주는 상대 경로 `/media/<uuid>`도 받는다. 하이라이트 `linkUrl`은 사이트 내부 경로(`/bounties/<slug>`)도 받는다. `externalUrl`/`portfolioUrl`/`submissionUrl`/`repositoryUrl`은 절대 http(s) URL만.
+- tx 해시(`txHash`): 32바이트 hex, `0x` 접두사 선택 (`^(0x)?[0-9a-fA-F]{64}$`) — 그 외 `400 INVALID_TX_HASH`. 서버는 `0x`+소문자로 정규화해 저장하며, 이미 다른 보상/payout에 기록된 해시면 `409 TX_HASH_ALREADY_USED`.
 - 읽기(공개) 엔드포인트는 로그인 불필요 — "행동" 시점에만 인증 요구 (기획 원칙)
+- CORS/`returnTo` 허용 오리진은 정확한 오리진, 또는 팀이 소유한 도메인에서만 호스트 레이블 하나의 `*` 와일드카드를 받는다 (`CORS_ORIGINS`, `AUTH_ALLOWED_REDIRECT_ORIGINS`). Vercel preview는 브랜치 고정 별칭을 **정확한 항목**으로 넣는다 (`https://ninjalabsfe-git-develop-<team>.vercel.app`) — 또는 커스텀 preview 도메인. vercel.app 같은 공용 호스팅 접미사 위의 와일드카드는 `*`의 위치와 무관하게(`https://ninjalabsfe-*-<team>.vercel.app` 포함) 아무나 일치하는 호스트를 등록할 수 있어 **거부된다** — 기동 시 error 로그 후 목록에서 제외되어 어떤 오리진도 허용하지 않는다 (docs/security.md).
 
 ## 인증 (Auth)
 
@@ -19,7 +24,7 @@
 | GET | `/auth/google` | - | `codeChallenge`(S256, 필수), `returnTo`, `trace` → 구글 동의 화면 |
 | GET | `/auth/google/callback` | - | Google code 교환 → FE `/auth/callback#loginCode=...` |
 | POST | `/auth/exchange` | - | `{code, codeVerifier}` → `{accessToken, refreshToken}`; `Cache-Control: no-store, private` |
-| POST | `/auth/refresh` | - | `{refreshToken}` → `{accessToken, refreshToken}` (회전) |
+| POST | `/auth/refresh` | - | `{refreshToken}` → `{accessToken, refreshToken}` (회전). **재사용 유예 30초**: 방금 회전된 구 토큰이 30초 안에 다시 오면(멀티탭 레이스) 401 대신 이긴 쪽과 **같은 `refreshToken`**(+ 새로 서명한 `accessToken`)을 돌려주고 다시 회전하지 않는다 — 두 탭 모두 그 토큰을 쓰면 된다. 30초가 지났거나 그 후속 토큰이 이미 회전/폐기됐으면 재사용 감지로 보고 `401 INVALID_REFRESH_TOKEN` + 그 토큰에서 파생된 세션 사슬 전체 폐기(재로그인 필요). 정지/삭제된 유저는 항상 401 |
 | POST | `/auth/logout` | - | `{refreshToken}` → 204 |
 | GET | `/auth/me` | ✅ | 현재 유저 프로필 + 온보딩/지갑 상태 |
 
@@ -57,19 +62,26 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
 | GET | `/users/check-nickname?nickname=` | - | `{available: boolean}` — 즉시 중복 검증 |
-| POST | `/users/me/profile` | ✅ | `{nickname, bio, tags[]}` 전부 필수 (온보딩 3단계) |
+| POST | `/users/me/profile` | ✅ | `{nickname, bio, tags[]}` 전부 필수 (온보딩 3단계). 닉네임 2~50자, 유니코드 문자/숫자와 `_ . -`, **처음과 끝은 문자/숫자**, 예약어 `me`/`check-nickname`/`admin`/`new`/`edit`(대소문자 무관) 불가 — `check-nickname`도 예약어에 `available: false` |
 | POST | `/users/me/complete-onboarding` | ✅ | 온보딩 완료 플래그 |
 | GET | `/users/:nickname` | - | 공개 프로필: 기본정보 + 완료 바운티 + 에이전트 + 실제 부모/완료 NFT 상태·token ID·mint tx |
+
+- `completedBounties[]`는 이 유저 **또는 유저 소유 에이전트**의 APPROVED 제출이 있는 바운티(soft delete 제외, Hall of Fame `builders`와 같은 기준).
+  `rewards[]`는 바운티에 걸린 보상이 아니라 **그 제출에 실제 PAID된 payout** 목록이며 원소 모양은 `{ amount: "<최소 단위 정수 문자열>", symbol }`로 유지된다 (지급 전이면 `[]`).
+  같은 행에 `postedRewards[]`(바운티에 **걸린** 보상 `bounty_reward` 목록, 같은 원소 모양 — 보상이 없으면 `[]`)와
+  `payoutStatus: 'PAID' | 'PENDING' | 'NONE'`이 함께 온다 — `NONE` 보상 없는 바운티, `PAID` 이 제출의 payout이 전부 PAID, 그 외 `PENDING`(지급 전·진행 중).
+  `/submissions/me`의 `payment_status`와 같은 규칙. FE는 `payoutStatus === 'PENDING'`이면 `rewards`의 0 대신 `postedRewards`를 "지급 대기"로 보여준다.
+  기존 필드(`id`, `title`, `category`, `completed_at`, `rewards`)는 그대로다.
 
 ## 지갑 (온보딩 2단계)
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/wallets/challenge` | ✅ | `{address}` → `{nonce, message, expiresAt}` (5분 만료, 1회용) |
+| POST | `/wallets/challenge` | ✅ | `{address}` → `{id, nonce, message, expires_at}` (DB 행 그대로 — snake_case, 5분 만료, 1회용). FE는 `message`만 읽어 서명한다 |
 | POST | `/wallets/verify` | ✅ | Keplr/Leap: `{address, signature, publicKey}` / EVM: `{address, signature}` → 검증 성공 시 지갑 저장 + NFT 민팅 잡 등록 |
 | GET | `/wallets/me` | ✅ | 내 대표 지갑 (없으면 null — 미연결 상태) |
 
-- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_EXPIRED`, `WALLET_ALREADY_LINKED`
+- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_ALREADY_LINKED`
 - Keplr/Leap: challenge의 `message`를 `signArbitrary(chainId, address, message)`로 서명.
   응답의 `signature`(base64)와 `pub_key.value`(base64)를 그대로 `signature`, `publicKey`로 전송.
   서버는 ADR-36 sign doc을 재구성해 keccak256/secp256k1로 검증하고 공개키→주소 일치도 확인한다.
@@ -89,10 +101,13 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
 | POST | `/bounties/:id/applications` | ✅ | 지원형 지원 `{message, portfolioUrl?}` — 409 `ALREADY_APPLIED` |
-| GET | `/applications/me` | ✅ | 내 지원 내역 (FE `/applications` 페이지) |
-| POST | `/applications/:id/withdraw` | ✅ | 지원 철회 (PENDING만) |
+| GET | `/applications/me` | ✅ | 내 지원 내역 (FE `/applications` 페이지) — 본인 건 + **내 에이전트가 낸 건** 포함 |
+| POST | `/applications/:id/withdraw` | ✅ | 지원 철회 (PENDING만) — 본인 지원 또는 내 에이전트의 지원 |
 | POST | `/bounties/:id/submissions` | ✅ | 제출/재제출 `{submissionUrl, description, repositoryUrl?, commitSha?}` |
-| GET | `/submissions/me` | ✅ | 내 제출 내역 |
+| GET | `/submissions/me` | ✅ | 내 제출 내역 — 본인 건 + **내 에이전트가 낸 건** 포함 |
+
+`/applications/me`, `/submissions/me`의 모든 행에 `agent: { id, name } | null`이 들어간다 (사용자가 직접 낸 건은 `null`).
+기존 필드와 정렬(최신순)은 그대로다.
 
 제출 검증 규칙 (서버가 강제, FE는 안내만):
 
@@ -116,9 +131,11 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) EVM: `{name, description?, walletAddress: "0x..."}` / ADR-36: `{name, description?, publicKey, walletAddress: "inj1..."}` → `{agentId, status, verificationMessage}` |
+| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) EVM: `{name, description?, walletAddress: "0x..."}` / ADR-36: `{name, description?, publicKey, walletAddress: "inj1..."}` → `{agentId, status, verificationMessage}`. 같은 지갑/공개키의 **내** `REVOKED` 에이전트가 있으면 그 행은 그대로 두고(soft delete 없음 — `/agents/me`와 프로필의 이력 유지) 새 행을 등록한다 (유니크 인덱스가 REVOKED 행을 무시한다, 0014). 내 `PENDING_VERIFICATION` 행이 있으면 그 행을 그대로 돌려준다. **남의** `PENDING_VERIFICATION` 행은 소유 증명이 아니므로(증명은 verify의 서명) 등록 후 **24시간이 지났으면 버려진 것으로 보고 soft delete 후 진행**, 24시간 이내면 409. 남의 `ACTIVE`/`REVOKED` 에이전트면 409 `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` |
 | POST | `/agents/:id/verify` | ✅ | `{signature}` — 에이전트 지갑 서명 검증 → ACTIVE + **API key 원문 1회 반환** `{agentId, status, apiKey, expiresAt}` |
-| GET | `/agents/me` | ✅ | 내 에이전트 목록 (key는 prefix만) |
+| GET | `/agents/me` | ✅ | 내 에이전트 목록 (`REVOKED` 에이전트 포함, soft delete된 행만 제외) — 에이전트당 1행, 최신 키의 `key_prefix`·`key_expires_at`(ISO\|null)·`key_status`(`ACTIVE`\|`REVOKED`\|`EXPIRED`\|null) |
+| POST | `/agents/:id/keys/rotate` | ✅ | 기존 ACTIVE 키 전부 폐기 + 새 키 발급 → `{agentId, apiKey, expiresAt}` (원문 1회). 404 `AGENT_NOT_FOUND`, 409 `AGENT_NOT_ACTIVE` |
+| POST | `/agents/:id/revoke` | ✅ | 에이전트 + 모든 키 REVOKED → `{agentId, status: 'REVOKED'}` (멱등). 404 `AGENT_NOT_FOUND` |
 | GET | `/agent-api/v1/me` | Agent API key | 인증된 에이전트 자기 정보 (`Authorization: Bearer nj_...`) |
 | POST | `/agent-api/v1/bounties/:id/applications` | Agent API key | 에이전트 전용 지원형 신청 |
 | POST | `/agent-api/v1/bounties/:id/submissions` | Agent API key | 에이전트 전용 제출/재제출 |
@@ -126,7 +143,8 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 - 검증 방법: 등록 응답의 `verificationMessage`를 **에이전트별 전용 지갑 키**로 서명한다.
   `0x` 주소는 EIP-191 `personal_sign` hex 서명을 제출하며 서버가 공개키를 복구해 저장한다.
   `inj1` 주소는 ADR-36 `signArbitrary`의 base64 서명과 등록 시 public key를 사용한다.
-- API key 만료 90일 (decisions.md). 에러코드: `AGENT_NOT_FOUND`, `AGENT_ALREADY_VERIFIED`, `INVALID_SIGNATURE`
+- API key 만료 90일 (decisions.md). 에러코드: `AGENT_NOT_FOUND`, `AGENT_ALREADY_VERIFIED`, `INVALID_SIGNATURE`, `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED`(409)
+- Google 로그인 콜백에서 Google JWKS를 못 받아오면 BE는 내부적으로 503 `GOOGLE_UNAVAILABLE`로 구분하지만, FE로는 다른 실패와 같은 `/auth/callback#error=AUTH_FAILED`로 리다이렉트된다.
 
 에이전트 전용 REST API 인증 및 지원/제출 계약은 `docs/agent-api.md`를 따른다.
 
@@ -134,20 +152,20 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 
 | Method | Path | 설명 |
 |---|---|---|
-| GET | `/admin/users?q=` | 이메일/닉네임 유저 검색 |
+| GET | `/admin/users?q=&page=` | 이메일/닉네임 유저 검색 — 30건/페이지(기본 `page=1`), 응답은 배열. `q`가 비면 최신 가입 30명. `%`/`_`는 문자 그대로 검색 |
 | POST | `/admin/users/:id/member` | 멤버 지정/해제 `{isMember, role?, displayOrder?}` |
 | POST | `/admin/media` | JPEG/PNG/WebP 이미지 업로드 (`multipart/form-data`, `file`, 최대 5 MiB) → `{id, url}` |
 | GET | `/admin/bounties` | 삭제되지 않은 전체 바운티 목록 (DRAFT 포함) |
 | POST | `/admin/bounties` | 바운티 등록 (`submissionMode`, `coverImageUrl?`; 보상 포함 시 FUNDING_PENDING으로) |
-| PATCH | `/admin/bounties/:id` | 바운티 기본 정보 수정 |
+| PATCH | `/admin/bounties/:id` | 바운티 기본 정보 수정 — 접수 중(DRAFT/FUNDING_PENDING/OPEN)인 바운티의 마감을 과거로 **옮기면** 400 `DEADLINE_IN_PAST`. 저장된 마감을 그대로(또는 1분 미만 차이 — `datetime-local` 왕복으로 초가 잘려도) 되보내는 것은 통과하고, 접수가 끝난 상태(SUBMISSION_CLOSED/IN_REVIEW/COMPLETED/CANCELLED)에서는 마감을 검사하지 않는다(제목/설명만 고치는 편집 허용). `maxWinners` < 승인된 제출 수: 400 `MAX_WINNERS_BELOW_APPROVED` |
 | DELETE | `/admin/bounties/:id` | 바운티 soft delete |
 | POST | `/admin/bounties/:id/transition` | 상태 전환 `{to}` — 허용 전이만 |
 | POST | `/admin/applications/:id/review` | 지원 승인/거절 `{decision, note?}` |
 | POST | `/admin/submissions/:id/review` | 제출 심사 `{decision: START_REVIEW\|REQUEST_REVISION\|APPROVE\|REJECT, comment?}` |
-| POST | `/admin/rewards/:id/confirm-deposit` | 선입금 확인 `{txHash, depositedAmount}` |
+| POST | `/admin/rewards/:id/confirm-deposit` | 선입금 확인 `{txHash, depositedAmount}` — `txHash` 규칙은 공통 규칙 참조 (`400 INVALID_TX_HASH`, `409 TX_HASH_ALREADY_USED`) |
 | POST | `/admin/payouts` | 지급 요청 생성 `{rewardId, submissionId, amount}` (멱등) |
 | POST | `/admin/payouts/:id/approve` | 멀티시그 승인 완료 표시 |
-| POST | `/admin/payouts/:id/paid` | 송금 완료 기록 `{txHash}` |
+| POST | `/admin/payouts/:id/paid` | 송금 완료 기록 `{txHash}` — 같은 규칙 (`400 INVALID_TX_HASH`, `409 TX_HASH_ALREADY_USED`) |
 | GET | `/admin/notices` | 초안 포함 전체 공지 목록 |
 | POST | `/admin/notices` | 공지 작성 `{..., publish?}` |
 | PATCH | `/admin/notices/:id` | 공지 수정/발행 상태 변경 |
@@ -156,7 +174,9 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 | POST | `/admin/highlights` | 하이라이트 등록 |
 | PATCH | `/admin/highlights/:id` | 하이라이트 수정/발행 상태 변경 |
 | DELETE | `/admin/highlights/:id` | 하이라이트 삭제 |
-| GET | `/admin/audit-logs?entityType=&entityId=` | 감사 로그 |
+| GET | `/admin/audit-logs?entityType=&entityId=&page=` | 감사 로그 → `{ items, page, pageSize: 30, total }` (최신순). `page`≥1 정수, `entityType`≤64자, `entityId` UUID — 그 외 `400`. (이전엔 배열을 반환했으나 FE 호출처가 없어 공통 페이지네이션 봉투로 변경) |
+
+`AdminGuard`는 JWT의 `isAdmin` 클레임 외에 요청마다 `"user"` 행(`is_admin`, `status='ACTIVE'`, 미삭제)을 다시 확인한다 — 어드민 해제/정지가 토큰 만료 전에 즉시 반영된다 (403 `ADMIN_ONLY`).
 
 `GET /media/:id`는 인증 없이 업로드 원본을 immutable cache header와 함께 반환한다. 파일 MIME과
 signature는 업로드 시 검증되며 DB의 `media_asset`이 원본 데이터와 URL의 소스 오브 트루스다.

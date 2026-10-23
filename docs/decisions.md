@@ -30,7 +30,7 @@
 | 항목 | MVP 디폴트 | 근거 / 비고 |
 |---|---|---|
 | 부모 NFT 없는 유저에게 완료 NFT 발급? | **발급하되 attach 보류** — parent_nft_id NULL 허용, 부모 민팅 후 ATTACH_CHILD 잡 | 보상은 받았는데 증명이 없는 상황 방지 |
-| 부모 민팅 실패 자동 재시도 | **5회** (10분 간격), 이후 FAILED + 운영자 수동 재시도 | `nft-job.worker.ts` MAX_RETRY=5 |
+| 부모 민팅 실패 자동 재시도 | **총 5회 시도 (첫 시도 + 재시도 4회)**, 10분 간격. 5번째 실패에서 FAILED + 운영자 수동 재시도 | `nft-job.worker.ts` MAX_RETRY=5 (`retry_count + 1 >= MAX_RETRY`) — test-db `nft-worker.db-spec`가 4번째/5번째 경계를 검증 |
 | 완료 NFT 메타데이터 공개 범위 | 바운티명/완료일/스폰서명 공개, **보상액은 비공개** | 연봉 공개와 같은 민감성. 팀 논의 필요 표시 |
 | attach 실패 시 표시 상태 | `MINTED` (민팅됨, 연결 대기중) — FE에 "포트폴리오 연결 중" 표기 권장 | status 체계에 이미 반영 |
 

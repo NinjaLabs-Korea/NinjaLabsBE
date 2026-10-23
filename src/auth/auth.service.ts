@@ -454,15 +454,23 @@ export class AuthService {
     );
   }
 
-  /** access JWT 검증 — 서명·만료 외에 `typ === 'access'`와 문자열 `sub`를 요구한다 (state JWT 등 다른 용도 토큰 거부) */
+  /**
+   * access JWT 검증 — 서명·만료 외에 `typ === 'access'`와 문자열 `sub`를 요구한다 (state JWT 등 다른 용도 토큰 거부).
+   *
+   * 전환기 예외: 이 배포 이전에 발급된 access 토큰에는 `typ`이 없다. `typ`도 `p`(OAuth state 용도 클레임)도 없고 `sub`가 문자열인 토큰은
+   * 레거시 access 토큰으로 보고 받는다 — 배포 직후 로그인된 사용자가 access TTL(15분) 안에 전부 401을 맞지 않도록.
+   * state 토큰(`p: 'gstate'`, `sub` 없음)은 어느 경로로도 통과하지 못한다.
+   * TODO(remove after 2026-11-30): 레거시 분기(`legacy`)를 지우고 `typ === 'access'`만 남긴다 — 그때면 구 토큰은 모두 만료됐다.
+   */
   async verifyAccessToken(token: string): Promise<SessionUser> {
-    let payload: { sub?: unknown; adm?: unknown; typ?: unknown };
+    let payload: { sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown };
     try {
-      payload = await this.jwt.verifyAsync<{ sub?: unknown; adm?: unknown; typ?: unknown }>(token);
+      payload = await this.jwt.verifyAsync<{ sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown }>(token);
     } catch {
       throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
     }
-    if (payload.typ !== 'access' || typeof payload.sub !== 'string' || !payload.sub) {
+    const legacy = payload.typ === undefined && payload.p === undefined;
+    if ((payload.typ !== 'access' && !legacy) || typeof payload.sub !== 'string' || !payload.sub) {
       throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
     }
     return { userId: payload.sub, isAdmin: payload.adm === true };

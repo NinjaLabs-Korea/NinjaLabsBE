@@ -322,11 +322,20 @@ describe('AuthService access token type binding', () => {
     await expect(service.verifyAccessToken('t')).resolves.toEqual({ userId, isAdmin: true });
   });
 
+  // TODO(remove after 2026-11-30): together with the legacy branch in verifyAccessToken
+  it('accepts a legacy access token issued before typ was added (no typ, no p, string sub) during the transition', async () => {
+    const { service } = createService(jest.fn(async () => ({ sub: userId, adm: false })));
+    await expect(service.verifyAccessToken('t')).resolves.toEqual({ userId, isAdmin: false });
+  });
+
   it.each([
     ['an OAuth state JWT (p=gstate, no typ/sub)', { p: 'gstate', c: 'c'.repeat(43), r: 'https://app.example' }],
-    ['a token without typ', { sub: userId, adm: false }],
+    ['an OAuth state JWT that somehow carries a sub', { p: 'gstate', sub: userId, c: 'c'.repeat(43) }],
+    ['a legacy-shaped token with any p claim', { sub: userId, p: 'other' }],
     ['a token with a different typ', { sub: userId, typ: 'refresh' }],
+    ['a token with a null typ', { sub: userId, typ: null }],
     ['a token whose sub is not a string', { sub: 42, typ: 'access' }],
+    ['a legacy-shaped token whose sub is not a string', { sub: 42 }],
     ['a token with an empty sub', { sub: '', typ: 'access' }],
   ])('rejects %s even though the signature verifies', async (_label, payload) => {
     const { service } = createService(jest.fn(async () => payload));

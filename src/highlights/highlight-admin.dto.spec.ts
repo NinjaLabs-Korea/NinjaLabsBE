@@ -25,4 +25,13 @@ describe('highlight admin DTOs', () => {
     expect(await failedFields(UpdateHighlightDto, { linkUrl: 'javascript:alert(1)' })).toEqual(['linkUrl']);
     expect(await failedFields(UpdateHighlightDto, {})).toEqual([]);
   });
+
+  it('update uses 2x bounds (title 400, description 4000) and accepts legacy site-relative images but not a bare host or protocol-relative link', async () => {
+    expect(await failedFields(UpdateHighlightDto, { title: 't'.repeat(400), description: 'd'.repeat(4000) })).toEqual([]);
+    expect(await failedFields(UpdateHighlightDto, { title: 't'.repeat(401), description: 'd'.repeat(4001) })).toEqual(['description', 'title']);
+    const legacyRow = { ...valid, imageUrl: '/images/legacy.png', linkUrl: '/bounties/../x' };
+    expect(await failedFields(CreateHighlightDto, legacyRow)).toEqual(['imageUrl', 'linkUrl']);
+    expect(await failedFields(UpdateHighlightDto, legacyRow)).toEqual([]);
+    expect(await failedFields(UpdateHighlightDto, { imageUrl: 'cdn.example.com/legacy.png', linkUrl: '//evil.com' })).toEqual(['imageUrl', 'linkUrl']);
+  });
 });

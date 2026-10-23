@@ -51,8 +51,50 @@ BEGIN
   END IF;
 END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_bounty_reward_deposit_tx ON bounty_reward(deposit_tx_hash) WHERE deposit_tx_hash IS NOT NULL;
--- (payout.payout_tx_hash에는 유니크 인덱스를 두지 않는다 — 파일 머리말 참고. 과거에 만들어진 적이 있으면 정리한다.)
-DROP INDEX IF EXISTS uq_payout_tx;
+-- (payout.payout_tx_hash에는 유니크 인덱스를 두지 않는다 — 파일 머리말 참고.)
+
+-- ── 레거시 URL/제목 점검 — 정보성 RAISE NOTICE만, 실패시키지 않는다 ─────────
+-- 생성 DTO의 엄격 규칙(이미지: http(s) 또는 /media/<uuid>, 외부 링크: http(s), 하이라이트 링크: http(s) 또는 `/`로 시작하는 사이트 경로,
+-- 제목 200자)에 맞지 않는 기존 행 수를 테이블/컬럼별로 보고한다. 수정 DTO는 완화 규칙(IsSafeUrl, 상한 2배)이라 이 행들의 PATCH도 통과한다.
+-- 제목은 DTO의 MaxLength가 UTF-16 단위로 세므로 BMP 밖 문자(이모지)는 2로 센다 — 그 기준으로 200을 넘는 행을 센다 (VARCHAR(200)은 코드포인트 기준).
+DO $$
+DECLARE
+  n   BIGINT;
+  r   RECORD;
+BEGIN
+  FOR r IN
+    SELECT * FROM (VALUES
+      ('bounty',             'cover_image_url', 'image', 'deleted_at IS NULL'),
+      ('notice',             'thumbnail_url',   'image', 'deleted_at IS NULL'),
+      ('notice',             'external_url',    'http',  'deleted_at IS NULL'),
+      ('platform_highlight', 'image_url',       'image', 'true'),
+      ('platform_highlight', 'link_url',        'link',  'true')
+    ) AS t(tbl, col, kind, live)
+  LOOP
+    EXECUTE format(
+      'SELECT count(*) FROM %I WHERE %s AND %I IS NOT NULL AND NOT (%I ~* ''^https?://[^/?#\\]'' %s)',
+      r.tbl, r.live, r.col, r.col,
+      CASE r.kind
+        WHEN 'image' THEN format('OR %I ~* ''^/media/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$''', r.col)
+        WHEN 'link'  THEN format('OR %I ~ ''^/(?![/\\])''', r.col)
+        ELSE ''
+      END)
+      INTO n;
+    IF n > 0 THEN
+      RAISE NOTICE '0014: %.% — % row(s) would fail the strict create-DTO URL rule (PATCH still works via the lenient update rule; re-save with an http(s) or /media URL when convenient)', r.tbl, r.col, n;
+    END IF;
+  END LOOP;
+
+  FOR r IN SELECT * FROM (VALUES ('bounty', 'deleted_at IS NULL'), ('notice', 'deleted_at IS NULL'), ('platform_highlight', 'true')) AS t(tbl, live) LOOP
+    EXECUTE format(
+      'SELECT count(*) FROM %I WHERE %s AND char_length(title) + length(regexp_replace(title, ''[^\U00010000-\U0010FFFF]'', '''', ''g'')) > 200',
+      r.tbl, r.live)
+      INTO n;
+    IF n > 0 THEN
+      RAISE NOTICE '0014: %.title — % row(s) exceed 200 UTF-16 units (astral characters count twice in the DTO); the update DTO allows 400', r.tbl, n;
+    END IF;
+  END LOOP;
+END $$;
 
 -- ── 유저 이메일/구글 ID 유니크를 활성 행으로 한정 ───────────
 -- 0001: CREATE UNIQUE INDEX uq_user_google_id ON "user"(google_id);

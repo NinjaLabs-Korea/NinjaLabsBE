@@ -1,4 +1,4 @@
-import { isHttpUrl, isMediaPath, isSitePath } from './url';
+import { isHttpUrl, isMediaPath, isSafeUrl, isSitePath } from './url';
 
 describe('URL field validators', () => {
   const mediaPath = '/media/11111111-1111-4111-8111-111111111111';
@@ -82,5 +82,38 @@ describe('URL field validators', () => {
     ['too long', `/${'a'.repeat(2048)}`],
   ])('isSitePath rejects %s: %p', (_label, value) => {
     expect(isSitePath(value)).toBe(false);
+  });
+
+  describe('isSafeUrl (lenient rule for update DTOs — legacy rows must keep passing PATCH)', () => {
+    it.each([
+      'https://ninjalabs.xyz/bounties/1', 'http://localhost:3000/x', 'HTTPS://cdn.example/a.png?x=1#y',
+      mediaPath, '/uploads/legacy-cover.png', '/images/a b.png', '/bounties/../admin', '/x%2fy', '/', '/bounties?page=2',
+    ])('accepts %p', (value) => {
+      expect(isSafeUrl(value)).toBe(true);
+    });
+
+    it.each([
+      ['javascript scheme', 'javascript:alert(1)'],
+      ['javascript scheme, mixed case', 'JavaScript:alert(1)'],
+      ['data scheme', 'data:text/html,hi'],
+      ['vbscript scheme', 'vbscript:msgbox(1)'],
+      ['other scheme', 'ftp://ninjalabs.xyz/x'],
+      ['protocol-relative', '//evil.com/x'],
+      ['protocol-relative via backslash', '/\\evil.com/x'],
+      ['bare host (legacy, no scheme)', 'ninjalabs.xyz/x.png'],
+      ['bare host with www', 'www.example.com'],
+      ['userinfo', 'https://ninjalabs.xyz@evil.com/x'],
+      ['no host', 'https://'],
+      ['NUL', '/x\u0000y'],
+      ['newline', 'https://ninjalabs.xyz/\nx'],
+      ['tab before scheme', '\tjavascript:alert(1)'],
+      ['leading space', ' /uploads/x.png'],
+      ['empty', ''],
+      ['too long', `/${'a'.repeat(2048)}`],
+      ['not a string', 42],
+      ['null', null],
+    ])('rejects %s: %p', (_label, value) => {
+      expect(isSafeUrl(value)).toBe(false);
+    });
   });
 });

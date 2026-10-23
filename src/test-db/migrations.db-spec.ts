@@ -50,9 +50,10 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
     const userId = (await pool.query<{ id: string }>(
       `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step) VALUES ($1, $2, $3, '', 2) RETURNING id`,
       [`google-${id}`, `${id}@example.test`, `user_${id.slice(0, 8)}`])).rows[0].id;
+    // legacy cover image saved before the strict URL rule — 0014 must only *report* it (RAISE NOTICE), never fail on it
     bountyId = (await pool.query<{ id: string }>(
-      `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline)
-       VALUES ($1, 's', 't', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days') RETURNING id`, [userId])).rows[0].id;
+      `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, cover_image_url)
+       VALUES ($1, 's', 't', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', '/uploads/legacy-cover.png') RETURNING id`, [userId])).rows[0].id;
     const depositHash = `0x${'ab'.repeat(32)}`;
     rewardIds = [];
     for (const hash of [depositHash, depositHash.toUpperCase().replace('0X', '0x')]) {
@@ -114,8 +115,12 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
 
   it('after the operator removes the deposit duplicates the migration applies; duplicate payout hashes (multi-send) survive, normalized, with no unique index', async () => {
     await pool.query(`UPDATE bounty_reward SET deposit_tx_hash = NULL WHERE id = $1`, [rewardIds[1]]);
-    const { applied } = await applyMigrations(pool);
+    const log: string[] = [];
+    const { applied } = await applyMigrations(pool, { log: (line) => log.push(line) });
     expect(applied).toEqual([HARDENING]);
+    // the legacy cover image is reported, not rejected
+    expect(log).toContainEqual(expect.stringContaining('[notice] 0014: bounty.cover_image_url — 1 row(s) would fail the strict create-DTO URL rule'));
+    expect(log.some((line) => line.includes('notice.thumbnail_url'))).toBe(false);
     expect(await migrationNames()).toContain(HARDENING);
     expect(await indexNames()).toEqual(['uq_bounty_reward_deposit_tx']);
     const normalized = await pool.query<{ deposit_tx_hash: string | null }>(`SELECT deposit_tx_hash FROM bounty_reward WHERE id = $1`, [rewardIds[0]]);

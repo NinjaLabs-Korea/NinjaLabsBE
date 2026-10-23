@@ -49,7 +49,17 @@ describe('bounty admin DTOs', () => {
       ...validCreate, title: 't'.repeat(201), sponsorName: 's'.repeat(101), summary: 'u'.repeat(501),
       description: 'd'.repeat(50_001), requirements: 'r'.repeat(20_001), evaluationCriteria: 'e'.repeat(20_001),
     })).toEqual(['description', 'evaluationCriteria', 'requirements', 'sponsorName', 'summary', 'title']);
-    expect(await failedFields(UpdateBountyDto, { title: 't'.repeat(201) })).toEqual(['title']);
+  });
+
+  it('update bounds are 2x the create bounds so legacy rows re-sent unchanged by the FE still pass', async () => {
+    expect(await failedFields(UpdateBountyDto, {
+      title: 't'.repeat(400), sponsorName: 's'.repeat(200), summary: 'u'.repeat(1000),
+      description: 'd'.repeat(100_000), requirements: 'r'.repeat(40_000), evaluationCriteria: 'e'.repeat(40_000),
+    })).toEqual([]);
+    expect(await failedFields(UpdateBountyDto, {
+      title: 't'.repeat(401), sponsorName: 's'.repeat(201), summary: 'u'.repeat(1001),
+      description: 'd'.repeat(100_001), requirements: 'r'.repeat(40_001), evaluationCriteria: 'e'.repeat(40_001),
+    })).toEqual(['description', 'evaluationCriteria', 'requirements', 'sponsorName', 'summary', 'title']);
   });
 
   it('accepts coverImageUrl as the /media/<uuid> path returned by POST /admin/media or an http(s) URL, null clears it on update', async () => {
@@ -58,7 +68,17 @@ describe('bounty admin DTOs', () => {
     expect(await failedFields(CreateBountyDto, { ...validCreate, coverImageUrl: 'javascript:alert(1)' })).toEqual(['coverImageUrl']);
     expect(await failedFields(CreateBountyDto, { ...validCreate, coverImageUrl: '/uploads/x.png' })).toEqual(['coverImageUrl']);
     expect(await failedFields(UpdateBountyDto, { coverImageUrl: null })).toEqual([]);
-    expect(await failedFields(UpdateBountyDto, { coverImageUrl: 'ninjalabs.xyz/x.png' })).toEqual(['coverImageUrl']);
+  });
+
+  it('update accepts a legacy site-relative cover image (lenient IsSafeUrl) but still rejects unsafe schemes and a bare host', async () => {
+    // the FE PATCH re-sends every field — a legacy row saved before the strict rule must not make the whole edit fail
+    const legacyRow = { ...validCreate, coverImageUrl: '/uploads/legacy-cover.png', maxWinners: 1 };
+    expect(await failedFields(CreateBountyDto, legacyRow)).toEqual(['coverImageUrl']);
+    expect(await failedFields(UpdateBountyDto, legacyRow)).toEqual([]);
+    expect(await failedFields(UpdateBountyDto, { coverImageUrl: 'javascript:alert(1)' })).toEqual(['coverImageUrl']);
+    expect(await failedFields(UpdateBountyDto, { coverImageUrl: '//evil.com/x.png' })).toEqual(['coverImageUrl']);
+    // a legacy bare-host value (no scheme) is not a URL the browser can resolve either — the admin has to re-save it with https://
+    expect(await failedFields(UpdateBountyDto, { ...legacyRow, coverImageUrl: 'ninjalabs.xyz/x.png' })).toEqual(['coverImageUrl']);
   });
 
   it('validates the nested reward: token type, amount as integer base units, display symbol', async () => {

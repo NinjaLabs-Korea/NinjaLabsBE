@@ -6,6 +6,7 @@ import { buildMessage, isURL, ValidateBy, ValidationOptions } from 'class-valida
  *   IsHttpUrl()                외부 링크 (externalUrl, portfolioUrl, submissionUrl, repositoryUrl)
  *   IsHttpUrlOrMediaPath()     이미지 — `POST /admin/media`가 돌려주는 상대 경로 `/media/<uuid>`도 허용 (thumbnailUrl, imageUrl, coverImageUrl)
  *   IsHttpUrlOrSitePath()      사이트 내부 라우트 `/bounties/<slug>`도 허용 (highlight linkUrl). `//host` 같은 프로토콜 상대 URL은 거부
+ *   IsSafeUrl()                **수정 DTO 전용 완화 규칙** — http(s) 절대 URL 또는 `/` 하나로 시작하는 아무 경로 (레거시 행 보호, 아래 참고)
  *
  * 사이트 경로는 FE 라우터와 리버스 프록시가 서로 다르게 정규화할 수 있는 입력을 전부 거부한다:
  * 퍼센트 인코딩된 슬래시/역슬래시(`%2f`, `%5c`), 제어 문자, `..`로 디코딩되는 세그먼트(`%2e%2e`, `..;x` 같은 경로 파라미터 꼼수 포함).
@@ -92,6 +93,40 @@ export const IsHttpUrlOrSitePath = (options?: ValidationOptions) =>
       validator: {
         validate: (value) => isHttpUrl(value) || isSitePath(value),
         defaultMessage: buildMessage((prefix) => `${prefix}$property must be an http(s) URL or a site-relative path`, options),
+      },
+    },
+    options,
+  );
+
+/**
+ * 완화 규칙 — **수정(PATCH) DTO 전용**. FE는 수정 때 바뀌지 않은 필드도 저장된 값 그대로 되보내므로, 엄격 규칙(위 세 가지) 이전에
+ * 저장된 레거시 값(`/uploads/x.png` 같은 사이트 경로, `/bounties/x`를 이미지에 쓴 행 등)이 있으면 **모든** PATCH가 400이 된다.
+ * 그래서 수정은 "위험하지 않은 것"만 거른다: http(s) 절대 URL(호스트 필수, userinfo 불가) 또는 `/` 하나로 시작하는 사이트 경로.
+ * `javascript:`/`data:`/`vbscript:` 등 다른 스킴, 프로토콜 상대(`//host`, `/\host`), 제어 문자, 스킴 없는 bare host(`cdn.example/x.png`)는 거부.
+ * 생성 DTO는 계속 엄격 규칙을 쓴다. (0014가 엄격 규칙에 안 맞는 기존 행 수를 RAISE NOTICE로 보고한다.)
+ */
+const LENIENT_SITE_PATH = /^\/(?![/\\])/;
+
+export function isSafeUrl(value: unknown): boolean {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_URL_LENGTH) return false;
+  if (CONTROL_CHARS.test(value)) return false;
+  if (LENIENT_SITE_PATH.test(value)) return true;
+  if (!HTTP_URL_PREFIX.test(value)) return false; // 다른 스킴·프로토콜 상대·bare host는 전부 여기서 끝난다
+  try {
+    const url = new URL(value);
+    return Boolean(url.hostname) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+export const IsSafeUrl = (options?: ValidationOptions) =>
+  ValidateBy(
+    {
+      name: 'isSafeUrl',
+      validator: {
+        validate: (value) => isSafeUrl(value),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property must be an http(s) URL or a site-relative path starting with /`, options),
       },
     },
     options,

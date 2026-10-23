@@ -4,7 +4,7 @@ import {
 } from 'class-validator';
 import { TOKEN_AMOUNT } from '../../common/validation/token-amount';
 import { Trim } from '../../common/validation/trim';
-import { IsHttpUrlOrMediaPath } from '../../common/validation/url';
+import { IsHttpUrlOrMediaPath, IsSafeUrl } from '../../common/validation/url';
 import { RewardInput } from './reward-token.resolver';
 
 const CATEGORIES = ['DEV', 'DESIGN', 'CONTENT', 'OTHER'];
@@ -40,19 +40,22 @@ export class CreateBountyDto {
 }
 
 // 수정 요청은 보낸 필드만 검증한다. 다만 필수 텍스트를 빈 값("" 또는 공백)으로 바꾸는 것은 막는다.
+// 상한은 생성의 2배, URL은 완화 규칙(IsSafeUrl) — FE가 바뀌지 않은 필드도 저장값 그대로 되보내므로, 엄격 규칙 이전에 저장된 레거시 행이
+// 모든 PATCH를 400으로 만들지 않게 한다 (common/validation/url.ts). 제목류 컬럼은 VARCHAR(200)/(100)이라 DB가 최종 상한이다
+// (MaxLength는 UTF-16 단위, Postgres는 코드포인트 단위 — 이모지가 섞인 200자 제목은 MaxLength(200)에 걸리지만 DB에는 들어간다).
 export class UpdateBountyDto {
-  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(200) title?: string;
-  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(100) sponsorName?: string;
-  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(500) summary?: string;
-  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(50_000) description?: string;
-  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(20_000) requirements?: string;
-  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(20_000) evaluationCriteria?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(400) title?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(200) sponsorName?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(1000) summary?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(100_000) description?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(40_000) requirements?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(40_000) evaluationCriteria?: string;
   @IsOptional() @IsIn(CATEGORIES) category?: string;
   @IsOptional() @IsBoolean() applicationRequired?: boolean;
   @IsOptional() @IsIn(SUBMISSION_MODES) submissionMode?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) maxWinners?: number;
   @IsOptional() @IsDateString() submissionDeadline?: string;
   @IsOptional() @IsDateString() applicationDeadline?: string | null;
-  // null이면 커버 이미지 제거 (IsOptional은 null도 통과시킨다)
-  @IsOptional() @IsHttpUrlOrMediaPath() coverImageUrl?: string | null;
+  // null이면 커버 이미지 제거 (IsOptional은 null도 통과시킨다). 레거시 `/uploads/x.png` 같은 값도 통과 (IsSafeUrl)
+  @IsOptional() @IsSafeUrl() coverImageUrl?: string | null;
 }

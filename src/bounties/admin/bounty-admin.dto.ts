@@ -1,47 +1,58 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional, Min } from 'class-validator';
+import {
+  IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, ValidateNested,
+} from 'class-validator';
+import { TOKEN_AMOUNT } from '../../common/validation/token-amount';
 import { Trim } from '../../common/validation/trim';
+import { IsHttpUrlOrMediaPath } from '../../common/validation/url';
+import { RewardInput } from './reward-token.resolver';
 
 const CATEGORIES = ['DEV', 'DESIGN', 'CONTENT', 'OTHER'];
 const SUBMISSION_MODES = ['DIRECT', 'AGENT'];
+/** bounty_reward.token_type CHECK (0011) */
+const TOKEN_TYPES = ['NATIVE', 'CW20', 'ERC20'];
+
+/** 보상 입력 — RewardTokenResolver가 읽는 필드만 받는다. USDC는 서버가 env의 컨트랙트/체인으로 덮어쓴다 */
+export class RewardDto implements RewardInput {
+  @IsIn(TOKEN_TYPES) tokenType!: string;
+  @IsOptional() @IsString() @MaxLength(128) tokenDenom?: string;
+  @IsOptional() @IsString() @MaxLength(255) tokenContractAddress?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) evmChainId?: number;
+  @IsString() @Matches(/^[A-Za-z0-9]{1,12}$/) displaySymbol!: string;
+  @IsString() @Matches(TOKEN_AMOUNT) amount!: string;
+}
 
 export class CreateBountyDto {
-  @Trim() @IsNotEmpty() title!: string;
-  @Trim() @IsNotEmpty() sponsorName!: string;
-  @Trim() @IsNotEmpty() summary!: string;
-  @Trim() @IsNotEmpty() description!: string;
-  @Trim() @IsNotEmpty() requirements!: string;
-  @Trim() @IsNotEmpty() evaluationCriteria!: string;
+  @Trim() @IsString() @IsNotEmpty() @MaxLength(200) title!: string;
+  @Trim() @IsString() @IsNotEmpty() @MaxLength(100) sponsorName!: string;
+  @Trim() @IsString() @IsNotEmpty() @MaxLength(500) summary!: string;
+  @Trim() @IsString() @IsNotEmpty() @MaxLength(50_000) description!: string;
+  @Trim() @IsString() @IsNotEmpty() @MaxLength(20_000) requirements!: string;
+  @Trim() @IsString() @IsNotEmpty() @MaxLength(20_000) evaluationCriteria!: string;
   @IsIn(CATEGORIES) category!: string;
   @IsBoolean() applicationRequired!: boolean;
   @IsIn(SUBMISSION_MODES) submissionMode!: string;
   @Type(() => Number) @IsInt() @Min(1) maxWinners!: number;
   @IsDateString() submissionDeadline!: string;
-  @IsOptional() applicationDeadline?: string;
-  @IsOptional() coverImageUrl?: string;
-  @IsOptional() reward?: {
-    tokenType: string;
-    tokenDenom?: string;
-    tokenContractAddress?: string;
-    evmChainId?: number;
-    displaySymbol: string;
-    amount: string;
-  };
+  @IsOptional() @IsDateString() applicationDeadline?: string;
+  @IsOptional() @IsHttpUrlOrMediaPath() coverImageUrl?: string;
+  @IsOptional() @ValidateNested() @Type(() => RewardDto) reward?: RewardDto;
 }
 
 // 수정 요청은 보낸 필드만 검증한다. 다만 필수 텍스트를 빈 값("" 또는 공백)으로 바꾸는 것은 막는다.
 export class UpdateBountyDto {
-  @IsOptional() @Trim() @IsNotEmpty() title?: string;
-  @IsOptional() @Trim() @IsNotEmpty() sponsorName?: string;
-  @IsOptional() @Trim() @IsNotEmpty() summary?: string;
-  @IsOptional() @Trim() @IsNotEmpty() description?: string;
-  @IsOptional() @Trim() @IsNotEmpty() requirements?: string;
-  @IsOptional() @Trim() @IsNotEmpty() evaluationCriteria?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(200) title?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(100) sponsorName?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(500) summary?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(50_000) description?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(20_000) requirements?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(20_000) evaluationCriteria?: string;
   @IsOptional() @IsIn(CATEGORIES) category?: string;
   @IsOptional() @IsBoolean() applicationRequired?: boolean;
   @IsOptional() @IsIn(SUBMISSION_MODES) submissionMode?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) maxWinners?: number;
   @IsOptional() @IsDateString() submissionDeadline?: string;
-  @IsOptional() applicationDeadline?: string | null;
-  @IsOptional() coverImageUrl?: string | null;
+  @IsOptional() @IsDateString() applicationDeadline?: string | null;
+  // null이면 커버 이미지 제거 (IsOptional은 null도 통과시킨다)
+  @IsOptional() @IsHttpUrlOrMediaPath() coverImageUrl?: string | null;
 }

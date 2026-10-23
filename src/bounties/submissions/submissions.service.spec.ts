@@ -40,6 +40,22 @@ describe('SubmissionsService submission modes', () => {
   });
 });
 
+describe('SubmissionsService owner visibility of agent submissions', () => {
+  it('lists submissions made by the user or by agents the user owns, keeping existing fields', async () => {
+    const db = { query: jest.fn().mockResolvedValue({ rowCount: 0, rows: [] }), tx: jest.fn() };
+    await new SubmissionsService(db as unknown as DatabaseService).mySubmissions('user');
+    const [sql, params] = db.query.mock.calls[0];
+    expect(params).toEqual(['user']);
+    expect(sql).toContain("json_build_object('id', ag.id, 'name', ag.name) END AS agent");
+    expect(sql).toContain('LEFT JOIN agent ag ON ag.id = s.agent_id');
+    expect(sql).toContain('WHERE s.submitter_user_id = $1');
+    expect(sql).toContain('OR s.agent_id IN (SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)');
+    for (const kept of ['payment_status', 's.description', 'review.comment AS review_comment', 'b.category', 'ORDER BY s.submitted_at DESC']) {
+      expect(sql).toContain(kept);
+    }
+  });
+});
+
 describe('SubmissionsService revisions after closing intake', () => {
   const input = { submissionUrl: 'https://example.com/revised', description: 'updated' };
   function setup(status: string, existingStatus?: string) {

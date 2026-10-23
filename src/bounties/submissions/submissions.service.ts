@@ -140,11 +140,13 @@ export class SubmissionsService {
     });
   }
 
-  /** 내 제출 내역 */
+  /** 내 제출 내역 — 본인 제출 + 내가 소유한 에이전트의 제출. 각 행에 agent {id, name} | null */
   async mySubmissions(userId: string) {
     const r = await this.db.query(
       `SELECT s.id, s.status, s.current_revision_no, s.submitted_at, s.last_resubmitted_at,
               b.id AS bounty_id, b.title AS bounty_title, b.category,
+              CASE WHEN ag.id IS NULL THEN NULL
+                   ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent,
               CASE WHEN NOT EXISTS (SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = b.id) THEN 'NONE'
                 WHEN EXISTS (SELECT 1 FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
                   WHERE p.submission_id = s.id AND rw.bounty_id = b.id AND p.status = 'PAID')
@@ -154,9 +156,11 @@ export class SubmissionsService {
               review.comment AS review_comment
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id
+         LEFT JOIN agent ag ON ag.id = s.agent_id
          LEFT JOIN LATERAL (SELECT comment FROM submission_review WHERE submission_id = s.id
                             ORDER BY created_at DESC LIMIT 1) review ON true
         WHERE s.submitter_user_id = $1
+           OR s.agent_id IN (SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)
         ORDER BY s.submitted_at DESC`,
       [userId],
     );

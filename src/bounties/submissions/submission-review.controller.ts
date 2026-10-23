@@ -1,14 +1,14 @@
 import { Body, Controller, Param, ParseUUIDPipe, Post, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { AdminGuard } from '../../auth/admin.guard';
 import { AuthedRequest } from '../../auth/authed-request';
 import { SubmissionReviewService } from './submission-review.service';
 
-class ReviewSubmissionDto {
+export class ReviewSubmissionDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) revisionNo?: number;
   @IsIn(['START_REVIEW', 'REQUEST_REVISION', 'APPROVE', 'REJECT']) decision!: string;
-  @IsOptional() comment?: string;
+  @IsOptional() @IsString() @MaxLength(2000) comment?: string;
 }
 
 @Controller('admin/submissions')

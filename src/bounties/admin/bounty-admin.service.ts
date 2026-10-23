@@ -5,6 +5,9 @@ import { BountyStatusPolicy } from '../bounty-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { RewardInput, RewardTokenResolver } from './reward-token.resolver';
 
+/** 저장된 마감과 이 차이 미만이면 "바꾸지 않은 값" — FE의 datetime-local 입력은 초/밀리초를 보존하지 못한다 */
+const DEADLINE_UNCHANGED_TOLERANCE_MS = 60_000;
+
 /** 운영자용 바운티 관리 — 등록/수정/삭제/상태 전이와 운영 현황 조회.
  * 전이 가능 여부는 BountyStatusPolicy, 전이 차단 사유는 BountyLifecycleService가 결정한다. */
 @Injectable()
@@ -143,13 +146,45 @@ export class BountyAdminService {
     if (!fields.length) return { id: bountyId };
     const values = fields.map(([, value]) => value);
     const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
-    const r = await this.db.query(
-      `UPDATE bounty SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
-      [bountyId, ...values],
-    );
-    if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    await this.audit.record(adminId, 'BOUNTY_UPDATED', 'bounty', bountyId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      // 승인 수 확인과 max_winners 변경 사이에 APPROVE가 끼어들지 않도록 바운티 행을 잠근다 (심사도 같은 행을 잠근다)
+      const cur = await tx.query<{ id: string; status: string; submission_deadline: string | Date; application_deadline: string | Date | null }>(
+        `SELECT id, status, submission_deadline, application_deadline FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [bountyId],
+      );
+      if (!cur.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      // 마감은 과거로 "옮길" 수 없다 — FE는 수정 때마다 기존 마감을 그대로 되보내므로, 저장된 값과 같은 과거 마감은 통과시킨다
+      // (null로 지우는 것도 허용). FE가 datetime-local로 왕복시키며 초/밀리초를 잃으므로 1분 미만 차이는 "같은 값"으로 본다.
+      // 접수가 끝난 상태(SUBMISSION_CLOSED/IN_REVIEW/COMPLETED/CANCELLED)에서는 마감이 더 이상 의미 없으므로 검사하지 않는다 —
+      // 지난 마감을 그대로 둔 채 제목/설명만 고칠 수 있어야 한다.
+      if (BountyStatusPolicy.enforcesFutureDeadline(cur.rows[0].status)) {
+        for (const [deadline, stored] of [
+          [input.submissionDeadline, cur.rows[0].submission_deadline],
+          [input.applicationDeadline, cur.rows[0].application_deadline],
+        ] as const) {
+          if (!deadline) continue;
+          const next = new Date(deadline).getTime();
+          const unchanged = stored !== null && Math.abs(next - new Date(stored).getTime()) < DEADLINE_UNCHANGED_TOLERANCE_MS;
+          if (!unchanged && !(next > Date.now())) throw new BadRequestException('DEADLINE_IN_PAST');
+        }
+      }
+      if (input.maxWinners !== undefined) {
+        const approved = await tx.query<{ count: string }>(
+          `SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`,
+          [bountyId],
+        );
+        if (input.maxWinners < Number(approved.rows[0].count)) {
+          throw new BadRequestException('MAX_WINNERS_BELOW_APPROVED');
+        }
+      }
+      const r = await tx.query(
+        `UPDATE bounty SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
+        [bountyId, ...values],
+      );
+      if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      await this.audit.record(adminId, 'BOUNTY_UPDATED', 'bounty', bountyId, tx);
+      return r.rows[0];
+    });
   }
 
   async remove(bountyId: string, adminId: string) {

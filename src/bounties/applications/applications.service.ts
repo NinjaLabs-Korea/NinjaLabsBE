@@ -69,25 +69,31 @@ export class ApplicationsService {
     });
   }
 
-  /** 내 지원 내역 */
+  /** 내 지원 내역 — 본인이 낸 것 + 내가 소유한 에이전트가 낸 것. 각 행에 agent {id, name} | null */
   async myApplications(userId: string) {
     const r = await this.db.query(
       `SELECT a.id, a.status, a.message, a.applied_at, a.reviewed_at, a.review_note,
-              b.id AS bounty_id, b.title AS bounty_title, b.category
+              b.id AS bounty_id, b.title AS bounty_title, b.category,
+              CASE WHEN ag.id IS NULL THEN NULL
+                   ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent
          FROM bounty_application a
          JOIN bounty b ON b.id = a.bounty_id
+         LEFT JOIN agent ag ON ag.id = a.agent_id
         WHERE a.applicant_user_id = $1
+           OR a.agent_id IN (SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)
         ORDER BY a.applied_at DESC`,
       [userId],
     );
     return r.rows;
   }
 
-  /** 지원 철회 */
+  /** 지원 철회 — 본인 지원 또는 내 에이전트의 지원 (PENDING만) */
   async withdraw(applicationId: string, userId: string) {
     const r = await this.db.query(
       `UPDATE bounty_application SET status = 'WITHDRAWN'
-        WHERE id = $1 AND applicant_user_id = $2 AND status = 'PENDING'
+        WHERE id = $1 AND status = 'PENDING'
+          AND (applicant_user_id = $2
+               OR agent_id IN (SELECT id FROM agent WHERE owner_user_id = $2 AND deleted_at IS NULL))
         RETURNING id, status`,
       [applicationId, userId],
     );

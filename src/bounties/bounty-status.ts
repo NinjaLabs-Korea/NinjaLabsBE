@@ -26,6 +26,13 @@ const IN_PROGRESS: readonly string[] = [
 /** 더 이상 심사할 수 없는 종료 상태 */
 const FINISHED: readonly string[] = [BountyStatus.COMPLETED, BountyStatus.CANCELLED];
 
+/** 마감이 아직 앞날의 접수를 좌우하는 상태 — 여기서만 운영자 수정 시 마감을 과거로 옮기는 것을 거부한다 (bounty-admin.service.ts) */
+const DEADLINE_ENFORCED: readonly string[] = [
+  BountyStatus.DRAFT,
+  BountyStatus.FUNDING_PENDING,
+  BountyStatus.OPEN,
+];
+
 /** 운영자가 수동으로 일으킬 수 있는 상태 전이 */
 const TRANSITIONS: Readonly<Record<string, readonly BountyStatus[]>> = {
   [BountyStatus.DRAFT]: [BountyStatus.FUNDING_PENDING, BountyStatus.OPEN, BountyStatus.CANCELLED],
@@ -45,6 +52,7 @@ const TRANSITION_STAMP_COLUMN: Readonly<Partial<Record<BountyStatus, string>>> =
 export const BountyStatusPolicy = {
   isInProgress: (status: string): boolean => IN_PROGRESS.includes(status),
   isFinished: (status: string): boolean => FINISHED.includes(status),
+  enforcesFutureDeadline: (status: string): boolean => DEADLINE_ENFORCED.includes(status),
   canTransition: (from: string, to: string): boolean =>
     (TRANSITIONS[from] as readonly string[] | undefined)?.includes(to) ?? false,
   stampColumnFor: (to: string): string | undefined =>

@@ -20,6 +20,11 @@ describe('BountyStatusPolicy', () => {
       .filter(BountyStatusPolicy.isInProgress)).toEqual(['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW']);
   });
 
+  it('enforces a future deadline only while the bounty is still taking intake (DRAFT, FUNDING_PENDING, OPEN)', () => {
+    expect(['DRAFT', 'FUNDING_PENDING', 'OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED', 'CANCELLED']
+      .filter(BountyStatusPolicy.enforcesFutureDeadline)).toEqual(['DRAFT', 'FUNDING_PENDING', 'OPEN']);
+  });
+
   it('stamps the first-entry timestamp column for tracked transitions only', () => {
     expect(BountyStatusPolicy.stampColumnFor('OPEN')).toBe('opened_at');
     expect(BountyStatusPolicy.stampColumnFor('IN_REVIEW')).toBe('review_started_at');

@@ -160,7 +160,7 @@ export class SubmissionsService {
          LEFT JOIN LATERAL (SELECT comment FROM submission_review WHERE submission_id = s.id
                             ORDER BY created_at DESC LIMIT 1) review ON true
         WHERE s.submitter_user_id = $1
-           OR s.agent_id IN (SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)
+           OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))
         ORDER BY s.submitted_at DESC`,
       [userId],
     );

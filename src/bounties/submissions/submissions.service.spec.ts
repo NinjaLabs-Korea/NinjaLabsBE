@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { DatabaseService } from '../../common/database/database.service';
+import { withParamsCheck } from '../../test-support/expect-params-match';
 import { SubmissionsService } from './submissions.service';
 
 describe('SubmissionsService submission modes', () => {
@@ -7,9 +8,10 @@ describe('SubmissionsService submission modes', () => {
 
   function serviceWith(query: jest.Mock) {
     const db = {
-      tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query })),
+      query: jest.fn(),
+      tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) })),
     };
-    return new SubmissionsService(db as unknown as DatabaseService);
+    return { db, service: new SubmissionsService(db as unknown as DatabaseService) };
   }
 
   it('rejects a browser user on an agent-only bounty', async () => {
@@ -18,11 +20,11 @@ describe('SubmissionsService submission modes', () => {
       rows: [{ application_required: false, submission_mode: 'AGENT', status: 'OPEN', submission_deadline: '2099-01-01' }],
     });
 
-    await expect(serviceWith(query).submit('bounty', 'user', input))
+    await expect(serviceWith(query).service.submit('bounty', 'user', input))
       .rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('stores an authenticated agent and its revision', async () => {
+  it('stores an authenticated agent and its revision inside the transaction', async () => {
     const query = jest.fn()
       .mockResolvedValueOnce({
         rowCount: 1,
@@ -31,25 +33,30 @@ describe('SubmissionsService submission modes', () => {
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'submission' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+    const { db, service } = serviceWith(query);
 
-    await expect(serviceWith(query).submitAsAgent('bounty', 'agent', input)).resolves.toEqual({
+    await expect(service.submitAsAgent('bounty', 'agent', input)).resolves.toEqual({
       id: 'submission', revisionNo: 1, status: 'SUBMITTED',
     });
     expect(query.mock.calls[2][1].slice(0, 4)).toEqual(['bounty', null, null, 'agent']);
     expect(query.mock.calls[3][1].slice(-2)).toEqual([null, 'agent']);
+    expect(db.query).not.toHaveBeenCalled();
   });
 });
 
 describe('SubmissionsService owner visibility of agent submissions', () => {
   it('lists submissions made by the user or by agents the user owns, keeping existing fields', async () => {
-    const db = { query: jest.fn().mockResolvedValue({ rowCount: 0, rows: [] }), tx: jest.fn() };
+    const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
+    const db = { query: withParamsCheck(query), tx: jest.fn() };
     await new SubmissionsService(db as unknown as DatabaseService).mySubmissions('user');
-    const [sql, params] = db.query.mock.calls[0];
+    const [sql, params] = query.mock.calls[0];
     expect(params).toEqual(['user']);
     expect(sql).toContain("json_build_object('id', ag.id, 'name', ag.name) END AS agent");
     expect(sql).toContain('LEFT JOIN agent ag ON ag.id = s.agent_id');
     expect(sql).toContain('WHERE s.submitter_user_id = $1');
-    expect(sql).toContain('OR s.agent_id IN (SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)');
+    // `= ANY(ARRAY(subquery))` so the planner can BitmapOr idx_submission_submitter + idx_submission_agent_status (0015); `IN (subquery)` cannot
+    expect(sql).toContain('OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))');
+    expect(sql).not.toContain('agent_id IN (');
     for (const kept of ['payment_status', 's.description', 'review.comment AS review_comment', 'b.category', 'ORDER BY s.submitted_at DESC']) {
       expect(sql).toContain(kept);
     }
@@ -63,14 +70,16 @@ describe('SubmissionsService revisions after closing intake', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ application_required: false, submission_mode: 'DIRECT', status, submission_deadline: '2000-01-01' }] })
       .mockResolvedValueOnce({ rowCount: existingStatus ? 1 : 0, rows: existingStatus ? [{ id: 'sub', status: existingStatus, current_revision_no: 2 }] : [] })
       .mockResolvedValue({ rowCount: 1, rows: [] });
-    const db = { tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query }) };
-    return { service: new SubmissionsService(db as never), query };
+    const db = { query: jest.fn(), tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) }) };
+    return { service: new SubmissionsService(db as never), query, db };
   }
   it.each(['SUBMISSION_CLOSED', 'IN_REVIEW'])('allows requested revisions in %s after the deadline', async (status) => {
-    const { service, query } = setup(status, 'REVISION_REQUESTED');
+    const { service, query, db } = setup(status, 'REVISION_REQUESTED');
     await expect(service.submit('bounty', 'user', input)).resolves.toEqual({ id: 'sub', revisionNo: 3, status: 'RESUBMITTED' });
     expect(query.mock.calls[2][0]).toContain('UPDATE bounty_submission');
+    expect(query.mock.calls[2][1]).toEqual(['sub', input.submissionUrl, input.description, null, null, 3]);
     expect(query.mock.calls[3][0]).toContain('INSERT INTO submission_revision');
+    expect(db.query).not.toHaveBeenCalled();
   });
   it.each([undefined, 'SUBMITTED', 'APPROVED'])('rejects closed-intake submission with status %s', async (status) => {
     const { service } = setup('IN_REVIEW', status);

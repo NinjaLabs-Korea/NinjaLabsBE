@@ -94,11 +94,11 @@ export class UsersService {
                 ELSE 'PENDING' END AS "payoutStatus"
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id
-         LEFT JOIN agent ag ON ag.id = s.agent_id AND ag.deleted_at IS NULL
          LEFT JOIN payout p ON p.submission_id = s.id AND p.status = 'PAID'
          LEFT JOIN bounty_reward r ON r.id = p.bounty_reward_id
         WHERE s.status = 'APPROVED' AND b.deleted_at IS NULL
-          AND (s.submitter_user_id = $1 OR ag.owner_user_id = $1)
+          AND (s.submitter_user_id = $1
+               OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)))
         GROUP BY s.id, b.id
         ORDER BY s.reviewed_at DESC`,
       [u.id],

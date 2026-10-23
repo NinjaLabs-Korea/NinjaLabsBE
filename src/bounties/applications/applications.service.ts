@@ -80,7 +80,7 @@ export class ApplicationsService {
          JOIN bounty b ON b.id = a.bounty_id
          LEFT JOIN agent ag ON ag.id = a.agent_id
         WHERE a.applicant_user_id = $1
-           OR a.agent_id IN (SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)
+           OR a.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))
         ORDER BY a.applied_at DESC`,
       [userId],
     );
@@ -93,7 +93,7 @@ export class ApplicationsService {
       `UPDATE bounty_application SET status = 'WITHDRAWN'
         WHERE id = $1 AND status = 'PENDING'
           AND (applicant_user_id = $2
-               OR agent_id IN (SELECT id FROM agent WHERE owner_user_id = $2 AND deleted_at IS NULL))
+               OR agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $2 AND deleted_at IS NULL)))
         RETURNING id, status`,
       [applicationId, userId],
     );

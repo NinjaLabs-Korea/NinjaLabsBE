@@ -1,0 +1,36 @@
+import { ArgumentsHost, Catch, HttpException, Logger } from '@nestjs/common';
+import { BaseExceptionFilter } from '@nestjs/core';
+import { Request } from 'express';
+
+/**
+ * 전역 예외 필터 — 응답 포맷은 Nest 기본(BaseExceptionFilter)을 그대로 쓰고,
+ * 5xx만 method/path/status/에러명/메시지를 한 줄로 남긴다.
+ * 본문·헤더·쿼리스트링·토큰은 절대 기록하지 않는다 (onboarding-log 원칙과 동일).
+ *
+ * HttpException이 아니어도 body-parser 오류(`entity.parse.failed` 400, `entity.too.large` 413)처럼
+ * 숫자 status/statusCode(4xx)를 들고 오면 그 값으로 판단한다 — Nest 기본 필터도 그 상태로 응답하므로 에러 로그가 아니다.
+ */
+@Catch()
+export class HttpExceptionFilter extends BaseExceptionFilter {
+  private readonly logger = new Logger('HttpException');
+
+  /** 로그 판단용 상태 — HttpException은 getStatus(), 그 외는 4xx로 표시된 status/statusCode만 인정하고 나머지는 500 */
+  static statusOf(exception: unknown): number {
+    if (exception instanceof HttpException) return exception.getStatus();
+    const carried = exception as { status?: unknown; statusCode?: unknown } | null | undefined;
+    const code = typeof carried?.status === 'number' ? carried.status
+      : typeof carried?.statusCode === 'number' ? carried.statusCode : undefined;
+    return code !== undefined && code >= 400 && code < 500 ? code : 500;
+  }
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const status = HttpExceptionFilter.statusOf(exception);
+    if (status >= 500) {
+      const req = host.switchToHttp().getRequest<Request | undefined>();
+      const name = exception instanceof Error ? exception.name : 'UnknownError';
+      const message = exception instanceof Error ? exception.message : String(exception);
+      this.logger.error(`${req?.method ?? '-'} ${req?.path ?? req?.url ?? '-'} ${status} ${name}: ${message}`);
+    }
+    super.catch(exception, host);
+  }
+}

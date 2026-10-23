@@ -163,7 +163,7 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 | POST | `/admin/applications/:id/review` | 지원 승인/거절 `{decision, note?}` |
 | POST | `/admin/submissions/:id/review` | 제출 심사 `{decision: START_REVIEW\|REQUEST_REVISION\|APPROVE\|REJECT, comment?}` |
 | POST | `/admin/rewards/:id/confirm-deposit` | 선입금 확인 `{txHash, depositedAmount}` — `txHash` 규칙은 공통 규칙 참조 (`400 INVALID_TX_HASH`, `409 TX_HASH_ALREADY_USED`) |
-| POST | `/admin/payouts` | 지급 요청 생성 `{rewardId, submissionId, amount}` (멱등) |
+| POST | `/admin/payouts` | 지급 요청 생성 `{rewardId, submissionId, amount}` (멱등). 보상이 `PAID`여도 여유분(입금액 − 취소 아닌 payout 합계)이 남아 있으면 받고 보상은 `PARTIALLY_PAID`로 돌아간다(첫 지급 뒤 `maxWinners`를 올린 경우); 여유분이 없으면 `400 PAYOUT_EXCEEDS_AVAILABLE_REWARD` |
 | POST | `/admin/payouts/:id/approve` | 멀티시그 승인 완료 표시 |
 | POST | `/admin/payouts/:id/paid` | 송금 완료 기록 `{txHash}` — `400 INVALID_TX_HASH`; 다른 바운티의 PAID payout에 이미 쓰인 해시면 `409 TX_HASH_ALREADY_USED`, 같은 바운티의 다른 payout과 같은 해시는 허용(한 tx로 여러 수상자 송금) |
 | GET | `/admin/notices` | 초안 포함 전체 공지 목록 |
@@ -207,7 +207,7 @@ USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심
 - `GET /admin/bounties/:id/operations` (AdminGuard): returns `{ bounty, applications, submissions, rewards, payouts }`. Rows include IDs and raw status codes. Applications include actor names, messages, portfolio URLs and review notes. Submissions include actor names, work/repository URLs, commit SHA, current revision number and latest feedback. Reward and payout amounts are **integer strings in minimum token units**; payout rows include recipient wallet addresses. These fields are admin-only.
 - `POST /admin/submissions/:id/review` additionally accepts optional positive integer `revisionNo`. A mismatch returns `SUBMISSION_REVISION_CHANGED`. Finalized submissions cannot be reviewed again; submissions waiting for revisions may only be rejected with feedback. `REQUEST_REVISION` requires nonblank `comment`.
 - Opening a bounty with an unconfirmed reward returns `REWARD_NOT_FUNDED`. Deposit confirmation requires a positive integer amount covering the reward.
-- Payout requests require a funded reward and an approved submission from that same bounty with a primary linked wallet. Allocations are serialized by locking the reward; pending and paid allocations cannot exceed the confirmed deposit. Duplicate submission/reward pairs return `PAYOUT_ALREADY_REQUESTED`.
+- Payout requests require a funded reward (`FUNDED`, `PARTIALLY_PAID`, or `PAID` with headroom left — e.g. after `maxWinners` was raised past the first payout) and an approved submission from that same bounty with a primary linked wallet. Allocations are serialized by locking the reward; pending and paid allocations cannot exceed the confirmed deposit (`PAYOUT_EXCEEDS_AVAILABLE_REWARD`). Duplicate submission/reward pairs return `PAYOUT_ALREADY_REQUESTED`. The reward status is recomputed after every request and every paid payout: `PAID` only when no payout is still open and the pool or the winner count is exhausted, otherwise `PARTIALLY_PAID` (a `PAID` reward drops back to `PARTIALLY_PAID` when a new payout is requested); nothing changes before the first paid payout.
 - Requested revisions can be resubmitted in `OPEN`, `SUBMISSION_CLOSED` or `IN_REVIEW`, including after the deadline. Other new/updated submissions require open intake (and the existing deadline rules).
 - `GET /submissions/me` now includes bounty `category`, submission `description`, and latest `review_comment` for participant feedback.
 

@@ -210,4 +210,46 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       `SELECT count(*)::int AS n FROM nft_job j JOIN nft n ON n.id = j.nft_id WHERE n.bounty_id = $1 AND j.job_type = 'MINT_CHILD'`, [bountyId]);
     expect(childJobs.rows[0].n).toBe(2);
   });
+
+  async function approvedWinner(bountyId: string, index: number): Promise<string> {
+    const builderId = await createUser(db);
+    await createPrimaryWallet(db, builderId);
+    const application = await applications.apply(bountyId, builderId, 'hi');
+    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+    const submission = await submissions.submit(bountyId, builderId, { submissionUrl: `https://x.test/w${index}`, description: 'd' });
+    await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
+    return submission.id;
+  }
+
+  it('a PAID reward accepts another payout while headroom remains after the admin raises maxWinners, and drops back to PARTIALLY_PAID until it is paid', async () => {
+    const { bountyId, rewardId } = await createFundedBounty({ maxWinners: 1, amount: '1000' });
+    await rewards.confirmDeposit(rewardId, fakeTxHash(), '1000', adminId);
+    await bounties.transition(bountyId, 'OPEN', adminId);
+
+    const firstSubmission = await approvedWinner(bountyId, 1);
+    const first = await rewards.requestPayout(rewardId, firstSubmission, '400', adminId);
+    expect((await rewardRow(rewardId)).status).toBe('FUNDED'); // a request alone is not a partial payment
+    await rewards.markApproved(first.id, adminId);
+    await rewards.markPaid(first.id, fakeTxHash(), adminId);
+    expect((await rewardRow(rewardId)).status).toBe('PAID'); // 1 winner paid of max_winners 1, even though 600 is left
+
+    // the admin decides on a second winner: raise maxWinners, approve another submission
+    await bounties.update(bountyId, { maxWinners: 2 }, adminId);
+    const secondSubmission = await approvedWinner(bountyId, 2);
+
+    await expect(rewards.requestPayout(rewardId, secondSubmission, '601', adminId)).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' });
+    const second = await rewards.requestPayout(rewardId, secondSubmission, '600', adminId);
+    expect(second.status).toBe('REQUESTED');
+    expect((await rewardRow(rewardId)).status).toBe('PARTIALLY_PAID'); // back from PAID: a payout is open again
+
+    await rewards.markApproved(second.id, adminId);
+    await rewards.markPaid(second.id, fakeTxHash(), adminId);
+    expect((await rewardRow(rewardId)).status).toBe('PAID');
+
+    // pool exhausted: a third winner cannot be paid even if maxWinners were raised again
+    await bounties.update(bountyId, { maxWinners: 3 }, adminId);
+    const thirdSubmission = await approvedWinner(bountyId, 3);
+    await expect(rewards.requestPayout(rewardId, thirdSubmission, '1', adminId)).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' });
+    expect((await rewardRow(rewardId)).status).toBe('PAID');
+  });
 });

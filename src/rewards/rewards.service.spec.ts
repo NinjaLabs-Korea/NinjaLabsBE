@@ -116,11 +116,13 @@ describe('RewardsService markPaid', () => {
     expect(query.mock.calls[recompute][1]).toEqual(['reward']);
 
     const sql = sqls[recompute];
-    // Derived from current state (idempotent), only ever moves FUNDED/PARTIALLY_PAID forward.
-    expect(sql).toContain("p.paid_count >= b.max_winners OR p.paid_amount >= rw.deposited_amount THEN 'PAID'");
+    // Derived from current state (idempotent): PAID only when nothing is still open and the pool or the winner count is exhausted;
+    // a PAID reward drops back to PARTIALLY_PAID once a new payout is requested; nothing moves before the first PAID payout.
+    expect(sql).toContain("p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= rw.deposited_amount) THEN 'PAID'");
     expect(sql).toContain("ELSE 'PARTIALLY_PAID'");
-    expect(sql).toContain("WHERE bounty_reward_id = $1 AND status = 'PAID'");
-    expect(sql).toContain("rw.status IN ('FUNDED', 'PARTIALLY_PAID')");
+    expect(sql).toContain("count(*) FILTER (WHERE status NOT IN ('PAID', 'CANCELLED'))::int AS open_count");
+    expect(sql).toContain("rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')");
+    expect(sql).toContain('AND p.paid_count > 0');
   });
 });
 
@@ -191,10 +193,10 @@ describe('RewardsService markApproved', () => {
 });
 
 describe('RewardsService payout allocation', () => {
-  function setup(options: { funded?: boolean; wallet?: boolean; duplicate?: boolean; allocated?: string } = {}) {
+  function setup(options: { funded?: boolean; rewardStatus?: string; wallet?: boolean; duplicate?: boolean; allocated?: string } = {}) {
     const query = jest.fn()
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'IN_REVIEW' }] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ bounty_id: 'bounty', status: options.funded === false ? 'DEPOSIT_PENDING' : 'FUNDED', deposited_amount: '10000000' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ bounty_id: 'bounty', status: options.funded === false ? 'DEPOSIT_PENDING' : options.rewardStatus ?? 'FUNDED', deposited_amount: '10000000' }] })
       .mockResolvedValueOnce({ rowCount: options.wallet === false ? 0 : 1, rows: [{ wallet_id: 'wallet' }] })
       .mockResolvedValueOnce({ rowCount: options.duplicate ? 1 : 0, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ amount: options.allocated ?? '0' }] })
@@ -204,12 +206,31 @@ describe('RewardsService payout allocation', () => {
     const service = new RewardsService(db as never, {} as never, new AuditService(db as never));
     return { service, query };
   }
-  it('creates a payout against the matching bounty and audits inside the transaction', async () => {
+  it('creates a payout against the matching bounty, recomputes the reward status and audits inside the transaction', async () => {
     const { service, query } = setup();
     await expect(service.requestPayout('reward', 'sub', '5000000', 'admin')).resolves.toMatchObject({ status: 'REQUESTED' });
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE');
     expect(query.mock.calls[2]).toEqual([expect.stringContaining('s.bounty_id = $2'), ['sub', 'bounty']]);
-    expect(query.mock.calls[6][0]).toContain('INSERT INTO audit_log');
+    const sqls = query.mock.calls.map(([sql]) => sql as string);
+    const insert = sqls.findIndex((sql) => sql.includes('INSERT INTO payout'));
+    const recompute = sqls.findIndex((sql) => sql.includes('UPDATE bounty_reward rw'));
+    const audit = sqls.findIndex((sql) => sql.includes('INSERT INTO audit_log'));
+    expect(insert).toBeGreaterThan(0);
+    expect(recompute).toBeGreaterThan(insert);
+    expect(audit).toBeGreaterThan(recompute);
+    expect(query.mock.calls[recompute][1]).toEqual(['reward']);
+  });
+
+  it('accepts a payout against a PAID reward while headroom remains (maxWinners raised after the first payout) and recomputes the status', async () => {
+    const { service, query } = setup({ rewardStatus: 'PAID', allocated: '4000000' });
+    await expect(service.requestPayout('reward', 'sub', '5000000', 'admin')).resolves.toMatchObject({ status: 'REQUESTED' });
+    expect(query.mock.calls.some(([sql]) => (sql as string).includes('UPDATE bounty_reward rw'))).toBe(true);
+  });
+
+  it('rejects a payout against a PAID reward with no headroom left', async () => {
+    const { service, query } = setup({ rewardStatus: 'PAID', allocated: '10000000' });
+    await expect(service.requestPayout('reward', 'sub', '1', 'admin')).rejects.toThrow('PAYOUT_EXCEEDS_AVAILABLE_REWARD');
+    expect(query.mock.calls.some(([sql]) => (sql as string).includes('INSERT INTO payout'))).toBe(false);
   });
   it.each([
     [{ funded: false }, 'REWARD_NOT_FUNDED'],

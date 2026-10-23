@@ -47,7 +47,11 @@ export class RewardsService {
     }));
   }
 
-  /** 운영자: 승인된 제출물에 대한 지급 요청 생성 (멱등) */
+  /**
+   * 운영자: 승인된 제출물에 대한 지급 요청 생성 (멱등).
+   * 보상이 이미 PAID여도 여유분(deposited_amount − 취소 아닌 payout 합계)이 남아 있으면 받는다 — 첫 지급 뒤 운영자가 maxWinners를 올려
+   * 수상자를 추가한 경우. 그때는 삽입 후 상태를 재계산해 PARTIALLY_PAID로 되돌린다 (advanceRewardStatus). 여유분이 없으면 400 PAYOUT_EXCEEDS_AVAILABLE_REWARD.
+   */
   async requestPayout(rewardId: string, submissionId: string, amount: string, adminId: string) {
     this.validateAmount(amount);
     return this.db.tx(async (tx) => {
@@ -60,7 +64,7 @@ export class RewardsService {
         `SELECT bounty_id, status, deposited_amount::text FROM bounty_reward WHERE id = $1 FOR UPDATE`,
         [rewardId],
       );
-      if (!reward.rowCount || !['FUNDED', 'PARTIALLY_PAID'].includes(reward.rows[0].status)) {
+      if (!reward.rowCount || !['FUNDED', 'PARTIALLY_PAID', 'PAID'].includes(reward.rows[0].status)) {
         throw new BadRequestException('REWARD_NOT_FUNDED');
       }
       const wallet = await tx.query<{ wallet_id: string }>(
@@ -90,6 +94,8 @@ export class RewardsService {
         [rewardId, submissionId, wallet.rows[0].wallet_id, amount,
          `submission:${submissionId}:reward:${rewardId}`, adminId],
       );
+      // 새 payout이 아직 지급 전이므로 PAID였던 보상은 PARTIALLY_PAID로 돌아간다 (FUNDED는 그대로 — 지급된 것이 없다)
+      await this.advanceRewardStatus(tx, rewardId);
       await this.audit.record(adminId, 'PAYOUT_REQUESTED', 'payout', r.rows[0].id, tx);
       return r.rows[0];
     });
@@ -191,26 +197,29 @@ export class RewardsService {
   }
 
   /**
-   * payout PAID 이후 보상 상태 재계산 (markPaid 트랜잭션 안에서 호출)
-   *   PAID            — 더 지급할 수 있는 payout이 없을 때: PAID payout 수가 max_winners에 도달했거나
-   *                     PAID 합계가 입금액을 모두 소진한 경우
-   *   PARTIALLY_PAID  — 그 외 (아직 수상자/잔액이 남아 있어 requestPayout이 더 들어올 수 있음)
+   * payout 변동 뒤 보상 상태 재계산 (markPaid / requestPayout 트랜잭션 안에서 호출). 지급된 payout이 하나라도 있어야 움직인다.
+   *   PAID            — 열린 payout(PAID/CANCELLED 아님)이 없고, PAID 수가 max_winners에 도달했거나 PAID 합계가 입금액을 소진한 경우
+   *   PARTIALLY_PAID  — 그 외: 잔액/수상자가 남았거나, 아직 지급 전인 payout이 있다 (PAID였다가 maxWinners 인상 후 payout이 추가된 경우 포함)
+   *   FUNDED          — 지급된 것이 없으면 건드리지 않는다 (요청만 있는 상태는 "부분 지급"이 아니다)
    * 현재 상태에서 다시 계산하므로 몇 번 호출해도 결과가 같다.
    */
   private async advanceRewardStatus(tx: QueryRunner, rewardId: string) {
-    // 동시 markPaid가 같은 reward를 갱신할 때 재계산이 상대 커밋을 본 뒤 실행되도록 먼저 잠근다.
+    // 동시 markPaid/requestPayout이 같은 reward를 갱신할 때 재계산이 상대 커밋을 본 뒤 실행되도록 먼저 잠근다.
     await tx.query(`SELECT id FROM bounty_reward WHERE id = $1 FOR UPDATE`, [rewardId]);
     await tx.query(
       `UPDATE bounty_reward rw
           SET status = CASE
-                WHEN p.paid_count >= b.max_winners OR p.paid_amount >= rw.deposited_amount THEN 'PAID'
+                WHEN p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= rw.deposited_amount) THEN 'PAID'
                 ELSE 'PARTIALLY_PAID'
               END
          FROM bounty b,
-              (SELECT count(*)::int AS paid_count, COALESCE(SUM(amount), 0) AS paid_amount
-                 FROM payout WHERE bounty_reward_id = $1 AND status = 'PAID') p
+              (SELECT count(*) FILTER (WHERE status = 'PAID')::int AS paid_count,
+                      count(*) FILTER (WHERE status NOT IN ('PAID', 'CANCELLED'))::int AS open_count,
+                      COALESCE(SUM(amount) FILTER (WHERE status = 'PAID'), 0) AS paid_amount
+                 FROM payout WHERE bounty_reward_id = $1) p
         WHERE rw.id = $1 AND b.id = rw.bounty_id
-          AND rw.status IN ('FUNDED', 'PARTIALLY_PAID')`,
+          AND rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')
+          AND p.paid_count > 0`,
       [rewardId],
     );
   }

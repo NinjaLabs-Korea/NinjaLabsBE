@@ -1,7 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
-import { DatabaseService } from '../common/database/database.service';
+import { DatabaseService, QueryRunner } from '../common/database/database.service';
+import { isUniqueViolation } from '../common/database/pg-errors';
+import { TOKEN_AMOUNT } from '../common/validation/token-amount';
+import { normalizeTxHash } from '../common/validation/tx-hash';
 import { NftsService } from '../nfts/nfts.service';
 
 /**
@@ -20,19 +23,26 @@ export class RewardsService {
     private readonly audit: AuditService,
   ) {}
 
-  /** 운영자: 선입금 확인 처리 → 보상 FUNDED, 바운티 OPEN 전환은 admin 쪽에서 */
+  /**
+   * 운영자: 선입금 확인 처리 → 보상 FUNDED, 바운티 OPEN 전환은 admin 쪽에서.
+   * tx 해시는 32바이트 hex만 받아 `0x`+소문자로 정규화한다 (400 INVALID_TX_HASH). 같은 해시를 두 보상에 쓰면
+   * uq_bounty_reward_deposit_tx(0014)가 막고 409 TX_HASH_ALREADY_USED — 한 입금을 두 번 인정하지 않는다.
+   */
   async confirmDeposit(rewardId: string, txHash: string, depositedAmount: string, adminId: string) {
     this.validateAmount(depositedAmount);
-    const r = await this.db.query(
-      `UPDATE bounty_reward
-          SET status = 'FUNDED', deposit_tx_hash = $2, deposited_amount = $3, deposited_at = now()
-        WHERE id = $1 AND status = 'DEPOSIT_PENDING' AND $3::numeric >= amount
-        RETURNING id, bounty_id, status`,
-      [rewardId, txHash, depositedAmount],
-    );
-    if (!r.rowCount) throw new NotFoundException('REWARD_NOT_FOUND_OR_NOT_PENDING');
-    await this.audit.record(adminId, 'REWARD_DEPOSIT_CONFIRMED', 'bounty_reward', rewardId);
-    return r.rows[0];
+    const hash = normalizeTxHash(txHash);
+    return this.rejectReusedTxHash(() => this.db.tx(async (tx) => {
+      const r = await tx.query(
+        `UPDATE bounty_reward
+            SET status = 'FUNDED', deposit_tx_hash = $2, deposited_amount = $3::numeric, deposited_at = now()
+          WHERE id = $1 AND status = 'DEPOSIT_PENDING' AND $3::numeric >= amount
+          RETURNING id, bounty_id, status`,
+        [rewardId, hash, depositedAmount],
+      );
+      if (!r.rowCount) throw new NotFoundException('REWARD_NOT_FOUND_OR_NOT_PENDING');
+      await this.audit.record(adminId, 'REWARD_DEPOSIT_CONFIRMED', 'bounty_reward', rewardId, tx);
+      return r.rows[0];
+    }));
   }
 
   /** 운영자: 승인된 제출물에 대한 지급 요청 생성 (멱등) */
@@ -83,33 +93,37 @@ export class RewardsService {
     });
   }
 
-  /** 운영자: 멀티시그 승인 완료 표시 */
+  /** 운영자: 멀티시그 승인 완료 표시 — 상태 전이와 감사 로그를 같은 트랜잭션에 */
   async markApproved(payoutId: string, adminId: string) {
-    const r = await this.db.query(
-      `UPDATE payout SET status = 'APPROVED', approved_by = $2, approved_at = now()
-        WHERE id = $1 AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL')
-        RETURNING id, status`,
-      [payoutId, adminId],
-    );
-    if (!r.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
-    await this.audit.record(adminId, 'PAYOUT_APPROVED', 'payout', payoutId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const r = await tx.query(
+        `UPDATE payout SET status = 'APPROVED', approved_by = $2, approved_at = now()
+          WHERE id = $1 AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL')
+          RETURNING id, status`,
+        [payoutId, adminId],
+      );
+      if (!r.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
+      await this.audit.record(adminId, 'PAYOUT_APPROVED', 'payout', payoutId, tx);
+      return r.rows[0];
+    });
   }
 
-  /** 운영자: 송금 완료 기록 (tx hash) */
+  /** 운영자: 송금 완료 기록 (tx hash — confirmDeposit과 같은 정규화, uq_payout_tx로 한 송금을 두 payout에 쓰지 못한다) */
   async markPaid(payoutId: string, txHash: string, adminId: string) {
-    return this.db.tx(async (tx) => {
+    const hash = normalizeTxHash(txHash);
+    return this.rejectReusedTxHash(() => this.db.tx(async (tx) => {
       const payout = await tx.query<{
         id: string;
         status: string;
         payout_tx_hash: string;
         submission_id: string;
         recipient_wallet_id: string;
+        bounty_reward_id: string;
       }>(
         `UPDATE payout SET status = 'PAID', payout_tx_hash = $2, paid_at = now()
           WHERE id = $1 AND status IN ('APPROVED', 'BROADCASTING')
-          RETURNING id, status, payout_tx_hash, submission_id, recipient_wallet_id`,
-        [payoutId, txHash],
+          RETURNING id, status, payout_tx_hash, submission_id, recipient_wallet_id, bounty_reward_id`,
+        [payoutId, hash],
       );
       if (!payout.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
 
@@ -132,13 +146,49 @@ export class RewardsService {
         submission.rows[0].bounty_id,
         payout.rows[0].submission_id,
       );
+      await this.advanceRewardStatus(tx, payout.rows[0].bounty_reward_id);
       await this.audit.record(adminId, 'PAYOUT_PAID', 'payout', payoutId, tx);
       return payout.rows[0];
-    });
+    }));
+  }
+
+  /** uq_bounty_reward_deposit_tx / uq_payout_tx(0014) 충돌 → 409. 그 외 유니크 충돌은 이 두 흐름에 없다 */
+  private async rejectReusedTxHash<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (err: unknown) {
+      if (isUniqueViolation(err)) throw new ConflictException('TX_HASH_ALREADY_USED');
+      throw err;
+    }
+  }
+
+  /**
+   * payout PAID 이후 보상 상태 재계산 (markPaid 트랜잭션 안에서 호출)
+   *   PAID            — 더 지급할 수 있는 payout이 없을 때: PAID payout 수가 max_winners에 도달했거나
+   *                     PAID 합계가 입금액을 모두 소진한 경우
+   *   PARTIALLY_PAID  — 그 외 (아직 수상자/잔액이 남아 있어 requestPayout이 더 들어올 수 있음)
+   * 현재 상태에서 다시 계산하므로 몇 번 호출해도 결과가 같다.
+   */
+  private async advanceRewardStatus(tx: QueryRunner, rewardId: string) {
+    // 동시 markPaid가 같은 reward를 갱신할 때 재계산이 상대 커밋을 본 뒤 실행되도록 먼저 잠근다.
+    await tx.query(`SELECT id FROM bounty_reward WHERE id = $1 FOR UPDATE`, [rewardId]);
+    await tx.query(
+      `UPDATE bounty_reward rw
+          SET status = CASE
+                WHEN p.paid_count >= b.max_winners OR p.paid_amount >= rw.deposited_amount THEN 'PAID'
+                ELSE 'PARTIALLY_PAID'
+              END
+         FROM bounty b,
+              (SELECT count(*)::int AS paid_count, COALESCE(SUM(amount), 0) AS paid_amount
+                 FROM payout WHERE bounty_reward_id = $1 AND status = 'PAID') p
+        WHERE rw.id = $1 AND b.id = rw.bounty_id
+          AND rw.status IN ('FUNDED', 'PARTIALLY_PAID')`,
+      [rewardId],
+    );
   }
 
   private validateAmount(amount: string) {
-    if (typeof amount !== 'string' || !/^[1-9][0-9]{0,77}$/.test(amount)) {
+    if (typeof amount !== 'string' || !TOKEN_AMOUNT.test(amount)) {
       throw new BadRequestException('INVALID_TOKEN_AMOUNT');
     }
   }

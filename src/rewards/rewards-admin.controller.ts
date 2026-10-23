@@ -2,11 +2,10 @@ import { Body, Controller, Param, ParseUUIDPipe, Post, Req, UseGuards } from '@n
 import { IsString, IsUUID, Matches, MaxLength } from 'class-validator';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
+import { TOKEN_AMOUNT } from '../common/validation/token-amount';
 import { RewardsService } from './rewards.service';
 
-/** 최소 단위 토큰 금액: 선행 0 없는 양의 정수 문자열 */
-const TOKEN_AMOUNT = /^[1-9][0-9]{0,77}$/;
-
+// txHash 형식(32바이트 hex)은 서비스가 검사해 400 INVALID_TX_HASH로 응답한다 — common/validation/tx-hash.ts
 class ConfirmDepositDto {
   @IsString() @Matches(/\S/) @MaxLength(255) txHash!: string;
   @IsString() @Matches(TOKEN_AMOUNT) depositedAmount!: string;

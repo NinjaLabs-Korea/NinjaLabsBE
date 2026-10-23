@@ -1,4 +1,6 @@
+import { ConflictException } from '@nestjs/common';
 import { Wallet } from 'ethers';
+import { withParamsCheck } from '../test-support/expect-params-match';
 import { WalletsService } from './wallets.service';
 
 const mockCanonicalInjectiveAddress = 'inj1canonicaladdress';
@@ -16,13 +18,13 @@ describe('WalletsService EVM verification', () => {
   it('verifies personal_sign, stores the canonical inj1 address, and advances onboarding', async () => {
     const signer = Wallet.createRandom();
     let challengeMessage = '';
-    const txQuery = jest.fn(async (sql: string, params: unknown[]) => {
+    const txQuery = jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
       if (sql.includes('INSERT INTO wallet ')) return { rowCount: 1, rows: [{ id: 'wallet-id' }] };
       if (sql.includes('INSERT INTO wallet_verification_challenge')) {
-        challengeMessage = params[3] as string;
+        challengeMessage = params![3] as string;
         return {
           rowCount: 1,
-          rows: [{ id: 'challenge-id', nonce: params[2], message: challengeMessage }],
+          rows: [{ id: 'challenge-id', nonce: params![2], message: challengeMessage }],
         };
       }
       if (sql.includes('FROM wallet_verification_challenge')) {
@@ -30,9 +32,9 @@ describe('WalletsService EVM verification', () => {
       }
       if (sql.includes('SET used_at = now()')) return { rowCount: 1, rows: [{ id: 'challenge-id' }] };
       return { rowCount: 1, rows: [] };
-    });
+    }));
     const db = {
-      query: jest.fn(async (sql: string, _params: unknown[]) => {
+      query: jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
         if (sql.includes('SELECT id, chain, address')) {
           return {
             rowCount: 1,
@@ -40,7 +42,7 @@ describe('WalletsService EVM verification', () => {
           };
         }
         throw new Error(`Unexpected query: ${sql}`);
-      }),
+      })),
       tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) =>
         callback({ query: txQuery }),
       ),
@@ -78,8 +80,8 @@ describe('WalletsService EVM verification', () => {
 describe('WalletsService createChallenge', () => {
   it('deletes prior unused challenges for the same (user, wallet) and inserts the new one in a single transaction', async () => {
     const signer = Wallet.createRandom();
-    const txQuery = jest.fn(async (sql: string, params: unknown[]) =>
-      sql.includes('INSERT') ? { rowCount: 1, rows: [{ id: 'challenge-id', nonce: params[2], message: params[3] }] } : { rowCount: 2, rows: [] });
+    const txQuery = jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) =>
+      sql.includes('INSERT') ? { rowCount: 1, rows: [{ id: 'challenge-id', nonce: params![2], message: params![3] }] } : { rowCount: 2, rows: [] }));
     const db = {
       query: jest.fn(),
       tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) => callback({ query: txQuery })),
@@ -99,17 +101,18 @@ describe('WalletsService createChallenge', () => {
     expect(purge[0]).toContain('WHERE user_id = $1 AND wallet_address = $2 AND used_at IS NULL');
     expect(purge[1]).toEqual(['user-id', signer.address]);
     expect(insert[0]).toContain('INSERT INTO wallet_verification_challenge');
-    expect(insert[1].slice(0, 2)).toEqual(['user-id', signer.address]);
+    expect(insert[1]!.slice(0, 2)).toEqual(['user-id', signer.address]);
   });
 });
 
 describe('WalletsService challenge lookup', () => {
-  function verify(rows: Array<{ id: string; message: string; valid: boolean }>, consumeRowCount = 1) {
-    const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
+  function verify(rows: Array<{ id: string; message: string; valid: boolean }>, consumeRowCount = 1, walletInsert?: Error) {
+    const txQuery = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FROM wallet_verification_challenge')) return { rowCount: rows.length, rows };
       if (sql.includes('SET used_at = now()')) return { rowCount: consumeRowCount, rows: consumeRowCount ? [{ id: rows[0]?.id }] : [] };
+      if (sql.includes('INSERT INTO wallet ') && walletInsert) throw walletInsert;
       return { rowCount: 1, rows: [{ id: 'wallet-id' }] };
-    });
+    }));
     const db = {
       query: jest.fn(),
       tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) => callback({ query: txQuery })),
@@ -156,5 +159,26 @@ describe('WalletsService challenge lookup', () => {
     const { txQuery, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }]);
     await expect(run('0xdeadbeef')).rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
     expect(txQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('maps a unique violation on the wallet INSERT (uq_wallet_chain_address_active / uq_wallet_primary_per_user) to 409 WALLET_ALREADY_LINKED', async () => {
+    const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_chain_address_active"'), { code: '23505' });
+    const { db, txQuery, nfts, signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, duplicate);
+    const signature = await signer.signMessage('m');
+    const error = await run(signature).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).message).toBe('WALLET_ALREADY_LINKED');
+    // the INSERT was attempted inside the tx (which rolls back: challenge consumption included) and nothing after it ran
+    expect(txQuery.mock.calls.map(([sql]) => sql as string).filter((sql) => sql.includes('INSERT INTO wallet '))).toHaveLength(1);
+    expect(txQuery.mock.calls.some(([sql]) => sql.includes('onboarding_step'))).toBe(false);
+    expect(nfts.enqueueParentMintInTransaction).not.toHaveBeenCalled();
+    expect(db.query).not.toHaveBeenCalled(); // myWallet is never read back
+  });
+
+  it('propagates other INSERT failures unchanged (not every error is a duplicate wallet)', async () => {
+    const failure = new Error('connection terminated unexpectedly');
+    const { signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, failure);
+    const signature = await signer.signMessage('m');
+    await expect(run(signature)).rejects.toBe(failure);
   });
 });

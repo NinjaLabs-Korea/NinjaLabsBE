@@ -1,3 +1,4 @@
+import { withParamsCheck } from '../../test-support/expect-params-match';
 import { DatabaseService } from './database.service';
 import { SchemaGuard, assertSchemaCurrent, missingMigrations } from './schema-guard';
 
@@ -10,11 +11,11 @@ describe('SchemaGuard', () => {
 
   function setup(applied: string[] | Error) {
     const db = {
-      query: jest.fn(async (sql: string) => {
+      query: jest.fn(withParamsCheck(async (sql: string) => {
         expect(sql).toBe('SELECT name FROM _migrations');
         if (applied instanceof Error) throw applied;
         return { rowCount: applied.length, rows: applied.map((name) => ({ name })) };
-      }),
+      })),
     };
     const guard = new SchemaGuard(db as unknown as DatabaseService);
     jest.spyOn(guard['logger'], 'log').mockImplementation(() => undefined);

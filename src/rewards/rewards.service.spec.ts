@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
@@ -8,27 +8,54 @@ import { RewardsService } from './rewards.service';
 const txHash = `0x${'ab'.repeat(32)}`;
 
 describe('RewardsService markPaid', () => {
-  /** `reuse`: PAID payouts already carrying the same hash — on this payout's bounty / on other bounties */
-  function setup(options: { reuse?: { same_bounty: number; other_bounty: number }; found?: boolean } = {}) {
-    const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
+  type PayoutRow = { id: string; bounty_id: string; payout_tx_hash: string | null; status: string };
+
+  /**
+   * Tiny in-memory payout table. The mock answers by the SHAPE of each statement (its predicates), never by which columns it
+   * happens to select, so a regression in the SQL changes the answer:
+   *   - the reuse lookup is evaluated from `others` with the WHERE filters and the `count(*) FILTER (WHERE rw.bounty_id = / <> $3)`
+   *     predicates the statement actually carries — swap the two FILTERs or drop `p.status = 'PAID'` / `p.id <> $1` and the counts move;
+   *   - the PAID UPDATE applies its own `status IN (...)` list to the target payout — drop the list and a REQUESTED payout is "paid".
+   */
+  function setup(options: { payout?: Partial<PayoutRow>; others?: PayoutRow[]; found?: boolean } = {}) {
+    const target: PayoutRow = { id: 'payout', bounty_id: 'bounty', payout_tx_hash: null, status: 'APPROVED', ...options.payout };
+    const table = [target, ...(options.others ?? [])];
+    const query = jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
       if (sql.includes('SELECT rw.bounty_id FROM payout p')) {
-        return options.found === false ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ bounty_id: 'bounty' }] };
+        return options.found === false || params![0] !== target.id ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ bounty_id: target.bounty_id }] };
       }
-      if (sql.includes('AS other_bounty')) return { rowCount: 1, rows: [options.reuse ?? { same_bounty: 0, other_bounty: 0 }] };
+      if (sql.includes('FROM payout p JOIN bounty_reward rw') && sql.includes('count(*) FILTER')) {
+        const [payoutId, hash, bountyId] = params as [string, string, string];
+        const where = sql.slice(sql.lastIndexOf('WHERE'));
+        const candidates = table.filter((p) =>
+          (!where.includes('p.payout_tx_hash = $2') || p.payout_tx_hash === hash)
+          && (!where.includes("p.status = 'PAID'") || p.status === 'PAID')
+          && (!where.includes('p.id <> $1') || p.id !== payoutId));
+        const row: Record<string, number> = {};
+        for (const m of sql.matchAll(/count\(\*\) FILTER \(WHERE rw\.bounty_id (=|<>) \$3::uuid\)::int AS (\w+)/g)) {
+          row[m[2]] = candidates.filter((p) => (m[1] === '=' ? p.bounty_id === bountyId : p.bounty_id !== bountyId)).length;
+        }
+        return { rowCount: 1, rows: [row] };
+      }
       if (sql.includes(`UPDATE payout SET status = 'PAID'`)) {
+        const allowed = /status IN \(([^)]*)\)/.exec(sql)?.[1].split(',').map((s) => s.trim().replace(/'/g, ''));
+        if (params![0] !== target.id || (allowed && !allowed.includes(target.status))) return { rowCount: 0, rows: [] };
+        target.status = 'PAID';
+        target.payout_tx_hash = params![1] as string;
         return {
           rowCount: 1,
           rows: [{
-            id: 'payout', status: 'PAID', payout_tx_hash: txHash,
+            id: target.id, status: 'PAID', payout_tx_hash: target.payout_tx_hash,
             submission_id: 'submission', recipient_wallet_id: 'wallet', bounty_reward_id: 'reward',
           }],
         };
       }
-      if (sql.includes('FROM bounty_submission s')) return { rowCount: 1, rows: [{ owner_user_id: 'user', bounty_id: 'bounty' }] };
+      if (sql.includes('FROM bounty_submission s')) return { rowCount: 1, rows: [{ owner_user_id: 'user', bounty_id: target.bounty_id }] };
       return { rowCount: 1, rows: [] };
     }));
     const tx = { query };
     const db = {
+      query: jest.fn(),
       tx: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
     };
     const nfts = {
@@ -39,15 +66,18 @@ describe('RewardsService markPaid', () => {
       nfts as unknown as NftsService,
       new AuditService(db as unknown as DatabaseService),
     );
-    return { service, query, tx, nfts };
+    return { service, query, tx, db, nfts, target };
   }
 
+  const paidElsewhere = (id: string, bounty_id: string, hash = txHash): PayoutRow => ({ id, bounty_id, payout_tx_hash: hash, status: 'PAID' });
+
   it('enqueues a completion NFT in the same transaction when a payout is paid', async () => {
-    const { service, tx, nfts } = setup();
+    const { service, tx, db, nfts } = setup();
     await expect(service.markPaid('payout', txHash, 'admin')).resolves.toMatchObject({ status: 'PAID' });
     expect(nfts.enqueueChildMintInTransaction).toHaveBeenCalledWith(
       tx, 'user', 'wallet', 'bounty', 'submission',
     );
+    expect(db.query).not.toHaveBeenCalled();
   });
 
   it('normalizes the tx hash to lowercase 0x-prefixed before storing it', async () => {
@@ -69,7 +99,7 @@ describe('RewardsService markPaid', () => {
     const sqls = query.mock.calls.map(([sql]) => sql as string);
     const lock = sqls.findIndex((sql) => sql.includes('pg_advisory_xact_lock(hashtext($1))'));
     const bounty = sqls.findIndex((sql) => sql.includes('SELECT rw.bounty_id FROM payout p'));
-    const reuse = sqls.findIndex((sql) => sql.includes('AS other_bounty'));
+    const reuse = sqls.findIndex((sql) => sql.includes('count(*) FILTER'));
     const update = sqls.findIndex((sql) => sql.includes(`UPDATE payout SET status = 'PAID'`));
     expect([lock, bounty, reuse, update]).toEqual([0, 1, 2, 3]);
     expect(query.mock.calls[lock][1]).toEqual([txHash]);
@@ -78,27 +108,58 @@ describe('RewardsService markPaid', () => {
     expect(query.mock.calls[reuse][1]).toEqual(['payout', txHash, 'bounty']);
   });
 
+  it.each(['APPROVED', 'BROADCASTING'])('pays a payout in status %s', async (status) => {
+    const { service } = setup({ payout: { status } });
+    await expect(service.markPaid('payout', txHash, 'admin')).resolves.toMatchObject({ status: 'PAID' });
+  });
+
+  it.each(['REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'PAID', 'FAILED', 'CANCELLED'])(
+    'refuses to pay a payout in status %s: the UPDATE matches no row → 404 PAYOUT_NOT_FOUND_OR_WRONG_STATUS, no NFT, no audit',
+    async (status) => {
+      const { service, query, nfts, target } = setup({ payout: { status } });
+      const error = await service.markPaid('payout', txHash, 'admin').catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect((error as NotFoundException).message).toBe('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
+      expect(target.status).toBe(status);
+      expect(nfts.enqueueChildMintInTransaction).not.toHaveBeenCalled();
+      expect(query.mock.calls.some(([sql]) => (sql as string).includes('INSERT INTO audit_log'))).toBe(false);
+    },
+  );
+
   it('rejects with 409 TX_HASH_ALREADY_USED when the hash is already PAID on a payout of a different bounty, without touching the payout', async () => {
-    const { service, query, nfts } = setup({ reuse: { same_bounty: 0, other_bounty: 1 } });
+    const { service, query, nfts, target } = setup({ others: [paidElsewhere('other-payout', 'other-bounty')] });
     const error = await service.markPaid('payout', txHash, 'admin').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as ConflictException).message).toBe('TX_HASH_ALREADY_USED');
     expect(query.mock.calls.some(([sql]) => (sql as string).includes(`UPDATE payout SET status = 'PAID'`))).toBe(false);
+    expect(target.status).toBe('APPROVED');
     expect(nfts.enqueueChildMintInTransaction).not.toHaveBeenCalled();
   });
 
   it('allows the same hash on several payouts of the same bounty (one multisig tx paying several winners) and logs it', async () => {
-    const { service, query } = setup({ reuse: { same_bounty: 2, other_bounty: 0 } });
+    const { service, query } = setup({ others: [paidElsewhere('p2', 'bounty'), paidElsewhere('p3', 'bounty')] });
     const log = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     await expect(service.markPaid('payout', txHash, 'admin')).resolves.toMatchObject({ status: 'PAID' });
     expect(query.mock.calls.some(([sql]) => (sql as string).includes(`UPDATE payout SET status = 'PAID'`))).toBe(true);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('already recorded on 2 PAID payout(s) of the same bounty'));
   });
 
+  it('ignores payouts that merely carry the hash without being PAID, and payouts with a different hash, on other bounties', async () => {
+    const { service } = setup({
+      others: [
+        { id: 'approved-elsewhere', bounty_id: 'other-bounty', payout_tx_hash: txHash, status: 'APPROVED' },
+        paidElsewhere('paid-other-hash', 'other-bounty', `0x${'cd'.repeat(32)}`),
+      ],
+    });
+    const log = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
+    await expect(service.markPaid('payout', txHash, 'admin')).resolves.toMatchObject({ status: 'PAID' });
+    expect(log).not.toHaveBeenCalled();
+  });
+
   it('reports PAYOUT_NOT_FOUND_OR_WRONG_STATUS for an unknown payout before looking at hash reuse', async () => {
     const { service, query } = setup({ found: false });
     await expect(service.markPaid('payout', txHash, 'admin')).rejects.toMatchObject({ message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
-    expect(query.mock.calls.some(([sql]) => (sql as string).includes('AS other_bounty'))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => (sql as string).includes('count(*) FILTER'))).toBe(false);
   });
 
   it('locks the reward and recomputes bounty_reward.status inside the same transaction', async () => {
@@ -129,7 +190,7 @@ describe('RewardsService markPaid', () => {
 describe('RewardsService confirmDeposit', () => {
   function setup(rowCount = 1) {
     const query = jest.fn().mockResolvedValue({ rowCount, rows: rowCount ? [{ id: 'reward', bounty_id: 'bounty', status: 'FUNDED' }] : [] });
-    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query })) };
+    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) })) };
     const service = new RewardsService(db as never, {} as never, new AuditService(db as never));
     return { service, query, db };
   }
@@ -169,7 +230,7 @@ describe('RewardsService confirmDeposit', () => {
 describe('RewardsService markApproved', () => {
   function setup(rowCount = 1) {
     const query = jest.fn().mockResolvedValue({ rowCount, rows: rowCount ? [{ id: 'payout', status: 'APPROVED' }] : [] });
-    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query })) };
+    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) })) };
     const service = new RewardsService(db as never, {} as never, new AuditService(db as never));
     return { service, query, db };
   }
@@ -202,13 +263,14 @@ describe('RewardsService payout allocation', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ amount: options.allocated ?? '0' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'payout', status: 'REQUESTED' }] })
       .mockResolvedValue({ rowCount: 1, rows: [] });
-    const db = { tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query }) };
+    const db = { query: jest.fn(), tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) }) };
     const service = new RewardsService(db as never, {} as never, new AuditService(db as never));
-    return { service, query };
+    return { service, query, db };
   }
   it('creates a payout against the matching bounty, recomputes the reward status and audits inside the transaction', async () => {
-    const { service, query } = setup();
+    const { service, query, db } = setup();
     await expect(service.requestPayout('reward', 'sub', '5000000', 'admin')).resolves.toMatchObject({ status: 'REQUESTED' });
+    expect(db.query).not.toHaveBeenCalled();
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE');
     expect(query.mock.calls[2]).toEqual([expect.stringContaining('s.bounty_id = $2'), ['sub', 'bounty']]);
     const sqls = query.mock.calls.map(([sql]) => sql as string);

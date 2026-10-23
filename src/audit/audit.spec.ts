@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { DatabaseService } from '../common/database/database.service';
+import { withParamsCheck } from '../test-support/expect-params-match';
 import { AuditLogsQueryDto } from './audit.controller';
 import { AuditService } from './audit.service';
 
@@ -24,8 +25,9 @@ describe('GET /admin/audit-logs query validation', () => {
 
 describe('AuditService.list', () => {
   function setup(rows: unknown[] = [], total = 0) {
-    const query = jest.fn(async (sql: string, _params?: unknown[]) =>
-      sql.includes('count(*)') ? { rowCount: 1, rows: [{ total }] } : { rowCount: rows.length, rows });
+    // list() assembles WHERE / LIMIT / OFFSET placeholders dynamically — every statement is checked for $n/params drift
+    const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) =>
+      sql.includes('count(*)') ? { rowCount: 1, rows: [{ total }] } : { rowCount: rows.length, rows }));
     return { query, service: new AuditService({ query } as unknown as DatabaseService) };
   }
 
@@ -47,5 +49,15 @@ describe('AuditService.list', () => {
     await service.list({ page: 1 });
     expect(query.mock.calls.every(([sql]) => !sql.includes('WHERE'))).toBe(true);
     expect(query.mock.calls[0][1]).toEqual([30, 0]);
+    expect(query.mock.calls[1][1]).toEqual([]);
+  });
+
+  it('numbers the placeholders after a single filter so LIMIT/OFFSET follow it ($2/$3)', async () => {
+    const { query, service } = setup();
+    await service.list({ page: 2, entityId: 'e' });
+    const [listSql, listParams] = query.mock.calls.find(([sql]) => sql.includes('ORDER BY created_at DESC'))!;
+    expect(listSql).toContain('WHERE entity_id = $1');
+    expect(listSql).toContain('LIMIT $2 OFFSET $3');
+    expect(listParams).toEqual(['e', 30, 30]);
   });
 });

@@ -1,5 +1,6 @@
 import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
+import { withParamsCheck } from '../test-support/expect-params-match';
 import { AdminGuard } from './admin.guard';
 import { AuthGuard } from './auth.guard';
 import { SessionUser } from './auth.service';
@@ -18,7 +19,7 @@ describe('AdminGuard', () => {
     };
     const db = { query: jest.fn().mockResolvedValue({ rowCount: adminRows, rows: adminRows ? [{ '?column?': 1 }] : [] }) };
     const context = { switchToHttp: () => ({ getRequest: () => request }) } as unknown as ExecutionContext;
-    const guard = new AdminGuard(authGuard as unknown as AuthGuard, db as unknown as DatabaseService);
+    const guard = new AdminGuard(authGuard as unknown as AuthGuard, { query: withParamsCheck(db.query) } as unknown as DatabaseService);
     return { guard, context, db, authGuard };
   }
 

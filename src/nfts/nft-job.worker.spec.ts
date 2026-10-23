@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../common/database/database.service';
+import { withParamsCheck } from '../test-support/expect-params-match';
 import { InjectiveNftClient } from './injective-nft.client';
 import { NftJobWorker } from './nft-job.worker';
 
@@ -19,6 +20,8 @@ describe('NftJobWorker', () => {
     mnemonic?: string;
     /** claimed batch in RETURNING (heap) order — defaults to one job */
     claimed?: Array<{ id: string; scheduled_at: Date }>;
+    /** retry_count the claimed job(s) already carry (default 0) — attempt number = retryCount + 1 */
+    retryCount?: number;
     /** per-job re-stamp behaviour: 0 rows = no longer PROCESSING; an Error = the statement itself fails */
     restamp?: Record<string, 0 | Error>;
     /** status of the parent NFT as re-read after a child mint / checked by the attach UPDATE (default MINTED) */
@@ -27,7 +30,7 @@ describe('NftJobWorker', () => {
     waitingChildren?: number;
   } = {}) {
     const parentReady = ['MINTED', 'ATTACHED'].includes(options.parentStatus ?? 'MINTED');
-    const query = jest.fn(async (sql: string, params?: unknown[]) => {
+    const query = jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
       if (sql.includes(`SELECT status FROM nft WHERE id = $1 AND nft_type = 'NINJA_PARENT'`)) {
         return { rowCount: 1, rows: [{ status: options.parentStatus ?? 'MINTED' }] };
       }
@@ -39,7 +42,7 @@ describe('NftJobWorker', () => {
       }
       if (sql.includes('UPDATE nft_job') && sql.includes('RETURNING id, nft_id, job_type, retry_count')) {
         const claimed = options.claimed ?? [{ id: 'job', scheduled_at: new Date() }];
-        const rows = claimed.map((job) => ({ ...job, nft_id: nftId, job_type: options.jobType ?? 'MINT_CHILD', retry_count: 0 }));
+        const rows = claimed.map((job) => ({ ...job, nft_id: nftId, job_type: options.jobType ?? 'MINT_CHILD', retry_count: options.retryCount ?? 0 }));
         return { rowCount: rows.length, rows };
       }
       if (sql.includes(`UPDATE nft_job SET started_at = now() WHERE id = $1 AND status = 'PROCESSING' RETURNING id`)) {
@@ -57,7 +60,7 @@ describe('NftJobWorker', () => {
         };
       }
       return { rowCount: 1, rows: [] };
-    });
+    }));
     const chain = {
       isConfigured: jest.fn(() => options.configured ?? true),
       contractAddress: jest.fn(() => 'inj1contract'),
@@ -156,7 +159,7 @@ describe('NftJobWorker', () => {
     const { worker, query } = setup({ tokenExists: new Error('late'), claimed: [{ id: 'job', scheduled_at: new Date() }] });
     const warn = jest.spyOn(worker['logger'], 'warn').mockImplementation(() => undefined);
     const error = jest.spyOn(worker['logger'], 'error').mockImplementation(() => undefined);
-    query.mockImplementation(async (sql: string, params?: unknown[]) => {
+    query.mockImplementation(withParamsCheck(async (sql: string, params?: unknown[]) => {
       if (sql.includes('retry_count = retry_count + 1')) return { rowCount: 0, rows: [] };
       if (sql.includes("interval '15 minutes'")) return { rowCount: 0, rows: [] };
       if (sql.includes('RETURNING id, nft_id, job_type, retry_count')) {
@@ -166,12 +169,38 @@ describe('NftJobWorker', () => {
         return { rowCount: 1, rows: [{ id: nftId, nft_type: 'NINJA_PARENT', status: 'PENDING', parent_nft_id: null, metadata_uri: null, owner_address: 'inj1owner' }] };
       }
       return { rowCount: 1, rows: [{ id: params?.[0] }] };
-    });
+    }));
     await worker.poll();
     // retry_count 4 + this failure would be the 5th attempt → FAILED, but the job is not ours any more: nft untouched, no permanent-failure log
     expect(query.mock.calls.some(([sql]) => sql.includes(`UPDATE nft SET status = 'FAILED'`))).toBe(false);
     expect(error).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('nft_job job failed late'));
+  });
+
+  it('the 5th failed attempt (retry_count 4 → MAX_RETRY) records the job as FAILED with processed_at, marks the nft FAILED and logs a permanent failure', async () => {
+    const { worker, query, chain } = setup({ retryCount: 4, tokenExists: new Error('node unreachable') });
+    const error = jest.spyOn(worker['logger'], 'error').mockImplementation(() => undefined);
+    await worker.poll();
+
+    expect(chain.mint).not.toHaveBeenCalled();
+    const recorded = query.mock.calls.find(([sql]) => sql.includes('retry_count = retry_count + 1'))!;
+    expect(recorded[1]).toEqual(['job', 'FAILED', 'node unreachable']);
+    expect(recorded[0]).toContain(`processed_at = CASE WHEN $2::varchar = 'FAILED' THEN now() ELSE NULL END`);
+    expect(recorded[0]).toContain(`WHERE id = $1 AND status = 'PROCESSING'`);
+    const nftFailed = query.mock.calls.find(([sql]) => sql.includes(`UPDATE nft SET status = 'FAILED'`))!;
+    expect(nftFailed[1]).toEqual([nftId]);
+    expect(nftFailed[0]).toContain('WHERE id = $1');
+    expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(false);
+    expect(error).toHaveBeenCalledWith('nft_job job failed permanently: node unreachable');
+  });
+
+  it('the 4th failed attempt (retry_count 3) still schedules a retry and leaves the nft alone', async () => {
+    const { worker, query } = setup({ retryCount: 3, tokenExists: new Error('node unreachable') });
+    const error = jest.spyOn(worker['logger'], 'error').mockImplementation(() => undefined);
+    await worker.poll();
+    expect(query.mock.calls.find(([sql]) => sql.includes('retry_count = retry_count + 1'))![1]).toEqual(['job', 'PENDING', 'node unreachable']);
+    expect(query.mock.calls.some(([sql]) => sql.includes(`UPDATE nft SET status = 'FAILED'`))).toBe(false);
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('processes the claimed batch in scheduled_at order regardless of RETURNING (heap) order', async () => {

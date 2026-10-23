@@ -1,5 +1,6 @@
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
+import { withParamsCheck } from '../../test-support/expect-params-match';
 import { BountyAdminService } from './bounty-admin.service';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { RewardTokenResolver } from './reward-token.resolver';
@@ -12,12 +13,14 @@ describe('BountyAdminService update safeguards', () => {
 
   function setup(options: { exists?: boolean; approved?: number; status?: string; stored?: { submission_deadline: string; application_deadline: string | null } } = {}) {
     const stored = options.stored ?? { submission_deadline: future, application_deadline: null };
-    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+    // The dynamic UPDATE builder is the statement most likely to drift ($n vs values) — every tx statement is checked for it.
+    const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FOR UPDATE')) return { rowCount: options.exists === false ? 0 : 1, rows: [{ id: bountyId, status: options.status ?? 'OPEN', ...stored }] };
       if (sql.includes("status = 'APPROVED'")) return { rowCount: 1, rows: [{ count: String(options.approved ?? 0) }] };
       if (sql.startsWith('UPDATE bounty')) return { rowCount: 1, rows: [{ id: bountyId, status: 'OPEN' }] };
       return { rowCount: 1, rows: [] };
-    });
+    }));
+    // db.query (autocommit) is a separate mock from the tx client — nothing in update() may run outside the transaction
     const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: typeof query }) => Promise<unknown>) => callback({ query })) };
     const service = new BountyAdminService(
       db as unknown as DatabaseService,
@@ -33,10 +36,13 @@ describe('BountyAdminService update safeguards', () => {
     await expect(service.update(bountyId, { title: 'New', maxWinners: 2 }, adminId)).resolves.toEqual({ id: bountyId, status: 'OPEN' });
     const sqls = query.mock.calls.map(([sql]) => sql as string);
     expect(sqls[0]).toContain('FOR UPDATE');
-    expect(sqls[1]).toContain("status = 'APPROVED'");
+    expect(query.mock.calls[0][1]).toEqual([bountyId]);
+    expect(sqls[1]).toContain(`SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`);
+    expect(query.mock.calls[1][1]).toEqual([bountyId]);
     expect(sqls[2]).toContain('UPDATE bounty SET title = $2, max_winners = $3');
     expect(query.mock.calls[2][1]).toEqual([bountyId, 'New', 2]);
     expect(sqls[3]).toContain('INSERT INTO audit_log');
+    expect(query.mock.calls[3][1]).toEqual([adminId, 'BOUNTY_UPDATED', 'bounty', bountyId]);
     expect(db.query).not.toHaveBeenCalled();
   });
 
@@ -109,9 +115,11 @@ describe('BountyAdminService update safeguards', () => {
   });
 
   it('rejects maxWinners lower than the number of already approved submissions', async () => {
-    const { service, query } = setup({ approved: 3 });
+    const { service, query, db } = setup({ approved: 3 });
     await expect(service.update(bountyId, { maxWinners: 2 }, adminId)).rejects.toMatchObject({ message: 'MAX_WINNERS_BELOW_APPROVED' });
+    expect(query.mock.calls.find(([sql]) => (sql as string).includes("status = 'APPROVED'"))![1]).toEqual([bountyId]);
     expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty'))).toBe(false);
+    expect(db.query).not.toHaveBeenCalled();
     await expect(setup({ approved: 2 }).service.update(bountyId, { maxWinners: 2 }, adminId)).resolves.toMatchObject({ id: bountyId });
   });
 

@@ -1,6 +1,8 @@
+import { ConflictException } from '@nestjs/common';
 import { computeAddress, Wallet } from 'ethers';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
+import { withParamsCheck } from '../test-support/expect-params-match';
 import { AgentsService } from './agents.service';
 
 jest.mock('../common/crypto/adr36', () => ({
@@ -17,9 +19,23 @@ describe('AgentsService EVM registration', () => {
   const agentId = '11111111-1111-4111-8111-111111111111';
   const ownerUserId = '22222222-2222-4222-8222-222222222222';
 
-  function createService() {
+  type PendingRow = { id: string; owner_user_id: string; wallet_address: string };
+
+  /**
+   * `db.query` (outside the tx) only ever serves the "my own PENDING row on this wallet" lookup after a unique violation. It answers from
+   * `pending` by the predicates the statement actually carries: the wallet always, the owner only while `owner_user_id = $1` is present —
+   * so dropping the owner predicate hands back someone else's pending row and the 409 cases below fail.
+   */
+  function createService(pending: PendingRow[] = []) {
     const db = {
-      query: jest.fn(),
+      query: jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('FROM agent') && sql.includes("status = 'PENDING_VERIFICATION' AND deleted_at IS NULL")) {
+          const byOwner = sql.includes('owner_user_id = $1 AND wallet_address = $2');
+          const rows = pending.filter((row) => params!.includes(row.wallet_address) && (!byOwner || params![0] === row.owner_user_id));
+          return { rowCount: rows.length, rows: rows.map(({ id }) => ({ id })) };
+        }
+        throw new Error(`Unexpected query outside the transaction: ${sql}`);
+      })),
       tx: jest.fn(),
     };
     const service = new TestAgentsService(
@@ -33,7 +49,7 @@ describe('AgentsService EVM registration', () => {
 
   /** register() tx: occupied-row lookup (REVOKED / PENDING on the same wallet or key) → INSERT. `revoked` rows are what the FOR UPDATE lookup returns. */
   function registerTxQuery(options: { revoked?: OccupiedRow[]; insert?: unknown } = {}) {
-    return jest.fn(async (sql: string, _params?: unknown[]) => {
+    return jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
       if (sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION') AND deleted_at IS NULL")) {
         const rows = (options.revoked ?? []).map((row) => ({ status: 'REVOKED', abandoned: false, ...row }));
         return { rowCount: rows.length, rows };
@@ -43,7 +59,7 @@ describe('AgentsService EVM registration', () => {
         return { rowCount: 1, rows: [{ id: agentId }] };
       }
       return { rowCount: 1, rows: [] };
-    });
+    }));
   }
 
   it('registers a dedicated 0x wallet without a public key, then recovers it on verify', async () => {
@@ -71,7 +87,7 @@ describe('AgentsService EVM registration', () => {
       .mockImplementationOnce(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
         callback({ query: registerQuery }))
       .mockImplementationOnce(async (callback: (tx: { query: typeof verifyQuery }) => Promise<unknown>) =>
-        callback({ query: verifyQuery }));
+        callback({ query: withParamsCheck(verifyQuery) }));
 
     const registration = await service.register(
       ownerUserId,
@@ -108,13 +124,12 @@ describe('AgentsService EVM registration', () => {
     expect(computeAddress(recoveredPublicKey)).toBe(signer.address);
   });
 
-  it('returns the existing pending challenge after a rejected signature retry', async () => {
-    const { db, service } = createService();
+  it('returns the existing pending challenge after a rejected signature retry — looked up by (owner, wallet) outside the rolled-back tx', async () => {
     const signer = Wallet.createRandom();
+    const { db, service } = createService([{ id: agentId, owner_user_id: ownerUserId, wallet_address: signer.address }]);
     const registerQuery = registerTxQuery({ insert: { code: '23505' } });
     db.tx.mockImplementation(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
       callback({ query: registerQuery }));
-    db.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: agentId }] });
 
     await expect(
       service.register(ownerUserId, 'market-agent', undefined, undefined, signer.address),
@@ -123,7 +138,34 @@ describe('AgentsService EVM registration', () => {
       status: 'PENDING_VERIFICATION',
       verificationMessage: AgentsService.verificationMessage(agentId, ownerUserId),
     });
-    expect(db.query.mock.calls[0][0]).toContain("status = 'PENDING_VERIFICATION'");
+    expect(db.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain("status = 'PENDING_VERIFICATION' AND deleted_at IS NULL");
+    // scoped to the caller: a pending row of another owner on the same wallet must not be handed out as "yours"
+    expect(sql).toContain('WHERE owner_user_id = $1 AND wallet_address = $2');
+    expect(params).toEqual([ownerUserId, signer.address]);
+  });
+
+  it.each([
+    ['no pending row at all', () => [] as PendingRow[]],
+    ["another owner's pending row on the same wallet", (wallet: string) => [
+      { id: '66666666-6666-4666-8666-666666666666', owner_user_id: '44444444-4444-4444-8444-444444444444', wallet_address: wallet },
+    ]],
+    ["the caller's own pending row on a different wallet", () => [
+      { id: agentId, owner_user_id: ownerUserId, wallet_address: '0x0000000000000000000000000000000000000001' },
+    ]],
+  ])('keeps the 409 after a unique violation when there is %s (the pending lookup is scoped to owner AND wallet)', async (_label, pending) => {
+    const signer = Wallet.createRandom();
+    const { db, service } = createService(pending(signer.address));
+    const registerQuery = registerTxQuery({ insert: { code: '23505' } });
+    db.tx.mockImplementation(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
+      callback({ query: registerQuery }));
+
+    const error = await service.register(ownerUserId, 'market-agent', undefined, undefined, signer.address).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).message).toBe('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
+    expect(db.query).toHaveBeenCalledTimes(1);
+    expect(db.query.mock.calls[0][1]).toEqual([ownerUserId, signer.address]);
   });
 
   it("keeps the caller's own REVOKED agent on the same wallet (no soft delete — its history stays visible) and registers a new one", async () => {
@@ -206,15 +248,14 @@ describe('AgentsService EVM registration', () => {
   });
 
   it("leaves the caller's own PENDING_VERIFICATION row alone (the INSERT conflict returns it)", async () => {
-    const { db, service } = createService();
     const signer = Wallet.createRandom();
+    const { db, service } = createService([{ id: agentId, owner_user_id: ownerUserId, wallet_address: signer.address }]);
     const registerQuery = registerTxQuery({
       revoked: [{ id: agentId, owner_user_id: ownerUserId, status: 'PENDING_VERIFICATION', abandoned: true }],
       insert: { code: '23505' },
     });
     db.tx.mockImplementation(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
       callback({ query: registerQuery }));
-    db.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: agentId }] });
 
     await expect(
       service.register(ownerUserId, 'market-agent', undefined, undefined, signer.address),
@@ -249,7 +290,7 @@ describe('AgentsService EVM registration', () => {
     });
     db.tx.mockImplementation(
       async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) =>
-        callback({ query: txQuery }),
+        callback({ query: withParamsCheck(txQuery) }),
     );
     const signature = await attacker.signMessage(
       AgentsService.verificationMessage(agentId, ownerUserId),
@@ -275,7 +316,7 @@ describe('AgentsService EVM registration', () => {
     let release: (() => void) | undefined;
     const firstCommitted = new Promise<void>((resolve) => { release = resolve; });
     let selects = 0;
-    const txQuery = jest.fn(async (sql: string) => {
+    const txQuery = jest.fn(withParamsCheck(async (sql: string) => {
       if (sql.includes('FOR UPDATE')) {
         if (selects++ > 0) await firstCommitted;
         return { rowCount: 1, rows: [{ status, public_key: null, wallet_address: signer.address }] };
@@ -285,7 +326,7 @@ describe('AgentsService EVM registration', () => {
         return { rowCount: 1, rows: [{ expires_at: '2026-12-01T00:00:00.000Z' }] };
       }
       throw new Error(`Unexpected query: ${sql}`);
-    });
+    }));
     db.tx.mockImplementation(
       async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) => {
         try {
@@ -313,7 +354,7 @@ describe('AgentsService key rotation and revocation', () => {
   const ownerUserId = '22222222-2222-4222-8222-222222222222';
 
   function setup(status: string | null) {
-    const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
+    const txQuery = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FOR UPDATE')) {
         return { rowCount: status ? 1 : 0, rows: status ? [{ status }] : [] };
       }
@@ -321,7 +362,7 @@ describe('AgentsService key rotation and revocation', () => {
         return { rowCount: 1, rows: [{ expires_at: '2027-01-20T00:00:00.000Z' }] };
       }
       return { rowCount: 1, rows: [] };
-    });
+    }));
     const db = {
       query: jest.fn(),
       tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) =>
@@ -388,7 +429,7 @@ describe('AgentsService key rotation and revocation', () => {
 
   it('lists each agent once (REVOKED agents included) with the latest key and a computed key_status, hiding only soft-deleted rows', async () => {
     const { db, service } = setup('ACTIVE');
-    db.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: agentId, key_status: 'EXPIRED', key_expires_at: '2020-01-01T00:00:00.000Z' }] });
+    db.query.mockImplementationOnce(withParamsCheck(async () => ({ rowCount: 1, rows: [{ id: agentId, key_status: 'EXPIRED', key_expires_at: '2020-01-01T00:00:00.000Z' }] })));
     await expect(service.myAgents(ownerUserId)).resolves.toHaveLength(1);
     const [sql, params] = db.query.mock.calls[0];
     expect(params).toEqual([ownerUserId]);

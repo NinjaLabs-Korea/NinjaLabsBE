@@ -5,10 +5,15 @@ export const partial = "ninjalabsbe";
 export default defineRailway(() => {
   const web = service("ninjalabsbe", {
     start: "npm run start:prod",
+    // 새 컨테이너가 뜨기 전에 supabase/migrations를 적용한다 — 새 코드가 옛 스키마 위에서 기동하면 SchemaGuard가 MIGRATIONS_PENDING으로 거부한다 (README "배포")
+    preDeploy: "npm run migrate",
     healthcheck: "/health",
     healthcheckTimeout: 120,
     env: {
       // ── 공개 설정값 (git으로 관리) ──
+      NODE_ENV: "production",
+      // Railway 엣지 프록시 1홉 — X-Forwarded-For를 신뢰해야 rate limit / auth_session.ip_address가 클라이언트 IP가 된다 (main.ts가 production에서 필수로 검사)
+      TRUST_PROXY: "1",
       JWT_ACCESS_TTL: "15m",
       JWT_REFRESH_TTL: "14d",
       INJECTIVE_NETWORK: "testnet",
@@ -23,6 +28,8 @@ export default defineRailway(() => {
         "693249955885-ejgrdgjr75uhkst92ttloid3lpkpecf1.apps.googleusercontent.com",
       // ── 비밀값 (Railway 대시보드/CLI로만 설정, git에 두지 않음) ──
       DATABASE_URL: preserve(),
+      // Supabase CA PEM — 비어 있으면 database.service.ts가 production에서 warn (docs/security.md)
+      DATABASE_CA_CERT: preserve(),
       GOOGLE_CLIENT_SECRET: preserve(),
       JWT_SECRET: preserve(),
       MASTER_WALLET_MNEMONIC: preserve(),

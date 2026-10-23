@@ -12,7 +12,7 @@ export default defineRailway(() => {
     env: {
       // ── 공개 설정값 (git으로 관리) ──
       NODE_ENV: "production",
-      // Railway 엣지 프록시 1홉 — X-Forwarded-For를 신뢰해야 rate limit / auth_session.ip_address가 클라이언트 IP가 된다 (main.ts가 production에서 필수로 검사)
+      // Railway 엣지 프록시 1홉 — X-Forwarded-For를 신뢰해야 rate limit / auth_session.ip_address가 클라이언트 IP가 된다 (미설정이면 main.ts가 1로 보고 warn, 0이면 기동 거부)
       TRUST_PROXY: "1",
       JWT_ACCESS_TTL: "15m",
       JWT_REFRESH_TTL: "14d",

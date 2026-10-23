@@ -10,7 +10,7 @@ import { JWT_SECRET, JwtSecretModule } from './jwt-secret';
 import { requireGoogleClientSecret } from '../common/bootstrap-checks';
 
 /**
- * production 기동 조건 — JWT_SECRET(32바이트 이상, 기본값 금지) / GOOGLE_CLIENT_SECRET 없이는 기동 거부.
+ * production 기동 조건 — JWT_SECRET(미설정/기본값 금지; 32바이트 미만은 기동하되 error 로그) / GOOGLE_CLIENT_SECRET 없이는 기동 거부.
  * 조용한 폴백은 전체 인증 무력화(또는 모든 로그인 실패)로 이어진다. common/bootstrap-checks.ts
  *
  * 두 검사 모두 ConfigService를 통해 **모듈 초기화 시점**에 실행된다 — import 시점의 process.env는 ConfigModule.forRoot()가

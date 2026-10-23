@@ -1,4 +1,4 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -83,9 +83,20 @@ describe('AuthModule boots its secrets from the .env ConfigModule loads (not imp
     expect(app.get(JwtService).verify(token, { secret: 'dev-only-secret' })).toMatchObject({ sub: 'u' });
   });
 
-  it('refuses to boot in production with a weak JWT_SECRET (the provider factory throws before anything is signed)', async () => {
-    await expect(boot(`NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${'s'.repeat(31)}\n`))
-      .rejects.toThrow(/JWT_SECRET must be set to a random value of at least 32 bytes in production/);
+  it('refuses to boot in production without a JWT_SECRET (the provider factory throws before anything is signed)', async () => {
+    await expect(boot('NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\n'))
+      .rejects.toThrow(/JWT_SECRET must be set to a random value in production/);
+    await expect(boot('NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\nJWT_SECRET=change-me-long-random-string\n'))
+      .rejects.toThrow(/JWT_SECRET must be set to a random value in production/);
+  });
+
+  it('boots in production with a JWT_SECRET shorter than 32 bytes but logs an error (no crash loop over a weak secret)', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const weak = 's'.repeat(31);
+    const app = await boot(`NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${weak}\n`);
+    expect(app.get<string>(JWT_SECRET)).toBe(weak);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('JWT_SECRET is only 31 bytes'));
+    error.mockRestore();
   });
 
   it('refuses to boot in production without GOOGLE_CLIENT_SECRET (checked in onModuleInit through ConfigService)', async () => {

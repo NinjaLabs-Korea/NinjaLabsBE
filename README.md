@@ -75,6 +75,21 @@ PR 전 체크: `npm run lint && npm run typecheck && npm test && npm run build` 
 `RAISE NOTICE`/실패 시 `HINT`를 그대로 출력한다. `0014`는 `deposit_tx_hash`/`payout_tx_hash` 중복이 남아 있으면 **에러로 멈춘다**(중복 값·건수·조사 SQL 포함) —
 운영자가 정리한 뒤 다시 `npm run migrate`하면 이어서 적용된다 (`src/test-db/migrations.db-spec.ts`).
 
+#### 이 브랜치 첫 배포 전에 있어야 하는 env (production, `NODE_ENV=production`)
+
+기동 검사는 `common/bootstrap-checks.ts`·`auth.service.ts`·`database.service.ts`에 있다. 한 번 올라간 뒤가 아니라 **첫 컨테이너가 뜨기 전에** Railway 변수에 넣어 둔다
+(`.railway/railway.ts`의 `preserve()` 자리). 빠지면 아래 "결과" 열대로 동작한다 — 거부되는 것만 크래시 루프가 된다.
+
+| env | 결과 |
+|---|---|
+| `DATABASE_URL` | 없으면 `preDeploy`의 `npm run migrate`가 실패해 배포 중단 (구 버전 유지) |
+| `JWT_SECRET` | 미설정 또는 `.env.example` 자리표시값이면 **기동 거부**. 32바이트 미만이면 기동은 하되 `error` 로그 — 즉시 교체(`openssl rand -base64 48`) |
+| `GOOGLE_CLIENT_SECRET` | 없으면 **기동 거부** (로그인이 어차피 전부 실패) |
+| `TRUST_PROXY` | 미설정/빈 값이면 **1로 보고 `warn`** (Railway는 항상 프록시 1홉 뒤). 명시적 `0`/비정수는 **기동 거부** — railway.ts가 `1`을 넣는다 |
+| `JWT_REFRESH_TTL` | 미설정이면 `14d`. 형식/범위(60초~90일)가 틀리면 기동 거부 |
+| `DATABASE_CA_CERT` | 비어 있으면 기동하되 `warn` 1회 (TLS 인증서 미검증 — 운영 전 설정) |
+| `CORS_ORIGINS`, `AUTH_ALLOWED_REDIRECT_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT` | 기동은 하지만 값이 틀리면 로그인/CORS가 동작하지 않는다 (railway.ts에 공개값으로 고정) |
+
 ### 실 DB 통합 테스트 (`npm run test:db`)
 
 `npm test`는 DB를 mock한다. 세션 발급/갱신·에이전트 등록/폐기·지갑 challenge/verify·바운티→보상→payout→자식 NFT·공지·정리 크론처럼

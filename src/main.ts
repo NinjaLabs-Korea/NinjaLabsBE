@@ -15,8 +15,8 @@ async function bootstrap() {
   const config = app.get(ConfigService);
 
   // 리버스 프록시(Railway/Fly/LB) 뒤에서는 X-Forwarded-For를 신뢰해야 rate limit과
-  // auth_session.ip_address가 클라이언트 IP로 잡힌다. 홉 수를 TRUST_PROXY로 지정한다 (기본 0 = 신뢰 안 함).
-  // NODE_ENV=production에서 0/미설정이면 listen 전에 기동을 거부한다 (common/bootstrap-checks.ts).
+  // auth_session.ip_address가 클라이언트 IP로 잡힌다. 홉 수를 TRUST_PROXY로 지정한다 (개발 기본 0 = 신뢰 안 함).
+  // NODE_ENV=production에서 미설정이면 1로 보고 warn, 명시적 0/비정수면 listen 전에 기동을 거부한다 (common/bootstrap-checks.ts).
   const trustProxy = trustProxyHops({
     TRUST_PROXY: config.get<string>('TRUST_PROXY'),
     NODE_ENV: config.get<string>('NODE_ENV'),

@@ -199,7 +199,7 @@ USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심
 - 컨트랙트: `inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w` (`.env NFT_CONTRACT_ADDRESS`)
 - minter/admin: 마스터 지갑 `inj1fku0cc2tgmsf9uflhvx0e340urktq7vtlcg9hq` (민팅 전용)
 - token_id = `nft.id` (UUID) / metadata_uri는 추후 메타데이터 서비스 연결 시 채움
-- payout을 PAID로 기록하는 트랜잭션에서 완료 자식 NFT와 mint job도 멱등 생성한다.
+- payout을 PAID로 기록하는 트랜잭션에서 완료 자식 NFT와 mint job도 멱등 생성한다. 자식은 부모 NFT가 `MINTED`/`ATTACHED`일 때만 attach 잡이 걸리고, 부모가 아직 민팅 전이면 `MINTED`로 대기하다가 부모 민팅 완료 시 일괄로 attach 잡이 들어간다 (`nft-job.worker.ts`).
 - mainnet은 CosmWasm 업로드가 거버넌스 승인제 — 런칭 일정에 반영 필요
 
 ## Admin bounty operations

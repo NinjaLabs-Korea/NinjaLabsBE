@@ -21,8 +21,18 @@ describe('NftJobWorker', () => {
     claimed?: Array<{ id: string; scheduled_at: Date }>;
     /** per-job re-stamp behaviour: 0 rows = no longer PROCESSING; an Error = the statement itself fails */
     restamp?: Record<string, 0 | Error>;
+    /** status of the parent NFT as re-read after a child mint / checked by the attach UPDATE (default MINTED) */
+    parentStatus?: string;
+    /** rows the MINT_PARENT children scan reports as queued */
+    waitingChildren?: number;
   } = {}) {
+    const parentReady = ['MINTED', 'ATTACHED'].includes(options.parentStatus ?? 'MINTED');
     const query = jest.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes(`SELECT status FROM nft WHERE id = $1 AND nft_type = 'NINJA_PARENT'`)) {
+        return { rowCount: 1, rows: [{ status: options.parentStatus ?? 'MINTED' }] };
+      }
+      if (sql.includes(`SET status = 'ATTACHED'`)) return parentReady ? { rowCount: 1, rows: [{ id: params![0] }] } : { rowCount: 0, rows: [] };
+      if (sql.includes(`'attach-child:' || c.id`)) return { rowCount: options.waitingChildren ?? 0, rows: [] };
       if (sql.includes("interval '15 minutes'")) {
         const rows = options.stale ?? [];
         return { rowCount: rows.length, rows };
@@ -288,28 +298,47 @@ describe('NftJobWorker', () => {
     });
   });
 
-  it('enqueues ATTACH_CHILD after a child mint succeeds when the parent NFT is known', async () => {
+  const childAttachEnqueue = (query: jest.Mock) => query.mock.calls.find(([sql, params]) => sql.includes(`'ATTACH_CHILD'`) && params?.[1] === `attach-child:${nftId}`);
+
+  it('enqueues ATTACH_CHILD after a child mint succeeds when the parent NFT is MINTED, re-reading the parent after the child is MINTED', async () => {
     const { worker, query, chain } = setup();
     await worker.poll();
 
     expect(chain.mint).toHaveBeenCalledWith(nftId, 'inj1owner', null);
-    const attach = query.mock.calls.find(([sql]) => sql.includes(`'ATTACH_CHILD'`));
+    const attach = childAttachEnqueue(query);
     expect(attach).toBeDefined();
     expect(attach![0]).toContain('ON CONFLICT (idempotency_key) DO NOTHING');
     expect(attach![1]).toEqual([nftId, `attach-child:${nftId}`]);
+    // the parent status is read after the child's MINTED update, not from the initial row read (closes the parent/child race)
+    const sqls = query.mock.calls.map(([sql]) => sql as string);
+    const minted = sqls.findIndex((sql) => sql.includes(`SET status = 'MINTED'`));
+    const parentRead = sqls.findIndex((sql) => sql.includes(`SELECT status FROM nft WHERE id = $1 AND nft_type = 'NINJA_PARENT'`));
+    expect(parentRead).toBeGreaterThan(minted);
+    expect(query.mock.calls[parentRead][1]).toEqual([parentId]);
     expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(true);
   });
 
-  it('still enqueues ATTACH_CHILD when the mint job is retried after the NFT was already MINTED', async () => {
-    const { worker, query, chain } = setup({ nft: { status: 'MINTED' } });
+  it('also enqueues ATTACH_CHILD when the parent is already ATTACHED, and when the mint job is retried after the child was already MINTED', async () => {
+    const attachedParent = setup({ parentStatus: 'ATTACHED' });
+    await attachedParent.worker.poll();
+    expect(childAttachEnqueue(attachedParent.query)).toBeDefined();
+
+    const retried = setup({ nft: { status: 'MINTED' } });
+    await retried.worker.poll();
+    expect(retried.chain.mint).not.toHaveBeenCalled();
+    expect(childAttachEnqueue(retried.query)).toBeDefined();
+  });
+
+  it.each(['PENDING', 'MINTING', 'FAILED'])('leaves a freshly minted child MINTED (no ATTACH_CHILD) while its parent is %s', async (parentStatus) => {
+    const { worker, query } = setup({ parentStatus });
     await worker.poll();
 
-    expect(chain.mint).not.toHaveBeenCalled();
-    expect(query.mock.calls.some(([sql]) => sql.includes(`'ATTACH_CHILD'`))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'MINTED'`))).toBe(true);
+    expect(childAttachEnqueue(query)).toBeUndefined();
+    expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(true); // the mint job itself is done
   });
 
   it.each([
-    ['parent NFT', { nft_type: 'NINJA_PARENT', parent_nft_id: null }],
     ['child without a parent (attach deferred)', { parent_nft_id: null }],
     ['child already attached', { status: 'ATTACHED' }],
   ])('does not enqueue ATTACH_CHILD for a %s', async (_label, nft) => {
@@ -317,14 +346,54 @@ describe('NftJobWorker', () => {
     await worker.poll();
 
     expect(query.mock.calls.some(([sql]) => sql.includes(`'ATTACH_CHILD'`))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => sql.includes(`nft_type = 'NINJA_PARENT'`))).toBe(false);
   });
 
-  it('transitions MINTED → ATTACHED for an ATTACH_CHILD job (DB-only, no chain call)', async () => {
+  it('after MINT_PARENT succeeds, enqueues ATTACH_CHILD for every MINTED child linked to that parent (idempotent key, deferred jobs pulled forward)', async () => {
+    const { worker, query } = setup({ jobType: 'MINT_PARENT', nft: { nft_type: 'NINJA_PARENT', parent_nft_id: null }, waitingChildren: 2 });
+    const log = jest.spyOn(worker['logger'], 'log').mockImplementation(() => undefined);
+    await worker.poll();
+
+    const scan = query.mock.calls.find(([sql]) => sql.includes(`'attach-child:' || c.id`))!;
+    expect(scan[0]).toContain(`INSERT INTO nft_job (nft_id, job_type, idempotency_key)`);
+    expect(scan[0]).toContain(`WHERE c.parent_nft_id = $1 AND c.nft_type = 'BOUNTY_COMPLETION_CHILD' AND c.status = 'MINTED'`);
+    expect(scan[0]).toContain(`ON CONFLICT (idempotency_key) DO UPDATE SET scheduled_at = now()`);
+    expect(scan[0]).toContain(`WHERE nft_job.status = 'PENDING'`);
+    expect(scan[1]).toEqual([nftId]);
+    expect(childAttachEnqueue(query)).toBeUndefined();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('queued ATTACH_CHILD for 2 waiting child NFT(s)'));
+    expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(true);
+  });
+
+  it('transitions MINTED → ATTACHED for an ATTACH_CHILD job only through the parent-ready join (DB-only, no chain call)', async () => {
     const { worker, query, chain } = setup({ jobType: 'ATTACH_CHILD', nft: { status: 'MINTED' } });
     await worker.poll();
 
     expect(chain.mint).not.toHaveBeenCalled();
-    const attach = query.mock.calls.find(([sql]) => sql.includes(`SET status = 'ATTACHED'`));
-    expect(attach?.[1]).toEqual([nftId]);
+    const attach = query.mock.calls.find(([sql]) => sql.includes(`SET status = 'ATTACHED'`))!;
+    expect(attach[0]).toContain(`AND p.id = c.parent_nft_id AND p.status IN ('MINTED', 'ATTACHED')`);
+    expect(attach[1]).toEqual([nftId]);
+    expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(true);
+  });
+
+  it('defers an ATTACH_CHILD job (PENDING, +1 hour, retry_count untouched) when the parent is not minted yet, instead of succeeding or failing', async () => {
+    const { worker, query } = setup({ jobType: 'ATTACH_CHILD', nft: { status: 'MINTED' }, parentStatus: 'PENDING' });
+    const log = jest.spyOn(worker['logger'], 'log').mockImplementation(() => undefined);
+    await worker.poll();
+
+    const defer = query.mock.calls.find(([sql]) => sql.includes('attach deferred'))!;
+    expect(defer[0]).toContain(`SET status = 'PENDING', scheduled_at = now() + interval '1 hour'`);
+    expect(defer[0]).toContain(`WHERE id = $1 AND status = 'PROCESSING'`);
+    expect(defer[1]).toEqual(['job']);
+    expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => sql.includes('retry_count = retry_count + 1'))).toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('nft_job job deferred'));
+  });
+
+  it('closes an ATTACH_CHILD job as done without an UPDATE when the child is already ATTACHED', async () => {
+    const { worker, query } = setup({ jobType: 'ATTACH_CHILD', nft: { status: 'ATTACHED' } });
+    await worker.poll();
+    expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'ATTACHED'`))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(true);
   });
 });

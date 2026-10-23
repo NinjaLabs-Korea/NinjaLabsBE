@@ -52,8 +52,20 @@ export function redactMnemonicRuns(message: string, words: ReadonlySet<string>):
  * 경로 A(표준 cw721-base): MINT_PARENT/MINT_CHILD는 mint 실행,
  * ATTACH 계열은 온체인 nest가 없으므로 DB 상태 전이만 수행한다.
  * (2팀 Nestable 컨트랙트 전환 시 InjectiveNftClient와 이 분기만 교체)
+ *
+ * 부모/자식 순서: 자식은 **부모가 MINTED/ATTACHED일 때만** ATTACH_CHILD를 큐에 넣는다 — 부모가 PENDING/MINTING/FAILED이면 자식은 MINTED로
+ * 머문다 (FE "포트폴리오 연결 중", decisions.md). 부모 민팅이 끝나면(MINT_PARENT 성공) 그 부모에 연결된(parent_nft_id) MINTED 자식 전부에
+ * ATTACH_CHILD를 멱등 키(`attach-child:<child id>`)로 넣는다. 자식 민팅과 부모 민팅이 동시에 끝나는 경합은 자식이 MINTED가 된 **뒤에** 부모
+ * 상태를 다시 읽는 것으로 닫는다 (부모는 MINTED가 된 뒤 자식을 훑으므로 어느 쪽이든 한쪽은 잡을 본다). 부모가 아직 준비되지 않은 상태에서
+ * 집힌 ATTACH_CHILD(레거시 잡)는 실패/성공 처리하지 않고 1시간 뒤로 미룬다 — 성공으로 닫으면 멱등 키 때문에 다시는 attach되지 않는다.
  */
 type ClaimedJob = { id: string; nft_id: string; job_type: string; retry_count: number; scheduled_at: Date };
+/** execute()의 결과 — 'deferred'면 잡을 성공으로 닫지 않고 PENDING으로 되돌려 나중에 다시 시도한다 */
+type JobOutcome = 'done' | 'deferred';
+/** 자식을 attach할 수 있는 부모 상태 */
+const PARENT_READY = ['MINTED', 'ATTACHED'];
+/** 부모가 준비되지 않아 미룬 ATTACH_CHILD의 재시도 간격 */
+const ATTACH_DEFER_INTERVAL = '1 hour';
 
 @Injectable()
 export class NftJobWorker {
@@ -163,7 +175,18 @@ export class NftJobWorker {
     }
 
     try {
-      await this.execute(job);
+      const outcome = await this.execute(job);
+      if (outcome === 'deferred') {
+        // 부모 NFT가 아직 준비되지 않은 ATTACH_CHILD — retry_count를 소모하지 않고 뒤로 미룬다 (성공으로 닫지 않는다: 멱등 키가 재큐잉을 막는다)
+        await this.db.query(
+          `UPDATE nft_job SET status = 'PENDING', scheduled_at = now() + interval '${ATTACH_DEFER_INTERVAL}',
+                  last_error = 'parent NFT not minted yet — attach deferred'
+            WHERE id = $1 AND status = 'PROCESSING'`,
+          [job.id],
+        );
+        this.logger.log(`nft_job ${job.id} deferred: parent NFT of ${job.nft_id} is not minted yet`);
+        return;
+      }
       const done = await this.db.query(
         `UPDATE nft_job SET status = 'SUCCEEDED', processed_at = now(), last_error = NULL
           WHERE id = $1 AND status = 'PROCESSING'`,
@@ -195,7 +218,7 @@ export class NftJobWorker {
     }
   }
 
-  private async execute(job: { id: string; nft_id: string; job_type: string }) {
+  private async execute(job: { id: string; nft_id: string; job_type: string }): Promise<JobOutcome> {
     const r = await this.db.query<{
       id: string;
       nft_type: string;
@@ -240,8 +263,23 @@ export class NftJobWorker {
             );
           }
         }
-        // 자식 NFT는 민팅 후 부모에 attach — 부모가 없으면 MINTED로 보류 (decisions.md)
-        if (nft.nft_type === 'BOUNTY_COMPLETION_CHILD' && nft.parent_nft_id && nft.status !== 'ATTACHED') {
+        if (nft.nft_type === 'NINJA_PARENT') {
+          // 부모가 준비됐으니 그동안 MINTED로 기다리던 자식들을 attach — 이미 PENDING으로 미뤄진 잡은 지금 바로 돌게 당긴다
+          const queued = await this.db.query(
+            `INSERT INTO nft_job (nft_id, job_type, idempotency_key)
+             SELECT c.id, 'ATTACH_CHILD', 'attach-child:' || c.id
+               FROM nft c
+              WHERE c.parent_nft_id = $1 AND c.nft_type = 'BOUNTY_COMPLETION_CHILD' AND c.status = 'MINTED'
+             ON CONFLICT (idempotency_key) DO UPDATE SET scheduled_at = now()
+             WHERE nft_job.status = 'PENDING'`,
+            [nft.id],
+          );
+          if (queued.rowCount) this.logger.log(`parent nft ${nft.id} minted — queued ATTACH_CHILD for ${queued.rowCount} waiting child NFT(s)`);
+          return 'done';
+        }
+        // 자식 NFT는 민팅 후 부모에 attach — 부모가 없거나 아직 MINTED/ATTACHED가 아니면 MINTED로 보류 (decisions.md).
+        // 부모 상태는 자식이 MINTED가 된 뒤 다시 읽는다 (헤더 주석의 경합 참고).
+        if (nft.parent_nft_id && nft.status !== 'ATTACHED' && await this.parentReady(nft.parent_nft_id)) {
           await this.db.query(
             `INSERT INTO nft_job (nft_id, job_type, idempotency_key)
              VALUES ($1, 'ATTACH_CHILD', $2)
@@ -249,20 +287,35 @@ export class NftJobWorker {
             [nft.id, `attach-child:${nft.id}`],
           );
         }
-        return;
+        return 'done';
       }
       case 'ATTACH_CHILD':
       case 'RETRY_ATTACH': {
-        // 표준 cw721에는 온체인 nest가 없음 — DB 상태 전이만 (Nestable 전환 시 실제 attach 호출)
-        await this.db.query(
-          `UPDATE nft SET status = 'ATTACHED', attached_at = now()
-            WHERE id = $1 AND status IN ('MINTED', 'ATTACHING')`,
+        if (nft.status === 'ATTACHED') return 'done'; // 멱등
+        // 표준 cw721에는 온체인 nest가 없음 — DB 상태 전이만 (Nestable 전환 시 실제 attach 호출). 부모가 MINTED/ATTACHED일 때만.
+        const attached = await this.db.query(
+          `UPDATE nft c SET status = 'ATTACHED', attached_at = now()
+             FROM nft p
+            WHERE c.id = $1 AND c.status IN ('MINTED', 'ATTACHING')
+              AND p.id = c.parent_nft_id AND p.status IN ('MINTED', 'ATTACHED')
+            RETURNING c.id`,
           [nft.id],
         );
-        return;
+        if (attached.rowCount) return 'done';
+        if (nft.status === 'MINTED' || nft.status === 'ATTACHING') return 'deferred'; // 부모 미준비 — 1시간 뒤 재시도
+        throw new Error(`nft ${nft.id} cannot be attached in status ${nft.status}`);
       }
       default:
         throw new Error(`unknown job_type: ${job.job_type}`);
     }
+  }
+
+  /** 부모 NFT가 자식을 받을 수 있는 상태인가 — 자식 민팅 **뒤에** 새로 읽는다 */
+  private async parentReady(parentNftId: string): Promise<boolean> {
+    const parent = await this.db.query<{ status: string }>(
+      `SELECT status FROM nft WHERE id = $1 AND nft_type = 'NINJA_PARENT'`,
+      [parentNftId],
+    );
+    return parent.rowCount === 1 && PARENT_READY.includes(parent.rows[0].status);
   }
 }

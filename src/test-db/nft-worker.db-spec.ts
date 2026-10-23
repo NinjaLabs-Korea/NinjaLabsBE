@@ -3,7 +3,7 @@ import { NftJobWorker } from '../nfts/nft-job.worker';
 import { NftsService } from '../nfts/nfts.service';
 import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, testConfig } from './harness';
+import { createDb, createPrimaryWallet, createUser, testConfig, unique } from './harness';
 
 // 실제 클라이언트는 @injectivelabs/sdk-ts(ESM)를 끌어오므로 DI 메타데이터용 껍데기로 대체한다 (유닛 스펙과 동일)
 jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
@@ -80,6 +80,25 @@ describeDb('nft_job worker on a real database', () => {
     return r.rows[0];
   }
 
+  /** 자식 NFT + MINT_CHILD 잡 (payout PAID 직후 상태) — 바운티/제출물 행은 chk_nft_child_refs 때문에 필요하다 */
+  async function childJob(userId: string, walletId: string): Promise<{ nftId: string; jobId: string }> {
+    const bountyId = (await db.query<{ id: string }>(
+      `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline)
+       VALUES ($1, 's', $2, 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days') RETURNING id`, [userId, unique('nft-flow-')])).rows[0].id;
+    const submissionId = (await db.query<{ id: string }>(
+      `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
+       VALUES ($1, $2, 'https://example.test/w', 'd', 'APPROVED') RETURNING id`, [bountyId, userId])).rows[0].id;
+    const { nftId } = (await nfts.enqueueChildMint(userId, walletId, bountyId, submissionId))!;
+    const job = await db.query<{ id: string }>(`SELECT id FROM nft_job WHERE nft_id = $1 AND job_type = 'MINT_CHILD'`, [nftId]);
+    return { nftId, jobId: job.rows[0].id };
+  }
+
+  async function attachJob(childId: string) {
+    const r = await db.query<JobRow & { id: string }>(
+      `SELECT id, status, retry_count, last_error, scheduled_at, processed_at FROM nft_job WHERE idempotency_key = $1`, [`attach-child:${childId}`]);
+    return r.rows[0];
+  }
+
   it('a rejected mint schedules a retry (+1, +10min, last_error) and a healthy job later in the same batch still succeeds', async () => {
     const failing = await parentJob('2 minutes');
     const healthy = await parentJob('1 minute');
@@ -149,5 +168,67 @@ describeDb('nft_job worker on a real database', () => {
     // and A never touched the second job because its per-job ownership re-stamp found 0 PROCESSING rows
     expect(chainA.mint).toHaveBeenCalledTimes(1);
     expect(await nftRow(second.nftId)).toEqual({ status: 'MINTED', token_id: second.nftId, mint_tx_hash: '0xB' });
+  });
+
+  it('a child minted while its parent is still PENDING stays MINTED; the parent mint then queues ATTACH_CHILD and the next poll attaches it', async () => {
+    const userId = await createUser(db);
+    const wallet = await createPrimaryWallet(db, userId);
+    const { nftId: parentId } = (await nfts.enqueueParentMint(userId, wallet.id))!;
+    // hold the parent mint back so the child is processed first (the payout flow does not wait for the parent)
+    await db.query(`UPDATE nft_job SET scheduled_at = now() + interval '1 hour' WHERE nft_id = $1`, [parentId]);
+    const child = await childJob(userId, wallet.id);
+    expect((await db.query<{ parent_nft_id: string }>(`SELECT parent_nft_id FROM nft WHERE id = $1`, [child.nftId])).rows[0].parent_nft_id).toBe(parentId);
+    const chain = chainStub(async (tokenId) => `0x${tokenId.slice(0, 8)}`);
+    const worker = createWorker(chain);
+
+    // 1) child mints, parent is PENDING → child MINTED, no ATTACH_CHILD yet
+    await worker.poll();
+    expect(chain.mint.mock.calls.map(([tokenId]) => tokenId)).toEqual([child.nftId]);
+    expect(await jobRow(child.jobId)).toMatchObject({ status: 'SUCCEEDED' });
+    expect((await nftRow(child.nftId)).status).toBe('MINTED');
+    expect((await nftRow(parentId)).status).toBe('PENDING');
+    expect(await attachJob(child.nftId)).toBeUndefined();
+
+    // 2) a legacy/early ATTACH_CHILD picked up before the parent is ready is deferred (+1h, PENDING, no retry consumed), child stays MINTED
+    await db.query(`INSERT INTO nft_job (nft_id, job_type, idempotency_key) VALUES ($1, 'ATTACH_CHILD', $2)`, [child.nftId, `attach-child:${child.nftId}`]);
+    const before = Date.now();
+    await worker.poll();
+    const deferred = await attachJob(child.nftId);
+    expect(deferred).toMatchObject({ status: 'PENDING', retry_count: 0, last_error: 'parent NFT not minted yet — attach deferred', processed_at: null });
+    expect(deferred.scheduled_at.getTime() - before).toBeGreaterThan(55 * 60_000);
+    expect((await nftRow(child.nftId)).status).toBe('MINTED');
+
+    // 3) the parent mints → ATTACH_CHILD for the waiting child is pulled forward (scheduled now) by the parent's children scan
+    await db.query(`UPDATE nft_job SET scheduled_at = now() WHERE nft_id = $1`, [parentId]);
+    await worker.poll();
+    expect(await nftRow(parentId)).toEqual({ status: 'MINTED', token_id: parentId, mint_tx_hash: `0x${parentId.slice(0, 8)}` });
+    const queued = await attachJob(child.nftId);
+    expect(queued.status).toBe('PENDING');
+    expect(queued.scheduled_at.getTime()).toBeLessThanOrEqual(Date.now());
+    expect((await nftRow(child.nftId)).status).toBe('MINTED');
+
+    // 4) next poll attaches the child (DB-only transition), job SUCCEEDED
+    await worker.poll();
+    expect(await attachJob(child.nftId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0, last_error: null });
+    expect((await nftRow(child.nftId)).status).toBe('ATTACHED');
+    expect(chain.mint).toHaveBeenCalledTimes(2); // child + parent only — attach never touches the chain on path A
+  });
+
+  it('a child minted after its parent is already MINTED queues ATTACH_CHILD itself (no parent scan needed)', async () => {
+    const userId = await createUser(db);
+    const wallet = await createPrimaryWallet(db, userId);
+    const { nftId: parentId } = (await nfts.enqueueParentMint(userId, wallet.id))!;
+    const chain = chainStub(async (tokenId) => `0x${tokenId.slice(0, 8)}`);
+    const worker = createWorker(chain);
+    await worker.poll();
+    expect((await nftRow(parentId)).status).toBe('MINTED');
+
+    const child = await childJob(userId, wallet.id);
+    await worker.poll();
+    expect((await nftRow(child.nftId)).status).toBe('MINTED');
+    expect(await attachJob(child.nftId)).toMatchObject({ status: 'PENDING', retry_count: 0 });
+    await worker.poll();
+    expect(await attachJob(child.nftId)).toMatchObject({ status: 'SUCCEEDED' });
+    expect((await nftRow(child.nftId)).status).toBe('ATTACHED');
   });
 });

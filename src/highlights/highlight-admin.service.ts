@@ -24,18 +24,20 @@ export class HighlightAdminService {
     imageUrl?: string; linkUrl?: string; bountyId?: string;
     displayOrder?: number; publish?: boolean;
   }) {
-    const r = await this.db.query<{ id: string }>(
-      `INSERT INTO platform_highlight
-         (created_by, type, title, description, image_url, link_url, bounty_id, display_order, is_published, published_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING id`,
-      [adminId, input.type, input.title, input.description,
-       input.imageUrl ?? null, input.linkUrl ?? null, input.bountyId ?? null,
-       input.displayOrder ?? 0, input.publish ?? false,
-       input.publish ? new Date() : null],
-    );
-    await this.audit.record(adminId, 'HIGHLIGHT_CREATED', 'platform_highlight', r.rows[0].id);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const r = await tx.query<{ id: string }>(
+        `INSERT INTO platform_highlight
+           (created_by, type, title, description, image_url, link_url, bounty_id, display_order, is_published, published_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id`,
+        [adminId, input.type, input.title, input.description,
+         input.imageUrl ?? null, input.linkUrl ?? null, input.bountyId ?? null,
+         input.displayOrder ?? 0, input.publish ?? false,
+         input.publish ? new Date() : null],
+      );
+      await this.audit.record(adminId, 'HIGHLIGHT_CREATED', 'platform_highlight', r.rows[0].id, tx);
+      return r.rows[0];
+    });
   }
 
   async update(highlightId: string, input: {
@@ -52,19 +54,23 @@ export class HighlightAdminService {
     }
     if (!fields.length) return { id: highlightId };
     const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
-    const r = await this.db.query(
-      `UPDATE platform_highlight SET ${assignments} WHERE id = $1 RETURNING id, is_published`,
-      [highlightId, ...fields.map(([, value]) => value)],
-    );
-    if (!r.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
-    await this.audit.record(adminId, 'HIGHLIGHT_UPDATED', 'platform_highlight', highlightId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const r = await tx.query(
+        `UPDATE platform_highlight SET ${assignments} WHERE id = $1 RETURNING id, is_published`,
+        [highlightId, ...fields.map(([, value]) => value)],
+      );
+      if (!r.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
+      await this.audit.record(adminId, 'HIGHLIGHT_UPDATED', 'platform_highlight', highlightId, tx);
+      return r.rows[0];
+    });
   }
 
   async remove(highlightId: string, adminId: string) {
-    const r = await this.db.query(`DELETE FROM platform_highlight WHERE id = $1 RETURNING id`, [highlightId]);
-    if (!r.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
-    await this.audit.record(adminId, 'HIGHLIGHT_DELETED', 'platform_highlight', highlightId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const r = await tx.query(`DELETE FROM platform_highlight WHERE id = $1 RETURNING id`, [highlightId]);
+      if (!r.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
+      await this.audit.record(adminId, 'HIGHLIGHT_DELETED', 'platform_highlight', highlightId, tx);
+      return r.rows[0];
+    });
   }
 }

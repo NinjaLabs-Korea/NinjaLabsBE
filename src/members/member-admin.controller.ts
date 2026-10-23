@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { MemberAdminService } from './member-admin.service';
@@ -20,14 +20,23 @@ export class SetMemberDto {
   displayOrder?: number;
 }
 
+export class SearchUsersQueryDto {
+  @IsOptional() @IsString()
+  q?: string;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  page?: number;
+}
+
 @Controller('admin/users')
 @UseGuards(AdminGuard)
 export class MemberAdminController {
   constructor(private readonly members: MemberAdminService) {}
 
+  /** GET /admin/users?q=&page= — 30건/페이지, 응답은 배열 (FE 계약 유지) */
   @Get()
-  searchUsers(@Query('q') q = '') {
-    return this.members.searchUsers(q);
+  searchUsers(@Query() query: SearchUsersQueryDto) {
+    return this.members.searchUsers(query.q ?? '', query.page ?? 1);
   }
 
   @Post(':id/member')

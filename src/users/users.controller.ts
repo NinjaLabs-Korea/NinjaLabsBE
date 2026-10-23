@@ -9,7 +9,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ArrayNotEmpty, IsArray, IsIn, IsNotEmpty, Length } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsIn, IsNotEmpty, IsString, Length, Matches, MaxLength } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
@@ -19,13 +19,24 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
+import { Trim } from '../common/validation/trim';
+import { IsNotReservedNickname, NICKNAME } from './nickname';
 import { UsersService } from './users.service';
 
-class CompleteProfileDto {
+export { NICKNAME } from './nickname';
+
+export class CompleteProfileDto {
+  /** 규칙은 users/nickname.ts — 문자/숫자로 시작·끝, `_ . -` 허용, 예약어(me/check-nickname/admin/new/edit) 거부 */
+  @Trim()
+  @IsString()
   @Length(2, 50)
+  @Matches(NICKNAME)
+  @IsNotReservedNickname()
   nickname!: string;
 
+  @IsString()
   @IsNotEmpty()
+  @MaxLength(1000)
   bio!: string;
 
   @IsArray()

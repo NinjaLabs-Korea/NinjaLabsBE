@@ -60,13 +60,26 @@ export class WalletsService {
       '이 서명은 트랜잭션을 발생시키지 않으며 가스비가 들지 않습니다.',
     ].join('\n');
 
-    const r = await this.db.query(
-      `INSERT INTO wallet_verification_challenge (user_id, wallet_address, nonce, message, expires_at)
-       VALUES ($1, $2, $3, $4, now() + interval '5 minutes')
-       RETURNING id, nonce, message, expires_at`,
-      [userId, normalizedAddress, nonce, message],
-    );
-    return r.rows[0];
+    // 같은 (user, wallet)의 미사용 challenge는 지우고 새로 발급 — 열린 challenge는 항상 최대 1개 (만료 행 정리는 MaintenanceService 크론).
+    // 같은 (user, wallet)의 동시 발급은 트랜잭션 범위 advisory lock으로 직렬화한다 — 두 요청이 서로의 DELETE를 보지 못한 채 INSERT하면 2개가 열린다
+    return this.db.tx(async (tx) => {
+      await tx.query(
+        `SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text))`,
+        [userId, normalizedAddress],
+      );
+      await tx.query(
+        `DELETE FROM wallet_verification_challenge
+          WHERE user_id = $1 AND wallet_address = $2 AND used_at IS NULL`,
+        [userId, normalizedAddress],
+      );
+      const r = await tx.query<{ id: string; nonce: string; message: string; expires_at: string }>(
+        `INSERT INTO wallet_verification_challenge (user_id, wallet_address, nonce, message, expires_at)
+         VALUES ($1, $2, $3, $4, now() + interval '5 minutes')
+         RETURNING id, nonce, message, expires_at`,
+        [userId, normalizedAddress, nonce, message],
+      );
+      return r.rows[0];
+    });
   }
 
   /**
@@ -75,33 +88,41 @@ export class WalletsService {
    */
   async verifySignature(userId: string, address: string, signature: string, pubKey?: string) {
     const normalizedAddress = this.normalizeChallengeAddress(address);
-    const challenge = await this.db.query<{ id: string; message: string }>(
-      `SELECT id, message FROM wallet_verification_challenge
-        WHERE user_id = $1 AND wallet_address = $2
-          AND used_at IS NULL AND expires_at > now()
-        ORDER BY created_at DESC
-        LIMIT 1`,
-      [userId, normalizedAddress],
-    );
-    if (!challenge.rowCount) throw new BadRequestException('CHALLENGE_EXPIRED');
-    const { id: challengeId, message } = challenge.rows[0];
-
-    if (!signatureSchemeFor(normalizedAddress).verify({ address: normalizedAddress, message, signature, publicKey: pubKey })) {
-      throw new UnauthorizedException('INVALID_SIGNATURE');
-    }
-
     // 두 서명 방식 모두 CW-721 수신에 쓰는 inj1 주소로 저장한다
     const injectiveAddress = isEvmAddress(normalizedAddress)
       ? getInjectiveAddress(normalizedAddress)
       : normalizedAddress;
 
-    let walletId: string;
     try {
-      walletId = await this.db.tx(async (tx) => {
-        await tx.query(
-          `UPDATE wallet_verification_challenge SET used_at = now() WHERE id = $1`,
+      // challenge 조회(행 잠금) → 서명 검증 → 소비(조건부 UPDATE) → 지갑 저장을 한 트랜잭션에서.
+      // 같은 challenge로 동시에 두 번 verify하면 잠금 뒤 두 번째는 used_at이 찍힌 행을 보고 CHALLENGE_EXPIRED로 끝난다 (지갑은 1개만 저장).
+      await this.db.tx(async (tx) => {
+        // 유효한(미사용·미만료) 최신 challenge를 우선 고르고, 없으면 최신 무효 행으로 "없음"과 "만료/사용됨"을 구분한다
+        const challenge = await tx.query<{ id: string; message: string; valid: boolean }>(
+          `SELECT id, message, (used_at IS NULL AND expires_at > now()) AS valid
+             FROM wallet_verification_challenge
+            WHERE user_id = $1 AND wallet_address = $2
+            ORDER BY valid DESC, created_at DESC
+            LIMIT 1
+              FOR UPDATE`,
+          [userId, normalizedAddress],
+        );
+        if (!challenge.rowCount) throw new BadRequestException('CHALLENGE_NOT_FOUND');
+        if (!challenge.rows[0].valid) throw new BadRequestException('CHALLENGE_EXPIRED');
+        const { id: challengeId, message } = challenge.rows[0];
+
+        if (!signatureSchemeFor(normalizedAddress).verify({ address: normalizedAddress, message, signature, publicKey: pubKey })) {
+          throw new UnauthorizedException('INVALID_SIGNATURE');
+        }
+
+        // 소비는 조건부 UPDATE로 — 조회와 소비 사이에 만료됐거나(경계) 이미 쓰였으면 0행 → 400 CHALLENGE_EXPIRED
+        const consumed = await tx.query(
+          `UPDATE wallet_verification_challenge SET used_at = now()
+            WHERE id = $1 AND used_at IS NULL AND expires_at > now()
+            RETURNING id`,
           [challengeId],
         );
+        if (!consumed.rowCount) throw new BadRequestException('CHALLENGE_EXPIRED');
         const w = await tx.query<{ id: string }>(
           `INSERT INTO wallet (user_id, chain, address, public_key, is_primary, verified_at)
            VALUES ($1, 'INJECTIVE', $2, $3, true, now())
@@ -113,7 +134,8 @@ export class WalletsService {
             WHERE id = $1 AND deleted_at IS NULL`,
           [userId],
         );
-        return w.rows[0].id;
+        // 부모 NFT 민팅 잡을 지갑 저장과 같은 트랜잭션에서 등록 (멱등) — 커밋 뒤 크래시로 잡만 빠지는 일이 없다
+        await this.nfts.enqueueParentMintInTransaction(tx, userId, w.rows[0].id);
       });
     } catch (err: unknown) {
       // 부분 유니크 인덱스 충돌: 주소가 이미 다른 계정에 연결됐거나 내 대표 지갑이 이미 있음
@@ -122,9 +144,6 @@ export class WalletsService {
       }
       throw err;
     }
-
-    // 부모 NFT 민팅 잡 등록 (멱등 — 이미 있으면 no-op)
-    await this.nfts.enqueueParentMint(userId, walletId);
 
     return this.myWallet(userId);
   }

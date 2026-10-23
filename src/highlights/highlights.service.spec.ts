@@ -19,4 +19,13 @@ describe('HighlightsService stats', () => {
     expect(subqueries).toHaveLength(4);
     for (const subquery of subqueries) expect(subquery).toMatch(/deleted_at IS NULL/);
   });
+
+  it('counts agent submitters as builders (submitter_user_id is NULL for agent submissions)', async () => {
+    const db = { query: jest.fn(async (_sql: string) => ({ rows: [row], rowCount: 1 })) };
+    await new HighlightsService(db as never).stats();
+
+    const sql: string = db.query.mock.calls[0][0];
+    expect(sql).toContain('count(DISTINCT COALESCE(s.submitter_user_id, s.agent_id))');
+    expect(sql).not.toContain('count(DISTINCT s.submitter_user_id)');
+  });
 });

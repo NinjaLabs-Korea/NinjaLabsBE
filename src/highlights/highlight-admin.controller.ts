@@ -1,7 +1,8 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 import { Trim } from '../common/validation/trim';
+import { IsHttpUrlOrMediaPath, IsHttpUrlOrSitePath } from '../common/validation/url';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { HighlightAdminService } from './highlight-admin.service';
@@ -10,10 +11,11 @@ const HIGHLIGHT_TYPES = ['MILESTONE', 'FEATURED_BOUNTY', 'PROJECT', 'PARTNERSHIP
 
 export class CreateHighlightDto {
   @IsIn(HIGHLIGHT_TYPES) type!: string;
-  @Trim() @IsNotEmpty() title!: string;
-  @Trim() @IsNotEmpty() description!: string;
-  @IsOptional() imageUrl?: string;
-  @IsOptional() linkUrl?: string;
+  @Trim() @IsString() @IsNotEmpty() @MaxLength(200) title!: string;
+  @Trim() @IsString() @IsNotEmpty() @MaxLength(2000) description!: string;
+  @IsOptional() @IsHttpUrlOrMediaPath() imageUrl?: string;
+  // FE 내부 라우트(`/bounties/<slug>`)도 링크로 쓴다
+  @IsOptional() @IsHttpUrlOrSitePath() linkUrl?: string;
   @IsOptional() @IsUUID() bountyId?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) displayOrder?: number;
   @IsOptional() @IsBoolean() publish?: boolean;
@@ -21,10 +23,10 @@ export class CreateHighlightDto {
 
 export class UpdateHighlightDto {
   @IsOptional() @IsIn(HIGHLIGHT_TYPES) type?: string;
-  @IsOptional() @Trim() @IsNotEmpty() title?: string;
-  @IsOptional() @Trim() @IsNotEmpty() description?: string;
-  @IsOptional() imageUrl?: string;
-  @IsOptional() linkUrl?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(200) title?: string;
+  @IsOptional() @Trim() @IsString() @IsNotEmpty() @MaxLength(2000) description?: string;
+  @IsOptional() @IsHttpUrlOrMediaPath() imageUrl?: string;
+  @IsOptional() @IsHttpUrlOrSitePath() linkUrl?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) displayOrder?: number;
   @IsOptional() @IsBoolean() publish?: boolean;
 }

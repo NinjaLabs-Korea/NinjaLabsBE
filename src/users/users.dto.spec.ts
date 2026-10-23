@@ -1,0 +1,58 @@
+import 'reflect-metadata';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { isReservedNickname, NICKNAME } from './nickname';
+import { CompleteProfileDto } from './users.controller';
+
+// 컨트롤러가 서비스 → wallet-signature → @injectivelabs/sdk-ts(ESM)를 끌어오므로 서명 검증 모듈만 껍데기로 대체한다
+jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
+
+const failedFields = async (body: object) =>
+  (await validate(plainToInstance(CompleteProfileDto, body))).map((error) => error.property).sort();
+
+const valid = { nickname: 'ninja_dev', bio: 'Builder', tags: ['DEV'] };
+
+describe('CompleteProfileDto', () => {
+  it('accepts unicode letters/digits with _ . - and trims surrounding whitespace', async () => {
+    expect(await failedFields(valid)).toEqual([]);
+    expect(await failedFields({ ...valid, nickname: '닌자.개발자-01' })).toEqual([]);
+    expect(await failedFields({ ...valid, nickname: '  ninja  ' })).toEqual([]);
+    expect(plainToInstance(CompleteProfileDto, { ...valid, nickname: '  ninja  ' }).nickname).toBe('ninja');
+  });
+
+  it.each(['a', 'n'.repeat(51), 'ninja dev', 'ninja@dev', 'ninja/dev', 'ninja<b>', '   ', '​​'])(
+    'rejects nickname %p (length 2..50, no whitespace or symbols beyond _ . -)',
+    async (nickname) => {
+      expect(await failedFields({ ...valid, nickname })).toEqual(['nickname']);
+    },
+  );
+
+  it.each(['.ninja', 'ninja.', '-ninja', 'ninja-', '_ninja', 'ninja_', '..', '...', '--', '-.', '.-', '_-_', '.a', 'a.'])(
+    'rejects nickname %p (must start and end with a letter or digit; no dot/dash-only values)',
+    async (nickname) => {
+      expect(await failedFields({ ...valid, nickname })).toEqual(['nickname']);
+    },
+  );
+
+  it.each(['a.b', 'a-b', 'a_b', 'ninja-dev', 'n.i.n.j.a', '닌자.개발자', '01', 'me2', 'admin1', 'newbie', 'edits'])(
+    'accepts nickname %p (letters/digits at both ends)',
+    async (nickname) => {
+      expect(await failedFields({ ...valid, nickname })).toEqual([]);
+      expect(NICKNAME.test(nickname)).toBe(true);
+    },
+  );
+
+  it.each(['me', 'ME', 'Me', 'check-nickname', 'Check-Nickname', 'admin', 'ADMIN', 'new', 'New', 'edit', 'EDIT', '  me  '])(
+    'rejects the reserved route word %p (case-insensitive)',
+    async (nickname) => {
+      expect(isReservedNickname(nickname)).toBe(true);
+      expect(await failedFields({ ...valid, nickname })).toEqual(['nickname']);
+    },
+  );
+
+  it('bounds bio to 1000 characters and still requires it', async () => {
+    expect(await failedFields({ ...valid, bio: 'b'.repeat(1000) })).toEqual([]);
+    expect(await failedFields({ ...valid, bio: 'b'.repeat(1001) })).toEqual(['bio']);
+    expect(await failedFields({ ...valid, bio: '' })).toEqual(['bio']);
+  });
+});

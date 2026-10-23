@@ -1,39 +1,23 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 import { AdminGuard } from '../auth/admin.guard';
-import { DatabaseService } from '../common/database/database.service';
+import { AuditService } from './audit.service';
+
+export class AuditLogsQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
+  @IsOptional() @IsString() @MaxLength(64) entityType?: string;
+  @IsOptional() @IsUUID() entityId?: string;
+}
 
 @Controller('admin/audit-logs')
 @UseGuards(AdminGuard)
 export class AuditController {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(private readonly audit: AuditService) {}
 
-  /** GET /admin/audit-logs?entityType=&entityId=&page= — 감사 로그 조회 */
+  /** GET /admin/audit-logs?entityType=&entityId=&page= — 감사 로그 조회 → `{ items, page, pageSize, total }` (30건/페이지) */
   @Get()
-  async list(
-    @Query('entityType') entityType?: string,
-    @Query('entityId') entityId?: string,
-    @Query('page') page = '1',
-  ) {
-    const pageSize = 30;
-    const offset = (Number(page) - 1) * pageSize;
-    const conds: string[] = [];
-    const params: unknown[] = [];
-    if (entityType) {
-      params.push(entityType);
-      conds.push(`entity_type = $${params.length}`);
-    }
-    if (entityId) {
-      params.push(entityId);
-      conds.push(`entity_id = $${params.length}`);
-    }
-    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-    const r = await this.db.query(
-      `SELECT id, actor_user_id, actor_agent_id, action, entity_type, entity_id, created_at
-         FROM audit_log ${where}
-        ORDER BY created_at DESC
-        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-      [...params, pageSize, offset],
-    );
-    return r.rows;
+  list(@Query() query: AuditLogsQueryDto) {
+    return this.audit.list({ page: query.page ?? 1, entityType: query.entityType, entityId: query.entityId });
   }
 }

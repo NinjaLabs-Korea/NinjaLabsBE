@@ -31,6 +31,37 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  db-tests:
+    name: Real-database tests (Postgres 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Creates a fresh database per run, applies supabase/migrations with scripts/migrate.js and runs src/test-db/*.db-spec.ts
+      # against the real DatabaseService (no SQL mocks). Skips itself (with a message) when TEST_DATABASE_URL is unset.
+      - run: npm run test:db
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
   audit:
     name: Dependency audit (report only)
     runs-on: ubuntu-latest

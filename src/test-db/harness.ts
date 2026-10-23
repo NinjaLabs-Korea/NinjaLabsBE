@@ -19,6 +19,21 @@ export const TEST_DB_URL_ENV = 'NINJALABS_TEST_DB_URL';
 export const TEST_DB_NAME_ENV = 'NINJALABS_TEST_DB_NAME';
 export const TEST_JWT_SECRET = 'test-db-jwt-secret-at-least-32-bytes-long!!';
 
+/**
+ * 관리용 접속 문자열(TEST_DATABASE_URL). 없으면 로컬에서는 undefined(→ 스위트 skip)지만 **CI(CI=true)에서는 throw** —
+ * db-tests 잡의 시크릿/env 가 빠져도 조용히 초록으로 끝나지 않게 한다 (.github/workflows/ci.yml).
+ */
+export function testDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const url = env.TEST_DATABASE_URL;
+  if (!url && env.CI === 'true') {
+    throw new Error(
+      'TEST_DATABASE_URL is not set while CI=true — the real-database suite must RUN in CI, not skip. ' +
+        'Set TEST_DATABASE_URL on the db-tests job (see .github/workflows/ci.yml).',
+    );
+  }
+  return url || undefined;
+}
+
 /** 테스트용 ssl 환경 — database-ssl.ts / scripts/migrate.js의 sslOptions()에 그대로 넘긴다 */
 export function testSslEnv(): { PGSSLMODE: string; DATABASE_CA_CERT: string | undefined } {
   return { PGSSLMODE: process.env.TEST_PGSSLMODE ?? 'disable', DATABASE_CA_CERT: process.env.DATABASE_CA_CERT };
@@ -79,6 +94,32 @@ export async function createPrimaryWallet(db: DatabaseService, userId: string): 
 /** 32바이트 hex tx 해시 (대문자 hex로 만들어 서비스의 소문자 정규화를 함께 확인한다) */
 export function fakeTxHash(): string {
   return `0x${randomBytes(32).toString('hex').toUpperCase()}`;
+}
+
+/** 밖에서 resolve/reject 하는 Promise — 동시성 스펙에서 트랜잭션 하나를 원하는 지점에 세워 둘 때 쓴다 */
+export function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+export async function waitFor(condition: () => boolean | Promise<boolean>, what: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+/** 이 데이터베이스에서 행/advisory 잠금을 기다리는 백엔드가 하나 이상 생길 때까지 기다린다 (동시성 스펙: "상대가 막혔다"를 확인한 뒤 풀어 준다) */
+export async function waitForLockWaiter(db: DatabaseService, what: string): Promise<void> {
+  await waitFor(async () => {
+    const r = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+    return r.rows[0].n > 0;
+  }, what);
 }
 
 export async function auditActions(db: DatabaseService, entityType: string, entityId: string): Promise<string[]> {

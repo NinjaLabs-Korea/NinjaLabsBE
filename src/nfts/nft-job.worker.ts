@@ -64,6 +64,19 @@ type ClaimedJob = { id: string; nft_id: string; job_type: string; retry_count: n
 type JobOutcome = 'done' | 'deferred';
 /** 자식을 attach할 수 있는 부모 상태 */
 const PARENT_READY = ['MINTED', 'ATTACHED'];
+/**
+ * 선점(claim) 문장 — 한 문장 안의 FOR UPDATE SKIP LOCKED 로 다중 인스턴스가 서로 다른 잡을 집는다. test-db(nft-worker.db-spec)가
+ * 두 트랜잭션에서 이 문장을 그대로 실행해 "둘 다 즉시, 서로소 집합" 을 확인하므로 워커 밖으로 꺼내 둔다.
+ */
+export const CLAIM_PENDING_JOBS_SQL = `UPDATE nft_job
+            SET status = 'PROCESSING', started_at = now()
+          WHERE id IN (
+                SELECT id FROM nft_job
+                 WHERE status = 'PENDING' AND scheduled_at <= now()
+                 ORDER BY scheduled_at
+                 LIMIT 10
+                   FOR UPDATE SKIP LOCKED)
+          RETURNING id, nft_id, job_type, retry_count, scheduled_at`;
 /** 부모가 준비되지 않아 미룬 ATTACH_CHILD의 재시도 간격 */
 const ATTACH_DEFER_INTERVAL = '1 hour';
 
@@ -103,17 +116,7 @@ export class NftJobWorker {
 
       // 선점(claim)을 단일 문장으로 — autocommit에서도 SELECT ... FOR UPDATE SKIP LOCKED와
       // PROCESSING 전환이 같은 스냅샷/잠금 안에서 끝나므로 워커 다중 인스턴스에도 안전
-      const jobs = await this.db.query<ClaimedJob>(
-        `UPDATE nft_job
-            SET status = 'PROCESSING', started_at = now()
-          WHERE id IN (
-                SELECT id FROM nft_job
-                 WHERE status = 'PENDING' AND scheduled_at <= now()
-                 ORDER BY scheduled_at
-                 LIMIT 10
-                   FOR UPDATE SKIP LOCKED)
-          RETURNING id, nft_id, job_type, retry_count, scheduled_at`,
-      );
+      const jobs = await this.db.query<ClaimedJob>(CLAIM_PENDING_JOBS_SQL);
 
       // RETURNING 순서는 힙 순서(서브쿼리의 ORDER BY와 무관) — 오래 기다린 잡부터 처리하도록 다시 정렬한다
       const batch = [...jobs.rows].sort((a, b) => a.scheduled_at.getTime() - b.scheduled_at.getTime());

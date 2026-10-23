@@ -1,30 +1,14 @@
 import { InjectiveNftClient } from '../nfts/injective-nft.client';
-import { NftJobWorker } from '../nfts/nft-job.worker';
+import { CLAIM_PENDING_JOBS_SQL, NftJobWorker } from '../nfts/nft-job.worker';
 import { NftsService } from '../nfts/nfts.service';
 import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, testConfig, unique } from './harness';
+import { createDb, createPrimaryWallet, createUser, deferred, testConfig, unique, waitFor } from './harness';
 
 // 실제 클라이언트는 @injectivelabs/sdk-ts(ESM)를 끌어오므로 DI 메타데이터용 껍데기로 대체한다 (유닛 스펙과 동일)
 jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
 
 type JobRow = { status: string; retry_count: number; last_error: string | null; scheduled_at: Date; processed_at: Date | null };
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
-}
-
-async function waitFor(condition: () => boolean | Promise<boolean>, what: string, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await condition()) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error(`timed out waiting for ${what}`);
-}
 
 /**
  * NftJobWorker on a real database — 실패 경로 UPDATE의 `$2` 세 자리(컬럼 대입 + 문자열 비교 2곳)는 mock DB에서는 통과하고
@@ -138,6 +122,47 @@ describeDb('nft_job worker on a real database', () => {
     expect(await jobRow(jobId)).toMatchObject({ status: 'FAILED', retry_count: 5, last_error: 'node unreachable', processed_at: expect.any(Date) });
     expect((await nftRow(nftId)).status).toBe('FAILED');
     expect(chain.mint).toHaveBeenCalledTimes(2);
+  });
+
+  it('two instances claiming inside two open transactions at the same time each get a disjoint, non-empty batch immediately (FOR UPDATE SKIP LOCKED)', async () => {
+    // more due jobs than one LIMIT 10 batch, so the second claimant has something left to take
+    const mine = await Promise.all(Array.from({ length: 13 }, (_, i) => parentJob(`${i + 1} minutes`)));
+    const myIds = new Set(mine.map((job) => job.jobId));
+
+    // both transactions run the worker's claim statement and then wait for each other BEFORE committing — while A still holds its
+    // row locks, B must come back at once with the rows A skipped. Without SKIP LOCKED, B blocks on A's rows and the barrier times out.
+    const bothClaimed = deferred<void>();
+    let arrived = 0;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('second claim did not return while the first transaction held its rows — SKIP LOCKED is not in effect')), 5_000);
+    });
+    const claim = () => db.tx(async (client) => {
+      const r = await client.query<{ id: string }>(CLAIM_PENDING_JOBS_SQL);
+      if (++arrived === 2) bothClaimed.resolve();
+      await Promise.race([bothClaimed.promise, timeout]);
+      return r.rows.map((row) => row.id);
+    });
+    let idsA: string[];
+    let idsB: string[];
+    try {
+      [idsA, idsB] = await Promise.all([claim(), claim()]);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    expect(idsA.length).toBeGreaterThan(0);
+    expect(idsB.length).toBeGreaterThan(0);
+    expect(Math.max(idsA.length, idsB.length)).toBe(10); // one of them took a full LIMIT 10 batch
+    expect(idsA.filter((id) => idsB.includes(id))).toEqual([]); // disjoint
+    const claimed = new Set([...idsA, ...idsB]);
+    for (const id of myIds) expect(claimed.has(id)).toBe(true); // between them, every due job was claimed exactly once
+    const states = await db.query<{ status: string; n: number }>(
+      `SELECT status, count(*)::int AS n FROM nft_job WHERE id = ANY($1::uuid[]) GROUP BY status`, [[...claimed]]);
+    expect(states.rows).toEqual([{ status: 'PROCESSING', n: claimed.size }]);
+
+    // nothing processes these — close them so later tests (and the 15-minute stale sweep) never see them
+    await db.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE id = ANY($1::uuid[])`, [[...claimed]]);
   });
 
   it('a stale job reclaimed by instance B is owned by B: A\'s late failure is a no-op and A skips batch jobs it no longer owns', async () => {

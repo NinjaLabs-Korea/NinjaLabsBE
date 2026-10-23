@@ -101,7 +101,7 @@ SQL이 핵심인 흐름은 `src/test-db/*.db-spec.ts`가 **실제 Postgres**에�
 TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres npm run test:db
 ```
 
-`TEST_DATABASE_URL`이 없으면 전부 skip되며 이유를 출력한다. 로컬/CI Postgres는 TLS가 없으므로 기본 `PGSSLMODE=disable`로 붙는다 (TLS DB면 `TEST_PGSSLMODE=require`).
-CI의 `db-tests` 잡이 `postgres:16` 서비스 컨테이너로 같은 명령을 돌린다.
+`TEST_DATABASE_URL`이 없으면 로컬에서는 전부 skip되며 이유를 출력한다 — 단 `CI=true`이면 skip 대신 **실패**한다 (시크릿/env가 빠진 CI 잡이 조용히 초록이 되지 않게, `src/test-db/harness.ts` `testDatabaseUrl()`). 로컬/CI Postgres는 TLS가 없으므로 기본 `PGSSLMODE=disable`로 붙는다 (TLS DB면 `TEST_PGSSLMODE=require`).
+CI의 `db-tests` 잡이 `postgres:16` 서비스 컨테이너로 같은 명령을 돌린다. 스위트는 테스트 순서에 기대지 않으므로 `npm run test:db -- --randomize`로도 통과해야 하고, 정렬 단언은 collation에 기대지 않는다(`COLLATE "C"` 또는 JS 정렬).
 
 Supabase 프로젝트 생성 후 `Project Settings → Database → Connection string`을 `DATABASE_URL`에 넣으면 된다. Supabase CLI를 쓰는 팀이면 `npm run migrate` 대신 `supabase db push`도 가능 (마이그레이션 디렉터리 규칙 호환).

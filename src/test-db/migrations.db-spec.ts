@@ -8,38 +8,49 @@ import { describeDb } from './describe-db';
 import { createDb, testSslEnv, unique } from './harness';
 
 const HARDENING = '0014_security_hardening.sql';
+/** 0014 부터 끝까지 — "0014 직전에 멈춘" DB 에 applyMigrations() 를 돌리면 이 순서로 적용돼야 한다 */
+const FROM_HARDENING = migrationFiles().filter((file) => file >= HARDENING);
 
 /**
  * 0014의 입금 tx 해시 유니크 인덱스는 중복이 남아 있으면 마이그레이션을 **실패**시켜야 한다 (조용히 건너뛰지 않음) — 그리고 운영자가 정리한 뒤
  * 재실행하면 적용되어야 한다. payout 해시는 멀티시그 한 tx로 여러 수상자에게 보내는 경우가 정당하므로 중복이 있어도 막지 않고 정규화만 한다.
  * 공유 테스트 DB는 이미 전부 적용돼 있으므로 0001~0013만 적용한 별도 데이터베이스를 만들어 검증한다.
  * 같은 "0014 미적용" DB로 SchemaGuard의 MIGRATIONS_PENDING 거부도 확인한다.
+ *
+ * 각 테스트는 beforeEach 에서 **자기만의** 데이터베이스를 만들고 afterEach 에서 지운다 — 테스트끼리 상태를 공유하지 않으므로
+ * 어떤 순서로 돌아도(`--randomize`) 같은 결과다. 정렬 단언은 collation 에 기대지 않는다 (`COLLATE "C"`): en_US.UTF-8 클러스터(CI 의
+ * postgres:16 기본)에서는 `0xAB…` 와 `0xab…` 의 순서가 C 와 다르다.
  */
 describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck before 0014', () => {
   const adminUrl = process.env.TEST_DATABASE_URL!;
   const ssl = sslOptions(testSslEnv());
-  const dbName = `ninjalabs_test_mig_${Date.now().toString(36)}_${unique().slice(0, 6)}`;
-  let pool: Pool;
-  let partialDir: string;
-  let partialUrl: string;
-  let bountyId: string;
-  let submissionId: string;
-  let rewardIds: string[];
 
-  const migrationNames = async () => (await pool.query<{ name: string }>(`SELECT name FROM _migrations ORDER BY name`)).rows.map((row) => row.name);
-  const indexNames = async () => (await pool.query<{ indexname: string }>(
-    `SELECT indexname FROM pg_indexes WHERE indexname IN ('uq_bounty_reward_deposit_tx', 'uq_payout_tx') ORDER BY indexname`)).rows.map((row) => row.indexname);
+  type StuckDb = {
+    pool: Pool;
+    url: string;
+    name: string;
+    bountyId: string;
+    submissionId: string;
+    rewardIds: string[];
+    partialDir: string;
+  };
+  let stuck: StuckDb;
 
-  beforeAll(async () => {
+  const migrationNames = async () => (await stuck.pool.query<{ name: string }>(`SELECT name FROM _migrations ORDER BY name COLLATE "C"`)).rows.map((row) => row.name);
+  const indexNames = async () => (await stuck.pool.query<{ indexname: string }>(
+    `SELECT indexname FROM pg_indexes WHERE indexname IN ('uq_bounty_reward_deposit_tx', 'uq_payout_tx') ORDER BY indexname COLLATE "C"`)).rows.map((row) => row.indexname);
+
+  /** 0001~0013 만 적용한 새 데이터베이스 + 0014 가 걸려 넘어져야 할 레거시 데이터 */
+  async function provisionStuckDb(): Promise<StuckDb> {
+    const name = `ninjalabs_test_mig_${Date.now().toString(36)}_${unique().slice(0, 6)}`;
     const admin = new Pool({ connectionString: adminUrl, ssl, max: 1 });
-    try { await admin.query(`CREATE DATABASE "${dbName}"`); } finally { await admin.end(); }
+    try { await admin.query(`CREATE DATABASE "${name}"`); } finally { await admin.end(); }
     const url = new URL(adminUrl);
-    url.pathname = `/${dbName}`;
-    partialUrl = url.toString();
-    pool = new Pool({ connectionString: partialUrl, ssl, max: 2 });
+    url.pathname = `/${name}`;
+    const pool = new Pool({ connectionString: url.toString(), ssl, max: 2 });
 
     // 0014 직전까지만 담은 디렉터리 — 운영 러너와 같은 applyMigrations()로 적용한다
-    partialDir = mkdtempSync(join(tmpdir(), 'ninjalabs-mig-'));
+    const partialDir = mkdtempSync(join(tmpdir(), 'ninjalabs-mig-'));
     for (const file of migrationFiles()) if (file < HARDENING) copyFileSync(join(MIGRATIONS_DIR, file), join(partialDir, file));
     const { applied } = await applyMigrations(pool, { dir: partialDir });
     expect(applied).not.toContain(HARDENING);
@@ -51,11 +62,11 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
       `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step) VALUES ($1, $2, $3, '', 2) RETURNING id`,
       [`google-${id}`, `${id}@example.test`, `user_${id.slice(0, 8)}`])).rows[0].id;
     // legacy cover image saved before the strict URL rule — 0014 must only *report* it (RAISE NOTICE), never fail on it
-    bountyId = (await pool.query<{ id: string }>(
+    const bountyId = (await pool.query<{ id: string }>(
       `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, cover_image_url)
        VALUES ($1, 's', 't', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', '/uploads/legacy-cover.png') RETURNING id`, [userId])).rows[0].id;
     const depositHash = `0x${'ab'.repeat(32)}`;
-    rewardIds = [];
+    const rewardIds: string[] = [];
     for (const hash of [depositHash, depositHash.toUpperCase().replace('0X', '0x')]) {
       rewardIds.push((await pool.query<{ id: string }>(
         `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, custody_address, deposit_tx_hash)
@@ -63,7 +74,7 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
     }
     const walletId = (await pool.query<{ id: string }>(
       `INSERT INTO wallet (user_id, address, verified_at) VALUES ($1, $2, now()) RETURNING id`, [userId, `inj1${id}`])).rows[0].id;
-    submissionId = (await pool.query<{ id: string }>(
+    const submissionId = (await pool.query<{ id: string }>(
       `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
        VALUES ($1, $2, 'https://example.test', 'd', 'APPROVED') RETURNING id`, [bountyId, userId])).rows[0].id;
     const payoutHash = `0x${'CD'.repeat(32)}`;
@@ -72,22 +83,29 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
         `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by, payout_tx_hash)
          VALUES ($1, $2, $3, 1000, 'PAID', $4, $5, $6)`, [rewardId, submissionId, walletId, unique('idem-'), userId, payoutHash]);
     }
-  });
+    return { pool, url: url.toString(), name, bountyId, submissionId, rewardIds, partialDir };
+  }
 
-  afterAll(async () => {
-    await pool?.end();
-    if (partialDir) rmSync(partialDir, { recursive: true, force: true });
+  async function dropStuckDb(db: StuckDb) {
+    await db.pool.end();
+    rmSync(db.partialDir, { recursive: true, force: true });
     const admin = new Pool({ connectionString: adminUrl, ssl, max: 1 });
-    try { await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`); } finally { await admin.end(); }
-  });
+    try { await admin.query(`DROP DATABASE IF EXISTS "${db.name}" WITH (FORCE)`); } finally { await admin.end(); }
+  }
 
-  it('refuses to start the app on that schema with MIGRATIONS_PENDING naming 0014, and boots on the fully migrated one', async () => {
-    const stale = createDb({ DATABASE_URL: partialUrl });
+  beforeEach(async () => { stuck = await provisionStuckDb(); });
+  afterEach(async () => { if (stuck) await dropStuckDb(stuck); });
+
+  /** 정렬을 Postgres collation 에 맡기지 않는다 — JS 코드포인트 순으로 비교한다 */
+  const sorted = (values: string[]) => [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+  it('refuses to start the app on that schema with MIGRATIONS_PENDING naming every missing file, and boots on the fully migrated one', async () => {
+    const stale = createDb({ DATABASE_URL: stuck.url });
     const current = createDb();
     try {
       const guard = new SchemaGuard(stale);
       jest.spyOn(guard['logger'], 'log').mockImplementation(() => undefined);
-      await expect(guard.onModuleInit()).rejects.toThrow(`MIGRATIONS_PENDING: run npm run migrate (missing: ${HARDENING})`);
+      await expect(guard.onModuleInit()).rejects.toThrow(`MIGRATIONS_PENDING: run npm run migrate (missing: ${FROM_HARDENING.join(', ')})`);
       const ok = new SchemaGuard(current);
       jest.spyOn(ok['logger'], 'log').mockImplementation(() => undefined);
       await expect(ok.onModuleInit()).resolves.toBeUndefined();
@@ -98,38 +116,40 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
 
   it('fails 0014 loudly while duplicate deposit tx hashes exist: rolled back, no _migrations row, no unique index', async () => {
     const notices: string[] = [];
-    await expect(applyMigrations(pool, { log: (line) => notices.push(line) })).rejects.toMatchObject({
+    await expect(applyMigrations(stuck.pool, { log: (line) => notices.push(line) })).rejects.toMatchObject({
       file: HARDENING,
       code: '23505',
       message: expect.stringContaining('0014: cannot create uq_bounty_reward_deposit_tx — 1 duplicate bounty_reward.deposit_tx_hash value(s)'),
     });
-    await expect(applyMigrations(pool)).rejects.toMatchObject({
+    // a second attempt on the same (still dirty) database fails the same way — nothing was half-applied
+    await expect(applyMigrations(stuck.pool)).rejects.toMatchObject({
       message: expect.stringMatching(/First 1: 0x(ab){32} \(x2\)\. Inspect with: SELECT deposit_tx_hash, count\(\*\), array_agg\(id\) FROM bounty_reward/),
     });
     expect(await migrationNames()).not.toContain(HARDENING);
     expect(await indexNames()).toEqual([]);
-    // the normalization UPDATE ran inside the failed transaction, so the mixed-case legacy value is still there (idempotent re-run normalizes again)
-    const hashes = await pool.query<{ deposit_tx_hash: string }>(`SELECT deposit_tx_hash FROM bounty_reward WHERE bounty_id = $1 ORDER BY deposit_tx_hash`, [bountyId]);
-    expect(hashes.rows.map((row) => row.deposit_tx_hash)).toEqual([`0x${'AB'.repeat(32)}`, `0x${'ab'.repeat(32)}`]);
+    // the normalization UPDATE ran inside the failed transaction, so the mixed-case legacy value is still there (idempotent re-run normalizes again).
+    // Compared in JS code-point order so the assertion does not depend on the cluster's collation.
+    const hashes = await stuck.pool.query<{ deposit_tx_hash: string }>(`SELECT deposit_tx_hash FROM bounty_reward WHERE bounty_id = $1`, [stuck.bountyId]);
+    expect(sorted(hashes.rows.map((row) => row.deposit_tx_hash))).toEqual(sorted([`0x${'AB'.repeat(32)}`, `0x${'ab'.repeat(32)}`]));
   });
 
   it('after the operator removes the deposit duplicates the migration applies; duplicate payout hashes (multi-send) survive, normalized, with no unique index', async () => {
-    await pool.query(`UPDATE bounty_reward SET deposit_tx_hash = NULL WHERE id = $1`, [rewardIds[1]]);
+    await stuck.pool.query(`UPDATE bounty_reward SET deposit_tx_hash = NULL WHERE id = $1`, [stuck.rewardIds[1]]);
     const log: string[] = [];
-    const { applied } = await applyMigrations(pool, { log: (line) => log.push(line) });
-    expect(applied).toEqual([HARDENING]);
+    const { applied } = await applyMigrations(stuck.pool, { log: (line) => log.push(line) });
+    expect(applied).toEqual(FROM_HARDENING);
     // the legacy cover image is reported, not rejected
     expect(log).toContainEqual(expect.stringContaining('[notice] 0014: bounty.cover_image_url — 1 row(s) would fail the strict create-DTO URL rule'));
     expect(log.some((line) => line.includes('notice.thumbnail_url'))).toBe(false);
-    expect(await migrationNames()).toContain(HARDENING);
+    expect(await migrationNames()).toEqual(expect.arrayContaining(FROM_HARDENING));
     expect(await indexNames()).toEqual(['uq_bounty_reward_deposit_tx']);
-    const normalized = await pool.query<{ deposit_tx_hash: string | null }>(`SELECT deposit_tx_hash FROM bounty_reward WHERE id = $1`, [rewardIds[0]]);
+    const normalized = await stuck.pool.query<{ deposit_tx_hash: string | null }>(`SELECT deposit_tx_hash FROM bounty_reward WHERE id = $1`, [stuck.rewardIds[0]]);
     expect(normalized.rows[0].deposit_tx_hash).toBe(`0x${'ab'.repeat(32)}`);
-    const payoutHashes = await pool.query<{ payout_tx_hash: string }>(`SELECT payout_tx_hash FROM payout WHERE submission_id = $1`, [submissionId]);
+    const payoutHashes = await stuck.pool.query<{ payout_tx_hash: string }>(`SELECT payout_tx_hash FROM payout WHERE submission_id = $1`, [stuck.submissionId]);
     expect(payoutHashes.rows.map((row) => row.payout_tx_hash)).toEqual([`0x${'cd'.repeat(32)}`, `0x${'cd'.repeat(32)}`]);
-    // idempotent: a second run skips it
-    await expect(applyMigrations(pool)).resolves.toMatchObject({ applied: [] });
-    const stale = createDb({ DATABASE_URL: partialUrl });
+    // idempotent: a second run skips everything
+    await expect(applyMigrations(stuck.pool)).resolves.toMatchObject({ applied: [] });
+    const stale = createDb({ DATABASE_URL: stuck.url });
     try {
       const guard = new SchemaGuard(stale);
       jest.spyOn(guard['logger'], 'log').mockImplementation(() => undefined);

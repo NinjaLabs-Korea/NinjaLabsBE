@@ -1,11 +1,14 @@
 import { randomBytes } from 'crypto';
 import { Pool } from 'pg';
 import { applyMigrations, sslOptions } from '../../scripts/migrate';
-import { TEST_DB_NAME_ENV, TEST_DB_URL_ENV, testSslEnv } from './harness';
+import { TEST_DB_NAME_ENV, TEST_DB_URL_ENV, testDatabaseUrl, testSslEnv } from './harness';
 
-/** 실행마다 새 데이터베이스를 만들고 supabase/migrations를 운영 러너(scripts/migrate.js)와 같은 코드로 적용한다 */
+/**
+ * 실행마다 새 데이터베이스를 만들고 supabase/migrations를 운영 러너(scripts/migrate.js)와 같은 코드로 적용한다.
+ * TEST_DATABASE_URL 이 없으면 로컬에서는 skip 안내만 하고, CI=true 면 testDatabaseUrl()이 throw 해 실행 자체가 실패한다.
+ */
 export default async function globalSetup(): Promise<void> {
-  const adminUrl = process.env.TEST_DATABASE_URL;
+  const adminUrl = testDatabaseUrl();
   if (!adminUrl) {
     process.stdout.write(
       '\n[test:db] TEST_DATABASE_URL is not set — real-database tests are SKIPPED.\n' +

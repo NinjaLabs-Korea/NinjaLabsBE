@@ -1,3 +1,4 @@
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
 import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.service';
@@ -10,7 +11,7 @@ import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique } from './harness';
+import { auditActions, createDb, createPrimaryWallet, createUser, deferred, fakeTxHash, testConfig, unique, waitForLockWaiter } from './harness';
 
 describeDb('bounty → reward → payout → child NFT on a real database', () => {
   let db: DatabaseService;
@@ -251,5 +252,129 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     const thirdSubmission = await approvedWinner(bountyId, 3);
     await expect(rewards.requestPayout(rewardId, thirdSubmission, '1', adminId)).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' });
     expect((await rewardRow(rewardId)).status).toBe('PAID');
+  });
+
+  describe('two transactions racing (each call takes its own pool client, so Promise.all is two real concurrent transactions)', () => {
+    async function openBountyWithWinners(maxWinners: number, amount: string) {
+      const { bountyId, rewardId } = await createFundedBounty({ maxWinners, amount });
+      await rewards.confirmDeposit(rewardId, fakeTxHash(), amount, adminId);
+      await bounties.transition(bountyId, 'OPEN', adminId);
+      const winners: string[] = [];
+      for (let i = 0; i < maxWinners; i++) winners.push(await approvedWinner(bountyId, i + 1));
+      return { bountyId, rewardId, winners };
+    }
+
+    async function approvedPayout(rewardId: string, submissionId: string, amount: string) {
+      const payout = await rewards.requestPayout(rewardId, submissionId, amount, adminId);
+      await rewards.markApproved(payout.id, adminId);
+      return payout.id;
+    }
+
+    const split = <T,>(results: PromiseSettledResult<T>[]) => ({
+      fulfilled: results.filter((r): r is PromiseFulfilledResult<T> => r.status === 'fulfilled').map((r) => r.value),
+      rejected: results.filter((r): r is PromiseRejectedResult => r.status === 'rejected').map((r) => r.reason as Error),
+    });
+
+    it('requestPayout twice for the same submission: one payout row, the loser gets 409 PAYOUT_ALREADY_REQUESTED (not a raw unique violation)', async () => {
+      const { rewardId, winners: [submissionId] } = await openBountyWithWinners(1, '1000');
+      const { fulfilled, rejected } = split(await Promise.allSettled([
+        rewards.requestPayout(rewardId, submissionId, '400', adminId),
+        rewards.requestPayout(rewardId, submissionId, '400', adminId),
+      ]));
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      // the loser waited on the bounty/reward row locks, re-ran the duplicate check and saw the winner's row — it never reached uq_payout_idempotency
+      expect(rejected[0]).toBeInstanceOf(ConflictException);
+      expect(rejected[0].message).toBe('PAYOUT_ALREADY_REQUESTED');
+      const rows = await db.query<{ id: string; amount: string }>(`SELECT id, amount::text FROM payout WHERE submission_id = $1`, [submissionId]);
+      expect(rows.rows).toEqual([{ id: fulfilled[0].id, amount: '400' }]);
+      expect(await auditActions(db, 'payout', fulfilled[0].id)).toEqual(['PAYOUT_REQUESTED']);
+    });
+
+    it('markPaid twice for the same payout (two different tx hashes): one PAID with the winning hash, one child NFT job, the loser gets 404 PAYOUT_NOT_FOUND_OR_WRONG_STATUS', async () => {
+      const { rewardId, winners: [submissionId] } = await openBountyWithWinners(1, '1000');
+      const payoutId = await approvedPayout(rewardId, submissionId, '1000');
+      const hashes = [fakeTxHash(), fakeTxHash()];
+      const { fulfilled, rejected } = split(await Promise.allSettled([
+        rewards.markPaid(payoutId, hashes[0], adminId),
+        rewards.markPaid(payoutId, hashes[1], adminId),
+      ]));
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]).toBeInstanceOf(NotFoundException);
+      expect(rejected[0].message).toBe('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
+      const row = await db.query<{ status: string; payout_tx_hash: string }>(`SELECT status, payout_tx_hash FROM payout WHERE id = $1`, [payoutId]);
+      expect(row.rows[0]).toEqual({ status: 'PAID', payout_tx_hash: fulfilled[0].payout_tx_hash });
+      expect(hashes.map((h) => `0x${h.slice(2).toLowerCase()}`)).toContain(fulfilled[0].payout_tx_hash);
+      const jobs = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM nft_job WHERE idempotency_key = $1`, [`mint-child:${submissionId}`]);
+      expect(jobs.rows[0].n).toBe(1);
+      expect(await auditActions(db, 'payout', payoutId)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED', 'PAYOUT_PAID']);
+      expect((await rewardRow(rewardId)).status).toBe('PAID');
+    });
+
+    /**
+     * A RewardsService whose PAYOUT_PAID audit step parks the transaction of `payoutId` (everything before it — the PAID UPDATE,
+     * the child NFT job, advanceRewardStatus — has run but is uncommitted) until `release` resolves. `parked` resolves on arrival.
+     */
+    function parkedMarkPaid(payoutId: string) {
+      const parked = deferred<void>();
+      const release = deferred<void>();
+      const parkingAudit = {
+        record: async (actor: string | undefined, action: string, type: string, id: string, runner?: unknown) => {
+          if (action === 'PAYOUT_PAID' && id === payoutId) { parked.resolve(); await release.promise; }
+          return new AuditService(db).record(actor, action, type, id, runner as never);
+        },
+      } as unknown as AuditService;
+      return { service: new RewardsService(db, nfts, parkingAudit), parked: parked.promise, release: () => release.resolve() };
+    }
+
+    it('markPaid with the SAME hash on payouts of two different bounties while the first is still uncommitted: the advisory lock makes the second wait and then see the PAID row → 409 TX_HASH_ALREADY_USED', async () => {
+      const first = await openBountyWithWinners(1, '1000');
+      const second = await openBountyWithWinners(1, '1000');
+      const payouts = [await approvedPayout(first.rewardId, first.winners[0], '1000'), await approvedPayout(second.rewardId, second.winners[0], '1000')];
+      const hash = fakeTxHash();
+
+      // T1 records the hash on bounty A and parks before committing. T2 then records the same hash on bounty B: it must block on the
+      // per-hash advisory lock (T1's PAID row is invisible to it until T1 commits — without the lock T2's reuse check sees nothing and both commit).
+      const { service: parkedService, parked, release } = parkedMarkPaid(payouts[0]);
+      const t1 = parkedService.markPaid(payouts[0], hash, adminId);
+      await parked;
+      const t2 = rewards.markPaid(payouts[1], hash.toLowerCase(), adminId).then(() => 'paid' as const, (err: Error) => err);
+      // either T2 is now waiting on the advisory lock (correct), or it already finished (lock missing) — release T1 in both cases and judge below
+      await Promise.race([waitForLockWaiter(db, 'the second markPaid to block on the hash advisory lock'), t2]);
+      release();
+
+      await expect(t1).resolves.toMatchObject({ status: 'PAID' });
+      const outcome = await t2;
+      expect(outcome).toBeInstanceOf(ConflictException);
+      expect((outcome as Error).message).toBe('TX_HASH_ALREADY_USED');
+      const paid = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM payout WHERE payout_tx_hash = $1 AND status = 'PAID'`, [`0x${hash.slice(2).toLowerCase()}`]);
+      expect(paid.rows[0].n).toBe(1);
+      expect((await db.query<{ status: string }>(`SELECT status FROM payout WHERE id = $1`, [payouts[1]])).rows[0].status).toBe('APPROVED'); // rolled back, can be paid with its own hash
+    });
+
+    it('markPaid of two winners overlapping inside advanceRewardStatus: the reward ends PAID — the reward FOR UPDATE makes the second recomputation see the first payout', async () => {
+      const { rewardId, winners } = await openBountyWithWinners(2, '1000');
+      const payouts = [await approvedPayout(rewardId, winners[0], '500'), await approvedPayout(rewardId, winners[1], '500')];
+
+      // T1 pays the first winner and parks at its audit step: at that point T1 has already run advanceRewardStatus
+      // (reward row locked, status PARTIALLY_PAID in its uncommitted view) and is holding everything open.
+      const { service: parkedService, parked, release } = parkedMarkPaid(payouts[0]);
+      const t1 = parkedService.markPaid(payouts[0], fakeTxHash(), adminId);
+      await parked;
+
+      // T2 pays the second winner: it must block on the reward row (SELECT … FOR UPDATE) until T1 commits, then recompute from a
+      // fresh snapshot that includes T1's PAID payout. Without that lock T2's UPDATE would wait on the row inside the statement and
+      // re-evaluate with its stale payout counts → PARTIALLY_PAID although both winners are paid.
+      const t2 = rewards.markPaid(payouts[1], fakeTxHash(), adminId);
+      await waitForLockWaiter(db, 'the second markPaid to block on the reward row held by the first');
+      release();
+      await expect(t1).resolves.toMatchObject({ status: 'PAID' });
+      await expect(t2).resolves.toMatchObject({ status: 'PAID' });
+
+      expect((await rewardRow(rewardId)).status).toBe('PAID');
+      const paid = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM payout WHERE bounty_reward_id = $1 AND status = 'PAID'`, [rewardId]);
+      expect(paid.rows[0].n).toBe(2);
+    });
   });
 });

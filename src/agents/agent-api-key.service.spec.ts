@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
+import { withParamsCheck } from '../test-support/expect-params-match';
 import { AgentApiKeyService } from './agent-api-key.service';
 
 describe('AgentApiKeyService', () => {
@@ -29,10 +30,8 @@ describe('AgentApiKeyService', () => {
         rowCount: touchRowCount,
         rows: touchRowCount ? [{ id: 'key-id' }] : [],
       });
-    const db = {
-      tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) =>
-        callback({ query: txQuery })),
-    };
+    // Both statements (prefix lookup, conditional last_used_at UPDATE) are checked for $n/params drift on every call.
+    const db = { query: withParamsCheck(txQuery), tx: jest.fn() };
     return {
       service: new AgentApiKeyService(db as unknown as DatabaseService),
       db,
@@ -54,6 +53,18 @@ describe('AgentApiKeyService', () => {
     expect(txQuery.mock.calls[1][1]).toEqual([
       '11111111-1111-4111-8111-111111111111',
     ]);
+  });
+
+  it('takes no row lock and opens no transaction: a plain lookup plus a conditional last_used_at UPDATE', async () => {
+    const { service, db, txQuery } = createService([row()]);
+    await service.authenticate(rawKey);
+    expect(db.tx).not.toHaveBeenCalled();
+    const [lookup, touch] = txQuery.mock.calls.map(([sql]) => sql as string);
+    expect(lookup).not.toContain('FOR UPDATE');
+    expect(lookup).toContain('a.deleted_at IS NULL');
+    expect(touch).toContain('UPDATE agent_api_key');
+    expect(touch).toContain("WHERE id = $1 AND status = 'ACTIVE' AND expires_at > now()");
+    expect(touch).not.toMatch(/UPDATE agent\b/);
   });
 
   it('checks every key sharing the same lookup prefix', async () => {
@@ -104,11 +115,11 @@ describe('AgentApiKeyService', () => {
   });
 
   it('rejects malformed keys before querying the database', async () => {
-    const { service, db } = createService([]);
+    const { service, txQuery } = createService([]);
 
     await expect(service.authenticate('invalid')).rejects.toMatchObject({
       message: 'INVALID_AGENT_API_KEY',
     });
-    expect(db.tx).not.toHaveBeenCalled();
+    expect(txQuery).not.toHaveBeenCalled();
   });
 });

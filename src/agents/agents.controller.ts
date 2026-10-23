@@ -8,17 +8,23 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsNotEmpty, IsOptional, Length } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, Length, MaxLength } from 'class-validator';
 import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { SessionUser } from '../auth/auth.service';
+import { Trim } from '../common/validation/trim';
 import { AgentsService } from './agents.service';
 
-class RegisterAgentDto {
+export class RegisterAgentDto {
+  /** FE AgentRegisterForm의 maxLength=100과 일치 (docs/agent-api.md "Field limits") */
+  @Trim()
+  @IsString()
   @Length(1, 100)
   name!: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(1000)
   description?: string;
 
   @IsOptional()
@@ -64,5 +70,23 @@ export class AgentsController {
   @Get('me')
   mine(@Req() req: Request & { user: SessionUser }) {
     return this.agents.myAgents(req.user.userId);
+  }
+
+  /** POST /agents/:id/keys/rotate — 기존 ACTIVE 키 전부 폐기 + 새 키 발급 (원문 1회 노출) */
+  @Post(':id/keys/rotate')
+  rotateKey(
+    @Param('id', ParseUUIDPipe) agentId: string,
+    @Req() req: Request & { user: SessionUser },
+  ) {
+    return this.agents.rotateKey(req.user.userId, agentId);
+  }
+
+  /** POST /agents/:id/revoke — 에이전트와 모든 키 폐기 (멱등) */
+  @Post(':id/revoke')
+  revoke(
+    @Param('id', ParseUUIDPipe) agentId: string,
+    @Req() req: Request & { user: SessionUser },
+  ) {
+    return this.agents.revoke(req.user.userId, agentId);
   }
 }

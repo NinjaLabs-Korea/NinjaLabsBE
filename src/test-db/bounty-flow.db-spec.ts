@@ -139,7 +139,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       `SELECT job_type, idempotency_key, status FROM nft_job WHERE nft_id = $1`, [child.rows[0].id]);
     expect(job.rows).toEqual([{ job_type: 'MINT_CHILD', idempotency_key: `mint-child:${submitted.id}`, status: 'PENDING' }]);
 
-    // the same payout hash cannot be recorded for a second payout
+    // the same payout hash cannot be recorded on a payout of a *different* bounty (same-bounty reuse is the multi-send case below)
     const second = await createFundedBounty();
     await rewards.confirmDeposit(second.rewardId, fakeTxHash(), '1000', adminId);
     await bounties.transition(second.bountyId, 'OPEN', adminId);
@@ -191,16 +191,20 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     const extraSub = await submissions.submit(bountyId, extraId, { submissionUrl: 'https://x.test/extra', description: 'd' });
     await expect(submissionReview.review(extraSub.id, 'APPROVE', undefined, adminId)).rejects.toMatchObject({ message: 'MAX_WINNERS_REACHED' });
 
+    // one multisig tx pays both winners → the same hash is recorded on both payouts of this bounty
+    const multiSendHash = fakeTxHash();
     const first = await rewards.requestPayout(rewardId, winners[0].submissionId, '400', adminId);
     await rewards.markApproved(first.id, adminId);
-    await rewards.markPaid(first.id, fakeTxHash(), adminId);
+    await rewards.markPaid(first.id, multiSendHash, adminId);
     expect((await rewardRow(rewardId)).status).toBe('PARTIALLY_PAID');
 
     await expect(rewards.requestPayout(rewardId, winners[1].submissionId, '601', adminId)).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' });
     const second = await rewards.requestPayout(rewardId, winners[1].submissionId, '600', adminId);
     await rewards.markApproved(second.id, adminId);
-    await rewards.markPaid(second.id, fakeTxHash(), adminId);
+    await expect(rewards.markPaid(second.id, multiSendHash.toLowerCase(), adminId)).resolves.toMatchObject({ id: second.id, status: 'PAID' });
     expect((await rewardRow(rewardId)).status).toBe('PAID');
+    const paidHashes = await db.query<{ payout_tx_hash: string }>(`SELECT payout_tx_hash FROM payout WHERE bounty_reward_id = $1 AND status = 'PAID'`, [rewardId]);
+    expect(paidHashes.rows.map((row) => row.payout_tx_hash)).toEqual([`0x${multiSendHash.slice(2).toLowerCase()}`, `0x${multiSendHash.slice(2).toLowerCase()}`]);
 
     const childJobs = await db.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM nft_job j JOIN nft n ON n.id = j.nft_id WHERE n.bounty_id = $1 AND j.job_type = 'MINT_CHILD'`, [bountyId]);

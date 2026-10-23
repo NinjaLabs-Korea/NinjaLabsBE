@@ -10,8 +10,9 @@ import { createDb, testSslEnv, unique } from './harness';
 const HARDENING = '0014_security_hardening.sql';
 
 /**
- * 0014의 tx 해시 유니크 인덱스는 중복이 남아 있으면 마이그레이션을 **실패**시켜야 한다 (조용히 건너뛰지 않음) — 그리고 운영자가 정리한 뒤
- * 재실행하면 적용되어야 한다. 공유 테스트 DB는 이미 전부 적용돼 있으므로 0001~0013만 적용한 별도 데이터베이스를 만들어 검증한다.
+ * 0014의 입금 tx 해시 유니크 인덱스는 중복이 남아 있으면 마이그레이션을 **실패**시켜야 한다 (조용히 건너뛰지 않음) — 그리고 운영자가 정리한 뒤
+ * 재실행하면 적용되어야 한다. payout 해시는 멀티시그 한 tx로 여러 수상자에게 보내는 경우가 정당하므로 중복이 있어도 막지 않고 정규화만 한다.
+ * 공유 테스트 DB는 이미 전부 적용돼 있으므로 0001~0013만 적용한 별도 데이터베이스를 만들어 검증한다.
  * 같은 "0014 미적용" DB로 SchemaGuard의 MIGRATIONS_PENDING 거부도 확인한다.
  */
 describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck before 0014', () => {
@@ -43,7 +44,8 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
     const { applied } = await applyMigrations(pool, { dir: partialDir });
     expect(applied).not.toContain(HARDENING);
 
-    // 같은 해시를 두 보상/두 payout에 적은 레거시 데이터 (대소문자 변형 → 0014의 정규화 UPDATE 뒤 충돌해야 한다)
+    // 같은 해시를 두 보상에 적은 레거시 데이터 (대소문자 변형 → 0014의 정규화 UPDATE 뒤 충돌해야 한다)
+    // + 같은 payout 해시를 두 payout에 적은 레거시 데이터 (멀티 송금 — 0014는 이를 막지 않고 정규화만 해야 한다)
     const id = unique();
     const userId = (await pool.query<{ id: string }>(
       `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step) VALUES ($1, $2, $3, '', 2) RETURNING id`,
@@ -63,7 +65,7 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
     submissionId = (await pool.query<{ id: string }>(
       `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
        VALUES ($1, $2, 'https://example.test', 'd', 'APPROVED') RETURNING id`, [bountyId, userId])).rows[0].id;
-    const payoutHash = `0x${'cd'.repeat(32)}`;
+    const payoutHash = `0x${'CD'.repeat(32)}`;
     for (const rewardId of rewardIds) {
       await pool.query(
         `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by, payout_tx_hash)
@@ -93,7 +95,7 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
     }
   });
 
-  it('fails 0014 loudly while duplicate deposit/payout tx hashes exist: rolled back, no _migrations row, no unique index', async () => {
+  it('fails 0014 loudly while duplicate deposit tx hashes exist: rolled back, no _migrations row, no unique index', async () => {
     const notices: string[] = [];
     await expect(applyMigrations(pool, { log: (line) => notices.push(line) })).rejects.toMatchObject({
       file: HARDENING,
@@ -110,22 +112,16 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
     expect(hashes.rows.map((row) => row.deposit_tx_hash)).toEqual([`0x${'AB'.repeat(32)}`, `0x${'ab'.repeat(32)}`]);
   });
 
-  it('after the operator removes the duplicates, the same migration applies and both unique indexes exist', async () => {
-    // deposit duplicates cleared → the payout duplicate is the next thing to stop the migration
+  it('after the operator removes the deposit duplicates the migration applies; duplicate payout hashes (multi-send) survive, normalized, with no unique index', async () => {
     await pool.query(`UPDATE bounty_reward SET deposit_tx_hash = NULL WHERE id = $1`, [rewardIds[1]]);
-    await expect(applyMigrations(pool)).rejects.toMatchObject({
-      file: HARDENING,
-      message: expect.stringContaining(`0014: cannot create uq_payout_tx — 1 duplicate payout.payout_tx_hash value(s)`),
-    });
-    expect(await migrationNames()).not.toContain(HARDENING);
-
-    await pool.query(`UPDATE payout SET payout_tx_hash = NULL WHERE bounty_reward_id = $1`, [rewardIds[1]]);
     const { applied } = await applyMigrations(pool);
     expect(applied).toEqual([HARDENING]);
     expect(await migrationNames()).toContain(HARDENING);
-    expect(await indexNames()).toEqual(['uq_bounty_reward_deposit_tx', 'uq_payout_tx']);
+    expect(await indexNames()).toEqual(['uq_bounty_reward_deposit_tx']);
     const normalized = await pool.query<{ deposit_tx_hash: string | null }>(`SELECT deposit_tx_hash FROM bounty_reward WHERE id = $1`, [rewardIds[0]]);
     expect(normalized.rows[0].deposit_tx_hash).toBe(`0x${'ab'.repeat(32)}`);
+    const payoutHashes = await pool.query<{ payout_tx_hash: string }>(`SELECT payout_tx_hash FROM payout WHERE submission_id = $1`, [submissionId]);
+    expect(payoutHashes.rows.map((row) => row.payout_tx_hash)).toEqual([`0x${'cd'.repeat(32)}`, `0x${'cd'.repeat(32)}`]);
     // idempotent: a second run skips it
     await expect(applyMigrations(pool)).resolves.toMatchObject({ applied: [] });
     const stale = createDb({ DATABASE_URL: partialUrl });

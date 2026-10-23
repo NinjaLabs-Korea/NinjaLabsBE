@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
@@ -17,6 +17,8 @@ import { NftsService } from '../nfts/nfts.service';
  */
 @Injectable()
 export class RewardsService {
+  private readonly logger = new Logger(RewardsService.name);
+
   constructor(
     private readonly db: DatabaseService,
     private readonly nfts: NftsService,
@@ -108,10 +110,33 @@ export class RewardsService {
     });
   }
 
-  /** 운영자: 송금 완료 기록 (tx hash — confirmDeposit과 같은 정규화, uq_payout_tx로 한 송금을 두 payout에 쓰지 못한다) */
+  /**
+   * 운영자: 송금 완료 기록 (tx hash — confirmDeposit과 같은 정규화).
+   * 멀티시그 tx 하나가 여러 수상자에게 한 번에 보낼 수 있으므로 **같은 바운티 안에서는** 같은 해시를 여러 payout에 기록할 수 있다(info 로그).
+   * **다른 바운티**의 payout에 이미 PAID로 기록된 해시는 409 TX_HASH_ALREADY_USED — 한 송금을 두 바운티의 지급으로 인정하지 않는다.
+   * payout_tx_hash에는 유니크 인덱스가 없으므로(0014는 정규화만) 이 검사는 UPDATE 전에 조회로 하고, 같은 해시의 동시 기록은
+   * 해시별 advisory lock으로 직렬화한다.
+   */
   async markPaid(payoutId: string, txHash: string, adminId: string) {
     const hash = normalizeTxHash(txHash);
-    return this.rejectReusedTxHash(() => this.db.tx(async (tx) => {
+    return this.db.tx(async (tx) => {
+      await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [hash]);
+      const target = await tx.query<{ bounty_id: string }>(
+        `SELECT rw.bounty_id FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id WHERE p.id = $1 FOR UPDATE OF p`,
+        [payoutId],
+      );
+      if (!target.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
+      const reuse = await tx.query<{ same_bounty: number; other_bounty: number }>(
+        `SELECT count(*) FILTER (WHERE rw.bounty_id = $3::uuid)::int AS same_bounty,
+                count(*) FILTER (WHERE rw.bounty_id <> $3::uuid)::int AS other_bounty
+           FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
+          WHERE p.payout_tx_hash = $2 AND p.status = 'PAID' AND p.id <> $1`,
+        [payoutId, hash, target.rows[0].bounty_id],
+      );
+      if (reuse.rows[0].other_bounty > 0) throw new ConflictException('TX_HASH_ALREADY_USED');
+      if (reuse.rows[0].same_bounty > 0) {
+        this.logger.log(`payout ${payoutId}: tx ${hash} is already recorded on ${reuse.rows[0].same_bounty} PAID payout(s) of the same bounty — multi-recipient send`);
+      }
       const payout = await tx.query<{
         id: string;
         status: string;
@@ -149,10 +174,13 @@ export class RewardsService {
       await this.advanceRewardStatus(tx, payout.rows[0].bounty_reward_id);
       await this.audit.record(adminId, 'PAYOUT_PAID', 'payout', payoutId, tx);
       return payout.rows[0];
-    }));
+    });
   }
 
-  /** uq_bounty_reward_deposit_tx / uq_payout_tx(0014) 충돌 → 409. 그 외 유니크 충돌은 이 두 흐름에 없다 */
+  /**
+   * uq_bounty_reward_deposit_tx(0014) 충돌 → 409 TX_HASH_ALREADY_USED. confirmDeposit 전용 — 그 흐름에 다른 유니크 충돌은 없다.
+   * payout 쪽은 유니크 인덱스가 없고 markPaid가 조회로 판단한다 (같은 바운티 재사용 허용).
+   */
   private async rejectReusedTxHash<T>(run: () => Promise<T>): Promise<T> {
     try {
       return await run();

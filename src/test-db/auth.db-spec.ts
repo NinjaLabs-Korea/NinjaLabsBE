@@ -1,6 +1,6 @@
 import { JwtService } from '@nestjs/jwt';
 import { createHash } from 'crypto';
-import { AuthService } from '../auth/auth.service';
+import { AuthService, MAX_REVOKE_CHAIN_HOPS } from '../auth/auth.service';
 import { encryptGraceToken } from '../auth/refresh-grace';
 import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';
@@ -78,6 +78,60 @@ describeDb('auth sessions on a real database', () => {
     rows = await sessionRows(user.id);
     expect(rows).toHaveLength(2);
     expect(rows.every((row) => row.revoked_at !== null && row.grace_refresh_token === null)).toBe(true);
+  });
+
+  it('a session whose expires_at has passed is rejected by the SQL predicate (expires_at > now()): 401, no successor row, old row consumed', async () => {
+    const user = await auth.upsertGoogleUser(unique('google-'), `${unique()}@example.test`);
+    const session = await auth.issueSession(user.id, false);
+    // the row is otherwise perfectly valid (not revoked, ACTIVE user) — only the expiry moved into the past
+    await db.query(`UPDATE auth_session SET expires_at = now() - interval '1 second' WHERE refresh_token_hash = $1`, [sha256(session.refreshToken)]);
+    await expect(auth.refresh(session.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    const rows = await sessionRows(user.id);
+    expect(rows).toHaveLength(1); // nothing was rotated in
+    expect(rows[0].revoked_at).not.toBeNull(); // the replay path consumed the expired row (chain revoke), so it cannot be retried either
+
+    // boundary: a session that expires in the future still rotates
+    const live = await auth.issueSession(user.id, false);
+    await db.query(`UPDATE auth_session SET expires_at = now() + interval '1 minute' WHERE refresh_token_hash = $1`, [sha256(live.refreshToken)]);
+    await expect(auth.refresh(live.refreshToken)).resolves.toMatchObject({ refreshToken: expect.any(String) });
+  });
+
+  /** Inserts a hand-built chain of `length` sessions s1→s2→… (each successor names its predecessor's hash), rotated long ago. Returns the raw tokens. */
+  async function insertChain(userId: string, length: number): Promise<string[]> {
+    const tokens = Array.from({ length }, (_, i) => unique(`chain${i + 1}-`));
+    for (let i = 0; i < length; i++) {
+      await db.query(
+        `INSERT INTO auth_session (user_id, refresh_token_hash, expires_at, revoked_at, prev_refresh_token_hash, prev_rotated_at)
+         VALUES ($1, $2, now() + interval '14 days', CASE WHEN $4::boolean THEN NULL ELSE now() END, $3, now() - interval '1 hour')`,
+        [userId, sha256(tokens[i]), i ? sha256(tokens[i - 1]) : null, i === length - 1],
+      );
+    }
+    return tokens;
+  }
+
+  it(`revokeChain is bounded at ${MAX_REVOKE_CHAIN_HOPS} hops: a longer chain revokes every open session of the user; a chain at the bound leaves unrelated sessions alone`, async () => {
+    const warn = jest.spyOn(auth['logger'], 'warn').mockImplementation(() => undefined);
+
+    // (1) chain longer than the bound: the replay of its first token revokes the chain AND an unrelated open session of the same user
+    const longUser = await auth.upsertGoogleUser(unique('google-'), `${unique()}@example.test`);
+    const unrelatedLong = await auth.issueSession(longUser.id, false);
+    const longChain = await insertChain(longUser.id, MAX_REVOKE_CHAIN_HOPS + 8);
+    await expect(auth.refresh(longChain[0])).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    const openAfterLong = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM auth_session WHERE user_id = $1 AND revoked_at IS NULL`, [longUser.id]);
+    expect(openAfterLong.rows[0].n).toBe(0);
+    await expect(auth.refresh(unrelatedLong.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`exceeds ${MAX_REVOKE_CHAIN_HOPS} hops`));
+    warn.mockClear();
+
+    // (2) chain exactly at the bound: walked to the end, only the chain is revoked, the unrelated session keeps working
+    const boundUser = await auth.upsertGoogleUser(unique('google-'), `${unique()}@example.test`);
+    const unrelatedBound = await auth.issueSession(boundUser.id, false);
+    const boundChain = await insertChain(boundUser.id, MAX_REVOKE_CHAIN_HOPS);
+    await expect(auth.refresh(boundChain[0])).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    const tip = await db.query<{ revoked_at: Date | null }>(`SELECT revoked_at FROM auth_session WHERE refresh_token_hash = $1`, [sha256(boundChain.at(-1)!)]);
+    expect(tip.rows[0].revoked_at).not.toBeNull();
+    await expect(auth.refresh(unrelatedBound.refreshToken)).resolves.toMatchObject({ refreshToken: expect.any(String) });
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('a chain of three rotations is revoked end to end when the first token is replayed late', async () => {

@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
 import { AuthController } from './auth.controller';
 import { withParamsCheck } from '../test-support/expect-params-match';
-import { AuthService } from './auth.service';
+import { AuthService, MAX_REVOKE_CHAIN_HOPS } from './auth.service';
 import { decryptGraceToken } from './refresh-grace';
 
 /** 유닛 스펙은 JWT_SECRET provider(jwt-secret.ts) 대신 고정 시크릿을 직접 주입한다 — grace 사본은 이 값으로 감싸진다 */
@@ -74,6 +74,8 @@ describe('AuthService refresh rotation', () => {
     const consumeCall = txQuery.mock.calls[0];
     expect(consumeCall[0]).toContain('UPDATE auth_session AS s');
     expect(consumeCall[0]).toContain('s.revoked_at IS NULL');
+    // Expiry is decided by the SQL predicate inside the same conditional UPDATE (auth.db-spec drives it on a real expired row).
+    expect(consumeCall[0]).toContain('AND s.expires_at > now()');
     // The consumed row drops its own grace copy the moment it is rotated.
     expect(consumeCall[0]).toContain('SET revoked_at = now(), grace_refresh_token = NULL');
     // Rotation is only granted to an ACTIVE, non-deleted owner — the join is part of the conditional UPDATE itself.
@@ -155,6 +157,16 @@ describe('AuthService refresh rotation', () => {
     );
     expect(jwt.signAsync).not.toHaveBeenCalled();
     expect(txQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO auth_session'))).toBe(false);
+  });
+
+  it('decides expiry in SQL: the consume UPDATE carries expires_at > now() in its WHERE clause (no JS-side expiry check exists to fall back on)', async () => {
+    const txQuery = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
+    const { service } = createService(txQuery);
+    await expect(service.refresh('expired-token')).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    const [consume] = txQuery.mock.calls;
+    expect(consume[0]).toMatch(/UPDATE auth_session AS s[\s\S]*WHERE s\.refresh_token_hash = \$1[\s\S]*AND s\.expires_at > now\(\)[\s\S]*RETURNING s\.user_id/);
+    // the grace lookup is fenced the same way, so an expired successor never hands out its pair either
+    expect(txQuery.mock.calls[1][0]).toContain('AND s.expires_at > now()');
   });
 
   it('refuses to rotate a session whose user is suspended or deleted, and still consumes the old token', async () => {
@@ -288,6 +300,52 @@ describe('AuthService refresh rotation', () => {
     expect(revoke[1]).toEqual([['s1', 's2', 's3']]);
   });
 
+  /** A chain of `length` sessions s1→s2→…: hop i (locking h_i) reveals s_i and its successor s_(i+1); the last one has no successor */
+  function chainedTxQuery(length: number) {
+    return jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FOR UPDATE')) {
+        const rows = (params![0] as string[]).flatMap((h) => {
+          const n = Number(h.slice(1));
+          if (n < 1 || n > length) return [];
+          const self = { id: `s${n}`, user_id: userId, refresh_token_hash: `h${n}` };
+          return n < length ? [self, { id: `s${n + 1}`, user_id: userId, refresh_token_hash: `h${n + 1}` }] : [self];
+        });
+        return { rowCount: rows.length, rows };
+      }
+      return { rowCount: 0, rows: [] };
+    }));
+  }
+
+  it(`walks a chain of exactly ${MAX_REVOKE_CHAIN_HOPS} hops to its end and revokes just those rows (no user-wide fallback)`, async () => {
+    const txQuery = chainedTxQuery(MAX_REVOKE_CHAIN_HOPS);
+    const { service } = createService(txQuery);
+    const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    await service['revokeChain']({ query: txQuery }, 'h1');
+
+    expect(txQuery.mock.calls.filter(([sql]) => sql.includes('FOR UPDATE'))).toHaveLength(MAX_REVOKE_CHAIN_HOPS);
+    const revoke = txQuery.mock.calls.find(([sql]) => sql.includes('id = ANY($1::uuid[])'))!;
+    expect(revoke[1]).toEqual([Array.from({ length: MAX_REVOKE_CHAIN_HOPS }, (_, i) => `s${i + 1}`)]);
+    expect(txQuery.mock.calls.some(([sql]) => sql.includes('WHERE user_id = $1 AND revoked_at IS NULL'))).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it(`stops after ${MAX_REVOKE_CHAIN_HOPS} hops on a longer (corrupt or forged) chain and revokes every open session of that user instead, with a warning`, async () => {
+    const txQuery = chainedTxQuery(MAX_REVOKE_CHAIN_HOPS + 5);
+    const { service } = createService(txQuery);
+    const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    await service['revokeChain']({ query: txQuery }, 'h1');
+
+    // the walk is bounded: exactly MAX hops were locked, then the user-wide revoke replaced the per-id one
+    expect(txQuery.mock.calls.filter(([sql]) => sql.includes('FOR UPDATE'))).toHaveLength(MAX_REVOKE_CHAIN_HOPS);
+    expect(txQuery.mock.calls.some(([sql]) => sql.includes('id = ANY($1::uuid[])'))).toBe(false);
+    const fallback = txQuery.mock.calls.at(-1)!;
+    expect(fallback[0]).toContain('UPDATE auth_session SET revoked_at = now(), grace_refresh_token = NULL');
+    expect(fallback[0]).toContain('WHERE user_id = $1 AND revoked_at IS NULL');
+    expect(fallback[1]).toEqual([userId]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`exceeds ${MAX_REVOKE_CHAIN_HOPS} hops`));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`revoking every open session of user ${userId}`));
+  });
+
   it('reuse within the window but after the successor itself was rotated or revoked is still 401 + chain revoke', async () => {
     const { txQuery, service } = reuseScenario({ withinWindow: true, successorAlive: false });
     await service.refresh('old-token');
@@ -353,7 +411,8 @@ describe('AuthService upsertGoogleUser', () => {
 
   function createService(query: jest.Mock) {
     return new AuthService(
-      { query, tx: jest.fn() } as unknown as DatabaseService,
+      // every upsert statement is checked for $n/params drift; assertions still read the original mock's calls
+      { query: withParamsCheck(query), tx: jest.fn() } as unknown as DatabaseService,
       { signAsync: jest.fn(), verifyAsync: jest.fn() } as never,
       { get: jest.fn() } as never,
       DEV_SECRET,

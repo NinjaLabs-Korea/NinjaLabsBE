@@ -39,6 +39,11 @@ const REFRESH_TTL_SECONDS: Record<string, number> = { seconds: 1, minutes: 60, h
 /** refresh 수명 허용 범위 — 60초 미만은 access 토큰보다 짧아 로그인이 즉시 풀리고, 90일 초과는 탈취 토큰의 수명이 너무 길다 */
 export const MIN_REFRESH_TTL_SECONDS = 60;
 export const MAX_REFRESH_TTL_SECONDS = 90 * 86_400;
+/**
+ * revokeChain 이 prev_refresh_token_hash 를 따라가는 최대 홉 수. 정상 사슬은 폐기 후 30일(MaintenanceService)이 지나면 잘려 나가므로
+ * 15분 회전이라도 이보다 훨씬 짧다 — 넘으면 손상된/조작된 사슬(순환 등)로 보고 그 유저의 열린 세션을 전부 폐기한다 (안전 쪽으로).
+ */
+export const MAX_REVOKE_CHAIN_HOPS = 32;
 
 /**
  * `14d` → `'14 days'`, `15m` → `'15 minutes'`. 문법에 맞지 않거나 0 / 60초 미만 / 90일 초과면 throw (부팅 시 fail-fast).
@@ -387,20 +392,36 @@ export class AuthService {
    * 재평가에서 이미 폐기돼 건너뛴다 — 그 회전이 커밋되면 S3가 살아남는다. 그래서 사슬을 한 홉씩 **FOR UPDATE로 잠그며** 따라간다:
    * 회전 중인 행은 그 트랜잭션이 끝날 때까지 기다리고, 다음 홉은 새 스냅샷이라 커밋된 S3를 본다. 새 홉이 없을 때까지 반복한 뒤
    * 모은 행을 한 번에 폐기한다 (test-db auth.db-spec이 이 레이스를 실 DB로 재현).
+   *
+   * 홉 수는 MAX_REVOKE_CHAIN_HOPS 로 묶는다 — 그보다 긴 사슬은 정상 회전으로는 생기지 않으므로(손상·조작된 데이터) 걷기를 멈추고
+   * 그 유저의 폐기되지 않은 세션을 **전부** 폐기한 뒤 경고를 남긴다. 사슬을 따라가다 끝내지 못하는 것보다 넓게 폐기하는 쪽이 안전하다.
    */
   private async revokeChain(runner: QueryRunner, hash: string) {
     const ids = new Set<string>();
     const seen = new Set<string>();
+    let userId: string | undefined;
     let frontier = [hash];
-    while (frontier.length) {
+    for (let hops = 0; frontier.length; hops++) {
+      if (hops >= MAX_REVOKE_CHAIN_HOPS) {
+        this.logger.warn(
+          `revokeChain: session chain from ${hash.slice(0, 12)}… exceeds ${MAX_REVOKE_CHAIN_HOPS} hops — revoking every open session of user ${userId} instead`,
+        );
+        await runner.query(
+          `UPDATE auth_session SET revoked_at = now(), grace_refresh_token = NULL
+            WHERE user_id = $1 AND revoked_at IS NULL`,
+          [userId],
+        );
+        return;
+      }
       for (const h of frontier) seen.add(h);
       const hop = (await runner.query(
-        `SELECT id, refresh_token_hash FROM auth_session
+        `SELECT id, user_id, refresh_token_hash FROM auth_session
           WHERE refresh_token_hash = ANY($1::varchar[]) OR prev_refresh_token_hash = ANY($1::varchar[])
           FOR UPDATE`,
         [frontier],
-      )) as QueryResult<{ id: string; refresh_token_hash: string }>;
+      )) as QueryResult<{ id: string; user_id: string; refresh_token_hash: string }>;
       for (const row of hop.rows) ids.add(row.id);
+      userId ??= hop.rows[0]?.user_id;
       frontier = hop.rows.map((row) => row.refresh_token_hash).filter((h) => !seen.has(h));
     }
     await runner.query(

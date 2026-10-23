@@ -20,6 +20,7 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
+import { OriginAllowlist } from '../common/origin-allowlist';
 import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
 
@@ -50,17 +51,13 @@ export class AuthController {
     if (!requested) return fallback;
 
     try {
-      const fallbackUrl = new URL(fallback);
-      const allowedOrigins = new Set([
-        fallbackUrl.origin,
-        ...(this.config.get<string>('AUTH_ALLOWED_REDIRECT_ORIGINS') ?? '')
-          .split(',')
-          .map((value) => value.trim())
-          .filter(Boolean)
-          .map((value) => new URL(value).origin),
+      // 기본 리다이렉트 오리진 + AUTH_ALLOWED_REDIRECT_ORIGINS (정확한 오리진 또는 `*` 와일드카드 1개, Vercel preview)
+      const allowedOrigins = new OriginAllowlist([
+        new URL(fallback).origin,
+        ...(this.config.get<string>('AUTH_ALLOWED_REDIRECT_ORIGINS') ?? '').split(','),
       ]);
       const requestedUrl = new URL(requested);
-      if (!allowedOrigins.has(requestedUrl.origin)) return fallback;
+      if (!allowedOrigins.allows(requestedUrl.origin)) return fallback;
       return `${requestedUrl.origin}/`;
     } catch {
       return fallback;

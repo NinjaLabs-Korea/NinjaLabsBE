@@ -11,7 +11,7 @@ const challenge = createHash('sha256').update(verifier).digest('base64url');
 function setup(query = jest.fn()) {
   const db = { query: jest.fn(), tx: jest.fn(async (run) => run({ query })) };
   const jwt = { signAsync: jest.fn(async () => 'access-token'), verifyAsync: jest.fn() };
-  const service = new AuthService(db as never, jwt as never, {} as never);
+  const service = new AuthService(db as never, jwt as never, { get: jest.fn() } as never, 'dev-only-secret');
   return { service, db, jwt };
 }
 

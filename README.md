@@ -140,7 +140,9 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
 | `REWARD_MULTISIG_ADDRESS` | 기동은 하지만 비우면 새 보상의 `custody_address`가 자리표시값 `PENDING_MULTISIG_SETUP` — 스폰서가 입금할 주소가 없다. `railway.ts`의 `preserve()` 자리 — 값은 대시보드/CLI로 넣는다 (`docs/runbook.md` §1, §8) |
 | `PAYOUT_ALLOW_SELF_APPROVAL` | 선택, 기본 `false` — payout 승인 2인 규칙(요청자 ≠ 승인자, 403 `PAYOUT_SELF_APPROVAL`). 운영자 1인일 때만 `true` → 자기 승인 허용 + 기동/승인 시 `warn` + 감사 `PAYOUT_SELF_APPROVED`. railway.ts에는 값 없이 `preserve()` 자리만 있다(기본값 유지 — 대시보드에서 켠 값이 apply로 지워지지 않게) |
 | `OPS_ALERT_WEBHOOK_URL` | 선택 (railway.ts `preserve()`). Discord/Slack incoming webhook(https). 없으면 알림은 `OpsAlert` warn 로그로만, https가 아니면 기동 시 `error` 로그 후 무시 (기동은 함). 대상·규칙은 `docs/security.md` "운영 알림" |
-| `CORS_ORIGINS`, `AUTH_ALLOWED_REDIRECT_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT` | 기동은 하지만 값이 틀리면 로그인/CORS가 동작하지 않는다 (railway.ts에 공개값으로 고정) |
+| `CORS_ORIGINS` | 미설정/빈 값이면 **기동 거부** (production에는 localhost 폴백이 없다). `localhost`/`127.x`/`::1` 항목은 **빼고 `error` 로그**(기동은 함 — 옛 main의 railway.ts가 `http://localhost:3000`을 넣었기 때문), 그것만 있으면 기동 거부. railway.ts에 공개값으로 고정 |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT` | 미설정/빈 값이면 **기동 거부**. 두 URL은 http(s) URL이 아니거나 localhost/`127.x`이면 **기동 거부** (예전엔 `AUTH_SUCCESS_REDIRECT`가 `http://localhost:3000/`으로 폴백). railway.ts에 공개값으로 고정 |
+| `AUTH_ALLOWED_REDIRECT_ORIGINS` | 선택. 값이 틀리면 그 오리진으로의 `returnTo`가 무시될 뿐 |
 
 ### 실 DB 통합 테스트 (`npm run test:db`)
 

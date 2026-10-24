@@ -6,7 +6,7 @@ import helmet from 'helmet';
 import { AlertService } from './common/alerts/alert.service';
 import { HttpExceptionFilter } from './common/http/http-exception.filter';
 import { RequestLoggingInterceptor } from './common/http/request-logging.interceptor';
-import { trustProxyHops } from './common/bootstrap-checks';
+import { corsOriginsValue, trustProxyHops } from './common/bootstrap-checks';
 import { OriginAllowlist } from './common/origin-allowlist';
 import { REQUEST_ID_HEADER, requestIdMiddleware } from './common/http/request-id';
 
@@ -37,7 +37,10 @@ export function configureApp(app: NestExpressApplication): void {
   app.use(helmet());
 
   // CORS 허용 목록 — 정확한 오리진 또는 호스트 레이블 하나의 `*` 와일드카드 (Vercel preview). common/origin-allowlist.ts
-  const corsOrigins = OriginAllowlist.fromEnv(config.get<string>('CORS_ORIGINS') ?? 'http://localhost:3000');
+  // production에서 미설정이면 listen 전에 기동 거부, localhost 항목은 빼고 error 로그. 개발 기본값은 로컬 FE (common/bootstrap-checks.ts)
+  const corsOrigins = OriginAllowlist.fromEnv(
+    corsOriginsValue({ CORS_ORIGINS: config.get<string>('CORS_ORIGINS'), NODE_ENV: config.get<string>('NODE_ENV') }),
+  );
   app.enableCors({
     origin: (origin, callback) => callback(null, corsOrigins.allows(origin)),
     credentials: true,

@@ -15,7 +15,12 @@ import { JWT_SECRET } from './jwt-secret';
 @Module({ providers: [{ provide: DatabaseService, useValue: {} }], exports: [DatabaseService] })
 class FakeDatabaseModule {}
 
-const ENV_KEYS = ['JWT_SECRET', 'JWT_ACCESS_TTL', 'NODE_ENV', 'GOOGLE_CLIENT_SECRET', 'JWT_REFRESH_TTL'] as const;
+const ENV_KEYS = [
+  'JWT_SECRET', 'JWT_ACCESS_TTL', 'NODE_ENV', 'GOOGLE_CLIENT_SECRET', 'JWT_REFRESH_TTL',
+  'GOOGLE_CLIENT_ID', 'GOOGLE_CALLBACK_URL', 'AUTH_SUCCESS_REDIRECT',
+] as const;
+/** production 로그인 플로우 공개값 (railway.ts가 넣는 것) — requireProductionAuthUrls가 요구한다 */
+const PROD_PUBLIC = 'NODE_ENV=production\nGOOGLE_CLIENT_ID=id.apps.googleusercontent.com\nGOOGLE_CALLBACK_URL=https://api.example.com/auth/google/callback\nAUTH_SUCCESS_REDIRECT=https://fe.example.com/\n';
 const STRONG_SECRET = 'file-secret-from-dotenv-'.padEnd(48, 'x');
 
 describe('AuthModule boots its secrets from the .env ConfigModule loads (not import-time process.env)', () => {
@@ -88,7 +93,7 @@ describe('AuthModule boots its secrets from the .env ConfigModule loads (not imp
   });
 
   it('refuses to boot in production on a JWT_ACCESS_TTL above 60 minutes', async () => {
-    await expect(boot(`NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${STRONG_SECRET}\nJWT_ACCESS_TTL=2h\n`))
+    await expect(boot(`${PROD_PUBLIC}GOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${STRONG_SECRET}\nJWT_ACCESS_TTL=2h\n`))
       .rejects.toThrow(/JWT_ACCESS_TTL must be between/);
   });
 
@@ -100,28 +105,39 @@ describe('AuthModule boots its secrets from the .env ConfigModule loads (not imp
   });
 
   it('refuses to boot in production without a JWT_SECRET (the provider factory throws before anything is signed)', async () => {
-    await expect(boot('NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\n'))
+    await expect(boot(`${PROD_PUBLIC}GOOGLE_CLIENT_SECRET=g\n`))
       .rejects.toThrow(/JWT_SECRET must be set to a random value in production/);
-    await expect(boot('NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\nJWT_SECRET=change-me-long-random-string\n'))
+    await expect(boot(`${PROD_PUBLIC}GOOGLE_CLIENT_SECRET=g\nJWT_SECRET=change-me-long-random-string\n`))
       .rejects.toThrow(/JWT_SECRET must be set to a random value in production/);
   });
 
   it('boots in production with a JWT_SECRET shorter than 32 bytes but logs an error (no crash loop over a weak secret)', async () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const weak = 's'.repeat(31);
-    const app = await boot(`NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${weak}\n`);
+    const app = await boot(`${PROD_PUBLIC}GOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${weak}\n`);
     expect(app.get<string>(JWT_SECRET)).toBe(weak);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('JWT_SECRET is only 31 bytes'));
     error.mockRestore();
   });
 
   it('refuses to boot in production without GOOGLE_CLIENT_SECRET (checked in onModuleInit through ConfigService)', async () => {
-    await expect(boot(`NODE_ENV=production\nJWT_SECRET=${STRONG_SECRET}\n`))
+    await expect(boot(`${PROD_PUBLIC}JWT_SECRET=${STRONG_SECRET}\n`))
       .rejects.toThrow(/GOOGLE_CLIENT_SECRET must be set in production/);
   });
 
+  it('refuses to boot in production without the public login values (no silent localhost fallback for AUTH_SUCCESS_REDIRECT)', async () => {
+    await expect(boot(`NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${STRONG_SECRET}\n`))
+      .rejects.toThrow('FATAL: GOOGLE_CLIENT_ID, GOOGLE_CALLBACK_URL, AUTH_SUCCESS_REDIRECT must be set in production');
+  });
+
+  it('refuses to boot in production when AUTH_SUCCESS_REDIRECT points at localhost', async () => {
+    const env = PROD_PUBLIC.replace('https://fe.example.com/', 'http://localhost:3000/');
+    await expect(boot(`${env}GOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${STRONG_SECRET}\n`))
+      .rejects.toThrow(/AUTH_SUCCESS_REDIRECT=.*must be a public http\(s\) URL in production/);
+  });
+
   it('boots in production when both secrets are present in the file', async () => {
-    const app = await boot(`NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${STRONG_SECRET}\n`);
+    const app = await boot(`${PROD_PUBLIC}GOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${STRONG_SECRET}\n`);
     expect(app.get<string>(JWT_SECRET)).toBe(STRONG_SECRET);
   });
 });

@@ -1,9 +1,16 @@
 import { ConfigService } from '@nestjs/config';
+import { isProduction, LOCAL_AUTH_SUCCESS_REDIRECT } from '../common/bootstrap-checks';
 import { OriginAllowlist } from '../common/origin-allowlist';
 
-/** 로그인 완료 후 FE로 돌려보내는 기본 URL — AUTH_SUCCESS_REDIRECT (미설정이면 로컬 FE) */
+/**
+ * 로그인 완료 후 FE로 돌려보내는 기본 URL — AUTH_SUCCESS_REDIRECT. 개발에서 미설정이면 로컬 FE.
+ * production에는 폴백이 없다 — AuthModule.onModuleInit의 requireProductionAuthUrls가 미설정/localhost 값으로는 기동을 거부한다
+ * (여기서 빈 문자열이면 URL이 아니므로 returnTo도 받지 않는다 — auth.controller.ts).
+ */
 export function authSuccessRedirectUrl(config: Pick<ConfigService, 'get'>): string {
-  return config.get<string>('AUTH_SUCCESS_REDIRECT') ?? 'http://localhost:3000/';
+  const configured = config.get<string>('AUTH_SUCCESS_REDIRECT');
+  if (isProduction({ NODE_ENV: config.get<string>('NODE_ENV') })) return configured ?? '';
+  return configured ?? LOCAL_AUTH_SUCCESS_REDIRECT;
 }
 
 /**

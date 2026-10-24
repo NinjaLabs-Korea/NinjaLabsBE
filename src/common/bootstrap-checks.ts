@@ -79,3 +79,72 @@ export function requireGoogleClientSecret(env: BootstrapEnv): void {
     throw new Error('FATAL: GOOGLE_CLIENT_SECRET must be set in production');
   }
 }
+
+/** 개발 기본 FE 오리진 / 로그인 후 리다이렉트 — **production에서는 쓰지 않는다** (아래 두 검사가 값을 요구한다) */
+export const LOCAL_FE_ORIGIN = 'http://localhost:3000';
+export const LOCAL_AUTH_SUCCESS_REDIRECT = 'http://localhost:3000/';
+
+/** 루프백 호스트 — localhost(·*.localhost), 127.0.0.0/8, ::1, 0.0.0.0. production 브라우저가 이 주소로 가면 사용자 자신의 기계에 닿는다 */
+function isLoopbackUrl(value: string): boolean {
+  let host: string;
+  try {
+    host = new URL(value.trim()).hostname.toLowerCase().replace(/\.+$/, '');
+  } catch {
+    return false;
+  }
+  return host === 'localhost' || host.endsWith('.localhost') || /^127(\.\d{1,3}){3}$/.test(host) || host === '[::1]' || host === '0.0.0.0';
+}
+
+/**
+ * CORS 허용 목록의 env 값 (app-setup.ts → OriginAllowlist.fromEnv).
+ *   - production + 미설정/빈 값: 기동 거부 — 예전엔 조용히 `http://localhost:3000`으로 폴백해 운영 FE의 모든 API 호출이 CORS로 막혔다
+ *   - production + 루프백 항목(localhost/127.x): 그 항목만 빼고 error 로그 (기동은 함) — 아무 브라우저 탭의 localhost 페이지가
+ *     운영 API를 자격 증명과 함께 부를 수 있게 되므로 허용하지 않지만, 옛 main의 railway.ts가 `http://localhost:3000`을 넣었기 때문에
+ *     `railway config apply` 전의 값으로 크래시 루프가 나지 않게 한다. 빼고 나서 남는 항목이 없으면 미설정과 같으므로 기동 거부
+ *   - 그 외 환경: 미설정이면 로컬 FE (`http://localhost:3000`)
+ */
+export function corsOriginsValue(env: BootstrapEnv): string {
+  if (!isProduction(env)) return env.CORS_ORIGINS ?? LOCAL_FE_ORIGIN;
+  const entries = (env.CORS_ORIGINS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean);
+  if (entries.length === 0) {
+    throw new Error('FATAL: CORS_ORIGINS must be set in production (comma-separated FE origins, e.g. https://ninjalabsfe.vercel.app) — there is no localhost fallback in production');
+  }
+  const loopback = entries.filter(isLoopbackUrl);
+  const kept = entries.filter((entry) => !isLoopbackUrl(entry));
+  if (loopback.length > 0) {
+    logger.error(
+      `CORS_ORIGINS contains loopback origin(s) ${loopback.map((entry) => JSON.stringify(entry)).join(', ')} — IGNORED in production ` +
+        '(any localhost page in any browser tab could call the production API with credentials). Remove them from the Railway variable; local FEs use a local BE.',
+    );
+  }
+  if (kept.length === 0) {
+    throw new Error(`FATAL: CORS_ORIGINS=${JSON.stringify(env.CORS_ORIGINS)} lists only loopback origins — production needs the real FE origin(s)`);
+  }
+  return kept.join(',');
+}
+
+/** production에서 반드시 있어야 하는 로그인 플로우 값 — 없으면 Google 동의 화면/콜백/완료 리다이렉트 중 하나가 깨진다 */
+const PRODUCTION_AUTH_KEYS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CALLBACK_URL', 'AUTH_SUCCESS_REDIRECT'] as const;
+/** 이 중 URL인 값 — http(s) URL이어야 하고 루프백이면 안 된다 */
+const PRODUCTION_AUTH_URL_KEYS = ['GOOGLE_CALLBACK_URL', 'AUTH_SUCCESS_REDIRECT'] as const;
+
+/**
+ * GOOGLE_CLIENT_ID / GOOGLE_CALLBACK_URL / AUTH_SUCCESS_REDIRECT — production에서 미설정·빈 값·URL 아님·루프백이면 기동 거부.
+ * 예전엔 AUTH_SUCCESS_REDIRECT가 조용히 `http://localhost:3000/`으로 폴백해 로그인 완료 후 사용자를 **자기 기계의 localhost로**
+ * 로그인 코드와 함께 보냈고, GOOGLE_CLIENT_ID가 비면 첫 로그인 요청에서야 500이 났다. railway.ts가 네 값(CORS 포함)을 공개값으로 넣는다.
+ * 개발에서는 아무것도 하지 않는다 (fe-origins.ts가 로컬 FE로 폴백, google-oauth.flow.ts는 요청 시점에 GOOGLE_CLIENT_ID를 요구).
+ */
+export function requireProductionAuthUrls(env: BootstrapEnv): void {
+  if (!isProduction(env)) return;
+  const missing = PRODUCTION_AUTH_KEYS.filter((key) => !env[key]?.trim());
+  if (missing.length > 0) {
+    throw new Error(`FATAL: ${missing.join(', ')} must be set in production (public values in .railway/railway.ts — run \`railway config apply\`)`);
+  }
+  for (const key of PRODUCTION_AUTH_URL_KEYS) {
+    const value = env[key]!.trim();
+    const isHttpUrl = URL.canParse(value) && ['http:', 'https:'].includes(new URL(value).protocol);
+    if (!isHttpUrl || isLoopbackUrl(value)) {
+      throw new Error(`FATAL: ${key}=${JSON.stringify(env[key])} — must be a public http(s) URL in production (not localhost/127.x)`);
+    }
+  }
+}

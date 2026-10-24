@@ -6,6 +6,8 @@ import { GoogleIdTokenClaims } from '../../auth/google-id-token.verifier';
  *
  *   FakeGoogle           Google 토큰 엔드포인트(https://oauth2.googleapis.com/token)를 fetch 수준에서 가로채고,
  *                        GoogleIdTokenVerifier(JWKS 서명 검증) 자리를 대신한다. 콜백의 `code`마다 미리 등록한 클레임을 돌려준다.
+ *   FakeTurnstile        Cloudflare Turnstile siteverify(https://challenges.cloudflare.com/turnstile/v0/siteverify)를 fetch 수준에서 가로챈다.
+ *                        `issueToken()`으로 만든 토큰만 1회 통과(그 뒤 timeout-or-duplicate), `outage`가 켜지면 네트워크 오류.
  *   FakeInjectiveNftClient  체인 민팅 클라이언트 — 미설정(isConfigured=false)으로 답해 nft_job 워커가 잡을 PENDING으로 미루게 한다.
  */
 export const GOOGLE_CLIENT_ID_E2E = 'e2e-client.apps.googleusercontent.com';
@@ -46,6 +48,33 @@ export class FakeGoogle {
       return claims;
     },
   };
+}
+
+export const TURNSTILE_SITEVERIFY_URL_E2E = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+
+export class FakeTurnstile {
+  private readonly valid = new Set<string>();
+  requests: URLSearchParams[] = [];
+  /** true면 siteverify가 네트워크 오류를 낸다 (503 TURNSTILE_UNAVAILABLE 경로) */
+  outage = false;
+
+  /** 위젯이 브라우저에 주는 토큰 하나 — siteverify에서 한 번만 success:true */
+  issueToken(): string {
+    const token = `0.e2e-turnstile-${Math.random().toString(36).slice(2)}`;
+    this.valid.add(token);
+    return token;
+  }
+
+  async handleFetch(init?: RequestInit): Promise<Response> {
+    if (this.outage) throw new TypeError('fetch failed');
+    const form = new URLSearchParams(String(init?.body ?? ''));
+    this.requests.push(form);
+    const token = form.get('response') ?? '';
+    const success = this.valid.delete(token);
+    return new Response(JSON.stringify({ success, 'error-codes': success ? [] : ['invalid-input-response'] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  }
 }
 
 @Injectable()

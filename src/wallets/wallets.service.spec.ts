@@ -1,6 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { Wallet } from 'ethers';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { WalletsService } from './wallets.service';
 
 const mockCanonicalInjectiveAddress = 'inj1canonicaladdress';
@@ -18,7 +18,7 @@ describe('WalletsService EVM verification', () => {
   it('verifies personal_sign, stores the canonical inj1 address, and advances onboarding', async () => {
     const signer = Wallet.createRandom();
     let challengeMessage = '';
-    const txQuery = jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
+    const txQuery = jest.fn(async (sql: string, params?: unknown[]) => {
       if (sql.includes('INSERT INTO wallet ')) return { rowCount: 1, rows: [{ id: 'wallet-id' }] };
       if (sql.includes('INSERT INTO wallet_verification_challenge')) {
         challengeMessage = params![3] as string;
@@ -32,23 +32,19 @@ describe('WalletsService EVM verification', () => {
       }
       if (sql.includes('SET used_at = now()')) return { rowCount: 1, rows: [{ id: 'challenge-id' }] };
       return { rowCount: 1, rows: [] };
-    }));
-    const db = {
-      query: jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
-        if (sql.includes('SELECT id, chain, address')) {
-          return {
-            rowCount: 1,
-            rows: [{ id: 'wallet-id', chain: 'INJECTIVE', address: mockCanonicalInjectiveAddress }],
-          };
-        }
-        throw new Error(`Unexpected query: ${sql}`);
-      })),
-      tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) =>
-        callback({ query: txQuery }),
-      ),
-    };
+    });
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+      if (sql.includes('SELECT id, chain, address')) {
+        return {
+          rowCount: 1,
+          rows: [{ id: 'wallet-id', chain: 'INJECTIVE', address: mockCanonicalInjectiveAddress }],
+        };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+    const { database, db, txClient } = createMockDb({ query, txQuery });
     const nfts = { enqueueParentMintInTransaction: jest.fn(async () => ({ nftId: 'nft-id' })) };
-    const service = new WalletsService(db as never, nfts as never);
+    const service = new WalletsService(database, nfts as never);
 
     await service.createChallenge('user-id', signer.address.toLowerCase());
     const signature = await signer.signMessage(challengeMessage);
@@ -71,7 +67,7 @@ describe('WalletsService EVM verification', () => {
     ]);
     expect(txQuery.mock.calls.some(([sql]) => sql.includes('onboarding_step'))).toBe(true);
     // 부모 NFT 민팅 잡은 지갑 INSERT와 같은 트랜잭션 클라이언트로 등록된다 (커밋 후 별도 호출 아님)
-    expect(nfts.enqueueParentMintInTransaction).toHaveBeenCalledWith({ query: txQuery }, 'user-id', 'wallet-id');
+    expect(nfts.enqueueParentMintInTransaction).toHaveBeenCalledWith(txClient, 'user-id', 'wallet-id');
     expect(nfts.enqueueParentMintInTransaction.mock.invocationCallOrder[0])
       .toBeLessThan(db.query.mock.invocationCallOrder.at(-1)!);
   });
@@ -80,13 +76,10 @@ describe('WalletsService EVM verification', () => {
 describe('WalletsService createChallenge', () => {
   it('deletes prior unused challenges for the same (user, wallet) and inserts the new one in a single transaction', async () => {
     const signer = Wallet.createRandom();
-    const txQuery = jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) =>
-      sql.includes('INSERT') ? { rowCount: 1, rows: [{ id: 'challenge-id', nonce: params![2], message: params![3] }] } : { rowCount: 2, rows: [] }));
-    const db = {
-      query: jest.fn(),
-      tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) => callback({ query: txQuery })),
-    };
-    const service = new WalletsService(db as never, {} as never);
+    const txQuery = jest.fn(async (sql: string, params?: unknown[]) =>
+      sql.includes('INSERT') ? { rowCount: 1, rows: [{ id: 'challenge-id', nonce: params![2], message: params![3] }] } : { rowCount: 2, rows: [] });
+    const { database, db } = createMockDb({ txQuery });
+    const service = new WalletsService(database, {} as never);
 
     const challenge = await service.createChallenge('user-id', signer.address.toLowerCase());
 
@@ -107,18 +100,15 @@ describe('WalletsService createChallenge', () => {
 
 describe('WalletsService challenge lookup', () => {
   function verify(rows: Array<{ id: string; message: string; valid: boolean }>, consumeRowCount = 1, walletInsert?: Error) {
-    const txQuery = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
+    const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FROM wallet_verification_challenge')) return { rowCount: rows.length, rows };
       if (sql.includes('SET used_at = now()')) return { rowCount: consumeRowCount, rows: consumeRowCount ? [{ id: rows[0]?.id }] : [] };
       if (sql.includes('INSERT INTO wallet ') && walletInsert) throw walletInsert;
       return { rowCount: 1, rows: [{ id: 'wallet-id' }] };
-    }));
-    const db = {
-      query: jest.fn(),
-      tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) => callback({ query: txQuery })),
-    };
+    });
+    const { database, db } = createMockDb({ txQuery });
     const nfts = { enqueueParentMintInTransaction: jest.fn() };
-    const service = new WalletsService(db as never, nfts as never);
+    const service = new WalletsService(database, nfts as never);
     const signer = Wallet.createRandom();
     return {
       db, txQuery, nfts, signer,

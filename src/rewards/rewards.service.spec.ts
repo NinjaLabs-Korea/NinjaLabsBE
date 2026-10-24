@@ -58,7 +58,7 @@ describe('RewardsService markPaid', () => {
       }
       return { rowCount: 1, rows: [] };
     });
-    const { database, db } = createMockDb({ txQuery: query });
+    const { database, db, txClient } = createMockDb({ txQuery: query });
     const nfts = {
       enqueueChildMintInTransaction: jest.fn().mockResolvedValue({ nftId: 'nft' }),
     };
@@ -68,7 +68,7 @@ describe('RewardsService markPaid', () => {
       new AuditService(database),
       config(),
     );
-    return { service, query, db, nfts, target };
+    return { service, query, db, txClient, nfts, target };
   }
 
   const paidElsewhere = (id: string, bounty_id: string, hash = txHash): PayoutRow => ({ id, bounty_id, payout_tx_hash: hash, status: 'PAID' });
@@ -81,15 +81,9 @@ describe('RewardsService markPaid', () => {
   });
 
   it('enqueues a completion NFT in the same transaction when a payout is paid', async () => {
-    const { service, query, db, nfts } = setup();
+    const { service, txClient, db, nfts } = setup();
     await expect(service.markPaid('payout', txHash, 'admin')).resolves.toMatchObject({ status: 'PAID' });
-    expect(nfts.enqueueChildMintInTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ query: expect.any(Function) }), 'user', 'wallet', 'bounty', 'submission',
-    );
-    // the client handed to the NFT enqueue is the transaction client: a statement through it lands on tx.query, never on the pool
-    const [client] = nfts.enqueueChildMintInTransaction.mock.calls[0];
-    await client.query('SELECT 1');
-    expect(query).toHaveBeenLastCalledWith('SELECT 1', undefined);
+    expect(nfts.enqueueChildMintInTransaction).toHaveBeenCalledWith(txClient, 'user', 'wallet', 'bounty', 'submission');
     expect(db.query).not.toHaveBeenCalled();
   });
 

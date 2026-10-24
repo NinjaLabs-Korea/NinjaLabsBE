@@ -18,6 +18,8 @@ export interface MockDb {
   /** 호출 기록을 단언하는 원본 mock (검사 래퍼가 아니라 위임 대상) */
   query: QueryMock;
   txQuery: QueryMock;
+  /** 모든 `db.tx` 콜백이 받는 동일한 클라이언트 객체 — "같은 트랜잭션 클라이언트로 넘겼다"를 `toHaveBeenCalledWith(txClient, ...)`로 단언할 때 */
+  txClient: { query: QueryMock };
 }
 
 /**
@@ -30,9 +32,10 @@ export interface MockDb {
 export function createMockDb(options: MockDbOptions = {}): MockDb {
   const query = options.query ?? jest.fn();
   const txQuery = options.txQuery ?? jest.fn();
+  const txClient = { query: withParamsCheck(txQuery) };
   const db = {
     query: jest.fn(withParamsCheck(query)),
-    tx: jest.fn(async (callback: (tx: { query: QueryMock }) => Promise<unknown>) => callback({ query: withParamsCheck(txQuery) })),
+    tx: jest.fn(async (callback: (tx: { query: QueryMock }) => Promise<unknown>) => callback(txClient)),
   };
-  return { database: db as unknown as DatabaseService, db, query, txQuery };
+  return { database: db as unknown as DatabaseService, db, query, txQuery, txClient };
 }

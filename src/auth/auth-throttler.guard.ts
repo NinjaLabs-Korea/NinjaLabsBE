@@ -10,11 +10,19 @@ import { presentedRefreshToken } from './session-cookie';
  * FE가 `/api/auth/*`를 Vercel(Next.js rewrite)로 프록시하면 이 서버가 보는 클라이언트 IP는 Vercel의 공유 egress IP다 — IP 기준
  * 10/min이면 서로 다른 사용자들이 한 버킷을 나눠 쓰다 정당한 refresh가 429가 된다. 그래서 refresh는 refresh 토큰(쿠키 또는 본문)의
  * sha256, exchange는 로그인 코드의 sha256으로 버킷을 나눈다. 자격 증명이 없으면 IP로 떨어진다.
- * IP 기준의 거친 한도는 전역 throttler(app.module.ts, IP당 120/min)가 이 라우트에도 그대로 건다 — 토큰을 바꿔 가며 두드리는 것은
+ * IP 기준의 거친 한도는 전역 throttler(app.module.ts)가 이 라우트에도 건다 — 단 IP당 600/min으로 올려서(AUTH_PROXIED_ROUTE_IP_THROTTLE) — 토큰을 바꿔 가며 두드리는 것은
  * 그쪽이 막는다(refresh 토큰 384비트·로그인 코드 256비트+PKCE라 추측 자체가 비현실적).
  * 원문 토큰은 키에 남기지 않는다(해시만 — 저장소 덤프/로그에서 쓸 수 없게).
  */
 export const AUTH_TOKEN_THROTTLER = { name: 'auth-token', ttl: 60_000, limit: 10 } as const;
+
+/**
+ * `/auth/exchange`·`/auth/refresh`에만 거는 전역(IP) throttler 덮어쓰기 — 120/min → **600/min**.
+ * 운영 트래픽은 FE의 Vercel rewrite(`/api/auth/*`)를 거쳐 오므로 이 서버가 보는 IP는 소수의 Vercel egress IP다. 전역 IP당 120/min을
+ * 그대로 두면 많은 사용자가 그 버킷을 나눠 써 정상 refresh가 429가 된다. 사용자별 제한은 위의 토큰 해시별 10/min이 맡고,
+ * 이 600/min은 egress IP 하나에서 오는 무차별 대입에 대한 거친 상한으로만 남는다. 다른 라우트는 120/min 그대로 (docs/security.md).
+ */
+export const AUTH_PROXIED_ROUTE_IP_THROTTLE = { default: { ttl: 60_000, limit: 600 } } as const;
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 

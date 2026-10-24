@@ -41,7 +41,7 @@ FE는 `/api/auth/*`를 Next.js rewrite로 BE `/auth/*`에 프록시한다 — �
 - `POST /auth/logout`: 쿠키(와 본문에 함께 온 레거시 토큰)의 세션을 폐기하고 `Set-Cookie: ninja_rt=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0` → 204. 토큰이 없어도 204.
 - **CSRF**: 쿠키를 쓰는 요청은 커스텀 헤더가 **필수** — 교차 사이트 폼은 헤더를 붙일 수 없고, 교차 출처 JS는 CORS preflight(`CORS_ORIGINS` 허용 목록)에서 막힌다. `SameSite=Strict`는 이중 방어 (docs/security.md).
 - **본문 모드에서** `refreshToken`이 빠지면 예전과 같은 `400 ["refreshToken should not be empty", "refreshToken must be a string"]`.
-- **한도**: `/auth/refresh`는 제시된 refresh 토큰(쿠키 또는 본문)의 **해시별 10/min**, `/auth/exchange`는 로그인 코드 해시별 10/min (초과 시 429 + `Retry-After-auth-token`). Vercel 프록시 뒤 사용자들이 공유 egress IP 하나에 묶여 서로의 refresh를 막지 않게 한 것이다. IP 기준 거친 한도는 전역 IP당 120/min이 그대로 걸린다(초과 시 `Retry-After`).
+- **한도**: `/auth/refresh`는 제시된 refresh 토큰(쿠키 또는 본문)의 **해시별 10/min**, `/auth/exchange`는 로그인 코드 해시별 10/min (초과 시 429 + `Retry-After-auth-token`). Vercel 프록시 뒤 사용자들이 공유 egress IP 하나에 묶여 서로의 refresh를 막지 않게 한 것이다. IP 기준 거친 한도는 이 두 라우트에서 IP당 **600/min**(전역 120/min을 덮어씀 — 운영 트래픽이 Vercel egress IP 몇 개로 모인다, 초과 시 `Retry-After`)이다. 다른 라우트는 120/min.
 
 로그인 시 FE는 탭의 `sessionStorage`에 랜덤 verifier를 저장하고 SHA-256/base64url
 challenge만 `/auth/google`에 보낸다. BE는 challenge를 서명된 OAuth state에 연결한다.

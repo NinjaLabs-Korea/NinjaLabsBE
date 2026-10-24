@@ -143,7 +143,7 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres npm run
 FE는 `/api/auth/*`를 Next.js rewrite로 이 서버의 `/auth/*`에 프록시하고, 요청에 `X-Ninja-Session: cookie`를 붙여 쿠키 모드를 켠다.
 그때 `/auth/exchange`·`/auth/refresh`는 refresh 토큰을 `Set-Cookie: ninja_rt=…; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=<JWT_REFRESH_TTL 초>`(Domain 없음)로만 주고
 본문에서 뺀다(`{accessToken}`), `/auth/refresh`는 쿠키를 읽고(본문 `{}`), `/auth/logout`은 쿠키를 지운다(`Max-Age=0`). 헤더가 없으면 쿠키는 무시되고 기존 본문 모드(deprecated)다 — 커스텀 헤더가 CSRF 방어선.
-쿠키는 의존성 없이 `common/http/cookies.ts`로 읽는다. `/auth/refresh`·`/auth/exchange` 한도는 IP가 아니라 제시된 토큰/코드의 해시별 10/min(`auth/auth-throttler.guard.ts`) + 전역 IP 120/min. 계약 전문: `docs/api-contract.md` "refresh 쿠키 모드", 보안 모델: `docs/security.md`.
+쿠키는 의존성 없이 `common/http/cookies.ts`로 읽는다. `/auth/refresh`·`/auth/exchange` 한도는 IP가 아니라 제시된 토큰/코드의 해시별 10/min(`auth/auth-throttler.guard.ts`) + IP당 600/min(이 두 라우트만 전역 120/min을 올림 — Vercel rewrite 뒤 사용자들이 소수의 egress IP를 공유, `docs/security.md`). 계약 전문: `docs/api-contract.md` "refresh 쿠키 모드", 보안 모델: `docs/security.md`.
 로컬에서 `Secure` 쿠키는 `http://localhost`에서도 브라우저가 받는다(localhost는 secure context).
 
 Supabase 프로젝트 생성 후 `Project Settings → Database → Connection string`을 `DATABASE_URL`에 넣으면 된다. Supabase CLI를 쓰는 팀이면 `npm run migrate` 대신 `supabase db push`도 가능 (마이그레이션 디렉터리 규칙 호환).

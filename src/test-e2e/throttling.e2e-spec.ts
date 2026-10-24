@@ -60,13 +60,34 @@ describeDb('throttling over HTTP (e2e)', () => {
     expect((await e2e.post('/auth/exchange', { code: code43('b'), codeVerifier: verifier }, { ip })).status).toBe(401);
   });
 
-  it('/auth/refresh keeps the coarse per-IP limit (global 120/min): fresh tokens every call still hit 429 on the 121st; spoofed X-Forwarded-For prefixes do not open a new bucket', async () => {
-    const statuses = await burst(120, (i) => e2e.post('/auth/refresh', { refreshToken: unknownToken(`ip${i}`) }, { ip: `198.51.100.${i % 250}, 203.0.113.50` }));
+  it('/auth/refresh: the per-IP limit is raised to 600/min (Vercel egress IPs carry many users): fresh tokens every call hit 429 only on the 601st; spoofed X-Forwarded-For prefixes do not open a new bucket', async () => {
+    const statuses = await burst(600, (i) => e2e.post('/auth/refresh', { refreshToken: unknownToken(`ip${i}`) }, { ip: `198.51.100.${i % 250}, 203.0.113.50` }));
     expect(statuses.every((s) => s === 401)).toBe(true);
     const over = await e2e.post('/auth/refresh', { refreshToken: unknownToken('over') }, { ip: '198.51.100.251, 203.0.113.50' });
     expect(over.status).toBe(429);
     expect(Number(over.headers['retry-after'])).toBeGreaterThan(0);
+    expect(over.headers['retry-after-auth-token']).toBeUndefined(); // the IP bucket tripped, not a token bucket
     expect((await e2e.post('/auth/refresh', { refreshToken: unknownToken('other-ip') }, { ip: '203.0.113.51' })).status).toBe(401);
+  });
+
+  it('/auth/exchange: the per-IP limit is 600/min too — 121+ distinct codes from one IP are not 429 (they 401)', async () => {
+    const ip = '203.0.113.52';
+    const codes = (i: number) => code43('e').slice(0, 40) + String(i).padStart(3, '0');
+    const statuses = await burst(150, (i) => e2e.post('/auth/exchange', { code: codes(i), codeVerifier: verifier }, { ip }));
+    expect(statuses).toEqual(Array(150).fill(401));
+    const last = await e2e.post('/auth/exchange', { code: codes(150), codeVerifier: verifier }, { ip });
+    expect(last.status).toBe(401);
+    expect(last.headers['x-ratelimit-limit']).toBe('600');
+  });
+
+  it('other routes keep 120/min per IP even after the auth routes were used from that IP', async () => {
+    const ip = '203.0.113.53';
+    expect((await e2e.post('/auth/refresh', { refreshToken: unknownToken('pre') }, { ip })).headers['x-ratelimit-limit']).toBe('600');
+    const first = await e2e.get('/bounties?pageSize=1', { ip });
+    expect(first.headers['x-ratelimit-limit']).toBe('120');
+    const statuses = await burst(119, () => e2e.get('/bounties?pageSize=1', { ip }));
+    expect(statuses.every((s) => s === 200)).toBe(true);
+    expect((await e2e.get('/bounties?pageSize=1', { ip })).status).toBe(429);
   });
 
   it('the global limit is 120/min per IP (unsuffixed Retry-After), separate per IP', async () => {

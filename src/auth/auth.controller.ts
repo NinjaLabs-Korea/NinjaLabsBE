@@ -23,7 +23,7 @@ import {
   requestTraceId,
 } from '../common/logging/onboarding-log';
 import { OriginAllowlist } from '../common/origin-allowlist';
-import { AuthTokenThrottlerGuard } from './auth-throttler.guard';
+import { AUTH_PROXIED_ROUTE_IP_THROTTLE, AuthTokenThrottlerGuard } from './auth-throttler.guard';
 import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
 import { clearRefreshCookie, isCookieMode, readRefreshCookie, setRefreshCookie } from './session-cookie';
@@ -158,11 +158,12 @@ export class AuthController {
   /**
    * POST /auth/exchange — 로그인 코드 + PKCE verifier → 세션.
    * 쿠키 모드(`X-Ninja-Session: cookie`): refresh는 `Set-Cookie: ninja_rt=…`로만 주고 본문에서 뺀다 (session-cookie.ts).
-   * 한도: 로그인 코드 해시별 10/min (AuthTokenThrottlerGuard) + 전역 IP 120/min.
+   * 한도: 로그인 코드 해시별 10/min (AuthTokenThrottlerGuard) + IP당 600/min (전역 120/min을 이 라우트만 올림 — AUTH_PROXIED_ROUTE_IP_THROTTLE).
    */
   @Post('exchange')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store, private')
+  @Throttle(AUTH_PROXIED_ROUTE_IP_THROTTLE)
   @UseGuards(AuthTokenThrottlerGuard)
   async exchange(@Body() dto: LoginCodeDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const session = await this.auth.exchangeLoginCode(dto.code, dto.codeVerifier, req.ip, req.headers['user-agent']);
@@ -183,11 +184,13 @@ export class AuthController {
    *   - 쿠키 모드(`X-Ninja-Session: cookie`): `ninja_rt` 쿠키를 읽어 회전하고 새 토큰을 다시 쿠키로 → 본문 `{accessToken}`.
    *     본문에 `refreshToken`이 함께 오면(localStorage 레거시 토큰의 1회 이전) 본문 토큰을 쓰고 결과를 쿠키로 심는다.
    *     쿠키에서 읽은 토큰이 401이면 쿠키도 지운다 (죽은 세션).
-   * 한도: 제시된 refresh 토큰 해시별 10/min (AuthTokenThrottlerGuard — Vercel 프록시의 공유 IP로 버킷이 섞이지 않게) + 전역 IP 120/min.
+   * 한도: 제시된 refresh 토큰 해시별 10/min (AuthTokenThrottlerGuard — Vercel 프록시의 공유 IP로 버킷이 섞이지 않게) + IP당 600/min
+   * (전역 120/min을 이 라우트만 올림 — AUTH_PROXIED_ROUTE_IP_THROTTLE).
    */
   @Post('refresh')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store, private')
+  @Throttle(AUTH_PROXIED_ROUTE_IP_THROTTLE)
   @UseGuards(AuthTokenThrottlerGuard)
   async refresh(@Body() dto: RefreshDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const traceId = requestTraceId(req.headers);

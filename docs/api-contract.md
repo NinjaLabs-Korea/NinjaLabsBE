@@ -191,6 +191,8 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 | DELETE | `/admin/highlights/:id` | 하이라이트 삭제 |
 | GET | `/admin/audit-logs?entityType=&entityId=&page=` | 감사 로그 → `{ items, page, pageSize: 30, total }` (최신순). `page`≥1 정수, `entityType`≤64자, `entityId` UUID — 그 외 `400`. (이전엔 배열을 반환했으나 FE 호출처가 없어 공통 페이지네이션 봉투로 변경) |
 
+운영자 지정(`is_admin`)은 API가 없다 — `scripts/grant-admin.js`로만 바꾼다([runbook.md](runbook.md) §3). 그 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/requeue-nft-jobs.js`는 `NFT_JOB_REQUEUED`(entity `nft_job`)를 남긴다 — 감사 로그 화면은 actor가 비어 있는 행을 "운영 스크립트"로 표시하면 된다.
+
 `AdminGuard`는 JWT의 `isAdmin` 클레임 외에 요청마다 `"user"` 행(`is_admin`, `status='ACTIVE'`, 미삭제)을 다시 확인한다 — 어드민 해제/정지가 토큰 만료 전에 즉시 반영된다 (403 `ADMIN_ONLY`).
 
 `GET /media/:id`는 인증 없이 업로드 원본을 immutable cache header와 함께 반환한다. 파일 MIME과

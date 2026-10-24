@@ -29,10 +29,15 @@ src/
   app-setup.ts         configureApp(): 전역 파이프/필터/인터셉터/CORS/trust proxy — main.ts와 e2e가 공유
   test-support/        유닛 스펙 공용 헬퍼 (expectParamsMatch: SQL $n 수와 바인딩 수 일치 검사)
 scripts/migrate.js     Supabase CLI 없이 쓰는 마이그레이션 러너 (applyMigrations는 test-db도 사용)
+scripts/grant-admin.js       운영자 권한 부여/회수 (이메일, --dry-run, 확인 프롬프트, 감사 행) — docs/runbook.md §3
+scripts/requeue-nft-jobs.js  FAILED nft_job 수동 재시도 (id 또는 --all, --dry-run) — docs/runbook.md §7.3
+scripts/mainnet-preflight.sql 메인넷 전환 전 읽기 전용 점검 (psql) — docs/runbook.md §8
+scripts/ops-cli.js           운영 스크립트 공용 (migrate.js와 같은 접속 규칙, 인자, 프롬프트)
 docs/
   api-contract.md      FE와 합의할 REST API 계약 (FE docs/auth-api-contract.md 대응)
   decisions.md         미결정 사항에 대한 MVP 디폴트 제안
   security.md          보안 체크리스트 (반영됨 / 구현 시 필수 / 운영 전 조치)
+  runbook.md           운영 런북 — 첫 배포, 어드민 부트스트랩, OAuth 게시, 백업/복구 리허설, 업타임, 장애 플레이북, 메인넷 전환, 멀티시그 템플릿
 ```
 
 ### 코드 배치 규칙
@@ -80,6 +85,8 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
    `_migrations`에 있는지 확인하고, 빠진 게 있으면 listen 전에 `FATAL: MIGRATIONS_PENDING: run npm run migrate (missing: 0014_…)`를 찍고 exit 1.
    preDeploy를 우회해 배포했거나(수동 `railway up`, 다른 호스팅) `npm run migrate`가 실패한 채 컨테이너만 올라오는 상황을 잡는다.
 
+첫 배포 전체 순서(Railway 설정 반영 → env → BE → OAuth → FE → 어드민 부트스트랩 → 모니터)와 운영 절차는 **[docs/runbook.md](docs/runbook.md)**.
+
 따라서 수동 배포라면 **`npm run migrate` → 새 코드 기동** 순서를 지킨다. `scripts/migrate.js`는 실행 전체를 `pg_advisory_lock`(고정 키 `MIGRATION_LOCK_KEY`)으로 직렬화한다 — 두 배포의 preDeploy가 겹치면 뒤의 것은 `wait  another migration run holds the lock`을 찍고 기다렸다가 이미 적용된 파일을 skip한다 (`src/test-db/migrate-lock.db-spec.ts`). 파일 하나를 트랜잭션 하나로 적용하고
 `RAISE NOTICE`/실패 시 `HINT`를 그대로 출력한다. `0014`는 `deposit_tx_hash` 중복이 남아 있으면 **에러로 멈춘다**(중복 값·건수·조사 SQL 포함) —
 운영자가 정리한 뒤 다시 `npm run migrate`하면 이어서 적용된다 (`src/test-db/migrations.db-spec.ts`). `payout_tx_hash`는 정규화만 한다 (한 멀티시그 tx가 여러 수상자에게 보낼 수 있어 중복이 정당하다).
@@ -98,6 +105,7 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
 | `JWT_REFRESH_TTL` | 미설정이면 `14d`. 형식/범위(60초~90일)가 틀리면 기동 거부 |
 | `LEGACY_ACCESS_TOKEN_CUTOFF` | 선택. 미설정이면 프로세스 시작 시각 — 그 전에 발급된 `typ` 없는 구 access 토큰만 받는다(15분 뒤 자연 소멸). ISO 8601이 아니면 기동 거부. 2026-11-30 이후 코드와 함께 제거 |
 | `DATABASE_CA_CERT` | 비어 있으면 기동하되 `warn` 1회 (TLS 인증서 미검증 — 운영 전 설정) |
+| `REWARD_MULTISIG_ADDRESS` | 기동은 하지만 비우면 새 보상의 `custody_address`가 자리표시값 `PENDING_MULTISIG_SETUP` — 스폰서가 입금할 주소가 없다. `railway.ts`에 자리가 없으므로 대시보드에서 추가 (`docs/runbook.md` §1, §8) |
 | `PAYOUT_ALLOW_SELF_APPROVAL` | 선택, 기본 `false` — payout 승인 2인 규칙(요청자 ≠ 승인자, 403 `PAYOUT_SELF_APPROVAL`). 운영자 1인일 때만 `true` → 자기 승인 허용 + 기동/승인 시 `warn` + 감사 `PAYOUT_SELF_APPROVED`. railway.ts에 넣지 않는다(기본값 유지) |
 | `CORS_ORIGINS`, `AUTH_ALLOWED_REDIRECT_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT` | 기동은 하지만 값이 틀리면 로그인/CORS가 동작하지 않는다 (railway.ts에 공개값으로 고정) |
 

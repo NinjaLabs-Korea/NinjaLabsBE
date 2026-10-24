@@ -3,11 +3,15 @@ import { AdminGuard } from '../../auth/admin.guard';
 import { AuthedRequest } from '../../auth/authed-request';
 import { CreateBountyDto, TransitionBountyDto, UpdateBountyDto } from './bounty-admin.dto';
 import { BountyAdminService } from './bounty-admin.service';
+import { BountyOperationsQuery } from './bounty-operations.query';
 
 @Controller('admin/bounties')
 @UseGuards(AdminGuard)
 export class BountyAdminController {
-  constructor(private readonly bounties: BountyAdminService) {}
+  constructor(
+    private readonly bounties: BountyAdminService,
+    private readonly operationsQuery: BountyOperationsQuery,
+  ) {}
 
   @Get()
   list() {
@@ -16,7 +20,7 @@ export class BountyAdminController {
 
   @Get(':id/operations')
   operations(@Param('id', ParseUUIDPipe) bountyId: string, @Req() req: AuthedRequest) {
-    return this.bounties.operations(bountyId, req.user.userId);
+    return this.operationsQuery.execute(bountyId, req.user.userId);
   }
 
   @Post()

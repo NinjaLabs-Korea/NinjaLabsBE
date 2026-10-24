@@ -35,7 +35,7 @@ describeDb('bounty rules on a real database', () => {
     audit = new AuditService(db);
     const config = testConfig();
     nfts = new NftsService(db, config);
-    bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config), config);
+    bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
     rewards = new RewardsService(db, nfts, audit, config);
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
@@ -437,7 +437,7 @@ describeDb('bounty rules on a real database', () => {
       const bountyId = await createBounty({ amount: '10' });
       const rewardId = await rewardOf(bountyId);
       const parking = parkingAudit('BOUNTY_DELETED', bountyId);
-      const parkedBounties = new BountyAdminService(db, parking.service, new BountyLifecycleService(), new RewardTokenResolver(testConfig()), testConfig());
+      const parkedBounties = new BountyAdminService(db, parking.service, new BountyLifecycleService(), new RewardTokenResolver(testConfig()));
       const t1 = parkedBounties.remove(bountyId, adminId);
       await parking.parked;
       const t2 = rewards.confirmDeposit(rewardId, fakeTxHash(), '10', adminId).then(() => 'funded' as const, (err: Error) => err);

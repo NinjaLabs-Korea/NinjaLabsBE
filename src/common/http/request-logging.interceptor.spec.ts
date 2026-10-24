@@ -120,3 +120,53 @@ describe('RequestLoggingInterceptor through a real Nest HTTP app', () => {
     expect(matching[0]).not.toContain('secret');
   });
 });
+
+describe('RequestLoggingInterceptor — status of thrown errors, non-HTTP contexts and hostile paths', () => {
+  function context(path: string, method = 'GET') {
+    const res = Object.assign(new EventEmitter(), { statusCode: 200, writableEnded: false });
+    return {
+      getType: () => 'http',
+      switchToHttp: () => ({ getRequest: () => ({ method, path, url: path }), getResponse: () => res }),
+    } as unknown as ExecutionContext;
+  }
+  let log: jest.SpyInstance;
+  beforeEach(() => { log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined); });
+  afterEach(() => jest.restoreAllMocks());
+
+  const failWith = async (caught: unknown, path = '/x') => {
+    const failing: CallHandler = { handle: () => throwError(() => caught) };
+    await expect(lastValueFrom(new RequestLoggingInterceptor().intercept(context(path), failing))).rejects.toBe(caught);
+    return log.mock.calls.map(([line]) => line as string);
+  };
+
+  it.each([
+    ['a plain Error', new Error('boom'), 500],
+    ['a thrown string', 'boom', 500],
+    ['NUL rejected by Postgres (22021)', Object.assign(new Error('invalid byte sequence'), { code: '22021' }), 400],
+    ['unconvertible character (22P05)', Object.assign(new Error('untranslatable character'), { code: '22P05' }), 400],
+    ['FK to a missing row', Object.assign(new Error('fk'), { code: '23503', detail: 'Key (bounty_id)=(x) is not present in table "bounty".' }), 400],
+    ['FK still referenced (server policy, not the client)', Object.assign(new Error('fk'), { code: '23503', detail: 'Key (id)=(x) is still referenced from table "nft".' }), 500],
+    ['unique violation', Object.assign(new Error('dup'), { code: '23505' }), 500],
+  ])('%s → logged with status %i, original error re-thrown unchanged', async (_label, caught, status) => {
+    const lines = await failWith(caught);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(new RegExp(`^GET /x ${status} \\d+ms$`));
+  });
+
+  it('passes non-HTTP contexts (cron, microservice) straight through without logging', async () => {
+    const rpc = { getType: () => 'rpc', switchToHttp: () => { throw new Error('not http'); } } as unknown as ExecutionContext;
+    await expect(lastValueFrom(new RequestLoggingInterceptor().intercept(rpc, { handle: () => of('done') }))).resolves.toBe('done');
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('only skips exactly /health — /healthz and /health/x are logged', async () => {
+    for (const path of ['/healthz', '/health/x']) await failWith(new Error('x'), path);
+    expect(log.mock.calls.map(([line]) => (line as string).split(' ')[1])).toEqual(['/healthz', '/health/x']);
+  });
+
+  it('a path carrying CR/LF cannot start a forged log line', async () => {
+    const [line] = await failWith(new Error('x'), '/users/a\r\nGET /admin 200 1ms');
+    expect(line).not.toMatch(/[\r\n]/);
+    expect(line).toMatch(/^GET \/users\/a\\r\\nGET \/admin 200 1ms 500 \d+ms$/);
+  });
+});

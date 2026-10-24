@@ -24,3 +24,25 @@ describe('PaginationQueryDto', () => {
     expect(await failedFields({ page: '100001' })).toEqual(['page']);
   });
 });
+
+describe('PaginationQueryDto — query-string edge cases (values arrive as strings)', () => {
+  it.each([
+    [{ page: '100000' }, []],
+    [{ page: '100001' }, ['page']],
+    [{ pageSize: '50' }, []],
+    [{ pageSize: '51' }, ['pageSize']],
+    [{ page: '' }, ['page']], // Number('') = 0
+    [{ page: ' 2 ' }, []], // Number() trims
+    [{ page: '2.0' }, []], // integral after conversion
+    [{ page: '1e3' }, []],
+    [{ page: '1e309' }, ['page']], // Infinity
+    [{ page: 'NaN' }, ['page']],
+    [{ page: '-0' }, ['page']],
+    [{ page: '9'.repeat(400) }, ['page']],
+    [{ page: ['1', '2'] }, ['page']], // repeated ?page=1&page=2
+    [{ page: '0x10' }, []], // Number('0x10') = 16 — harmless, still bounded
+    [{ page: '1_000' }, ['page']],
+  ])('%p → failed %p', async (query, failed) => {
+    expect(await failedFields(query)).toEqual(failed);
+  });
+});

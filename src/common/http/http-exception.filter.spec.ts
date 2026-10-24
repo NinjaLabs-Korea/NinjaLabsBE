@@ -136,3 +136,34 @@ describe('HttpExceptionFilter', () => {
     });
   });
 });
+
+describe('HttpExceptionFilter — request context edge cases', () => {
+  let error: jest.SpyInstance;
+  beforeEach(() => {
+    jest.spyOn(BaseExceptionFilter.prototype, 'catch').mockImplementation(() => undefined);
+    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('still logs one line with "-" placeholders when there is no HTTP request (exception outside a request)', () => {
+    const noRequest = { switchToHttp: () => ({ getRequest: () => undefined }) } as unknown as ArgumentsHost;
+    new HttpExceptionFilter().catch(new Error('during bootstrap'), noRequest);
+    expect(error.mock.calls).toEqual([['- - 500 Error: during bootstrap']]);
+  });
+
+  it('caps an attacker-sized method and error name', () => {
+    const host = { switchToHttp: () => ({ getRequest: () => ({ method: 'M'.repeat(100), path: '/x' }) }) } as unknown as ArgumentsHost;
+    const exception = new Error('m');
+    exception.name = 'N'.repeat(500);
+    new HttpExceptionFilter().catch(exception, host);
+    const [line] = error.mock.calls[0] as [string];
+    expect(line.startsWith(`${'M'.repeat(16)}…(+84 chars) /x 500 ${'N'.repeat(100)}…(+400 chars): m`)).toBe(true);
+  });
+
+  it.each([
+    [{ status: 399 }, 500], [{ status: 400 }, 400], [{ status: 499 }, 499], [{ status: 500 }, 500],
+    [{ status: NaN }, 500], [{ statusCode: 404, status: 'x' }, 404], [{ status: 409, statusCode: 500 }, 409], [undefined, 500],
+  ])('statusOf(%p) → %p', (carried, status) => {
+    expect(HttpExceptionFilter.statusOf(carried)).toBe(status);
+  });
+});

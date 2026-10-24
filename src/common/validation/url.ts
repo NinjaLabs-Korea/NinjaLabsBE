@@ -109,7 +109,9 @@ export const IsHttpUrlOrSitePath = (options?: ValidationOptions) =>
  */
 const LENIENT_SITE_PATH = /^\/(?![/\\])/;
 /** 스킴 없는 `host.tld[:port][/path]` — 레이블은 영숫자/하이픈, 마지막 레이블은 글자 2자 이상 (`javascript:x`, `localhost:3000`은 해당 없음) */
-const BARE_HOST_URL = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:[/?#][^\s\\]*)?$/i;
+/** `scheme://` 뒤 첫 `/ ? #` 전(authority)에 역슬래시가 있다 */
+const ABSOLUTE_AUTHORITY_BACKSLASH = /^[a-z]+:\/\/[^/?#]*\\/i;
+const BARE_HOST_URL =/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:[/?#][^\s\\]*)?$/i;
 
 export function isSafeUrl(value: unknown): boolean {
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_URL_LENGTH) return false;
@@ -117,6 +119,10 @@ export function isSafeUrl(value: unknown): boolean {
   if (LENIENT_SITE_PATH.test(value)) return true;
   if (BARE_HOST_URL.test(value)) return true; // 레거시 스킴 없는 값 — 실행 불가, 위 주석
   if (!HTTP_URL_PREFIX.test(value)) return false; // 다른 스킴·프로토콜 상대는 전부 여기서 끝난다
+  // 절대 URL의 공백, authority(호스트 부분)의 역슬래시 거부 (위 주석의 규칙) — WHATWG URL은 `\`를 `/`로 읽어 `https://evil.com\.example.com`의
+  // 호스트를 evil.com으로 보지만 다른 파서는 호스트에 포함시킨다(파서 차이). new URL()은 앞뒤 공백도 조용히 잘라 통과시켰다.
+  // 경로/프래그먼트의 역슬래시는 엄격 규칙(isHttpUrl)도 받으므로 여기서 막으면 생성 때 통과한 값의 수정이 400이 된다.
+  if (/\s/.test(value) || ABSOLUTE_AUTHORITY_BACKSLASH.test(value)) return false;
   try {
     const url = new URL(value);
     return Boolean(url.hostname) && !url.username && !url.password;

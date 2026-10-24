@@ -90,6 +90,8 @@ describe('URL field validators', () => {
       mediaPath, '/uploads/legacy-cover.png', '/images/a b.png', '/bounties/../admin', '/x%2fy', '/', '/bounties?page=2',
       // legacy scheme-less values typed before the strict rule — not executable, the FE never renders them as links
       'ninjalabs.xyz/x.png', 'www.example.com', 'cdn.example.co.kr:8443/a.png?v=1', 'Img.Example/T.PNG#x',
+      // a backslash after the authority is accepted by the strict create rule too — an update must keep accepting it
+      'https://cdn.example/a\\b.png', 'https://cdn.example/a.png#x\\y',
     ])('accepts %p', (value) => {
       expect(isSafeUrl(value)).toBe(true);
     });
@@ -108,6 +110,10 @@ describe('URL field validators', () => {
       ['bare host with userinfo', 'user@cdn.example/x'],
       ['numeric last label', '127.0.0.1/x'],
       ['userinfo', 'https://ninjalabs.xyz@evil.com/x'],
+      ['absolute URL with a backslash before @ (WHATWG reads it as a path)', 'https://example.com\\@evil.com'],
+      ['absolute URL with a backslash in the host (parser differential)', 'https://evil.com\\.example.com'],
+      ['absolute URL with a trailing space (new URL() trims it silently)', 'https://example.com/ '],
+      ['absolute URL with an inner space', 'https://example.com/a b.png'],
       ['no host', 'https://'],
       ['NUL', '/x\u0000y'],
       ['newline', 'https://ninjalabs.xyz/\nx'],

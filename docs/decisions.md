@@ -27,6 +27,7 @@
 | 여러 수상자 분배 | 운영자가 payout 생성 시 금액 직접 입력 | 자동 균등분배는 추후. `bounty_reward` 1:N `payout` 구조라 유연 |
 | 취소 시 환불 | 운영자가 멀티시그에서 스폰서 주소로 수동 환불, `bounty_reward.status = REFUNDED` 기록 | REFUND_PENDING → REFUNDED 상태 이미 존재 |
 | Injective native USDC 식별 | EVM은 ERC-20 주소+chain ID, Cosmos는 `erc20:<lowercase address>` denom을 함께 저장 | MTS의 동일 자산을 두 실행 환경에서 혼동하지 않도록 서버 환경설정으로 강제 |
+| **[결정 2026-10-24] 지급 총액 공개 지표** | `GET /hall-of-fame/stats`의 `paidTotals`는 **status = `PAID` payout만** 합산, 삭제된 바운티 제외, `(upper(display_symbol), token_type)`별 base unit 문자열. 토큰 decimals는 DB에 없으므로 서버 상수표(`rewards/reward-token-decimals.ts`, INJ 18 / USDC 6)로 붙이고 모르는 심볼은 `null` | 환율 환산(USD 합계)은 하지 않는다 — 가격 소스 의존과 시점 문제. FE `TOKEN_DECIMALS`와 같은 값을 유지할 것 |
 | 송금 수수료 부담 | **플랫폼 부담** | Injective 가스비 ~$0.0003, 논의 가치 없는 수준 |
 
 ## NFT

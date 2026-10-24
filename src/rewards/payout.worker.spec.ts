@@ -35,7 +35,7 @@ describe('PayoutWorker — overlap and shutdown', () => {
     const query = jest.fn()
       .mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ rowCount: 1, rows: [{ count: '0' }] }); }))
       .mockResolvedValue({ rowCount: 1, rows: [{ count: '0' }] });
-    const worker = new PayoutWorker({ query } as unknown as DatabaseService, { notify: jest.fn() } as unknown as AlertService);
+    const worker = new PayoutWorker(createMockDb({ query }).database, { notify: jest.fn() } as unknown as AlertService);
     const first = worker.monitor();
     await worker.monitor(); // overlapping tick
     expect(query).toHaveBeenCalledTimes(1);

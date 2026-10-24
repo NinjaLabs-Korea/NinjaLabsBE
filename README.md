@@ -57,6 +57,7 @@ docs/
   제출물·지원서 상태도 같다 — `bounties/submission-status.ts`(`SubmissionStatusPolicy`), `bounties/application-status.ts`(`ApplicationStatusPolicy`).
   SQL의 상태 집합은 helper가 주는 배열을 `= ANY($n::text[])`로 바인딩한다. `src/test-support/status-literals.spec.ts`가 상태 리터럴 집합(`['APPROVED', 'REJECTED']`, `IN ('SUBMITTED', …)`)을 막는다.
 - **유니크 충돌 판별은 `isUniqueViolation(err)`** (`common/database/pg-errors.ts`).
+- **에러 코드는 `common/http/error-codes.ts` 카탈로그에 등록한다** (코드 → HTTP 상태 → 한 줄 의미). 서비스에는 `throw new XxxException('NEW_CODE')` 리터럴로 던지고, 카탈로그와 `docs/api-contract.md` "에러 코드" 표에 같은 행을 추가한다 — 빠지면 `src/test-support/error-codes.spec.ts`가 실패한다.
 - **사람/에이전트 참여는 `BountyActor`로 표현한다** (`bounties/bounty-actor.ts`). `isAgent ? ... : ...` 분기를 새로 만들지 않는다.
 - **지갑 서명 검증은 `signatureSchemeFor(address).verify()`** (`common/crypto/wallet-signature.ts`). 새 지갑 종류는 구현체를 추가한다.
 - **`process.env`를 직접 읽지 않는다.** 서비스는 `ConfigService`를 주입받고, `main.ts`도 `NestFactory.create()` 뒤 `app.get(ConfigService)`로 읽는다

@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 const adminServicesFor = (db: unknown) => {
   const audit = new AuditService(db as never);
   return {
-    bounties: new BountyAdminService(db as never, audit, new BountyLifecycleService(), new RewardTokenResolver(new ConfigService()), new ConfigService()),
+    bounties: new BountyAdminService(db as never, audit, new BountyLifecycleService(), new RewardTokenResolver(new ConfigService())),
     applicationReviews: new ApplicationReviewService(db as never, audit),
     submissionReviews: new SubmissionReviewService(db as never, audit),
   };

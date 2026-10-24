@@ -63,6 +63,13 @@ npm run start:dev           # http://localhost:4000
 
 PR 전 체크: `npm run lint && npm run typecheck && npm test && npm run build` (CI와 동일) + Postgres가 있으면 `npm run test:db`, `npm run test:e2e`.
 
+#### 로컬 오리진 (CORS / 로그인 returnTo)
+
+production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000`이 **없다** — 아무 브라우저 탭의 localhost 페이지가 운영 API를 자격 증명과 함께 부를 수 없게.
+로컬 FE는 로컬 BE에 붙인다: `.env`(`.env.example` 복사)의 `CORS_ORIGINS=http://localhost:3000`, `AUTH_SUCCESS_REDIRECT=http://localhost:3000/`가 기본값이고,
+다른 포트/호스트로 FE를 띄우면 `CORS_ORIGINS`와 `AUTH_ALLOWED_REDIRECT_ORIGINS`에 그 오리진을 콤마로 덧붙인다 (예: `CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3001`).
+로컬 FE로 운영 BE를 꼭 써야 한다면 운영 변수를 바꾸지 말고 FE의 mock 모드나 Vercel preview(정확한 별칭 항목)를 쓴다.
+
 ### 배포 순서 (Railway) — 마이그레이션이 먼저, 코드가 나중
 
 새 BE 코드는 새 스키마를 전제로 한다 (예: 0014의 `auth_session` 컬럼이 없으면 `/auth/exchange`·`/auth/refresh`가 500). 그래서 두 겹으로 막는다.

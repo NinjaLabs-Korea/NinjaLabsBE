@@ -20,7 +20,8 @@ export default defineRailway(() => {
       INJECTIVE_EVM_CHAIN_ID: "1439",
       USDC_EVM_CONTRACT_ADDRESS: "0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d",
       NFT_CONTRACT_ADDRESS: "inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w",
-      CORS_ORIGINS: "https://ninjalabsfe.vercel.app,http://localhost:3000",
+      // production 허용 목록에 localhost를 두지 않는다 — 로컬 FE는 로컬 BE(.env의 CORS_ORIGINS/AUTH_ALLOWED_REDIRECT_ORIGINS)로 붙는다 (README "로컬 오리진")
+      CORS_ORIGINS: "https://ninjalabsfe.vercel.app",
       GOOGLE_CALLBACK_URL:
         "https://ninjalabsbe-production.up.railway.app/auth/google/callback",
       AUTH_SUCCESS_REDIRECT: "https://ninjalabsfe.vercel.app/",

@@ -100,7 +100,7 @@ jobs:
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
 
   audit:
-    name: Dependency audit (report only)
+    name: Dependency audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -109,11 +109,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # Report-only: the job stays green and known advisories surface as a warning annotation.
-      # Once the pinned dependencies are upgraded, replace this step with a plain
-      # `npm audit --omit=dev --audit-level=high` so new advisories block the PR.
-      - name: npm audit (production deps, high+)
-        run: |
-          if ! npm audit --omit=dev --audit-level=high; then
-            echo "::warning title=Dependency audit::Production dependencies have high/critical advisories. See this job's log."
-          fi
+      # Blocking: fails on any high/critical production advisory that is not in audit-allowlist.json
+      # (each entry carries a reason and an expiry date; an expired entry fails the job too).
+      - run: npm ci
+      - name: audit gate (production deps, high+)
+        run: node scripts/audit-gate.js

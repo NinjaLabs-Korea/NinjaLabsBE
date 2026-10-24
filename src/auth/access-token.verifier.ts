@@ -6,7 +6,7 @@ import { JwtService } from '@nestjs/jwt';
  *
  * 여기를 고치는 경우:
  *   - access 토큰이 갖춰야 할 클레임 규칙(typ/sub/adm)을 바꿀 때 → AccessTokenVerifier.verify.
- *     발급 쪽 클레임 모양은 auth.service.ts(createSessionTokens)에 있으니 **두 곳을 함께** 본다.
+ *     발급 쪽 클레임 모양은 auth-sessions.ts(signAccessToken)에 있으니 **두 곳을 함께** 본다.
  *   - 레거시(typ 없는) 토큰 전환기를 끝낼 때 → 아래 TODO. legacyAccessTokenCutoff와 `legacy` 분기를 지운다.
  * 유저가 지금도 ACTIVE인지는 여기서 보지 않는다 — AuthService.assertActiveUser(user-status-cache.ts) 몫.
  */

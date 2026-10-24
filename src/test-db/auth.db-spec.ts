@@ -1,6 +1,7 @@
 import { JwtService } from '@nestjs/jwt';
 import { createHash, randomUUID } from 'crypto';
-import { AuthService, MAX_REVOKE_CHAIN_HOPS } from '../auth/auth.service';
+import { MAX_REVOKE_CHAIN_HOPS } from '../auth/auth-sessions';
+import { AuthService } from '../auth/auth.service';
 import { encryptGraceToken } from '../auth/refresh-grace';
 import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';

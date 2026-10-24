@@ -4,7 +4,8 @@ import { DatabaseService } from '../common/database/database.service';
 import { AuthController } from './auth.controller';
 import { withParamsCheck } from '../test-support/expect-params-match';
 import { legacyAccessTokenCutoff } from './access-token.verifier';
-import { AuthService, MAX_REVOKE_CHAIN_HOPS } from './auth.service';
+import { MAX_REVOKE_CHAIN_HOPS } from './auth-sessions';
+import { AuthService } from './auth.service';
 import { decryptGraceToken } from './refresh-grace';
 
 /** 유닛 스펙은 JWT_SECRET provider(jwt-secret.ts) 대신 고정 시크릿을 직접 주입한다 — grace 사본은 이 값으로 감싸진다 */
@@ -300,7 +301,7 @@ describe('AuthService refresh rotation', () => {
       return { rowCount: 0, rows: [] };
     });
     const { service } = createService(txQuery);
-    await service['revokeChain']({ query: txQuery }, 'h1');
+    await service['sessions'].revokeChain({ query: txQuery }, 'h1');
 
     const locks = txQuery.mock.calls.filter(([sql]) => sql.includes('FOR UPDATE')).map(([, params]) => params![0]);
     expect(locks).toEqual([['h1'], ['h2'], ['h3']]);
@@ -328,7 +329,7 @@ describe('AuthService refresh rotation', () => {
     const txQuery = chainedTxQuery(MAX_REVOKE_CHAIN_HOPS);
     const { service } = createService(txQuery);
     const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    await service['revokeChain']({ query: txQuery }, 'h1');
+    await service['sessions'].revokeChain({ query: txQuery }, 'h1');
 
     expect(txQuery.mock.calls.filter(([sql]) => sql.includes('FOR UPDATE'))).toHaveLength(MAX_REVOKE_CHAIN_HOPS);
     const revoke = txQuery.mock.calls.find(([sql]) => sql.includes('id = ANY($1::uuid[])'))!;
@@ -341,7 +342,7 @@ describe('AuthService refresh rotation', () => {
     const txQuery = chainedTxQuery(MAX_REVOKE_CHAIN_HOPS + 5);
     const { service } = createService(txQuery);
     const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    await service['revokeChain']({ query: txQuery }, 'h1');
+    await service['sessions'].revokeChain({ query: txQuery }, 'h1');
 
     // the walk is bounded: exactly MAX hops were locked, then the user-wide revoke replaced the per-id one
     expect(txQuery.mock.calls.filter(([sql]) => sql.includes('FOR UPDATE'))).toHaveLength(MAX_REVOKE_CHAIN_HOPS);

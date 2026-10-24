@@ -206,6 +206,12 @@ describeDb('validation over HTTP (e2e)', () => {
       expect((await e2e.get('/notices?page=0')).body).toEqual(badRequest(['page must not be less than 1']));
       expect((await e2e.get('/admin/users?page=-1', asAdmin())).status).toBe(400);
       expect((await e2e.get('/bounties?page=2&pageSize=50')).status).toBe(200);
+      // OFFSET beyond bigint used to answer 500 (22003) on the public lists
+      for (const path of ['/bounties', '/notices', '/admin/audit-logs', '/admin/users']) {
+        const huge = await e2e.get(`${path}?page=1000000000000000000`, asAdmin());
+        expect([path, huge.body]).toEqual([path, badRequest(['page must not be greater than 100000'])]);
+        expect([path, (await e2e.get(`${path}?page=100000`, asAdmin())).status]).toEqual([path, 200]);
+      }
     });
 
     it('dangerous URLs are rejected on create and update', async () => {

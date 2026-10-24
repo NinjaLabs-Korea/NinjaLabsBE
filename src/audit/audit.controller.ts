@@ -1,11 +1,12 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { MAX_PAGE } from '../common/pagination.dto';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuditService } from './audit.service';
 
 export class AuditLogsQueryDto {
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(MAX_PAGE) page?: number;
   @IsOptional() @IsString() @MaxLength(64) entityType?: string;
   @IsOptional() @IsUUID() entityId?: string;
 }

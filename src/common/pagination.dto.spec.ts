@@ -20,5 +20,7 @@ describe('PaginationQueryDto', () => {
     expect(await failedFields({ page: '0', pageSize: '51' })).toEqual(['page', 'pageSize']);
     expect(await failedFields({ page: '-1', pageSize: '1.5' })).toEqual(['page', 'pageSize']);
     expect(await failedFields({ pageSize: '' })).toEqual(['pageSize']);
+    expect(await failedFields({ page: '100000' })).toEqual([]);
+    expect(await failedFields({ page: '100001' })).toEqual(['page']);
   });
 });

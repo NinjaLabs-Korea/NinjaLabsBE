@@ -29,3 +29,24 @@ describe('PayoutWorker.monitor', () => {
     expect(alerts.notify).not.toHaveBeenCalled();
   });
 });
+
+describe('PayoutWorker — overlap and shutdown', () => {
+  it('skips an overlapping tick, waits for the in-flight check on shutdown, and runs nothing afterwards', async () => {
+    let release!: () => void;
+    const query = jest.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ rowCount: 1, rows: [{ count: '0' }] }); }))
+      .mockResolvedValue({ rowCount: 1, rows: [{ count: '0' }] });
+    const worker = new PayoutWorker({ query } as unknown as DatabaseService, { notify: jest.fn() } as unknown as AlertService);
+    const first = worker.monitor();
+    await worker.monitor(); // overlapping tick
+    expect(query).toHaveBeenCalledTimes(1);
+    let drained = false;
+    const shutdown = worker.beforeApplicationShutdown().then(() => { drained = true; });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(drained).toBe(false);
+    release();
+    await Promise.all([first, shutdown]);
+    await worker.monitor();
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+});

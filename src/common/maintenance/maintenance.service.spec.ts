@@ -51,7 +51,7 @@ describe('MaintenanceService crons', () => {
     query.mockRejectedValueOnce(new Error('timeout'));
     await expect(service.clearGraceCopies()).resolves.toBeUndefined();
     expect(error).toHaveBeenCalledWith(expect.stringContaining('timeout'));
-    expect(service['clearingGrace']).toBe(false);
+    expect(service['graceClears'].isRunning).toBe(false);
   });
 
   it('logs and swallows a failure so the cron keeps running next hour', async () => {
@@ -59,7 +59,7 @@ describe('MaintenanceService crons', () => {
     query.mockRejectedValueOnce(new Error('connection reset'));
     await expect(service.sweep()).resolves.toBeUndefined();
     expect(error).toHaveBeenCalledWith(expect.stringContaining('connection reset'));
-    expect(service['running']).toBe(false);
+    expect(service['sweeps'].isRunning).toBe(false);
   });
 
   it('runs at most once at a time', async () => {
@@ -128,5 +128,28 @@ describe('MaintenanceService — robustness', () => {
     const { service, error } = setup(jest.fn().mockRejectedValue(42));
     await service.clearGraceCopies();
     expect(error).toHaveBeenCalledWith('grace copy cleanup failed: 42');
+  });
+});
+
+describe('MaintenanceService — shutdown', () => {
+  it('beforeApplicationShutdown waits for an in-flight sweep to finish, and no cron runs afterwards', async () => {
+    let releaseFirst!: () => void;
+    const query = jest.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = () => resolve({ rowCount: 1 }); }))
+      .mockResolvedValue({ rowCount: 0 });
+    const service = new MaintenanceService({ query } as unknown as DatabaseService);
+    const log = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
+    const sweep = service.sweep();
+    let drained = false;
+    const shutdown = service.beforeApplicationShutdown().then(() => { drained = true; });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(drained).toBe(false);
+    releaseFirst();
+    await Promise.all([sweep, shutdown]);
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=1 sessions=0 login_codes=0 throttles=0'); // the sweep completed
+    query.mockClear();
+    await service.sweep();
+    await service.clearGraceCopies();
+    expect(query).not.toHaveBeenCalled();
   });
 });

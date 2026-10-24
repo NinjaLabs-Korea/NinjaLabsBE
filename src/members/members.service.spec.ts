@@ -41,9 +41,14 @@ describe('HighlightsService.list (GET /hall-of-fame)', () => {
   });
 
   it('GET /hall-of-fame/stats goes through the cached stats()', async () => {
-    const { db } = fakeDb([{ completed_bounties: '3', builders: '2', completion_nfts: '1', sponsors: '4' }]);
+    // two reads: the counts row and the per-token PAID totals (FROM payout)
+    const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => (sql.includes('FROM payout')
+      ? { rowCount: 1, rows: [{ symbol: 'INJ', token_type: 'NATIVE', amount: '5' }] }
+      : { rowCount: 1, rows: [{ completed_bounties: '3', builders: '2', completion_nfts: '1', sponsors: '4' }] })));
+    const db = { query } as unknown as DatabaseService;
     await expect(new HighlightsController(new HighlightsService(db)).stats()).resolves.toEqual({
       completedBounties: 3, builders: 2, completionNfts: 1, sponsors: 4,
+      paidTotals: [{ symbol: 'INJ', tokenType: 'NATIVE', decimals: 18, amount: '5' }],
     });
   });
 });

@@ -85,7 +85,7 @@ describe('MaintenanceService — robustness', () => {
   it('reports 0 when the driver gives rowCount null', async () => {
     const { service, log } = setup(jest.fn().mockResolvedValue({ rowCount: null, rows: [] }));
     await service.sweep();
-    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=0 sessions=0 login_codes=0');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=0 sessions=0 login_codes=0 throttles=0');
   });
 
   it('stops at the first failing statement (no later deletes) and logs a non-Error rejection as text', async () => {
@@ -102,7 +102,7 @@ describe('MaintenanceService — robustness', () => {
     const { service, log } = setup(query);
     await service.sweep();
     await service.sweep();
-    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=2 sessions=2 login_codes=2');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=2 sessions=2 login_codes=2 throttles=2');
   });
 
   it('clearGraceCopies runs at most once at a time and independently of a running sweep', async () => {
@@ -119,7 +119,7 @@ describe('MaintenanceService — robustness', () => {
     expect(query.mock.calls.filter(([sql]) => sql.includes('grace_refresh_token'))).toHaveLength(1);
     releaseGrace();
     await grace;
-    for (let i = 0; i < 3; i++) { releaseSweep(); await new Promise((resolve) => setImmediate(resolve)); }
+    for (let i = 0; i < 4; i++) { releaseSweep(); await new Promise((resolve) => setImmediate(resolve)); }
     await sweep;
     expect(error).not.toHaveBeenCalled();
   });

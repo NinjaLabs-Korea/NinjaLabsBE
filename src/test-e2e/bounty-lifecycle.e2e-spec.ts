@@ -188,6 +188,14 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect(asDeposit.body.message).toBe('TX_HASH_ALREADY_USED');
   });
 
+  it('DELETE /admin/bounties/:id hides the bounty and records BOUNTY_DELETED (same transaction); a second delete is 404 with no extra audit row', async () => {
+    const id = await createBounty(bountyForm({ reward: { amount: 0, currency: 'INJ' } }));
+    expect((await e2e.delete(`/admin/bounties/${id}`, asAdmin)).body).toEqual({ id });
+    expect((await e2e.delete(`/admin/bounties/${id}`, asAdmin)).status).toBe(404);
+    const audit = await e2e.get(`/admin/audit-logs?entityType=bounty&entityId=${id}`, asAdmin);
+    expect(audit.body.items.map((i: { action: string }) => i.action).filter((a: string) => a === 'BOUNTY_DELETED')).toEqual(['BOUNTY_DELETED']);
+  });
+
   it('USDC reward from the FE (ERC20 without contract) is pinned to the configured Injective EVM contract', async () => {
     const id = await createBounty(bountyForm({ reward: { amount: 250.5, currency: 'USDC' } }));
     const row = await adminRow(id);

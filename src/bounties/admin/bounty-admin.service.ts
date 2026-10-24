@@ -187,14 +187,20 @@ export class BountyAdminService {
     });
   }
 
+  /**
+   * soft delete + 감사 로그를 **같은 트랜잭션**에 — 감사 기록이 실패하면 삭제도 롤백된다 (다른 *-admin 서비스와 같은 규칙).
+   * 삭제 허용 범위(입금된 보상·진행 중 payout이 있어도 지울 수 있는지)는 제품 결정 대기 — docs/decisions.md "바운티 삭제 정책".
+   */
   async remove(bountyId: string, adminId: string) {
-    const r = await this.db.query(
-      `UPDATE bounty SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
-      [bountyId],
-    );
-    if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    await this.audit.record(adminId, 'BOUNTY_DELETED', 'bounty', bountyId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const r = await tx.query(
+        `UPDATE bounty SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+        [bountyId],
+      );
+      if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      await this.audit.record(adminId, 'BOUNTY_DELETED', 'bounty', bountyId, tx);
+      return r.rows[0];
+    });
   }
 
   async transition(bountyId: string, to: string, adminId: string) {

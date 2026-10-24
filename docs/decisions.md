@@ -13,6 +13,7 @@
 | 마감 후 수정 요청 기한 | 운영자가 REVISION_REQUESTED 부여한 경우만, 별도 기한 없음 | 기한 필요 시 `platform_setting`에 `submission.revision_deadline_days` 추가 |
 | 관리자 vs 스폰서 최종 승인 | **관리자(운영자)가 최종 승인** | MVP는 어드민만 심사 UI 보유. 스폰서 계정 기능은 추후 |
 | 바운티 취소 조건 | DRAFT/FUNDING_PENDING/OPEN에서만, 관리자만 | `bounties/bounty-status.ts`의 전이 맵에 반영됨 |
+| **[미결] 바운티 삭제 정책** | 현재: 운영자는 상태와 무관하게 soft delete 가능 (`DELETE /admin/bounties/:id` → `deleted_at`, 감사 `BOUNTY_DELETED`는 같은 트랜잭션). 입금 확인된 보상(`bounty_reward.status` FUNDED)이나 열린 payout이 있어도 막지 않는다 | 결정 필요: 그런 바운티의 삭제를 막을지(409) / CANCELLED + 환불 경로만 허용할지 / 지금처럼 허용하고 운영 절차로 처리할지. 바꾸려면 `bounty-admin.service.ts` remove()에 사전 조건 추가 + FE `BountyManager` 오류 문구 |
 
 ## 보상
 

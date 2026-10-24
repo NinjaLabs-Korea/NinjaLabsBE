@@ -46,6 +46,16 @@ describe('BountyAdminService update safeguards', () => {
     expect(db.query).not.toHaveBeenCalled();
   });
 
+  it('remove soft-deletes and audits BOUNTY_DELETED on the same transaction client (nothing autocommits)', async () => {
+    const { service, query, db } = setup();
+    await expect(service.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId, status: 'OPEN' });
+    expect(db.tx).toHaveBeenCalledTimes(1);
+    expect(db.query).not.toHaveBeenCalled();
+    expect(query.mock.calls[0][0]).toContain('UPDATE bounty SET deleted_at = now()');
+    expect(query.mock.calls[1][0]).toContain('INSERT INTO audit_log');
+    expect(query.mock.calls[1][1]).toEqual([adminId, 'BOUNTY_DELETED', 'bounty', bountyId]);
+  });
+
   it.each([
     ['submissionDeadline', { submissionDeadline: past }],
     ['applicationDeadline', { applicationDeadline: past }],

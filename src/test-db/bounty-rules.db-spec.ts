@@ -476,6 +476,28 @@ describeDb('bounty rules on a real database', () => {
       expect(allocated.rows[0].total).toBe('600');
     });
 
+    it('a payout recorded with a hash whose deposit confirmation is still uncommitted: the shared per-hash lock makes it wait and then 409 TX_HASH_ALREADY_USED', async () => {
+      const { bountyId, rewardId } = await openFunded();
+      const payout = await rewards.requestPayout(rewardId, await approvedSubmission(bountyId), '1000', adminId);
+      await rewards.markApproved(payout.id, approverId);
+      const otherReward = await rewardOf(await createBounty({ amount: '10' }));
+      const hash = fakeTxHash();
+
+      const parking = parkingAudit('REWARD_DEPOSIT_CONFIRMED', otherReward);
+      const t1 = new RewardsService(db, nfts, parking.service, testConfig()).confirmDeposit(otherReward, hash, '10', adminId);
+      await parking.parked;
+      // T1 holds pg_advisory_xact_lock(hashtext(hash)) with deposit_tx_hash written but invisible; without the shared key T2 would see no deposit
+      const t2 = rewards.markPaid(payout.id, hash.toLowerCase(), adminId).then((r) => r, (err: Error) => err);
+      await Promise.race([waitForLockWaiter(db, 'markPaid to wait on the per-hash advisory lock'), t2]);
+      parking.release();
+      await expect(t1).resolves.toMatchObject({ status: 'FUNDED' });
+      const outcome = await t2;
+      expect(outcome).toBeInstanceOf(ConflictException);
+      expect((outcome as Error).message).toBe('TX_HASH_ALREADY_USED');
+      expect((await db.query<{ status: string; payout_tx_hash: string | null }>(`SELECT status, payout_tx_hash FROM payout WHERE id = $1`, [payout.id])).rows[0])
+        .toEqual({ status: 'APPROVED', payout_tx_hash: null });
+    });
+
     it('two admins approving the same payout at once: one APPROVED with its approver, the other 404; a single PAYOUT_APPROVED', async () => {
       const { bountyId, rewardId } = await openFunded();
       const payout = await rewards.requestPayout(rewardId, await approvedSubmission(bountyId), '1000', adminId);

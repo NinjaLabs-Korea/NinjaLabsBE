@@ -10,6 +10,7 @@ Injective 생태계 빌더 커뮤니티 & 바운티 마켓플레이스 [NinjaLab
 supabase/migrations/   스키마의 소스 오브 트루스 (ERD v1 → SQL, 24 테이블 + 운영용 `throttler_storage`)
 src/
   common/database/     pg Pool 기반 DatabaseService (query + tx 헬퍼) + SchemaGuard (미적용 마이그레이션이 있으면 기동 거부)
+  common/alerts/       운영 알림 AlertService (OPS_ALERT_WEBHOOK_URL 웹훅, 없으면 로그만) + 기동 실패 알림 + 5xx 버스트 감지
   auth/                구글 OAuth → JWT 세션, AuthGuard / AdminGuard
   users/               온보딩 프로필, 닉네임 중복검사, 공개 프로필
   wallets/             지갑 연결 challenge/verify (nonce 서명 방식)
@@ -28,7 +29,8 @@ src/
   test-e2e/            HTTP e2e (npm run test:e2e) — 진짜 AppModule + 실 Postgres, 외부 I/O만 대역 (support/)
   app-setup.ts         configureApp(): 전역 파이프/필터/인터셉터/CORS/trust proxy — main.ts와 e2e가 공유
   test-support/        유닛 스펙 공용 헬퍼 (expectParamsMatch: SQL $n 수와 바인딩 수 일치 검사)
-scripts/migrate.js     Supabase CLI 없이 쓰는 마이그레이션 러너 (applyMigrations는 test-db도 사용)
+scripts/migrate.js     Supabase CLI 없이 쓰는 마이그레이션 러너 (applyMigrations는 test-db도 사용). 실패 시 운영 알림
+scripts/ops-alert.js   웹훅 전송 함수 postOpsAlert (절대 throw 안 함) — migrate.js와 src/common/alerts가 공유
 docs/
   api-contract.md      FE와 합의할 REST API 계약 (FE docs/auth-api-contract.md 대응)
   decisions.md         미결정 사항에 대한 MVP 디폴트 제안
@@ -41,12 +43,15 @@ docs/
   `*-admin.controller.ts` / `*-admin.service.ts`에 있다 (예: `notices/notice-admin.*`, `bounties/admin/*`).
   모든 운영자 컨트롤러는 `@UseGuards(AdminGuard)`를 붙이고 `AuthedRequest`로 `req.user`를 받는다.
 - **감사 로그는 `AuditService.record()`로만 남긴다.** 트랜잭션 안이면 `tx`를 마지막 인자로 넘긴다.
+- **운영 알림은 `AlertService.notify(key, message)`로만 보낸다** (`common/alerts/alert.service.ts`, 전역 모듈). 절대 throw하지 않으므로 try/catch 불필요.
+  `key`는 고정 문자열(또는 `종류:작은 고정 집합` — 예 `nft-job-failed:MINT_CHILD`)이고 같은 키는 30분에 한 번만 나간다. 메시지에 비밀·PII(이메일, 닉네임, 요청 본문, 실제 경로 값)를 넣지 않는다 — id·개수·상태·라우트 패턴만.
 - **바운티 상태 문자열 배열을 직접 만들지 않는다.** `bounties/bounty-status.ts`의 `BountyStatusPolicy`를 쓴다.
 - **유니크 충돌 판별은 `isUniqueViolation(err)`** (`common/database/pg-errors.ts`).
 - **사람/에이전트 참여는 `BountyActor`로 표현한다** (`bounties/bounty-actor.ts`). `isAgent ? ... : ...` 분기를 새로 만들지 않는다.
 - **지갑 서명 검증은 `signatureSchemeFor(address).verify()`** (`common/crypto/wallet-signature.ts`). 새 지갑 종류는 구현체를 추가한다.
 - **`process.env`를 직접 읽지 않는다.** 서비스는 `ConfigService`를 주입받고, `main.ts`도 `NestFactory.create()` 뒤 `app.get(ConfigService)`로 읽는다
-  (import 시점의 `process.env`는 `ConfigModule.forRoot()`가 `.env`를 읽기 전이다). JWT 시크릿은 `auth/jwt-secret.ts`의 `JWT_SECRET` provider 하나를 JwtModule과 AuthService가 함께 쓴다.
+  (import 시점의 `process.env`는 `ConfigModule.forRoot()`가 `.env`를 읽기 전이다). 예외는 `main.ts`의 기동 실패 catch 하나 — DI가 뜨기 전에
+  실패할 수 있어 `alertBootFailure(process.env, …)`가 env를 직접 읽는다(그 시점엔 `ConfigModule.forRoot()`가 `.env`를 이미 올렸다). JWT 시크릿은 `auth/jwt-secret.ts`의 `JWT_SECRET` provider 하나를 JwtModule과 AuthService가 함께 쓴다.
 - **SQL에서 같은 `$n`을 두 번 쓰면 캐스트도 같게 쓴다** (`$6::varchar` … `$6::varchar`). 한쪽만 bare/캐스트면 Postgres가 `42P08 inconsistent types deduced for parameter`로 거부한다 —
   mock DB 유닛 테스트는 이를 잡지 못하므로 새 SQL 흐름은 `src/test-db`에 실 DB 테스트를 추가한다.
 
@@ -100,6 +105,7 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
 | `DATABASE_CA_CERT` | 비어 있으면 기동하되 `warn` 1회 (TLS 인증서 미검증 — 운영 전 설정) |
 | `THROTTLER_STORAGE` | 선택. 미설정이면 production은 `postgres`(레플리카 간 공유 rate limit 카운터, `throttler_storage` — 0016), 그 외는 `memory`(인스턴스별). `postgres`/`memory` 외의 값은 **기동 거부**. railway.ts가 `postgres`를 명시한다 — `memory`로 바꾸면 레플리카 N대에서 한도가 N배 (`docs/security.md`) |
 | `PAYOUT_ALLOW_SELF_APPROVAL` | 선택, 기본 `false` — payout 승인 2인 규칙(요청자 ≠ 승인자, 403 `PAYOUT_SELF_APPROVAL`). 운영자 1인일 때만 `true` → 자기 승인 허용 + 기동/승인 시 `warn` + 감사 `PAYOUT_SELF_APPROVED`. railway.ts에 넣지 않는다(기본값 유지) |
+| `OPS_ALERT_WEBHOOK_URL` | 선택 (railway.ts `preserve()`). Discord/Slack incoming webhook(https). 없으면 알림은 `OpsAlert` warn 로그로만, https가 아니면 기동 시 `error` 로그 후 무시 (기동은 함). 대상·규칙은 `docs/security.md` "운영 알림" |
 | `CORS_ORIGINS`, `AUTH_ALLOWED_REDIRECT_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT` | 기동은 하지만 값이 틀리면 로그인/CORS가 동작하지 않는다 (railway.ts에 공개값으로 고정) |
 
 ### 실 DB 통합 테스트 (`npm run test:db`)

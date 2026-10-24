@@ -62,6 +62,7 @@ export function e2eEnv(): Record<string, string> {
     REWARD_MULTISIG_ADDRESS: 'inj1e2emultisig',
     INJECTIVE_EVM_CHAIN_ID: '1439',
     USDC_EVM_CONTRACT_ADDRESS: '0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d',
+    OPS_ALERT_WEBHOOK_URL: '', // 운영 알림은 로그만 — 개발자 .env의 실제 웹훅으로 새지 않게 (외부 fetch는 FakeGoogle이 실패시킨다)
     PAYOUT_ALLOW_SELF_APPROVAL: 'false', // 2인 규칙 기본값 — 결제 승인은 다른 운영자 세션으로 (bounty-lifecycle approver)
   };
 }

@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
 import { withParamsCheck } from '../test-support/expect-params-match';
 import { InjectiveNftClient } from './injective-nft.client';
@@ -71,12 +72,14 @@ describe('NftJobWorker', () => {
       }),
     };
     const config = { get: jest.fn((key: string) => (key === 'MASTER_WALLET_MNEMONIC' ? options.mnemonic : undefined)) };
+    const alerts = { notify: jest.fn(async () => true) };
     const worker = new NftJobWorker(
       { query } as unknown as DatabaseService,
       chain as unknown as InjectiveNftClient,
       config as unknown as ConfigService,
+      alerts as unknown as AlertService,
     );
-    return { worker, query, chain };
+    return { worker, query, chain, alerts };
   }
 
   it('requeues jobs stuck in PROCESSING for over 15 minutes and resets their MINTING nfts before claiming', async () => {
@@ -93,6 +96,20 @@ describe('NftJobWorker', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('requeued 1 stale nft_job'));
     // The regular claim still runs afterwards, unchanged.
     expect(query.mock.calls[2][0]).toContain('FOR UPDATE SKIP LOCKED');
+  });
+
+  it('raises a rate-limited ops alert (fixed key, count only) when stale PROCESSING jobs are requeued', async () => {
+    const { worker, alerts } = setup({ configured: false, stale: [{ id: 'a', nft_id: nftId }, { id: 'b', nft_id: nftId }] });
+    jest.spyOn(worker['logger'], 'warn').mockImplementation(() => undefined);
+    await worker.poll();
+    expect(alerts.notify).toHaveBeenCalledTimes(1);
+    expect(alerts.notify).toHaveBeenCalledWith('nft-job-stale-requeue', expect.stringContaining('requeued 2 nft_job(s) stuck in PROCESSING'));
+  });
+
+  it('raises no ops alert on an ordinary poll (nothing stale, nothing failed)', async () => {
+    const { worker, alerts } = setup({ configured: false });
+    await worker.poll();
+    expect(alerts.notify).not.toHaveBeenCalled();
   });
 
   it('does not touch nft rows or log when nothing is stale', async () => {
@@ -192,6 +209,25 @@ describe('NftJobWorker', () => {
     expect(nftFailed[0]).toContain('WHERE id = $1');
     expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(false);
     expect(error).toHaveBeenCalledWith('nft_job job failed permanently: node unreachable');
+  });
+
+  it('alerts ops once per job type when a job reaches FAILED, with the sanitized error (mnemonic redacted) and no owner address', async () => {
+    const mnemonic = 'abandon ability able about above absent';
+    const { worker, alerts } = setup({ retryCount: 4, mnemonic, tokenExists: new Error(`sign failed for ${mnemonic}`) });
+    jest.spyOn(worker['logger'], 'error').mockImplementation(() => undefined);
+    await worker.poll();
+    expect(alerts.notify).toHaveBeenCalledTimes(1);
+    const [key, message] = (alerts.notify.mock.calls as unknown as [string, string][])[0];
+    expect(key).toBe('nft-job-failed:MINT_CHILD');
+    expect(message).toContain(`nft_job job (MINT_CHILD, nft ${nftId}) reached FAILED after 5 attempts: sign failed for [redacted]`);
+    expect(message).not.toContain('abandon');
+    expect(message).not.toContain('inj1owner');
+  });
+
+  it('does not alert on a retryable failure (4th attempt)', async () => {
+    const { worker, alerts } = setup({ retryCount: 3, tokenExists: new Error('node unreachable') });
+    await worker.poll();
+    expect(alerts.notify).not.toHaveBeenCalled();
   });
 
   it('the 4th failed attempt (retry_count 3) still schedules a retry and leaves the nft alone', async () => {

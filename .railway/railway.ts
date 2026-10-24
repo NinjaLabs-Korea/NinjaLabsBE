@@ -36,6 +36,8 @@ export default defineRailway(() => {
       GOOGLE_CLIENT_SECRET: preserve(),
       JWT_SECRET: preserve(),
       MASTER_WALLET_MNEMONIC: preserve(),
+      // 운영 알림 Discord/Slack incoming webhook (https, URL 자체가 토큰) — 비어 있으면 알림은 로그로만 (README env 표, docs/security.md "운영 알림")
+      OPS_ALERT_WEBHOOK_URL: preserve(),
     },
   });
 

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpAdapterHost } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
+import { AlertService } from './common/alerts/alert.service';
 import { HttpExceptionFilter } from './common/http/http-exception.filter';
 import { RequestLoggingInterceptor } from './common/http/request-logging.interceptor';
 import { trustProxyHops } from './common/bootstrap-checks';
@@ -43,7 +44,7 @@ export function configureApp(app: NestExpressApplication): void {
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
 
-  // 관측: 5xx 한 줄 로그(응답 포맷은 Nest 기본 유지) + 요청 로그(method path status ms, /health 제외)
-  app.useGlobalFilters(new HttpExceptionFilter(app.get(HttpAdapterHost).httpAdapter));
+  // 관측: 5xx 한 줄 로그(응답 포맷은 Nest 기본 유지) + 5분 20건 초과 5xx 버스트 운영 알림 + 요청 로그(method path status ms, /health 제외)
+  app.useGlobalFilters(new HttpExceptionFilter(app.get(HttpAdapterHost).httpAdapter, app.get(AlertService)));
   app.useGlobalInterceptors(new RequestLoggingInterceptor());
 }

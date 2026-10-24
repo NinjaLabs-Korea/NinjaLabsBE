@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
 import { InjectiveNftClient } from './injective-nft.client';
 
@@ -89,6 +90,7 @@ export class NftJobWorker {
     private readonly db: DatabaseService,
     private readonly chain: InjectiveNftClient,
     private readonly config: ConfigService,
+    private readonly alerts: AlertService,
   ) {}
 
   /**
@@ -152,6 +154,11 @@ export class NftJobWorker {
     );
     this.logger.warn(
       `requeued ${stale.rowCount} stale nft_job(s) stuck in PROCESSING for over ${STALE_PROCESSING_INTERVAL}`,
+    );
+    // 고아 잡은 워커 크래시/배포 중단의 신호 — 운영 알림 (30분 쿨다운)
+    await this.alerts.notify(
+      'nft-job-stale-requeue',
+      `requeued ${stale.rowCount} nft_job(s) stuck in PROCESSING for over ${STALE_PROCESSING_INTERVAL} (worker crash or restart mid-job?)`,
     );
   }
 
@@ -217,6 +224,11 @@ export class NftJobWorker {
       if (exhausted) {
         await this.db.query(`UPDATE nft SET status = 'FAILED' WHERE id = $1`, [job.nft_id]);
         this.logger.error(`nft_job ${job.id} failed permanently: ${message}`);
+        // 운영자 수동 재시도가 필요하다 — 잡 종류별 30분 쿨다운 (체인 장애로 한꺼번에 실패해도 종류당 한 통 + 억제 건수)
+        await this.alerts.notify(
+          `nft-job-failed:${job.job_type}`,
+          `nft_job ${job.id} (${job.job_type}, nft ${job.nft_id}) reached FAILED after ${MAX_RETRY} attempts: ${message}`,
+        );
       }
     }
   }

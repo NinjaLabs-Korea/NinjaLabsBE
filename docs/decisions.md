@@ -56,6 +56,14 @@
 | 에이전트별 요청 제한 | 60 req/min (rate limit 미들웨어, Phase 3) | 초기엔 넉넉히, 어뷰징 보이면 축소 |
 | 에이전트가 지원+제출 모두 가능? | **가능** — 지원/제출 테이블 모두 agent_id 지원 | 스키마 이미 반영 |
 
+## 운영
+
+| 항목 | MVP 디폴트 | 근거 / 비고 |
+|---|---|---|
+| **[결정 2026-10-24] 운영 알림 채널** | Discord/Slack 호환 incoming webhook 하나 (`OPS_ALERT_WEBHOOK_URL`, 본문 `{content, text}` — 두 서비스 모두 모르는 키를 무시). 미설정이면 로그만 | 새 의존성 없이 global `fetch`. 채널 분리(심각도별)가 필요해지면 `AlertService`에 키 접두사 → URL 맵을 추가 |
+| 알림 임계값 | payout 48시간 미승인(5분 주기 검사), nft_job FAILED 즉시, 고아 PROCESSING(15분) 재큐잉 즉시, 5xx **5분 안 20건 초과**, 기동 실패·preDeploy 마이그레이션 실패 즉시 | 바꾸려면 `payout.worker.ts`, `nft-job.worker.ts`, `http-exception.filter.ts` `HTTP_5XX_BURST_*` |
+| 중복 억제 | 같은 키 **30분에 1회**, 인스턴스별 in-memory, 억제 건수를 다음 알림에 붙인다. 기동 실패는 프로세스가 곧 죽으므로 억제 없음(재시작 루프마다 1통 — Railway restart 상한까지) | `ALERT_COOLDOWN_MS` (`common/alerts/alert.service.ts`) |
+
 ## 스택 관련 (기획 문서와 다른 점)
 
 | 항목 | 결정 | 비고 |

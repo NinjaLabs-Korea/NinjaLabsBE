@@ -17,6 +17,7 @@ import { NftsModule } from './nfts/nfts.module';
 import { AgentsModule } from './agents/agents.module';
 import { AuditModule } from './audit/audit.module';
 import { MediaModule } from './media/media.module';
+import { AlertsModule } from './common/alerts/alerts.module';
 import { MaintenanceModule } from './common/maintenance/maintenance.module';
 import { throttlerModule } from './common/throttler/throttler-options';
 
@@ -29,6 +30,7 @@ import { throttlerModule } from './common/throttler/throttler-options';
     // 저장소: THROTTLER_STORAGE=postgres(production 기본)면 레플리카 간 공유 pg 테이블, memory면 인스턴스별 (common/throttler/throttler-options.ts)
     throttlerModule([{ ttl: 60_000, limit: 120 }]),
     DatabaseModule,
+    AlertsModule, // 운영 알림 (OPS_ALERT_WEBHOOK_URL, 없으면 로그만) — 워커·예외 필터가 쓴다
     HealthModule,
     AuthModule,
     UsersModule,

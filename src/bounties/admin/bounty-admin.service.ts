@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
-import { OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, paidPayoutSumSql, rewardCapSql, sqlStatusList } from '../../rewards/payout-status';
+import { OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardHoldsFundsSql, sqlStatusList } from '../../rewards/payout-status';
 import { BountyStatusPolicy } from '../bounty-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { RewardInput, RewardTokenResolver } from './reward-token.resolver';
@@ -143,12 +143,14 @@ export class BountyAdminService {
 
   /**
    * soft delete + 감사 로그를 **같은 트랜잭션**에 — 감사 기록이 실패하면 삭제도 롤백된다 (다른 *-admin 서비스와 같은 규칙).
-   * 삭제 정책(2026-10-24 결정, docs/decisions.md): 멀티시그에 아직 묶인 돈이 있으면 409 BOUNTY_HAS_OPEN_FUNDS —
-   *   - 보상이 REFUND_PENDING이거나, FUNDED/PARTIALLY_PAID/PAID인데 PAID 합계가 배정 상한 LEAST(amount, deposited_amount)에 못 미침
+   * 삭제 정책(2026-10-24 결정, 2026-10-25 개정 — docs/decisions.md): 멀티시그에 아직 묶인 돈이 있으면 409 BOUNTY_HAS_OPEN_FUNDS —
+   *   - 보상이 REFUND_PENDING이거나, FUNDED/PARTIALLY_PAID/PAID인데 입금액(deposited_amount) − PAID 합계 > 0
+   *     (배정 상한 LEAST(amount, deposited)가 아니라 입금액 전체 — 초과 입금분도 돌려줘야 할 돈이다. 정산 = REFUNDED, 또는 입금액을 전부 지급)
    *   - 또는 종료 상태(PAID/CANCELLED/FAILED)가 아닌(= 진행 중) payout이 하나라도 있음
-   *   상태 집합·상한식은 rewards/payout-status.ts (OPEN_PAYOUT_STATUSES, rewardCapSql, paidPayoutSumSql)
-   * 허용: 보상이 DEPOSIT_PENDING/REFUNDED/CANCELLED이거나 전액 지급된 PAID뿐인 바운티. 검사는 바운티 행 잠금 아래에서 하므로
-   * 같은 바운티의 requestPayout/confirmDeposit(둘 다 바운티 행을 먼저 잠근다)과 직렬화된다.
+   *   상태 집합·비교식은 rewards/payout-status.ts (OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardHoldsFundsSql)
+   * 허용: 보상이 DEPOSIT_PENDING/REFUNDED/CANCELLED이거나 입금액 전액이 지급된 PAID뿐인 바운티. 남은 돈은 CANCELLED → scripts/record-refund.js(REFUNDED)로
+   * 정산한다 — 환불 스크립트는 CANCELLED 바운티만 받으므로, 전액 지급됐지만 초과 입금분이 남은 COMPLETED 바운티는 삭제할 수 없다(409, runbook §7.7).
+   * 검사는 바운티 행 잠금 아래에서 하므로 같은 바운티의 requestPayout/confirmDeposit(둘 다 바운티 행을 먼저 잠근다)과 직렬화된다.
    */
   async remove(bountyId: string, adminId: string) {
     return this.db.tx(async (tx) => {
@@ -160,7 +162,7 @@ export class BountyAdminService {
              WHERE rw.bounty_id = $1
                AND (rw.status = 'REFUND_PENDING'
                     OR (rw.status IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})
-                        AND ${rewardCapSql('rw')} > ${paidPayoutSumSql('rw', 'p')}))) AS open_rewards,
+                        AND ${rewardHoldsFundsSql('rw', 'p')}))) AS open_rewards,
            (SELECT count(*)::int FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
              WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(OPEN_PAYOUT_STATUSES)})) AS open_payouts`,
         [bountyId],

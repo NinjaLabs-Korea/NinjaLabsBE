@@ -144,14 +144,19 @@ export class SubmissionsService {
     });
   }
 
-  /** 내 제출 내역 — 본인 제출 + 내가 소유한 에이전트의 제출. 각 행에 agent {id, name} | null, payment_status는 rewards/payout-status.ts (공개 프로필 payoutStatus와 같은 SQL) */
+  /**
+   * 내 제출 내역 — 본인 제출 + 내가 소유한 에이전트의 제출. 각 행에 agent {id, name} | null.
+   * payment_status는 rewards/payout-status.ts payoutStatusSql(공개 프로필 payoutStatus와 같은 SQL)인데, 그 식은 **승인된 제출** 전용이다 —
+   * APPROVED가 아닌 제출(심사 중·반려·scripts/forfeit-award.js로 몰수된 수상)은 받을 몫이 없으므로 'NONE'으로 고정한다.
+   * (식을 그대로 쓰면 여유분이 남은 입금 보상이 있는 동안 반려된 제출도 'PENDING' — "지급 대기"로 보인다.)
+   */
   async mySubmissions(userId: string) {
     const r = await this.db.query(
       `SELECT s.id, s.status, s.current_revision_no, s.submitted_at, s.last_resubmitted_at,
               b.id AS bounty_id, b.title AS bounty_title, b.category,
               CASE WHEN ag.id IS NULL THEN NULL
                    ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent,
-              ${payoutStatusSql('s', 'b')} AS payment_status, s.description,
+              CASE WHEN s.status = 'APPROVED' THEN ${payoutStatusSql('s', 'b')} ELSE 'NONE' END AS payment_status, s.description,
               review.comment AS review_comment
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id

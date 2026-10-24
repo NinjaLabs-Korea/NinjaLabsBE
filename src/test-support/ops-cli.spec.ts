@@ -1,4 +1,4 @@
-import { createPool, parseArgs, UUID_RE } from '../../scripts/ops-cli';
+import { createPool, extractValueOptions, parseArgs, UUID_RE } from '../../scripts/ops-cli';
 
 /** scripts/ops-cli.js — 운영 스크립트(grant-admin / requeue-nft-jobs) 공용 파서. 실 DB 동작은 src/test-db/ops-scripts.db-spec.ts */
 describe('scripts/ops-cli.js', () => {
@@ -11,6 +11,16 @@ describe('scripts/ops-cli.js', () => {
 
   it('throws on an unknown or typoed flag so "--dry-rn" never turns into a real write', () => {
     expect(() => parseArgs(['--dry-rn'], ['dry-run'])).toThrow('unknown option: --dry-rn');
+  });
+
+  it('extractValueOptions takes "--name value" pairs out and leaves the rest for parseArgs', () => {
+    expect(extractValueOptions(['id', '--reason', 'no wallet', '--dry-run', '--admin', 'u'], ['reason', 'admin'])).toEqual({
+      values: { reason: 'no wallet', admin: 'u' },
+      rest: ['id', '--dry-run'],
+    });
+    expect(() => extractValueOptions(['id', '--reason'], ['reason'])).toThrow('option --reason needs a value');
+    expect(() => extractValueOptions(['--reason', '--yes'], ['reason'])).toThrow('option --reason needs a value');
+    expect(() => extractValueOptions(['--admin', 'a', '--admin', 'b'], ['admin'])).toThrow('option --admin given twice');
   });
 
   it('requires DATABASE_URL', () => {

@@ -56,7 +56,9 @@ describe('BountyAdminService update safeguards', () => {
     const check = query.mock.calls[1][0] as string;
     expect(check).toContain("rw.status = 'REFUND_PENDING'");
     expect(check).toContain("rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')");
-    expect(check).toContain('LEAST(rw.amount, rw.deposited_amount) >');
+    // the whole deposit, not the allocation cap — over-deposit excess is still money in custody
+    expect(check).toContain("COALESCE(rw.deposited_amount, 0) > (SELECT COALESCE(SUM(p.amount), 0) FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status = 'PAID')");
+    expect(check).not.toContain('LEAST(');
     // open = not terminal (PAID/CANCELLED/FAILED) — payout-status.ts OPEN_PAYOUT_STATUSES
     expect(check).toContain("p.status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING')");
     expect(query.mock.calls[2][0]).toContain('UPDATE bounty SET deleted_at = now()');

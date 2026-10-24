@@ -1,4 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Pool } from 'pg';
+import { sslOptions } from '../../scripts/migrate';
+import { run as recordRefund } from '../../scripts/record-refund';
 import { AuditService } from '../audit/audit.service';
 import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
 import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.service';
@@ -11,7 +14,7 @@ import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { auditActions, createDb, createPrimaryWallet, createUser, deferred, fakeTxHash, testConfig, unique, waitForLockWaiter } from './harness';
+import { auditActions, createDb, createPrimaryWallet, createUser, deferred, fakeTxHash, TEST_DB_URL_ENV, testConfig, testSslEnv, unique, waitForLockWaiter } from './harness';
 
 /**
  * Bounty status walk, lifecycle blockers from real rows, the revision flow across the deadline, and the races the row locks /
@@ -518,6 +521,97 @@ describeDb('bounty rules on a real database', () => {
       await expect(solo.markApproved(payout.id, approverId)).rejects.toMatchObject({ message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
       expect((await db.query<{ approved_by: string; requested_by: string }>(`SELECT approved_by, requested_by FROM payout WHERE id = $1`, [payout.id])).rows[0])
         .toEqual({ approved_by: adminId, requested_by: adminId });
+    });
+  });
+
+  /**
+   * 삭제 가드는 배정 상한이 아니라 입금액 전체를 본다 (docs/decisions.md 삭제 정책 2026-10-25) — 초과 입금분, 그리고 max_winners를 채워
+   * 보상이 PAID로 닫혔지만 상한보다 적게 지급된 잔액은 멀티시그에 남은 돈이다. 정산 경로: CANCELLED → scripts/record-refund.js(PAID 보상도 받는다) → 삭제.
+   */
+  describe('delete guard counts the whole deposit; record-refund settles a PAID reward with money left', () => {
+    let pool: Pool;
+    beforeAll(() => {
+      pool = new Pool({ connectionString: process.env[TEST_DB_URL_ENV], ssl: sslOptions(testSslEnv()), max: 2 });
+    });
+    afterAll(async () => pool?.end());
+
+    async function refund(rewardId: string) {
+      const lines: string[] = [];
+      const code = await recordRefund([rewardId, '--tx', fakeTxHash(), '--yes'], { pool, log: (line) => lines.push(line) });
+      return { code, out: lines.join('\n') };
+    }
+    async function payInFull(rewardId: string, submissionId: string, amount: string) {
+      const payout = await rewards.requestPayout(rewardId, submissionId, amount, adminId);
+      await rewards.markApproved(payout.id, approverId);
+      await rewards.markPaid(payout.id, fakeTxHash(), adminId);
+    }
+    const rewardStatus = async (rewardId: string) =>
+      (await db.query<{ status: string }>(`SELECT status FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0].status;
+    const toInReview = async (bountyId: string) => {
+      await expireDeadline(bountyId);
+      await bounties.transition(bountyId, 'SUBMISSION_CLOSED', adminId);
+      await bounties.transition(bountyId, 'IN_REVIEW', adminId);
+    };
+
+    it('(a) amount 100, deposit 150, the winner paid 100: delete is 409 (OPEN, IN_REVIEW, CANCELLED) until record-refund records the 50, then allowed', async () => {
+      const bountyId = await createBounty({ amount: '100' });
+      const rewardId = await rewardOf(bountyId);
+      await rewards.confirmDeposit(rewardId, fakeTxHash(), '150', adminId);
+      await bounties.transition(bountyId, 'OPEN', adminId);
+      await payInFull(rewardId, await approvedSubmission(bountyId), '100');
+      expect(await rewardStatus(rewardId)).toBe('PAID'); // cap LEAST(100, 150) fully paid — the old guard let this delete through
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ status: 409, message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      await toInReview(bountyId);
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      // the excess is never allocatable (cap unchanged) — refund is the only way out. Reopen (needs a future deadline) → CANCELLED
+      await bounties.update(bountyId, { submissionDeadline: inDays(3) }, adminId);
+      await bounties.transition(bountyId, 'OPEN', adminId);
+      await bounties.transition(bountyId, 'CANCELLED', adminId);
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      const res = await refund(rewardId);
+      expect(res).toMatchObject({ code: 0 });
+      expect(res.out).toContain('refundedAmount=50');
+      expect(await rewardStatus(rewardId)).toBe('REFUNDED');
+      await expect(bounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
+      expect(await auditActions(db, 'bounty', bountyId)).toContain('BOUNTY_DELETED');
+    });
+
+    it('(b) maxWinners 1, deposit 100, the winner paid 50 (reward closes PAID): cancel → refund of 50 accepted → delete allowed', async () => {
+      const { bountyId, rewardId } = await openFunded({ amount: '100' });
+      await payInFull(rewardId, await approvedSubmission(bountyId), '50');
+      expect(await rewardStatus(rewardId)).toBe('PAID'); // max_winners reached
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      await bounties.transition(bountyId, 'CANCELLED', adminId); // the winner is PAID → not owed → cancel allowed
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      const res = await refund(rewardId);
+      expect(res).toMatchObject({ code: 0 });
+      expect(res.out).toContain('refundedAmount=50');
+      expect((await db.query(`SELECT before_data FROM audit_log WHERE entity_id = $1 AND action = 'REWARD_REFUNDED'`, [rewardId])).rows)
+        .toEqual([{ before_data: { status: 'PAID' } }]);
+      await expect(bounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
+    });
+
+    it('a fully paid over-deposited COMPLETED bounty stays undeletable (409) and record-refund refuses it — pending COMPLETED-leftover decision', async () => {
+      const bountyId = await createBounty({ amount: '100' });
+      const rewardId = await rewardOf(bountyId);
+      await rewards.confirmDeposit(rewardId, fakeTxHash(), '150', adminId);
+      await bounties.transition(bountyId, 'OPEN', adminId);
+      await payInFull(rewardId, await approvedSubmission(bountyId), '100');
+      await toInReview(bountyId);
+      await bounties.transition(bountyId, 'COMPLETED', adminId);
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      const res = await refund(rewardId);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain('not CANCELLED');
+      expect(await rewardStatus(rewardId)).toBe('PAID');
+    });
+
+    it('deposit exactly paid out (PAID) is deletable and has nothing to refund', async () => {
+      const { bountyId, rewardId } = await openFunded({ amount: '100' });
+      await payInFull(rewardId, await approvedSubmission(bountyId), '100');
+      const res = await refund(rewardId);
+      expect(res.code).toBe(1); // OPEN bounty → refused before anything else
+      await expect(bounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
     });
   });
 });

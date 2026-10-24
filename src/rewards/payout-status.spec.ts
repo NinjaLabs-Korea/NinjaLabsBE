@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   ALLOCATED_PAYOUT_STATUSES, allocatedPayoutSumSql, AWAITING_APPROVAL_PAYOUT_STATUSES, OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql,
-  PAYABLE_REWARD_STATUSES, paidPayoutSumSql, PAYOUT_ROW_STATUSES, PAYOUT_STATUSES, payoutStatusSql, recipientActiveSql, rewardCapSql, rewardHeadroomSql,
+  PAYABLE_REWARD_STATUSES, paidPayoutSumSql, PAYOUT_ROW_STATUSES, PAYOUT_STATUSES, payoutStatusSql, recipientActiveSql, rewardCapSql, rewardHeadroomSql, rewardHoldsFundsSql,
   SENDABLE_PAYOUT_STATUSES, sqlStatusList, TERMINAL_PAYOUT_STATUSES, UNSETTLED_PAYOUT_STATUSES,
 } from './payout-status';
 
@@ -92,6 +92,12 @@ describe('payout status sets', () => {
     expect(() => rewardCapSql('rw; --')).toThrow('alias must be an identifier');
   });
 
+  it('rewardHoldsFundsSql compares the whole deposit (not the cap) with the PAID sum — over-deposit excess still counts as held', () => {
+    expect(rewardHoldsFundsSql('rw', 'p')).toBe(`COALESCE(rw.deposited_amount, 0) > ${paidPayoutSumSql('rw', 'p')}`);
+    expect(rewardHoldsFundsSql('rw', 'p')).not.toContain('LEAST(');
+    expect(() => rewardHoldsFundsSql('rw; --')).toThrow('alias must be an identifier');
+  });
+
   it('sqlStatusList only renders upper-case status constants', () => {
     expect(sqlStatusList(['PAID', 'FAILED'])).toBe("'PAID', 'FAILED'");
     expect(() => sqlStatusList([])).toThrow();
@@ -110,6 +116,12 @@ describe('script copies of the payout status sets match payout-status.ts', () =>
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const script = require('../../scripts/record-refund') as { TERMINAL_PAYOUT_STATUSES: string[] };
     expect(sorted(script.TERMINAL_PAYOUT_STATUSES)).toEqual(sorted(TERMINAL_PAYOUT_STATUSES));
+  });
+
+  it('scripts/record-refund.js refunds exactly the payable reward statuses plus REFUND_PENDING (PAID too — the delete guard holds a PAID reward with deposit left)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const script = require('../../scripts/record-refund') as { REFUNDABLE: string[] };
+    expect(sorted(script.REFUNDABLE)).toEqual(sorted([...PAYABLE_REWARD_STATUSES, 'REFUND_PENDING']));
   });
 
   it('scripts/mainnet-preflight.sql [blocker] 3 payout_open lists exactly the terminal statuses', () => {

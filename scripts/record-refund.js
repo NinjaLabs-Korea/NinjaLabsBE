@@ -9,7 +9,9 @@
  *   --yes      확인 프롬프트를 건너뛴다 (비대화형 실행은 필수)
  *
  * 한 트랜잭션에서 (rewards.service.ts confirmDeposit과 같은 잠금 순서: bounty → bounty_reward):
- *   - 바운티가 CANCELLED, 보상이 FUNDED/PARTIALLY_PAID/REFUND_PENDING, 그리고 PAID/CANCELLED/FAILED 밖의 payout이 없어야 한다.
+ *   - 바운티가 CANCELLED, 보상이 FUNDED/PARTIALLY_PAID/PAID/REFUND_PENDING, PAID/CANCELLED/FAILED 밖의 payout이 없고, 입금액 − PAID 합계 > 0이어야 한다.
+ *     PAID 보상도 받는다: 보상 PAID는 "수상자 몫 지급 끝"일 뿐 입금액을 다 썼다는 뜻이 아니다 (초과 입금, 또는 max_winners를 채웠지만
+ *     상한보다 적게 지급) — 그 남은 돈 때문에 바운티 삭제가 409이므로 여기서 정산할 수 있어야 한다 (docs/decisions.md 삭제 정책 2026-10-25).
  *     하나라도 어긋나면 아무것도 쓰지 않고 이유를 출력한다 (exit 1).
  *   - bounty_reward: status → REFUNDED.
  *   - audit_log: REWARD_REFUNDED (actor NULL, entity_type 'bounty_reward', after_data {txHash, refundedAmount = deposited − PAID 합계, source}).
@@ -21,7 +23,8 @@ const { OpsError, UUID_RE, parseArgs, promptYes, runCli } = require('./ops-cli')
 
 const USAGE = 'usage: node scripts/record-refund.js <reward-id> --tx <hash> [--dry-run] [--yes]';
 const TX_HASH = /^(0x)?[0-9a-fA-F]{64}$/;
-const REFUNDABLE = ['FUNDED', 'PARTIALLY_PAID', 'REFUND_PENDING'];
+/** 환불 기록을 받는 보상 상태 — src/rewards/payout-status.ts PAYABLE_REWARD_STATUSES + REFUND_PENDING (payout-status.spec.ts가 대조) */
+const REFUNDABLE = ['FUNDED', 'PARTIALLY_PAID', 'PAID', 'REFUND_PENDING'];
 /**
  * payout 종료 상태 — 이 밖의 payout(진행 중)이 하나라도 있으면 거부한다.
  * src/rewards/payout-status.ts TERMINAL_PAYOUT_STATUSES의 **사본**이다 (scripts는 src를 import하지 않는 독립 JS).
@@ -176,6 +179,6 @@ async function run(argv, deps) {
   }
 }
 
-module.exports = { run, recordRefund, inspectReward, normalizeTxHash, TERMINAL_PAYOUT_STATUSES };
+module.exports = { run, recordRefund, inspectReward, normalizeTxHash, TERMINAL_PAYOUT_STATUSES, REFUNDABLE };
 
 if (require.main === module) runCli(run);

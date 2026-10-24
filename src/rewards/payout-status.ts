@@ -5,7 +5,7 @@
  *   - rewards/rewards.service.ts        requestPayout(배정 상한), markApproved/markPaid(전이 가능 상태), advanceRewardStatus(보상 PAID 판정)
  *   - rewards/payout.worker.ts          승인 대기 경고
  *   - bounties/admin/bounty-lifecycle.service.ts   COMPLETED·CANCELLED 전이 차단(UNPAID_WINNERS)
- *   - bounties/admin/bounty-admin.service.ts       삭제 차단(BOUNTY_HAS_OPEN_FUNDS)
+ *   - bounties/admin/bounty-admin.service.ts       삭제 차단(BOUNTY_HAS_OPEN_FUNDS — rewardHoldsFundsSql)
  *   - bounties/admin/bounty-operations.query.ts    운영 화면 allocated_amount / cap
  *   - users/account-withdrawal.service.ts          탈퇴 차단(열린 payout, 미요청 보상)
  *   - users/submissions 응답의 payoutStatus / payment_status (payoutStatusSql)
@@ -88,6 +88,16 @@ export function paidPayoutSumSql(rw = 'rw', p = 'p'): string {
   const r = alias(rw, 'paidPayoutSumSql');
   const x = alias(p, 'paidPayoutSumSql');
   return `(SELECT COALESCE(SUM(${x}.amount), 0) FROM payout ${x} WHERE ${x}.bounty_reward_id = ${r}.id AND ${x}.status = 'PAID')`;
+}
+
+/**
+ * 보상 `<rw>`의 돈이 아직 멀티시그에 남았나 — 입금액(deposited_amount) > PAID payout 합계. 배정 상한(rewardCapSql)이 아니라
+ * **입금액 전체**와 비교한다: 초과 입금분은 배정할 수 없지만 여전히 스폰서에게 돌려줘야 할 돈이다 (2026-10-25, docs/decisions.md 삭제 정책).
+ * 바운티 삭제 차단(BOUNTY_HAS_OPEN_FUNDS)과 scripts/record-refund.js의 환불 금액(deposited − PAID)이 같은 기준이다.
+ */
+export function rewardHoldsFundsSql(rw = 'rw', p = 'p'): string {
+  const r = alias(rw, 'rewardHoldsFundsSql');
+  return `COALESCE(${r}.deposited_amount, 0) > ${paidPayoutSumSql(rw, p)}`;
 }
 
 /** 보상 `<rw>`에 여유분이 남았나 — 배정 상한 > 배정 합계. requestPayout이 새 payout을 받아 줄 수 있는 조건(금액 > 0)과 같다 */

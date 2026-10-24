@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { promisify } from 'util';
 import { run as grantAdmin } from '../../scripts/grant-admin';
 import { applyMigrations, sslOptions } from '../../scripts/migrate';
+import { run as forfeitAward } from '../../scripts/forfeit-award';
 import { inspectReward, run as recordRefund } from '../../scripts/record-refund';
 import { run as requeueNftJobs } from '../../scripts/requeue-nft-jobs';
 import { AuditService } from '../audit/audit.service';
@@ -16,6 +17,9 @@ import { AlertService } from '../common/alerts/alert.service';
 import { InjectiveNftClient } from '../nfts/injective-nft.client';
 import { STATIC_FILE_EXTENSIONS } from '../users/nickname';
 import { NftJobWorker } from '../nfts/nft-job.worker';
+import { NftsService } from '../nfts/nfts.service';
+import { payoutStatusSql } from '../rewards/payout-status';
+import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
 import { createDb, testConfig, testSslEnv, unique } from './harness';
 
@@ -582,6 +586,22 @@ describeDb('ops scripts on a real database', () => {
       await expect(opsBounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
     });
 
+    it('accepts a PAID reward with deposit left (deposited − PAID > 0): refunds the remainder, then the delete guard lets the bounty go', async () => {
+      const { bountyId, rewardId, adminId } = await seedRefund({ reward: 'PAID', deposited: 1500, payouts: ['PAID', 'CANCELLED'] });
+      await expect(opsBounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      const TX = freshTx();
+      const dry = await invoke(recordRefund, [rewardId, '--tx', TX, '--dry-run']);
+      expect(dry.out).toContain('plan     reward PAID -> REFUNDED, refundedAmount=1200');
+      const res = await invoke(recordRefund, [rewardId, '--tx', TX, '--yes']);
+      expect(res.code).toBe(0);
+      expect(await rewardStatus(rewardId)).toBe('REFUNDED');
+      expect(await auditRows('bounty_reward', rewardId)).toEqual([{
+        action: 'REWARD_REFUNDED', actor_user_id: null, before_data: { status: 'PAID' },
+        after_data: { txHash: TX, refundedAmount: '1200', source: 'scripts/record-refund.js' },
+      }]);
+      await expect(opsBounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
+    });
+
     it('accepts a REFUND_PENDING reward', async () => {
       const { rewardId } = await seedRefund({ reward: 'REFUND_PENDING' });
       const res = await invoke(recordRefund, [rewardId, '--tx', `0x${'cd'.repeat(32)}`, '--yes']);
@@ -606,7 +626,9 @@ describeDb('ops scripts on a real database', () => {
     it.each([
       ['an OPEN bounty', { bounty: 'OPEN' }, 'not CANCELLED'],
       ['a COMPLETED bounty', { bounty: 'COMPLETED' }, 'not CANCELLED'],
-      ['a PAID reward', { reward: 'PAID' }, 'expected one of'],
+      ['a fully paid PAID reward (deposit = PAID sum)', { reward: 'PAID', deposited: 300, payouts: ['PAID'] }, 'nothing to refund'],
+      ['a PAID reward with an open payout', { reward: 'PAID', payouts: ['PAID', 'APPROVED'] }, 'still open'],
+      ['a PAID reward on a COMPLETED bounty', { bounty: 'COMPLETED', reward: 'PAID', payouts: ['PAID'] }, 'not CANCELLED'],
       ['a DEPOSIT_PENDING reward', { reward: 'DEPOSIT_PENDING' }, 'expected one of'],
       ['an already REFUNDED reward', { reward: 'REFUNDED' }, 'expected one of'],
       ['an open payout (REQUESTED)', { payouts: ['PAID', 'REQUESTED'] }, 'still open'],
@@ -871,6 +893,194 @@ describeDb('ops scripts on a real database', () => {
       }
       expect(await rewardStatus(rewardId)).toBe('FUNDED');
       expect(await auditRows('bounty_reward', rewardId)).toEqual([]);
+    });
+  });
+
+  /**
+   * scripts/forfeit-award.js — 지갑 없는 수상자(requestPayout 404)는 "받을 몫이 남은" 것으로 세져(다시 연결할 수 있으므로) COMPLETED·CANCELLED가
+   * 둘 다 막힌다. 연락이 끊긴 경우 운영자가 이 스크립트로 수상을 몰수하면 바운티를 닫고, 취소 → 환불 → 삭제까지 갈 수 있다 (runbook §7.4).
+   */
+  describe('scripts/forfeit-award.js', () => {
+    const OWED = 'Record completed payments for all approved winners and finish every pending payout.';
+    let fDb: DatabaseService;
+    let fBounties: BountyAdminService;
+    let fRewards: RewardsService;
+    let counter = 0;
+    beforeAll(() => {
+      const config = testConfig({ DATABASE_URL: url });
+      fDb = new DatabaseService(config);
+      fBounties = new BountyAdminService(fDb, new AuditService(fDb), new BountyLifecycleService(), new RewardTokenResolver(config));
+      fRewards = new RewardsService(fDb, new NftsService(fDb, config), new AuditService(fDb), config);
+    });
+    afterAll(async () => fDb.onApplicationShutdown());
+    const freshTx = () => `0x${(++counter).toString(16).padStart(64, 'b')}`;
+
+    /** IN_REVIEW(기본) 바운티, 입금된 1000 보상, 지갑 없는 승인 수상자 하나(리비전 1 스냅샷 포함) */
+    async function seedStuck(options: { bounty?: string; submission?: string; wallet?: boolean } = {}) {
+      const admin = await createUser({ isAdmin: true });
+      const bounty = await pool.query<{ id: string }>(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, max_winners, status)
+         VALUES ($1, 's', 'forfeit', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', 1, $2) RETURNING id`, [admin.id, options.bounty ?? 'IN_REVIEW']);
+      const reward = await pool.query<{ id: string }>(
+        `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, deposited_amount, custody_address, status)
+         VALUES ($1, 'NATIVE', 'inj', 'INJ', 1000, 1000, $2, 'FUNDED') RETURNING id`, [bounty.rows[0].id, `inj1${'q'.repeat(38)}`]);
+      const winner = await createUser();
+      let walletId: string | null = null;
+      if (options.wallet) {
+        walletId = (await pool.query<{ id: string }>(
+          `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`,
+          [winner.id, `inj1${unique()}`])).rows[0].id;
+      }
+      const submissionId = (await pool.query<{ id: string }>(
+        `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status, reviewed_at)
+         VALUES ($1, $2, 'https://example.test/s', 'd', $3, now()) RETURNING id`,
+        [bounty.rows[0].id, winner.id, options.submission ?? 'APPROVED'])).rows[0].id;
+      const revisionId = (await pool.query<{ id: string }>(
+        `INSERT INTO submission_revision (submission_id, revision_no, submission_url, description, created_by_user_id)
+         VALUES ($1, 1, 'https://example.test/s', 'd', $2) RETURNING id`, [submissionId, winner.id])).rows[0].id;
+      return { bountyId: bounty.rows[0].id, rewardId: reward.rows[0].id, adminId: admin.id, submissionId, revisionId, winnerId: winner.id, walletId };
+    }
+
+    const submissionStatus = async (id: string) =>
+      (await pool.query<{ status: string }>(`SELECT status FROM bounty_submission WHERE id = $1`, [id])).rows[0].status;
+    const reviews = async (submissionId: string) =>
+      (await pool.query(`SELECT revision_id, reviewer_id, decision, comment FROM submission_review WHERE submission_id = $1 ORDER BY created_at`, [submissionId])).rows;
+    const payoutStatusOf = async (submissionId: string) =>
+      (await pool.query<{ status: string }>(
+        `SELECT ${payoutStatusSql('s', 'b')} AS status FROM bounty_submission s JOIN bounty b ON b.id = s.bounty_id WHERE s.id = $1`, [submissionId])).rows[0].status;
+    const forfeit = (submissionId: string, adminId: string, extra: string[] = ['--yes'], prompt?: (q: string) => Promise<boolean>) =>
+      invoke(forfeitAward, [submissionId, '--reason', ' no wallet connected after 30 days ', '--admin', adminId, ...extra], prompt);
+
+    it('no-wallet stuck state: COMPLETED and CANCELLED both blocked → forfeit → CANCELLED → record-refund → delete; payoutStatus NONE', async () => {
+      const { bountyId, rewardId, adminId, submissionId, revisionId } = await seedStuck();
+      // the stuck state: no payout can be requested, yet the winner counts as owed (they could reconnect)
+      await expect(fRewards.requestPayout(rewardId, submissionId, '1000', adminId)).rejects.toMatchObject({ message: 'APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND' });
+      expect(await payoutStatusOf(submissionId)).toBe('PENDING');
+      await expect(fBounties.transition(bountyId, 'COMPLETED', adminId)).rejects.toMatchObject({ status: 400, response: { message: [OWED] } });
+      await expect(fBounties.transition(bountyId, 'OPEN', adminId)).resolves.toMatchObject({ status: 'OPEN' });
+      await expect(fBounties.transition(bountyId, 'CANCELLED', adminId)).rejects.toMatchObject({ status: 400, response: { message: [OWED] } });
+
+      // dry-run changes nothing
+      const dry = await forfeit(submissionId, adminId, ['--dry-run']);
+      expect(dry.code).toBe(0);
+      expect(dry.out).toContain('plan     submission APPROVED -> REJECTED');
+      expect(dry.out).toContain('"forfeited: no wallet connected after 30 days"');
+      expect(dry.out).toContain('dry-run  nothing written');
+      expect(dry.prompts).toEqual([]);
+      expect(await submissionStatus(submissionId)).toBe('APPROVED');
+      expect(await reviews(submissionId)).toEqual([]);
+      expect(await auditRows('bounty_submission', submissionId)).toEqual([]);
+
+      const res = await forfeit(submissionId, adminId.toUpperCase(), [], async () => true);
+      expect(res.code).toBe(0);
+      expect(res.prompts).toHaveLength(1);
+      expect(await submissionStatus(submissionId)).toBe('REJECTED');
+      expect(await reviews(submissionId)).toEqual([{ revision_id: revisionId, reviewer_id: adminId, decision: 'REJECT', comment: 'forfeited: no wallet connected after 30 days' }]);
+      expect(await auditRows('bounty_submission', submissionId)).toEqual([{
+        action: 'SUBMISSION_AWARD_FORFEITED',
+        actor_user_id: adminId,
+        before_data: { status: 'APPROVED' },
+        after_data: { status: 'REJECTED', reason: 'no wallet connected after 30 days', bountyId, source: 'scripts/forfeit-award.js' },
+      }]);
+
+      // the bounty can close now: CANCELLED → refund of the whole deposit → delete
+      await expect(fBounties.transition(bountyId, 'CANCELLED', adminId)).resolves.toEqual({ id: bountyId, status: 'CANCELLED' });
+      const refund = await invoke(recordRefund, [rewardId, '--tx', freshTx(), '--yes']);
+      expect(refund.code).toBe(0);
+      expect(refund.out).toContain('refundedAmount=1000');
+      await expect(fBounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
+      expect(await payoutStatusOf(submissionId)).toBe('NONE');
+    });
+
+    it('after a forfeit the IN_REVIEW bounty can complete as well (no owed winner left), and the maxWinners slot is free again', async () => {
+      const { bountyId, adminId, submissionId } = await seedStuck();
+      expect((await forfeit(submissionId, adminId)).code).toBe(0);
+      const lifecycle = await new BountyLifecycleService().blockers(fDb, bountyId, { status: 'IN_REVIEW', submission_deadline: new Date(Date.now() + 86_400_000) });
+      expect(lifecycle.blockerDetails.COMPLETED ?? []).not.toContainEqual({ code: 'UNPAID_WINNERS' });
+      expect((await pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`, [bountyId])).rows[0].n).toBe(0);
+      await expect(fBounties.transition(bountyId, 'COMPLETED', adminId)).resolves.toEqual({ id: bountyId, status: 'COMPLETED' });
+    });
+
+    it.each(['OPEN', 'SUBMISSION_CLOSED'])('accepts a %s bounty', async (status) => {
+      const { adminId, submissionId } = await seedStuck({ bounty: status });
+      expect((await forfeit(submissionId, adminId)).code).toBe(0);
+      expect(await submissionStatus(submissionId)).toBe('REJECTED');
+    });
+
+    type Seeded = Awaited<ReturnType<typeof seedStuck>>;
+    it.each<[string, Parameters<typeof seedStuck>[0], ((seed: Seeded) => Promise<string | void>) | null, string]>([
+      ['a COMPLETED bounty', { bounty: 'COMPLETED' }, null, 'bounty is COMPLETED'],
+      ['a CANCELLED bounty', { bounty: 'CANCELLED' }, null, 'bounty is CANCELLED'],
+      ['a DRAFT bounty', { bounty: 'DRAFT' }, null, 'bounty is DRAFT'],
+      ['a deleted bounty', {}, async (seed) => { await pool.query(`UPDATE bounty SET deleted_at = now() WHERE id = $1`, [seed.bountyId]); }, 'bounty is deleted'],
+      ['a submission that is not APPROVED', { submission: 'IN_REVIEW' }, null, 'not APPROVED'],
+      ['an already REJECTED submission', { submission: 'REJECTED' }, null, 'not APPROVED'],
+      ['a submission with a CANCELLED payout row', { wallet: true }, async (seed) => {
+        await pool.query(
+          `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by)
+           VALUES ($1, $2, $3, 300, 'CANCELLED', $4, $5)`, [seed.rewardId, seed.submissionId, seed.walletId, unique('forfeit-'), seed.adminId]);
+      }, 'runbook.md §7.4'],
+      ['a submission with a PAID payout row', { wallet: true }, async (seed) => {
+        await pool.query(
+          `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by)
+           VALUES ($1, $2, $3, 300, 'PAID', $4, $5)`, [seed.rewardId, seed.submissionId, seed.walletId, unique('forfeit-'), seed.adminId]);
+      }, 'payout row(s) exist'],
+      ['a submission with a completion NFT', { wallet: true }, async (seed) => {
+        await pool.query(
+          `INSERT INTO nft (owner_user_id, owner_wallet_id, bounty_id, submission_id, nft_type, contract_address)
+           VALUES ($1, $2, $3, $4, 'BOUNTY_COMPLETION_CHILD', 'inj1contract')`, [seed.winnerId, seed.walletId, seed.bountyId, seed.submissionId]);
+      }, 'completion NFT'],
+      ['a non-admin --admin', {}, async () => (await createUser()).id, 'not an active admin'],
+      ['a suspended admin', {}, async () => (await createUser({ isAdmin: true, status: 'SUSPENDED' })).id, 'not an active admin'],
+      ['a withdrawn admin', {}, async () => {
+        const gone = await createUser({ isAdmin: true });
+        await pool.query(`UPDATE "user" SET deleted_at = now(), status = 'WITHDRAWN' WHERE id = $1`, [gone.id]);
+        return gone.id;
+      }, 'not an active admin'],
+      ['an unknown --admin', {}, async () => '00000000-0000-4000-8000-000000000000', 'not an active admin'],
+    ])('refuses %s and writes nothing', async (_label, options, mutate, message) => {
+      const seed = await seedStuck(options);
+      const adminOverride = mutate ? await mutate(seed) : undefined;
+      const before = await submissionStatus(seed.submissionId);
+      const res = await forfeit(seed.submissionId, adminOverride || seed.adminId);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain(message);
+      expect(await submissionStatus(seed.submissionId)).toBe(before);
+      expect(await reviews(seed.submissionId)).toEqual([]);
+      expect(await auditRows('bounty_submission', seed.submissionId)).toEqual([]);
+    });
+
+    it('refuses a missing submission, bad arguments and a declined prompt without writing', async () => {
+      const { adminId, submissionId } = await seedStuck();
+      const missing = await forfeit('00000000-0000-4000-8000-000000000000', adminId);
+      expect(missing.code).toBe(1);
+      expect(missing.out).toContain('submission not found');
+      expect((await invoke(forfeitAward, [submissionId, '--admin', adminId, '--yes'])).code).toBe(2); // no --reason
+      expect((await invoke(forfeitAward, [submissionId, '--reason', '   ', '--admin', adminId, '--yes'])).code).toBe(2);
+      expect((await invoke(forfeitAward, [submissionId, '--reason', 'x', '--yes'])).code).toBe(2); // no --admin
+      expect((await invoke(forfeitAward, [submissionId, '--reason', 'x', '--admin', 'nope', '--yes'])).code).toBe(2);
+      expect((await invoke(forfeitAward, [unique('x'), '--reason', 'x', '--admin', adminId, '--yes'])).code).toBe(2);
+      expect((await invoke(forfeitAward, [submissionId, '--reason', 'x', '--admin', adminId, '--yes', '--nope'])).code).toBe(2);
+      expect((await invoke(forfeitAward, [submissionId, '--admin', adminId, '--reason'])).code).toBe(2);
+      const declined = await forfeit(submissionId, adminId, []);
+      expect(declined.code).toBe(1);
+      expect(declined.out).toContain('aborted  nothing written');
+      expect(await submissionStatus(submissionId)).toBe('APPROVED');
+      expect(await reviews(submissionId)).toEqual([]);
+      expect(await auditRows('bounty_submission', submissionId)).toEqual([]);
+    });
+
+    it('rolls the status change and the review row back when the audit insert fails (same transaction)', async () => {
+      const { adminId, submissionId } = await seedStuck();
+      await pool.query(`ALTER TABLE audit_log ADD CONSTRAINT tmp_forfeit_block CHECK (action <> 'SUBMISSION_AWARD_FORFEITED') NOT VALID`);
+      try {
+        await expect(forfeit(submissionId, adminId)).rejects.toThrow();
+      } finally {
+        await pool.query(`ALTER TABLE audit_log DROP CONSTRAINT tmp_forfeit_block`);
+      }
+      expect(await submissionStatus(submissionId)).toBe('APPROVED');
+      expect(await reviews(submissionId)).toEqual([]);
+      expect(await auditRows('bounty_submission', submissionId)).toEqual([]);
     });
   });
 });

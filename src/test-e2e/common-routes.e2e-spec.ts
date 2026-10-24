@@ -115,7 +115,9 @@ describeDb('common routes over HTTP (e2e)', () => {
     }
     const stats = await e2e.get('/hall-of-fame/stats');
     expect(stats.status).toBe(200);
-    expect(Object.keys(stats.body).sort()).toEqual(['builders', 'completedBounties', 'completionNfts', 'sponsors']);
-    for (const value of Object.values(stats.body)) expect(Number.isInteger(value)).toBe(true);
+    expect(Object.keys(stats.body).sort()).toEqual(['builders', 'completedBounties', 'completionNfts', 'paidTotals', 'sponsors']);
+    const { paidTotals, ...counts } = stats.body as { paidTotals: unknown } & Record<string, unknown>;
+    for (const value of Object.values(counts)) expect(Number.isInteger(value)).toBe(true);
+    expect(Array.isArray(paidTotals)).toBe(true); // per-token PAID sums (shape pinned in public-reads.e2e-spec)
   });
 });

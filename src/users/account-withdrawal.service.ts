@@ -4,7 +4,7 @@ import { AuthService } from '../auth/auth.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { SubmissionStatusPolicy } from '../bounties/submission-status';
 import { DatabaseService } from '../common/database/database.service';
-import { PAYABLE_REWARD_STATUSES } from '../rewards/rewards.service';
+import { PAYABLE_REWARD_STATUSES } from '../rewards/payout-status';
 import { WITHDRAWN_NICKNAME_PREFIX } from './nickname';
 
 /** payout 종료 상태 — 이 밖의 상태(REQUESTED/AWAITING_MULTISIG_APPROVAL/APPROVED/BROADCASTING)가 하나라도 있으면 탈퇴를 막는다 */

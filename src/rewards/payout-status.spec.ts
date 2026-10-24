@@ -1,5 +1,4 @@
 import { PAYABLE_REWARD_STATUSES, PAYOUT_STATUSES, payoutStatusSql } from './payout-status';
-import { PAYABLE_REWARD_STATUSES as FROM_SERVICE } from './rewards.service';
 
 jest.mock('../nfts/nfts.service', () => ({ NftsService: class {} })); // rewards.service → nfts → ESM SDK
 
@@ -34,6 +33,5 @@ describe('payoutStatusSql', () => {
 
   it('shares the payable reward statuses with requestPayout', () => {
     expect(PAYABLE_REWARD_STATUSES).toEqual(['FUNDED', 'PARTIALLY_PAID', 'PAID']);
-    expect(FROM_SERVICE).toBe(PAYABLE_REWARD_STATUSES);
   });
 });

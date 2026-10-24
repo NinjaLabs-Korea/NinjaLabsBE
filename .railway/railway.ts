@@ -38,6 +38,8 @@ export default defineRailway(() => {
       MASTER_WALLET_MNEMONIC: preserve(),
       // 운영 알림 Discord/Slack incoming webhook (https, URL 자체가 토큰) — 비어 있으면 알림은 로그로만 (README env 표, docs/security.md "운영 알림")
       OPS_ALERT_WEBHOOK_URL: preserve(),
+      // 선택 — 비어 있으면 로그인 봇 방지 생략 + 기동 시 warn. FE NEXT_PUBLIC_TURNSTILE_SITE_KEY 배포 후 설정 (README env 표)
+      TURNSTILE_SECRET_KEY: preserve(),
     },
   });
 

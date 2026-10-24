@@ -11,7 +11,7 @@ import { GoogleIdTokenVerifier } from '../../auth/google-id-token.verifier';
 import { DatabaseService } from '../../common/database/database.service';
 import { InjectiveNftClient } from '../../nfts/injective-nft.client';
 import { TEST_DB_URL_ENV } from '../../test-db/harness';
-import { FakeGoogle, FakeInjectiveNftClient, GOOGLE_CLIENT_ID_E2E } from './fakes';
+import { FakeGoogle, FakeInjectiveNftClient, FakeTurnstile, GOOGLE_CLIENT_ID_E2E, TURNSTILE_SITEVERIFY_URL_E2E } from './fakes';
 
 /**
  * HTTP e2e 하네스 — `npm run test:e2e` (jest.e2e.config.js).
@@ -64,6 +64,7 @@ export function e2eEnv(): Record<string, string> {
     USDC_EVM_CONTRACT_ADDRESS: '0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d',
     OPS_ALERT_WEBHOOK_URL: '', // 운영 알림은 로그만 — 개발자 .env의 실제 웹훅으로 새지 않게 (외부 fetch는 FakeGoogle이 실패시킨다)
     PAYOUT_ALLOW_SELF_APPROVAL: 'false', // 2인 규칙 기본값 — 결제 승인은 다른 운영자 세션으로 (bounty-lifecycle approver)
+    TURNSTILE_SECRET_KEY: '', // 기본은 봇 방지 꺼짐 — turnstile.e2e-spec만 startApp({ TURNSTILE_SECRET_KEY })로 켠다
   };
 }
 
@@ -110,6 +111,7 @@ export class E2eApp {
   readonly logs: LogLine[] = [];
   readonly google = new FakeGoogle();
   readonly chain = new FakeInjectiveNftClient();
+  readonly turnstile = new FakeTurnstile();
   /** close()에서 로그에 나타나지 않아야 하는 값 — 발급된 토큰·키·코드가 자동으로 쌓인다 */
   readonly secrets = new Set<string>(Object.values(E2E_SECRETS));
   app!: NestExpressApplication;
@@ -118,16 +120,23 @@ export class E2eApp {
   private originalFetch = globalThis.fetch;
   private savedEnv: Record<string, string | undefined> = {};
 
+  /** envOverrides: e2eEnv() 위에 덮어쓸 키 (예: TURNSTILE_SECRET_KEY). 값은 시크릿 누출 검사 대상에 들어간다 */
+  constructor(private readonly envOverrides: Record<string, string> = {}) {
+    for (const [key, value] of Object.entries(envOverrides)) if (/SECRET/.test(key) && value) this.secrets.add(value);
+  }
+
   async start(): Promise<this> {
-    for (const [key, value] of Object.entries(e2eEnv())) {
+    for (const [key, value] of Object.entries({ ...e2eEnv(), ...this.envOverrides })) {
       this.savedEnv[key] = process.env[key];
       process.env[key] = value;
     }
     const google = this.google;
+    const turnstile = this.turnstile;
     const passthrough = this.originalFetch;
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (/^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(url)) return passthrough(input, init);
+      if (url === TURNSTILE_SITEVERIFY_URL_E2E) return turnstile.handleFetch(init);
       return google.handleFetch(url, init);
     }) as typeof fetch;
 
@@ -224,8 +233,9 @@ export class E2eApp {
   }
 
   /** GET /auth/google → (Google) → GET /auth/google/callback. 콜백의 Location을 돌려준다 */
-  async oauthCallback(identity: { sub: string; email: string; emailVerified?: boolean }, options: { returnTo?: string; challenge: string; ip?: string }) {
+  async oauthCallback(identity: { sub: string; email: string; emailVerified?: boolean }, options: { returnTo?: string; challenge: string; ip?: string; turnstileToken?: string }) {
     const params = new URLSearchParams({ returnTo: options.returnTo ?? FE_ORIGIN, codeChallenge: options.challenge, trace: 'e2e-trace' });
+    if (options.turnstileToken) params.set('turnstileToken', options.turnstileToken);
     const start = await this.get(`/auth/google?${params}`, { ip: options.ip });
     if (start.status !== 302) throw new Error(`/auth/google → ${start.status} ${start.text}`);
     const googleUrl = new URL(String(start.headers.location));
@@ -241,7 +251,9 @@ export class E2eApp {
     const email = identity.email ?? `${sub}@example.test`;
     const ip = randomIp();
     const { verifier, challenge } = E2eApp.pkce();
-    const { location } = await this.oauthCallback({ sub, email }, { challenge, ip });
+    // 봇 방지가 켜진 앱이면 FE 위젯처럼 토큰을 하나 받아 실어 보낸다
+    const turnstileToken = this.envOverrides.TURNSTILE_SECRET_KEY ? this.turnstile.issueToken() : undefined;
+    const { location } = await this.oauthCallback({ sub, email }, { challenge, ip, turnstileToken });
     const loginCode = new URLSearchParams(new URL(location).hash.slice(1)).get('loginCode');
     if (!loginCode) throw new Error(`no loginCode in ${location}`);
     this.secrets.add(loginCode);
@@ -286,8 +298,8 @@ export class E2eApp {
   }
 }
 
-export async function startApp(): Promise<E2eApp> {
-  return new E2eApp().start();
+export async function startApp(envOverrides: Record<string, string> = {}): Promise<E2eApp> {
+  return new E2eApp(envOverrides).start();
 }
 
 /** multipart/form-data 본문 (FE의 FormData → fetch와 같은 모양) */

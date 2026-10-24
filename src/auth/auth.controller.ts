@@ -27,6 +27,7 @@ import { AUTH_PROXIED_ROUTE_IP_THROTTLE, AuthTokenThrottlerGuard } from './auth-
 import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
 import { clearRefreshCookie, isCookieMode, readRefreshCookie, setRefreshCookie } from './session-cookie';
+import { TurnstileVerifier } from './turnstile.verifier';
 
 /**
  * `/auth/refresh`·`/auth/logout` 본문. 쿠키 모드(`X-Ninja-Session: cookie`)에서는 비어 있어도 되므로 선택 필드이고,
@@ -58,6 +59,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly config: ConfigService,
+    private readonly turnstile: TurnstileVerifier,
   ) {}
 
   private authSuccessRedirect(requested?: string): string {
@@ -78,15 +80,30 @@ export class AuthController {
     }
   }
 
-  /** GET /auth/google — 구글 동의 화면으로 리다이렉트 */
+  /**
+   * GET /auth/google — 구글 동의 화면으로 리다이렉트.
+   * `TURNSTILE_SECRET_KEY`가 설정돼 있으면 `turnstileToken`(Cloudflare Turnstile 위젯 토큰)을 먼저 siteverify로 검증한다 —
+   * 없음/거절 400 TURNSTILE_FAILED, Cloudflare 불통 503 TURNSTILE_UNAVAILABLE (turnstile.verifier.ts). state 발급 전에 검사한다.
+   */
   @Get('google')
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   async googleRedirect(
     @Query('trace') traceId: string | undefined,
     @Query('returnTo') returnTo: string | undefined,
     @Query('codeChallenge') codeChallenge: string | undefined,
+    @Query('turnstileToken') turnstileToken: unknown,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
+    if (this.turnstile.enabled) {
+      try {
+        await this.turnstile.verify(typeof turnstileToken === 'string' ? turnstileToken : undefined, req.ip);
+      } catch (caught) {
+        onboardingError(this.logger, 'oauth.turnstile.rejected', caught, { traceId });
+        throw caught;
+      }
+      onboardingLog(this.logger, 'oauth.turnstile.verified', { traceId });
+    }
     const redirectUrl = this.authSuccessRedirect(returnTo);
     onboardingLog(this.logger, 'oauth.redirect.requested', {
       traceId,

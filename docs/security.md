@@ -67,7 +67,8 @@
 - [x] **refresh 토큰 HttpOnly 쿠키** (`X-Ninja-Session: cookie` 옵트인, CSRF = 커스텀 헤더 필수 + SameSite=Strict) — 본문 모드는 deprecated, FE 전환 후 제거 검토
   - [x] 저장소 레플리카 간 공유 — production 기본 `THROTTLER_STORAGE=postgres`(`throttler_storage`, 0016). `memory`로 두면 인스턴스별 (`common/throttler/throttler-options.ts`)
 - [x] Google `id_token` 서명 검증 — Google JWKS (`google-id-token.verifier.ts`)
-- [ ] **Cloudflare Turnstile 검증** — 가입(첫 로그인) 요청에서 서버측 siteverify 호출 (기획 확정 사항). `TURNSTILE_SECRET_KEY`는 아직 어떤 코드도 읽지 않는다 — `.env.example` 맨 아래 "계획만 있는 값" 주석에만 있고 `.railway/railway.ts`에도 없다. 구현 시 `ConfigService`로 읽고 `.env.example` 본문으로 올릴 것
+- [x] **Cloudflare Turnstile 검증** — 로그인 시작 `GET /auth/google`에서 `turnstileToken`을 서버측 siteverify(5초 제한, `remoteip` 포함)로 검증. 실패 `400 TURNSTILE_FAILED`, Cloudflare 불통/시크릿 오류 `503 TURNSTILE_UNAVAILABLE` (`auth/turnstile.verifier.ts`). `TURNSTILE_SECRET_KEY` 미설정이면 생략하고 production에서 기동 시 warn. 토큰·시크릿은 로그에 남기지 않는다(error-codes만). 신규 가입만이 아니라 **모든 로그인 시작**에 건다 — 첫 로그인 여부는 Google 콜백 뒤에야 알 수 있다
+  - [ ] 장애 시 정책은 fail-closed(503) — Cloudflare 장애 동안 로그인이 막힌다. 급하면 `TURNSTILE_SECRET_KEY`를 비우고 재배포(검사 생략)
 - [x] 지갑 서명 검증 시: challenge의 `user_id`·`wallet_address` 일치 확인, `used_at` 마킹(재사용 차단), 서명자 pubkey → 주소 유도 일치 확인 (`wallets.service.ts`, `common/crypto/*`)
 - [x] 만료된 `wallet_verification_challenge` 주기 삭제 (크론) — 매시 `MaintenanceService`, 발급 시 같은 지갑의 미사용 challenge 정리
 - [x] 로그에 이메일·토큰 등 PII/비밀 출력 금지 — `onboardingLog`는 길이/불리언/id만, 전역 필터·인터셉터는 경로/상태/에러명만 기록

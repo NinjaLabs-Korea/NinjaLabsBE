@@ -21,7 +21,7 @@
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| GET | `/auth/google` | - | `codeChallenge`(S256, 필수), `returnTo`, `trace` → 구글 동의 화면 |
+| GET | `/auth/google` | - | `codeChallenge`(S256, 필수), `returnTo`, `trace`, `turnstileToken`(`TURNSTILE_SECRET_KEY` 설정 시 필수) → 구글 동의 화면. 봇 방지 실패 `400 TURNSTILE_FAILED`, Cloudflare 불통 `503 TURNSTILE_UNAVAILABLE` (아래 "Turnstile") |
 | GET | `/auth/google/callback` | - | Google code 교환 → FE `/auth/callback#loginCode=...` |
 | POST | `/auth/exchange` | - | `{code, codeVerifier}` → `{accessToken, refreshToken}`; `Cache-Control: no-store, private`. **쿠키 모드**(`X-Ninja-Session: cookie`): `Set-Cookie: ninja_rt=…` + 본문 `{accessToken}` (아래 "refresh 쿠키 모드") |
 | POST | `/auth/refresh` | - | **쿠키 모드**: 본문 `{}`(또는 없음) + `ninja_rt` 쿠키 → `{accessToken}` + 새 `Set-Cookie`. **본문 모드(deprecated)**: `{refreshToken}` → `{accessToken, refreshToken}` (회전). `Cache-Control: no-store, private`. **재사용 유예 30초**: 방금 회전된 구 토큰이 30초 안에 다시 오면(멀티탭 레이스) 401 대신 이긴 쪽과 **같은 `refreshToken`**(+ 새로 서명한 `accessToken`)을 돌려주고 다시 회전하지 않는다 — 두 탭 모두 그 토큰을 쓰면 된다. 30초가 지났거나 그 후속 토큰이 이미 회전/폐기됐으면 재사용 감지로 보고 `401 INVALID_REFRESH_TOKEN` + 그 토큰에서 파생된 세션 사슬 전체 폐기(재로그인 필요). 정지/삭제된 유저는 항상 401 |
@@ -53,6 +53,22 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 배포 순서(완료): **새 FE 배포 → `0013_oauth_login_codes.sql` 마이그레이션 적용 → 새 BE 배포**.
 2026-10-22부터 FE는 URL fragment의 access/refresh token을 더 이상 수거하지 않는다 (링크로 세션을
 심는 공격면 제거). BE는 challenge가 없는 로그인 시작 요청을 `401 INVALID_CODE_CHALLENGE`로 거부한다.
+
+### Turnstile (로그인 봇 방지)
+
+`TURNSTILE_SECRET_KEY`가 설정된 배포에서 `GET /auth/google`은 `turnstileToken` 쿼리(Cloudflare Turnstile 위젯이 브라우저에 준 토큰)를
+state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/siteverify`(`secret`, `response`, `remoteip`=클라이언트 IP, 5초 제한)로 검증한다.
+
+| 상황 | 응답 |
+|---|---|
+| 토큰 없음/빈 값/2048자 초과/배열 | `400 TURNSTILE_FAILED` (siteverify 호출 없음) |
+| siteverify `success:false` (위조·만료·재사용 — 토큰은 1회용, 300초) | `400 TURNSTILE_FAILED` |
+| 네트워크 오류·5초 초과·비2xx·JSON 아님·`invalid-input-secret`/`missing-input-secret`/`internal-error` | `503 TURNSTILE_UNAVAILABLE` |
+| `TURNSTILE_SECRET_KEY` 미설정 | 검사 생략 — `turnstileToken`이 와도 무시 (production이면 기동 시 warn) |
+
+이 라우트는 브라우저 전체 페이지 이동이라 400/503은 JSON 본문 그대로 보인다. FE는 위젯 토큰을 받은 뒤에만 이동하고(`NEXT_PUBLIC_TURNSTILE_SITE_KEY`),
+만료되면 위젯을 다시 돌린다. FE↔BE 키 짝: FE site key가 있는데 BE secret이 없으면 토큰이 무시될 뿐 로그인은 된다. 반대(BE secret만)는 모든 로그인이 400이므로
+**FE를 먼저 배포**한다.
 
 `/auth/me` 응답 (FE 헤더/온보딩 분기에 필요한 모든 상태):
 

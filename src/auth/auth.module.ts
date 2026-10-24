@@ -8,6 +8,7 @@ import { AuthGuard } from './auth.guard';
 import { AdminGuard } from './admin.guard';
 import { GoogleIdTokenVerifier } from './google-id-token.verifier';
 import { JWT_SECRET, JwtSecretModule } from './jwt-secret';
+import { TurnstileVerifier } from './turnstile.verifier';
 import { requireGoogleClientSecret } from '../common/bootstrap-checks';
 import { throttlerModule } from '../common/throttler/throttler-options';
 
@@ -17,6 +18,7 @@ import { throttlerModule } from '../common/throttler/throttler-options';
  *
  * 두 검사 모두 ConfigService를 통해 **모듈 초기화 시점**에 실행된다 — import 시점의 process.env는 ConfigModule.forRoot()가
  * .env를 읽기 전이라, 그때 읽으면 로컬 `start:prod`가 .env의 시크릿 대신 dev 폴백 시크릿으로 서명할 수 있다.
+ * TURNSTILE_SECRET_KEY는 선택 — 미설정이면 production에서 기동 시 warn만 한다 (turnstile.verifier.ts).
  * 서명 시크릿은 JwtSecretModule의 JWT_SECRET provider 하나를 JwtModule과 AuthService가 함께 쓴다 (jwt-secret.ts).
  */
 @Module({
@@ -35,7 +37,7 @@ import { throttlerModule } from '../common/throttler/throttler-options';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, GoogleIdTokenVerifier, AuthGuard, AdminGuard, AuthTokenThrottlerGuard],
+  providers: [AuthService, GoogleIdTokenVerifier, TurnstileVerifier, AuthGuard, AdminGuard, AuthTokenThrottlerGuard],
   exports: [AuthService, AuthGuard, AdminGuard, JwtModule],
 })
 export class AuthModule implements OnModuleInit {

@@ -6,6 +6,7 @@ import { HighlightsController } from '../../highlights/highlights.controller';
 import { MediaController } from '../../media/media.controller';
 import { MembersController } from '../../members/members.controller';
 import { NoticesController } from '../../notices/notices.controller';
+import { UsersController } from '../../users/users.controller';
 import { PUBLIC_READ_IP_THROTTLE } from './public-read-throttle';
 
 const LIMIT = 'THROTTLER:LIMITdefault';
@@ -15,7 +16,7 @@ type Ctor = { prototype: any };
 const limitOf = (c: Ctor, handler: string) => Reflect.getMetadata(LIMIT, c.prototype[handler] as object);
 const ttlOf = (c: Ctor, handler: string) => Reflect.getMetadata(TTL, c.prototype[handler] as object);
 
-// 공개 GET 핸들러 전부 (users /:nickname은 별도 후속)
+// 공개 GET 핸들러 전부 
 const PUBLIC_READ_HANDLERS: Array<[string, Ctor, string]> = [
   ['GET /bounties', BountiesController, 'list'],
   ['GET /bounties/:id', BountiesController, 'detail'],
@@ -25,6 +26,7 @@ const PUBLIC_READ_HANDLERS: Array<[string, Ctor, string]> = [
   ['GET /hall-of-fame', HighlightsController, 'list'],
   ['GET /hall-of-fame/stats', HighlightsController, 'stats'],
   ['GET /media/:id', MediaController, 'get'],
+  ['GET /users/:nickname', UsersController, 'publicProfile'],
 ];
 
 describe('PUBLIC_READ_IP_THROTTLE', () => {
@@ -47,5 +49,15 @@ describe('PUBLIC_READ_IP_THROTTLE', () => {
         if (method !== undefined && method !== RequestMethod.GET) expect(limitOf(ctrl, name)).toBeUndefined();
       }
     }
+  });
+});
+
+describe('sensitive users routes keep their own limits', () => {
+  it('check-nickname stays 30 and DELETE /users/me stays 5', () => {
+    const limits = Object.getOwnPropertyNames(UsersController.prototype)
+      .map((n) => Reflect.getMetadata(LIMIT, (UsersController.prototype as any)[n] as object))
+      .filter((l) => l !== undefined)
+      .sort((a, b) => a - b);
+    expect(limits).toEqual([5, 30, 600]);
   });
 });

@@ -8,6 +8,8 @@ import { DatabaseService } from '../database/database.service';
  *   wallet_verification_challenge  만료 후 1일 지난 행 (verify의 "만료됨/없음" 구분에 잠깐 쓰이므로 하루 유예)
  *   auth_session                    폐기(revoked_at) 또는 만료(expires_at) 후 30일 지난 행 — 그 전까지는 감사/재사용 감지용으로 둔다
  *   oauth_login_code                만료된 행 전부 (60초 수명 — issueLoginCode도 발급 때마다 치우지만 로그인이 없으면 남는다)
+ *   throttler_storage               창(expires_at)과 차단(blocked_until)이 모두 지난 rate limit 카운터 (THROTTLER_STORAGE=postgres일 때만 행이 생긴다,
+ *                                   지난 행은 다음 요청이 어차피 새 창으로 덮어쓰므로 지워도 동작이 같다 — 한 번 오고 다시 안 오는 IP/토큰 해시가 쌓이지 않게)
  * 5분마다 clearGraceCopies():
  *   auth_session.grace_refresh_token  30초 재사용 유예 창이 지난 암호화 후속 토큰 사본 — 평문 해시만 둔다는 원칙의 예외라 최대 ~5분만 남게 한다
  *                                     (예전엔 매시라 최대 1시간 남았다). refresh는 창 밖 사본을 어차피 쓰지 않는다
@@ -34,8 +36,12 @@ export class MaintenanceService {
              OR expires_at < now() - interval '30 days'`,
       );
       const codes = await this.db.query(`DELETE FROM oauth_login_code WHERE expires_at <= now()`);
+      const throttles = await this.db.query(
+        `DELETE FROM throttler_storage
+          WHERE expires_at <= now() AND (blocked_until IS NULL OR blocked_until <= now())`,
+      );
       this.logger.log(
-        `maintenance sweep: challenges=${challenges.rowCount ?? 0} sessions=${sessions.rowCount ?? 0} login_codes=${codes.rowCount ?? 0}`,
+        `maintenance sweep: challenges=${challenges.rowCount ?? 0} sessions=${sessions.rowCount ?? 0} login_codes=${codes.rowCount ?? 0} throttles=${throttles.rowCount ?? 0}`,
       );
     } catch (err) {
       this.logger.error(`maintenance sweep failed: ${err instanceof Error ? err.message : String(err)}`);

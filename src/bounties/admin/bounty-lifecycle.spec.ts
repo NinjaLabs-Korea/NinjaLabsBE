@@ -57,6 +57,18 @@ describe('Bounty lifecycle ordering', () => {
     await expect(services.bounties.transition('b', 'COMPLETED', 'admin')).rejects.toMatchObject({ response: { message: [expect.any(String)] } });
     expect(statusUpdate(query)).toBeUndefined();
   });
+  it.each([{ unpaid: 1 }, { unawarded: 1 }])('blocks cancelling while an approved winner is still owed %j (same UNPAID_WINNERS sentence as COMPLETED)', async (counts) => {
+    const { services, query } = setup('OPEN', counts);
+    await expect(services.bounties.transition('b', 'CANCELLED', 'admin')).rejects.toMatchObject({
+      response: { message: ['Record completed payments for all approved winners and finish every pending payout.'] },
+    });
+    expect(statusUpdate(query)).toBeUndefined();
+  });
+  it.each(['DRAFT', 'FUNDING_PENDING', 'OPEN'])('still cancels %s when no winner is owed (other blockers do not apply to CANCELLED)', async (status) => {
+    const { services, query } = setup(status, { pending: 1, unsubmitted: 1, unresolved: 1, unfunded: 1 });
+    await expect(services.bounties.transition('b', 'CANCELLED', 'admin')).resolves.toMatchObject({ status: 'CANCELLED' });
+    expect(statusUpdate(query)![1]).toEqual(['b', 'CANCELLED']);
+  });
   it('allows completion after all reviews and payments are settled', async () => {
     const { services, query, dbQuery } = setup('IN_REVIEW');
     await expect(services.bounties.transition('b', 'COMPLETED', 'admin')).resolves.toMatchObject({ status: 'COMPLETED' });
@@ -109,6 +121,7 @@ describe('Lifecycle blocker codes (operations UI)', () => {
       SUBMISSION_CLOSED: [{ code: 'PENDING_APPLICATIONS', count: 2 }, { code: 'UNSUBMITTED_PARTICIPANTS', count: 1 }],
       IN_REVIEW: [],
       COMPLETED: [{ code: 'PENDING_APPLICATIONS', count: 2 }, { code: 'UNRESOLVED_SUBMISSIONS', count: 3 }, { code: 'UNPAID_WINNERS' }],
+      CANCELLED: [{ code: 'UNPAID_WINNERS' }],
     });
     expect(result.blockers.SUBMISSION_CLOSED).toEqual([
       'Review 2 pending application(s) before closing submissions.',

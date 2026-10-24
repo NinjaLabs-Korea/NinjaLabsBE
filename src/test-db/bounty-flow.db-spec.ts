@@ -641,7 +641,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
         await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).resolves.toEqual({ id: bountyId, status: 'COMPLETED' });
       });
 
-      it('refund after a cancel: the record-refund inspection sees no open payout and refunds deposited minus PAID only', async () => {
+      it('refund after a cancel: owed winners block CANCELLED until closed; then record-refund sees no open payout and refunds deposited minus PAID only', async () => {
         const { bountyId, rewardId } = await openBounty(3);
         const a = await winner(bountyId, 1);
         const b = await winner(bountyId, 2);
@@ -649,13 +649,20 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
         await pay(rewardId, a.submissionId, '400');
         const bPayout = await rewards.requestPayout(rewardId, b.submissionId, '300', adminId);
         const cPayout = await rewards.requestPayout(rewardId, c.submissionId, '300', adminId);
-        await bounties.transition(bountyId, 'CANCELLED', adminId);
+        // open payouts = winners still owed → the cancel (and with it the refund of their share) is refused (docs/decisions.md 2026-10-25)
+        await expect(bounties.transition(bountyId, 'CANCELLED', adminId)).rejects.toMatchObject(UNPAID);
         const before = await inspectReward(asScriptRunner(), rewardId);
-        expect(before.reward).toMatchObject({ bounty_status: 'CANCELLED', open_payouts: 2, paid_total: '400' });
+        expect(before.reward).toMatchObject({ bounty_status: 'OPEN', open_payouts: 2, paid_total: '400' });
         await runbookCancel(bPayout.id);
         await fail(cPayout.id);
+        const failedOnly = await inspectReward(asScriptRunner(), rewardId);
+        expect(failedOnly.reward).toMatchObject({ open_payouts: 0, paid_total: '400' }); // FAILED is terminal for the refund script…
+        await expect(bounties.transition(bountyId, 'CANCELLED', adminId)).rejects.toMatchObject(UNPAID); // …but that winner is still owed
+        // runbook §7.4 "FAILED payout": after confirming nothing went on chain, close it as CANCELLED
+        expect((await db.query(`UPDATE payout SET status = 'CANCELLED' WHERE id = $1 AND status = 'FAILED'`, [cPayout.id])).rowCount).toBe(1);
+        await expect(bounties.transition(bountyId, 'CANCELLED', adminId)).resolves.toEqual({ id: bountyId, status: 'CANCELLED' });
         const after = await inspectReward(asScriptRunner(), rewardId);
-        expect(after.reward).toMatchObject({ open_payouts: 0, paid_total: '400' });
+        expect(after.reward).toMatchObject({ bounty_status: 'CANCELLED', open_payouts: 0, paid_total: '400' });
         expect(after.refundedAmount).toBe('600');
         await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' }); // until REFUNDED is recorded
         await db.query(`UPDATE bounty_reward SET status = 'REFUNDED' WHERE id = $1`, [rewardId]);

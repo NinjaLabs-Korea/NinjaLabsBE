@@ -46,6 +46,16 @@ describe('HttpExceptionFilter', () => {
     expect(base).toHaveBeenCalledTimes(2);
   });
 
+  it('answers 400 INVALID_CHARACTER (no error log) when Postgres rejects a character in the request value (NUL → 22021)', () => {
+    const pgError = Object.assign(new Error('invalid byte sequence for encoding "UTF8": 0x00'), { code: '22021' });
+    new HttpExceptionFilter().catch(pgError, host);
+    expect(error).not.toHaveBeenCalled();
+    const [sent] = base.mock.calls[0] as [HttpException];
+    expect(sent).toBeInstanceOf(HttpException);
+    expect(sent.getStatus()).toBe(400);
+    expect(sent.getResponse()).toMatchObject({ message: 'INVALID_CHARACTER' });
+  });
+
   it('treats non-HttpException throwables as 500 and HttpException status as given', () => {
     new HttpExceptionFilter().catch(new HttpException('TEAPOT', 418), host);
     expect(error).not.toHaveBeenCalled();

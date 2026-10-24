@@ -185,6 +185,16 @@ describeDb('validation over HTTP (e2e)', () => {
       }
     });
 
+    it('NUL characters Postgres cannot store → 400 INVALID_CHARACTER instead of 500, logged as 400', async () => {
+      const nul = badRequest('INVALID_CHARACTER');
+      expect((await e2e.get('/users/a%00b')).body).toEqual(nul);
+      expect((await e2e.get('/bounties?category=%00')).body).toEqual(nul);
+      expect((await e2e.post('/users/me/profile', { nickname: 'nulprobe', bio: 'a\u0000b', tags: ['DEV'] }, { token: user.accessToken })).body).toEqual(nul);
+      expect((await e2e.post('/admin/notices', { title: 'a\u0000b', body: 'b', category: 'OTHER' }, asAdmin())).body).toEqual(nul);
+      expect(e2e.linesFor('HTTP')).toEqual(expect.arrayContaining([expect.stringMatching(/^GET \/users\/a%00b 400 \d+ms$/)]));
+      expect(e2e.linesFor('HttpException').filter((line) => line.includes('0x00'))).toEqual([]);
+    });
+
     it('non-UUID :id → 400 "Validation failed (uuid is expected)" on public, user and admin routes', async () => {
       // bodies are valid so only the :id pipe can fail
       for (const [method, path, token, json] of [

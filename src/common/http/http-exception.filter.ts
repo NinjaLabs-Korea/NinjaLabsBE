@@ -1,6 +1,7 @@
 import { ArgumentsHost, Catch, HttpException, Logger } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
 import { Request } from 'express';
+import { asClientError } from '../database/pg-errors';
 
 /**
  * 전역 예외 필터 — 응답 포맷은 Nest 기본(BaseExceptionFilter)을 그대로 쓰고,
@@ -23,7 +24,9 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
     return code !== undefined && code >= 400 && code < 500 ? code : 500;
   }
 
-  catch(exception: unknown, host: ArgumentsHost) {
+  catch(caught: unknown, host: ArgumentsHost) {
+    // 요청 값(NUL 등)을 DB가 거부한 것은 400 — pg-errors.ts asClientError
+    const exception = asClientError(caught);
     const status = HttpExceptionFilter.statusOf(exception);
     if (status >= 500) {
       const req = host.switchToHttp().getRequest<Request | undefined>();

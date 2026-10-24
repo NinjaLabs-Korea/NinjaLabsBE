@@ -9,6 +9,7 @@ import {
 import { Request, Response } from 'express';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
+import { asClientError } from '../database/pg-errors';
 
 /**
  * 요청 한 줄 로그 — method path status duration(ms). `/health`(Railway 폴링)는 제외.
@@ -39,7 +40,10 @@ export class RequestLoggingInterceptor implements NestInterceptor {
           if (res.writableEnded) log(res.statusCode); // @Res()로 이미 보낸 경우 finish는 지나갔다
           else res.once('finish', () => log(res.statusCode));
         },
-        error: (err: unknown) => log(err instanceof HttpException ? err.getStatus() : 500),
+        error: (caught: unknown) => {
+          const err = asClientError(caught); // HttpExceptionFilter와 같은 판단 — NUL 문자 등 입력 탓 DB 오류는 400
+          log(err instanceof HttpException ? err.getStatus() : 500);
+        },
       }),
     );
   }

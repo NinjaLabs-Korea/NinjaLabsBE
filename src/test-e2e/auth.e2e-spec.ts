@@ -211,6 +211,27 @@ describeDb('auth over HTTP (e2e)', () => {
       expect(res.body.id).toBe(session.userId);
     });
 
+    it('a still-valid access token of a suspended or deleted user → 401 INVALID_ACCESS_TOKEN once the 30 s status cache lapses (was accepted until expiry)', async () => {
+      const suspended = await e2e.login(); // login() itself calls /auth/me → the ACTIVE status is now cached
+      const deleted = await e2e.login();
+      const active = await e2e.login();
+      await e2e.db.query(`UPDATE "user" SET status = 'SUSPENDED' WHERE id = $1`, [suspended.userId]);
+      await e2e.db.query(`UPDATE "user" SET deleted_at = now() WHERE id = $1`, [deleted.userId]);
+      // documented window: up to 30 s per process
+      expect((await e2e.get('/auth/me', { token: suspended.accessToken })).status).toBe(200);
+
+      const realNow = Date.now();
+      const clock = jest.spyOn(Date, 'now').mockReturnValue(realNow + 31_000);
+      try {
+        expect((await e2e.get('/auth/me', { token: suspended.accessToken })).body).toEqual(unauthorized('INVALID_ACCESS_TOKEN'));
+        expect((await e2e.post('/users/me/profile', { nickname: 'suspendedx', bio: 'b', tags: ['DEV'] }, { token: suspended.accessToken })).status).toBe(401);
+        expect((await e2e.get('/auth/me', { token: deleted.accessToken })).body).toEqual(unauthorized('INVALID_ACCESS_TOKEN'));
+        expect((await e2e.get('/auth/me', { token: active.accessToken })).status).toBe(200);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
     it('missing, malformed and foreign-signed tokens → 401 with distinct codes', async () => {
       expect((await e2e.get('/auth/me')).body).toEqual(unauthorized('MISSING_BEARER_TOKEN'));
       expect((await e2e.get('/auth/me', { headers: { authorization: 'Basic abc' } })).body).toEqual(unauthorized('MISSING_BEARER_TOKEN'));

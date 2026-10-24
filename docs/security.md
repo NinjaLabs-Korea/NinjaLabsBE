@@ -18,6 +18,7 @@
 | refresh **재사용 감지 + 30초 유예** — 회전된 토큰이 30초 안에 다시 오면(멀티탭 레이스) 후속 쌍을 그대로 돌려주고(재회전 없음), 창 밖이거나 후속이 이미 회전/폐기됐으면 401 + 그 토큰에서 파생된 세션 사슬 전체 폐기(한 홉씩 `FOR UPDATE`로 잠그며 따라감 — 재귀 CTE 한 문장은 동시 진행 중인 정당한 회전이 만든 후속 행을 스냅샷 밖이라 놓친다, test-db `auth.db-spec`). 유예용 후속 토큰 사본은 AES-256-GCM(JWT_SECRET 파생 키)으로 `auth_session.grace_refresh_token`에 30초만 둔다 — 해시만 저장 원칙의 유일하고 한시적인 예외 | `auth.service.ts` refresh(), `auth/refresh-grace.ts`, `0014` |
 | 탈퇴(soft delete) 유저 재로그인 — `uq_user_email`/`uq_user_google_id`를 `deleted_at IS NULL` 부분 인덱스로; 그래도 충돌하면 409 `ACCOUNT_CONFLICT` → 콜백은 `#error=AUTH_FAILED` (500 없음) | `0014`, `auth.service.ts` upsertGoogleUser |
 | 어드민 API 서버측 가드 — JWT `is_admin` 클레임 + 요청마다 `"user"` 행(`is_admin`, `status='ACTIVE'`, 미삭제) 재확인 → 어드민 해제/정지 즉시 반영 | `admin.guard.ts` |
+| 로그인 가드(AuthGuard)도 access 토큰 주인이 `status='ACTIVE' AND deleted_at IS NULL`인지 확인 — 아니면 401 `INVALID_ACCESS_TOKEN`(FE는 refresh 시도 → refresh도 거부 → 세션 비움). 요청마다 DB를 치지 않도록 **프로세스별 30초 캐시**(유저당, 최대 1만 항목) — 정지/삭제는 레플리카마다 **최대 30초 늦게** 반영된다. 어드민 경로는 위 AdminGuard가 캐시 없이 즉시 반영 | `auth.service.ts` assertActiveUser, `auth.guard.ts`, e2e `auth.e2e-spec` |
 | 전역 rate limit (IP당 120/min) + 민감 엔드포인트 강화 (refresh 10/min, 닉네임 검사 30/min) | `app.module.ts`, 각 컨트롤러 |
 | ⚠️ 두 throttler(전역 IP 120/min, Agent API 키별 60/min)의 카운터는 **인스턴스별 in-memory**(`@nestjs/throttler` 기본 저장소) — 레플리카 N대면 실효 한도가 N배가 된다. 1대를 넘기기 전에 공유 저장소(`@nestjs/throttler-storage-redis` 또는 pg 테이블)로 옮길 것 (`TODO(scale)`, `app.module.ts` / `agents.module.ts`) | `app.module.ts`, `agents/agents.module.ts` |
 | 보안 헤더 (helmet) | `main.ts` |

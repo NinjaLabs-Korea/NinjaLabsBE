@@ -67,6 +67,15 @@ export function normalizeRefreshTtl(raw: string | undefined): string {
   return `${amount} ${unit}`;
 }
 
+/**
+ * AuthGuard의 유저 상태 캐시 — access JWT는 발급 시점 스냅샷이라, 정지(SUSPENDED/WITHDRAWN)·삭제된 유저도 만료(15분)까지 통과하던 것을 막는다.
+ * 요청마다 DB를 치지 않도록 인스턴스(프로세스)별로 유저당 결과를 30초 보관한다 — 따라서 정지/삭제는 **최대 30초 늦게** 반영된다
+ * (레플리카마다 독립 캐시, docs/security.md). 어드민 경로는 AdminGuard가 캐시 없이 매번 다시 확인하므로 즉시 반영된다.
+ */
+export const USER_STATUS_CACHE_TTL_MS = 30_000;
+/** 캐시 상한 — 넘으면 가장 오래 넣은 항목부터 버린다 (Map 삽입 순서) */
+export const USER_STATUS_CACHE_MAX = 10_000;
+
 export interface SessionUser {
   userId: string;
   isAdmin: boolean;
@@ -93,6 +102,8 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   /** JWT_REFRESH_TTL을 정규화한 Postgres interval 문자열 — 생성 시 검증해 잘못된 값이면 부팅이 실패한다 (JWT_SECRET과 동일) */
   private readonly refreshTtl: string;
+  /** userId → (ACTIVE이고 삭제되지 않았는지, 확인 시각 ms). USER_STATUS_CACHE_TTL_MS 참고 */
+  private readonly userStatusCache = new Map<string, { active: boolean; checkedAt: number }>();
 
   /**
    * @param graceSecret grace_refresh_token 암호화 키 재료 (refresh-grace.ts). JwtModule이 서명에 쓰는 것과 **같은 provider**(JWT_SECRET,
@@ -473,6 +484,31 @@ export class AuthService {
         WHERE refresh_token_hash = $1 AND revoked_at IS NULL`,
       [hash],
     );
+  }
+
+  /**
+   * access 토큰의 주인이 지금도 ACTIVE이고 삭제되지 않았는지 — 아니면 401 INVALID_ACCESS_TOKEN (FE는 refresh를 시도하고, refresh도 같은 조건으로
+   * 거부되므로 세션을 비운다). 결과는 USER_STATUS_CACHE_TTL_MS 동안 캐시한다 (정지/삭제 반영 지연 ≤ 30초).
+   */
+  async assertActiveUser(userId: string, now = Date.now()): Promise<void> {
+    const cached = this.userStatusCache.get(userId);
+    let active: boolean;
+    if (cached && now - cached.checkedAt < USER_STATUS_CACHE_TTL_MS) {
+      active = cached.active;
+    } else {
+      const r = await this.db.query(
+        `SELECT 1 FROM "user" WHERE id = $1 AND status = 'ACTIVE' AND deleted_at IS NULL`,
+        [userId],
+      );
+      active = r.rowCount === 1;
+      this.userStatusCache.delete(userId); // 다시 넣어 삽입 순서(=제거 순서)를 갱신
+      this.userStatusCache.set(userId, { active, checkedAt: now });
+      if (this.userStatusCache.size > USER_STATUS_CACHE_MAX) {
+        const oldest = this.userStatusCache.keys().next().value;
+        if (oldest !== undefined) this.userStatusCache.delete(oldest);
+      }
+    }
+    if (!active) throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
   }
 
   /**

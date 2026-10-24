@@ -288,7 +288,7 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
      한 트랜잭션(바운티 → 제출 잠금)에서 제출을 `APPROVED` → `REJECTED`로 바꾸고, `submission_review`(reviewer = `--admin`, decision `REJECT`, comment `forfeited: <사유>`)와 감사 `SUBMISSION_AWARD_FORFEITED`(actor = `--admin`, before/after + 사유)를 남긴다. 거부 조건(아무것도 쓰지 않고 exit 1): 바운티가 삭제됨 또는 `OPEN`/`SUBMISSION_CLOSED`/`IN_REVIEW`가 아님, 제출이 `APPROVED`가 아님, 그 제출의 payout 행이 **하나라도** 있음(상태 무관 — 위의 정정/취소로 다룬다), 완료 NFT 행이 있음, `--admin`이 활성 is_admin 유저가 아님. 이미 COMPLETED/CANCELLED로 닫힌 바운티의 수상은 이 스크립트 대상이 아니다.
      몰수가 남기는 것 — **사례별 운영자 결정**이다(되돌리는 스크립트는 없다. 되돌리려면 같은 형식의 SQL + 감사 행):
      - `max_winners` 자리가 하나 빈다 — 다른 제출을 승인할 수 있다.
-     - 이 수상이 공개 프로필 `completedBounties`와 명예의전당 집계(둘 다 `APPROVED` 기준)에서 빠진다. 제출자의 `/submissions/me`에는 `REJECTED`와 `review_comment` `forfeited: <사유>`가 보인다 — 사유는 제출자가 읽는다고 보고 쓴다.
+     - 이 수상이 공개 프로필 `completedBounties`와 명예의전당 집계(둘 다 `APPROVED` 기준)에서 빠진다. 제출자의 `/submissions/me`에는 `REJECTED`, `payment_status` `NONE`(APPROVED가 아닌 행은 항상 `NONE` — 나중에 지갑을 연결해도 payout을 요청할 수 없다), `review_comment` `forfeited: <사유>`가 보인다 — 사유는 제출자가 읽는다고 보고 쓴다.
      - 받을 몫이 남은 수상자로 세지 않으므로 COMPLETED·CANCELLED 차단이 풀린다. 취소한다면 §7.7로 입금액 − `PAID` 전액을 환불·기록한 뒤 삭제할 수 있다.
    - 수령 지갑이 틀림 → SQL로 `recipient_wallet_id`를 바꾸지 않는다. 수령 지갑은 요청 시점의 대표 지갑이므로 먼저 3번으로 지갑 이력을 확인한다.
    - 잘못된 주소로 **실제 송금됨** → 온체인 회수는 불가. 수령자 연락/추가 지급 여부를 결정하고, 결정과 tx를 사후 기록에 남긴다.

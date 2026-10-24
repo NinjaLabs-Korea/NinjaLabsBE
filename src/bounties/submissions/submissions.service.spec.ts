@@ -53,7 +53,8 @@ describe('SubmissionsService owner visibility of agent submissions', () => {
     // `= ANY(ARRAY(subquery))` so the planner can BitmapOr idx_submission_submitter + idx_submission_agent_status (0015); `IN (subquery)` cannot
     expect(sql).toContain('OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))');
     expect(sql).not.toContain('agent_id IN (');
-    expect(sql).toContain(`${payoutStatusSql('s', 'b')} AS payment_status`); // same helper as the public profile payoutStatus
+    // same helper as the public profile payoutStatus, applied to APPROVED submissions only (anything else owes nothing → NONE)
+    expect(sql).toContain(`CASE WHEN s.status = 'APPROVED' THEN ${payoutStatusSql('s', 'b')} ELSE 'NONE' END AS payment_status`);
     for (const kept of ['payment_status', 's.description', 'review.comment AS review_comment', 'b.category', 'ORDER BY s.submitted_at DESC']) {
       expect(sql).toContain(kept);
     }

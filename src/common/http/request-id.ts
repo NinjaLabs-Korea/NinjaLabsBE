@@ -20,8 +20,13 @@ export function requestIdMiddleware(req: Request, res: Response, next: NextFunct
   next();
 }
 
+/** 요청 ID(미들웨어를 거치지 않은 요청이면 undefined) — 구조화 로그의 `rid` 필드용 */
+export function requestIdOf(req: Request | undefined): string | undefined {
+  return (req as WithRequestId | undefined)?.requestId;
+}
+
 /** 로그 줄 접미사 — 미들웨어를 거치지 않은 요청(단위 테스트 등)에는 빈 문자열 */
 export function ridSuffix(req: Request | undefined): string {
-  const id = (req as WithRequestId | undefined)?.requestId;
+  const id = requestIdOf(req);
   return id ? ` rid=${id}` : '';
 }

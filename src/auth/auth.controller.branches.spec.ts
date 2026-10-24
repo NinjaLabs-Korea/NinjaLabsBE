@@ -10,8 +10,9 @@ const challenge = 'c'.repeat(43);
 function logs() {
   const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
   const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   const events = (spy: jest.SpyInstance) => spy.mock.calls.map(([line]) => JSON.parse(String(line).replace('[onboarding] ', '')));
-  return { log, error, logged: () => events(log), errored: () => events(error) };
+  return { log, error, logged: () => events(log), errored: () => events(error), warned: () => events(warn) };
 }
 
 afterEach(() => jest.restoreAllMocks());
@@ -104,15 +105,15 @@ describe('AuthController.refresh / me', () => {
   });
 
   it('GET /auth/me returns the service payload and logs wallet/nft flags; a failure is logged with its code and rethrown', async () => {
-    const { logged, errored } = logs();
+    const { logged, errored, warned } = logs();
     const me = { onboardingStep: 3, onboardingCompleted: false, wallet: { address: 'inj1x' }, nft: { status: 'PENDING' } };
     const auth = { getMe: jest.fn(async () => me) };
     const controller = new AuthController(auth as never, { get: () => undefined } as never, { enabled: false } as never);
-    const req = { headers: { 'x-onboarding-trace-id': 'trace-9' }, user: { userId, isAdmin: false } } as never;
+    const req = { headers: { 'x-onboarding-trace-id': 'trace-9' }, requestId: 'req-id-1234', user: { userId, isAdmin: false } } as never;
     await expect(controller.me(req)).resolves.toBe(me);
     expect(auth.getMe).toHaveBeenCalledWith(userId);
     expect(logged().find((line) => line.event === 'session.me.succeeded')).toEqual({
-      event: 'session.me.succeeded', traceId: 'trace-9', userId, onboardingStep: 3, onboardingCompleted: false, walletLinked: true, nftStatus: 'PENDING',
+      event: 'session.me.succeeded', rid: 'req-id-1234', traceId: 'trace-9', userId, onboardingStep: 3, onboardingCompleted: false, walletLinked: true, nftStatus: 'PENDING',
     });
 
     auth.getMe.mockResolvedValueOnce({ ...me, wallet: null, nft: null } as never);
@@ -122,7 +123,9 @@ describe('AuthController.refresh / me', () => {
     const gone = new NotFoundException('USER_NOT_FOUND');
     auth.getMe.mockRejectedValueOnce(gone);
     await expect(controller.me(req)).rejects.toBe(gone);
-    expect(errored().at(-1)).toEqual({ event: 'session.me.failed', traceId: 'trace-9', userId, errorCode: 'USER_NOT_FOUND' });
+    // an expected 404 is a warn with the request id, not an error
+    expect(warned().at(-1)).toEqual({ event: 'session.me.failed', rid: 'req-id-1234', traceId: 'trace-9', userId, errorCode: 'USER_NOT_FOUND' });
+    expect(errored()).toEqual([]);
   });
 });
 

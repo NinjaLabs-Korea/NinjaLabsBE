@@ -137,11 +137,12 @@ describeDb('onboarding over HTTP (e2e)', () => {
     });
   });
 
-  it('a public-profile lookup with CR/LF and a 2000-char nickname logs one capped line per event (no forged lines)', async () => {
+  it('a public-profile lookup with CR/LF and a 2000-char nickname logs one capped failure line (no forged lines)', async () => {
     const forged = `ghost\r\n[onboarding] {"event":"forged"}${'x'.repeat(2000)}`;
     expect((await e2e.get(`/users/${encodeURIComponent(forged)}`)).status).toBe(404);
     const lines = e2e.linesFor('UsersController').filter((line) => line.includes('ghost'));
-    expect(lines).toHaveLength(2); // requested + failed
+    expect(lines).toHaveLength(1); // failed only — no requested/succeeded lines on this hot public read
+    expect(lines[0]).toMatch(/"rid":"[0-9a-f-]{36}"/);
     for (const line of lines) {
       expect(line).not.toMatch(/[\r\n]/);
       expect(line.length).toBeLessThan(400);

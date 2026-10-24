@@ -1,4 +1,4 @@
-import { BadRequestException, Logger } from '@nestjs/common';
+import { BadRequestException, InternalServerErrorException, Logger } from '@nestjs/common';
 import { capLogValue, LOG_VALUE_MAX, logSafe } from './log-safe';
 import { onboardingError, onboardingLog } from './onboarding-log';
 
@@ -20,10 +20,10 @@ describe('logSafe', () => {
 
 describe('onboarding log lines', () => {
   let log: jest.SpyInstance;
-  let error: jest.SpyInstance;
+  let warn: jest.SpyInstance;
   beforeEach(() => {
     log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
-    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
   afterEach(() => jest.restoreAllMocks());
 
@@ -38,11 +38,38 @@ describe('onboarding log lines', () => {
 
   it('caps the error code taken from an exception message and the details', () => {
     onboardingError(new Logger('t'), 'profile.save.failed', new BadRequestException(`bad\n${'m'.repeat(1000)}`), { traceId: 't'.repeat(300) });
-    const [line] = error.mock.calls[0] as [string];
+    const [line] = warn.mock.calls[0] as [string];
     expect(line).not.toMatch(LINE_BREAK);
     const parsed = JSON.parse(line.replace('[onboarding] ', ''));
     expect(parsed.errorCode.length).toBeLessThanOrEqual(LOG_VALUE_MAX + 20);
     expect(parsed.traceId.length).toBeLessThanOrEqual(LOG_VALUE_MAX + 20);
+  });
+});
+
+describe('onboardingError level and rid', () => {
+  let warn: jest.SpyInstance;
+  let error: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('logs expected 4xx at warn, 5xx and non-HTTP errors at error', () => {
+    onboardingError(new Logger('t'), 'x.failed', new BadRequestException('NICKNAME_TAKEN'));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(error).not.toHaveBeenCalled();
+    onboardingError(new Logger('t'), 'x.failed', new InternalServerErrorException('boom'));
+    onboardingError(new Logger('t'), 'x.failed', new Error('pool exploded'));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledTimes(2);
+  });
+
+  it('prints rid so the line joins the request log, and omits it when absent', () => {
+    onboardingError(new Logger('t'), 'x.failed', new BadRequestException('E'), { rid: 'req-id-1234' });
+    expect(JSON.parse((warn.mock.calls[0] as [string])[0].replace('[onboarding] ', '')).rid).toBe('req-id-1234');
+    onboardingError(new Logger('t'), 'x.failed', new BadRequestException('E'));
+    expect(JSON.parse((warn.mock.calls[1] as [string])[0].replace('[onboarding] ', ''))).not.toHaveProperty('rid');
   });
 });
 

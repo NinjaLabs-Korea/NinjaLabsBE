@@ -22,6 +22,7 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
+import { requestIdOf } from '../common/http/request-id';
 import { AUTH_PROXIED_ROUTE_IP_THROTTLE, AuthTokenThrottlerGuard } from './auth-throttler.guard';
 import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
@@ -93,23 +94,25 @@ export class AuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    const rid = requestIdOf(req);
     if (this.turnstile.enabled) {
       try {
         await this.turnstile.verify(typeof turnstileToken === 'string' ? turnstileToken : undefined, req.ip);
       } catch (caught) {
-        onboardingError(this.logger, 'oauth.turnstile.rejected', caught, { traceId });
+        onboardingError(this.logger, 'oauth.turnstile.rejected', caught, { rid, traceId });
         throw caught;
       }
-      onboardingLog(this.logger, 'oauth.turnstile.verified', { traceId });
+      onboardingLog(this.logger, 'oauth.turnstile.verified', { rid, traceId });
     }
     const redirectUrl = this.authSuccessRedirect(returnTo);
     onboardingLog(this.logger, 'oauth.redirect.requested', {
+      rid,
       traceId,
       requestedReturnOrigin: returnTo ? this.safeOrigin(returnTo) : null,
       selectedReturnOrigin: this.safeOrigin(redirectUrl),
     });
     const state = await this.auth.issueOauthState(traceId, redirectUrl, codeChallenge ?? '');
-    onboardingLog(this.logger, 'oauth.redirect.ready', { traceId });
+    onboardingLog(this.logger, 'oauth.redirect.ready', { rid, traceId });
     res.redirect(this.auth.buildGoogleAuthUrl(state));
   }
 
@@ -128,14 +131,17 @@ export class AuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    const rid = requestIdOf(req);
     let fe = this.authSuccessRedirect();
     onboardingLog(this.logger, 'oauth.callback.received', {
+      rid,
       hasCode: Boolean(code),
       hasState: Boolean(state),
       providerError: error ?? null,
     });
     if (error || !code || !state) {
       onboardingLog(this.logger, 'oauth.callback.rejected', {
+        rid,
         reason: error ?? 'MISSING_CODE_OR_STATE',
       });
       return res.redirect(this.loginCallbackUrl(fe, { error: 'AUTH_FAILED' }));
@@ -144,21 +150,22 @@ export class AuthController {
       const oauthState = await this.auth.verifyOauthState(state);
       const traceId = oauthState.traceId;
       fe = this.authSuccessRedirect(oauthState.redirectUrl);
-      onboardingLog(this.logger, 'oauth.state.verified', { traceId });
+      onboardingLog(this.logger, 'oauth.state.verified', { rid, traceId });
       const { googleId, email } = await this.auth.exchangeGoogleCode(code);
-      onboardingLog(this.logger, 'oauth.google.exchange.succeeded', { traceId });
+      onboardingLog(this.logger, 'oauth.google.exchange.succeeded', { rid, traceId });
       const user = await this.auth.upsertGoogleUser(googleId, email);
       onboardingLog(this.logger, 'oauth.user.resolved', {
+        rid,
         traceId,
         userId: user.id,
         onboardingStep: user.onboarding_step,
         onboardingCompleted: user.onboarding_completed_at !== null,
       });
       const loginCode = await this.auth.issueLoginCode(user.id, oauthState.codeChallenge);
-      onboardingLog(this.logger, 'oauth.callback.redirecting', { traceId, userId: user.id });
+      onboardingLog(this.logger, 'oauth.callback.redirecting', { rid, traceId, userId: user.id });
       return res.redirect(this.loginCallbackUrl(fe, { loginCode }));
     } catch (caught) {
-      onboardingError(this.logger, 'oauth.callback.failed', caught);
+      onboardingError(this.logger, 'oauth.callback.failed', caught, { rid });
       // 실패 사유를 FE에 상세 노출하지 않는다 (code/state 탈취 시도 힌트 방지)
       return res.redirect(this.loginCallbackUrl(fe, { error: 'AUTH_FAILED' }));
     }
@@ -209,21 +216,22 @@ export class AuthController {
   @UseGuards(AuthTokenThrottlerGuard)
   async refresh(@Body() dto: RefreshDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const traceId = requestTraceId(req.headers);
+    const rid = requestIdOf(req);
     const cookieMode = isCookieMode(req);
     const fromCookie = cookieMode && !dto.refreshToken ? readRefreshCookie(req) : undefined;
     const refreshToken = dto.refreshToken ?? fromCookie;
     if (!refreshToken) {
       if (!cookieMode) throw new BadRequestException(REFRESH_TOKEN_REQUIRED);
-      onboardingLog(this.logger, 'session.refresh.rejected', { traceId, reason: 'NO_REFRESH_COOKIE' });
+      onboardingLog(this.logger, 'session.refresh.rejected', { rid, traceId, reason: 'NO_REFRESH_COOKIE' });
       throw new UnauthorizedException('INVALID_REFRESH_TOKEN');
     }
-    onboardingLog(this.logger, 'session.refresh.requested', { traceId, mode: cookieMode ? (fromCookie ? 'cookie' : 'cookie-migrate') : 'body' });
+    onboardingLog(this.logger, 'session.refresh.requested', { rid, traceId, mode: cookieMode ? (fromCookie ? 'cookie' : 'cookie-migrate') : 'body' });
     try {
       const session = await this.auth.refresh(refreshToken, req.ip, req.headers['user-agent']);
-      onboardingLog(this.logger, 'session.refresh.succeeded', { traceId });
+      onboardingLog(this.logger, 'session.refresh.succeeded', { rid, traceId });
       return cookieMode ? this.toCookieSession(session, res) : session;
     } catch (caught) {
-      onboardingError(this.logger, 'session.refresh.failed', caught, { traceId });
+      onboardingError(this.logger, 'session.refresh.failed', caught, { rid, traceId });
       if (fromCookie && caught instanceof UnauthorizedException) clearRefreshCookie(res);
       throw caught;
     }
@@ -259,10 +267,12 @@ export class AuthController {
   @UseGuards(AuthGuard)
   async me(@Req() req: Request & { user: SessionUser }) {
     const traceId = requestTraceId(req.headers);
-    onboardingLog(this.logger, 'session.me.requested', { traceId, userId: req.user.userId });
+    const rid = requestIdOf(req);
+    onboardingLog(this.logger, 'session.me.requested', { rid, traceId, userId: req.user.userId });
     try {
       const me = await this.auth.getMe(req.user.userId);
       onboardingLog(this.logger, 'session.me.succeeded', {
+        rid,
         traceId,
         userId: req.user.userId,
         onboardingStep: me.onboardingStep,
@@ -273,6 +283,7 @@ export class AuthController {
       return me;
     } catch (caught) {
       onboardingError(this.logger, 'session.me.failed', caught, {
+        rid,
         traceId,
         userId: req.user.userId,
       });

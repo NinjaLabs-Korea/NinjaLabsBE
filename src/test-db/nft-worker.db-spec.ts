@@ -210,7 +210,11 @@ describeDb('nft_job worker on a real database', () => {
 
     expect(idsA.length).toBeGreaterThan(0);
     expect(idsB.length).toBeGreaterThan(0);
-    expect(Math.max(idsA.length, idsB.length)).toBe(10); // one of them took a full LIMIT 10 batch
+    // SKIP LOCKED does not promise either claimant a full batch: two truly concurrent scans interleave their row locks, so the 13 due
+    // jobs can split 7/6 as well as 10/3. What it does promise is checked here and below: each batch ≤ LIMIT 10, disjoint, and together
+    // every due job exactly once. (A `max === 10` assertion was flaky in CI — 2026-10-25.)
+    expect(idsA.length).toBeLessThanOrEqual(10);
+    expect(idsB.length).toBeLessThanOrEqual(10);
     expect(idsA.filter((id) => idsB.includes(id))).toEqual([]); // disjoint
     const claimed = new Set([...idsA, ...idsB]);
     for (const id of myIds) expect(claimed.has(id)).toBe(true); // between them, every due job was claimed exactly once

@@ -31,13 +31,15 @@ BEGIN TRANSACTION READ ONLY;
 
 -- [blocker] 1. 열린 보상의 custody_address가 자리표시값/잘못된 모양/기대값과 다름.
 --   PENDING_MULTISIG_SETUP은 REWARD_MULTISIG_ADDRESS 미설정 시 reward-token.resolver.ts가 넣는 값이다. 스폰서가 이 주소로 입금할 수 없다.
---   bech32 inj1 + 38자(계정) 또는 + 58자(컨트랙트 — cw3 멀티시그)만 정상으로 본다.
+--   bech32 inj1 + 38자(계정) 또는 + 58자(컨트랙트 — cw3 멀티시그), 또는 EVM 0x + 40 hex(Safe 등 EVM 멀티시그 — runbook §9)만 정상으로 본다.
+--   기대값 비교는 대소문자를 무시한다 (bech32는 소문자뿐이고, EVM 주소는 체크섬 대소문자가 섞여 들어올 수 있다).
 SELECT 'custody_placeholder' AS check, r.id AS reward_id, r.bounty_id, b.title, r.status, r.custody_address
   FROM bounty_reward r JOIN bounty b ON b.id = r.bounty_id
  WHERE r.status IN ('DEPOSIT_PENDING', 'FUNDED', 'PARTIALLY_PAID', 'REFUND_PENDING')
    AND (r.custody_address = 'PENDING_MULTISIG_SETUP'
-        OR r.custody_address !~ '^inj1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{38}([qpzry9x8gf2tvdw0s3jn54khce6mua7l]{20})?$'
-        OR (:'expected_custody' <> '' AND r.custody_address <> :'expected_custody'))
+        OR (r.custody_address !~ '^inj1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{38}([qpzry9x8gf2tvdw0s3jn54khce6mua7l]{20})?$'
+            AND r.custody_address !~ '^0x[0-9a-fA-F]{40}$')
+        OR (:'expected_custody' <> '' AND lower(r.custody_address) <> lower(:'expected_custody')))
  ORDER BY r.created_at;
 
 -- [blocker] 2. 열린 ERC-20 보상이 testnet 체인(1439) 또는 기대와 다른 USDC 컨트랙트를 가리킴 — mainnet EVM chain id는 1776.

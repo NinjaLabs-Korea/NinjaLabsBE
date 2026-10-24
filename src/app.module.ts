@@ -17,6 +17,7 @@ import { NftsModule } from './nfts/nfts.module';
 import { AgentsModule } from './agents/agents.module';
 import { AuditModule } from './audit/audit.module';
 import { MediaModule } from './media/media.module';
+import { AlertsModule } from './common/alerts/alerts.module';
 import { MaintenanceModule } from './common/maintenance/maintenance.module';
 
 @Module({
@@ -29,6 +30,7 @@ import { MaintenanceModule } from './common/maintenance/maintenance.module';
     // (@nestjs/throttler-storage-redis 또는 pg 테이블)로 옮겨야 한도가 N배로 늘지 않는다 (docs/security.md)
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     DatabaseModule,
+    AlertsModule, // 운영 알림 (OPS_ALERT_WEBHOOK_URL, 없으면 로그만) — 워커·예외 필터가 쓴다
     HealthModule,
     AuthModule,
     UsersModule,

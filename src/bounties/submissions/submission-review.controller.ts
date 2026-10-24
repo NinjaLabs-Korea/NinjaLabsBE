@@ -4,9 +4,10 @@ import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validat
 import { AdminGuard } from '../../auth/admin.guard';
 import { AuthedRequest } from '../../auth/authed-request';
 import { SubmissionReviewService } from './submission-review.service';
+import { MaxPgInt } from '../../common/validation/optional-not-null';
 
 export class ReviewSubmissionDto {
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) revisionNo?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @MaxPgInt() revisionNo?: number;
   @IsIn(['START_REVIEW', 'REQUEST_REVISION', 'APPROVE', 'REJECT']) decision!: string;
   @IsOptional() @IsString() @MaxLength(2000) comment?: string;
 }

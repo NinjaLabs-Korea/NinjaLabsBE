@@ -35,4 +35,16 @@ describe('highlight admin DTOs', () => {
     expect(await failedFields(UpdateHighlightDto, legacyRow)).toEqual([]);
     expect(await failedFields(UpdateHighlightDto, { imageUrl: 'cdn.example.com/legacy.png', linkUrl: '//evil.com' })).toEqual(['linkUrl']);
   });
+
+  it('update rejects null for NOT NULL columns and publish, keeps null as "clear" for the URLs', async () => {
+    expect(await failedFields(UpdateHighlightDto, { type: null, title: null, description: null, displayOrder: null, publish: null }))
+      .toEqual(['description', 'displayOrder', 'publish', 'title', 'type']);
+    expect(await failedFields(UpdateHighlightDto, { imageUrl: null, linkUrl: null })).toEqual([]);
+  });
+
+  it('caps displayOrder at the Postgres INTEGER maximum on create and update', async () => {
+    expect(await failedFields(CreateHighlightDto, { ...valid, displayOrder: 2_147_483_647 })).toEqual([]);
+    expect(await failedFields(CreateHighlightDto, { ...valid, displayOrder: 2_147_483_648 })).toEqual(['displayOrder']);
+    expect(await failedFields(UpdateHighlightDto, { displayOrder: 2_147_483_648 })).toEqual(['displayOrder']);
+  });
 });

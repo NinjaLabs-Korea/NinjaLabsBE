@@ -166,6 +166,43 @@ describeDb('validation over HTTP (e2e)', () => {
         .toEqual(badRequest(['name must be shorter than or equal to 100 characters']));
     });
 
+    it('UPDATE DTOs: null for a NOT NULL column → 400 (was a 23502 500); nullable URL columns still clear with null', async () => {
+      const errorsBefore = e2e.linesFor('HttpException').length;
+      const bounty = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm(), true), asAdmin())).body.id;
+      const notice = (await e2e.post('/admin/notices', saveAdminPostBody({ slug: '', title: 'n', bodyMarkdown: 'b', category: 'OTHER', status: 'draft', thumbnail: null, externalUrl: null }, true), asAdmin())).body.id;
+      const highlight = (await e2e.post('/admin/highlights', saveAdminHighlightBody({ id: '', type: 'MILESTONE', title: 'h', order: 1, image: null, published: false }, true), asAdmin())).body.id;
+      for (const [path, fields] of [
+        [`/admin/bounties/${bounty}`, ['title', 'sponsorName', 'summary', 'description', 'requirements', 'evaluationCriteria', 'category', 'applicationRequired', 'submissionMode', 'maxWinners', 'submissionDeadline']],
+        [`/admin/notices/${notice}`, ['title', 'body', 'category', 'publish']],
+        [`/admin/highlights/${highlight}`, ['type', 'title', 'description', 'displayOrder', 'publish']],
+      ] as const) {
+        for (const field of fields) {
+          const res = await e2e.patch(path, { [field]: null }, asAdmin());
+          expect([path, field, res.status, res.body.message]).toEqual([path, field, 400, expect.arrayContaining([`${field} should not be null`])]);
+        }
+      }
+      expect((await e2e.patch(`/admin/bounties/${bounty}`, { coverImageUrl: null, applicationDeadline: null }, asAdmin())).status).toBe(200);
+      expect((await e2e.patch(`/admin/notices/${notice}`, { summary: null, thumbnailUrl: null, externalUrl: null }, asAdmin())).status).toBe(200);
+      expect((await e2e.patch(`/admin/highlights/${highlight}`, { imageUrl: null, linkUrl: null }, asAdmin())).status).toBe(200);
+      expect(e2e.linesFor('HttpException').slice(errorsBefore)).toEqual([]);
+    });
+
+    it('highlight bountyId that does not exist → 400 BOUNTY_NOT_FOUND (was a 23503 500); integers above 2^31−1 → 400', async () => {
+      const errorsBefore = e2e.linesFor('HttpException').length;
+      const item = saveAdminHighlightBody({ id: '', type: 'FEATURED_BOUNTY', title: 'h', order: 1, image: null, published: false }, true);
+      expect((await e2e.post('/admin/highlights', { ...item, bountyId: '00000000-0000-4000-8000-000000000000' }, asAdmin())).body).toEqual(badRequest('BOUNTY_NOT_FOUND'));
+      const bounty = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm(), true), asAdmin())).body.id;
+      expect((await e2e.post('/admin/highlights', { ...item, bountyId: bounty }, asAdmin())).status).toBe(201);
+
+      const tooBig = 2_147_483_648;
+      expect((await e2e.post('/admin/highlights', { ...item, displayOrder: tooBig }, asAdmin())).body).toEqual(badRequest(['displayOrder must not be greater than 2147483647']));
+      expect((await e2e.patch(`/admin/bounties/${bounty}`, { maxWinners: tooBig }, asAdmin())).body).toEqual(badRequest(['maxWinners must not be greater than 2147483647']));
+      expect((await e2e.post('/admin/bounties', { ...saveAdminBountyBody(bountyForm(), true), maxWinners: tooBig }, asAdmin())).status).toBe(400);
+      expect((await e2e.post(`/admin/users/${user.userId}/member`, { isMember: true, role: 'CORE', displayOrder: tooBig }, asAdmin())).body)
+        .toEqual(badRequest(['displayOrder must not be greater than 2147483647']));
+      expect(e2e.linesFor('HttpException').slice(errorsBefore)).toEqual([]);
+    });
+
     it('non-string values in auth/wallet/agent bodies → 400 (were TypeError 500s, /auth/refresh and /auth/logout without login)', async () => {
       const U = { token: user.accessToken };
       for (const [path, json, token] of [

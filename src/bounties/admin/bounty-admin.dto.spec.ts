@@ -115,4 +115,18 @@ describe('TransitionBountyDto', () => {
   it.each([undefined, '', 'open', 'ARCHIVED', 42, ['OPEN']])('rejects %p', async (to) => {
     expect(await failedFields(TransitionBountyDto, { to })).toEqual(['to']);
   });
+
+  it('update rejects null for every NOT NULL column, keeps null as "clear" for applicationDeadline and coverImageUrl', async () => {
+    const nulls = Object.fromEntries(Object.keys(validCreate).map((key) => [key, null]));
+    expect(await failedFields(UpdateBountyDto, nulls)).toEqual(Object.keys(validCreate).sort());
+    expect(await failedFields(UpdateBountyDto, { applicationDeadline: null, coverImageUrl: null })).toEqual([]);
+  });
+
+  it('caps maxWinners at the Postgres INTEGER maximum and evmChainId at the largest safe integer', async () => {
+    expect(await failedFields(CreateBountyDto, { ...validCreate, maxWinners: 2_147_483_648 })).toEqual(['maxWinners']);
+    expect(await failedFields(UpdateBountyDto, { maxWinners: 2_147_483_648 })).toEqual(['maxWinners']);
+    expect(await failedFields(UpdateBountyDto, { maxWinners: 2_147_483_647 })).toEqual([]);
+    const reward = { tokenType: 'NATIVE', displaySymbol: 'INJ', amount: '1', evmChainId: 2 ** 60 };
+    expect(await failedFields(CreateBountyDto, { ...validCreate, reward })).toEqual(['reward']);
+  });
 });

@@ -42,4 +42,9 @@ describe('notice admin DTOs', () => {
     expect(await failedFields(UpdateNoticeDto, { ...legacyRow, externalUrl: 'ninjalabs.xyz/post' })).toEqual([]);
     expect(await failedFields(CreateNoticeDto, { ...valid, externalUrl: 'ninjalabs.xyz/post' })).toEqual(['externalUrl']);
   });
+
+  it('update rejects null for NOT NULL columns (title/body/category) and publish, keeps null as "clear" for summary and URLs', async () => {
+    expect(await failedFields(UpdateNoticeDto, { title: null, body: null, category: null, publish: null })).toEqual(['body', 'category', 'publish', 'title']);
+    expect(await failedFields(UpdateNoticeDto, { summary: null, thumbnailUrl: null, externalUrl: null })).toEqual([]);
+  });
 });

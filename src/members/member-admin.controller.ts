@@ -5,6 +5,7 @@ import { MAX_PAGE } from '../common/pagination.dto';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { MemberAdminService } from './member-admin.service';
+import { MaxPgInt } from '../common/validation/optional-not-null';
 
 export class SetMemberDto {
   @IsBoolean()
@@ -18,6 +19,7 @@ export class SetMemberDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @MaxPgInt() // user.member_display_order INTEGER
   displayOrder?: number;
 }
 

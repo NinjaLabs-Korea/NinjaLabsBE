@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
+import { isForeignKeyViolation } from '../common/database/pg-errors';
 
 /** 운영자용 Hall of Fame 하이라이트 관리 */
 @Injectable()
@@ -24,6 +25,7 @@ export class HighlightAdminService {
     imageUrl?: string; linkUrl?: string; bountyId?: string;
     displayOrder?: number; publish?: boolean;
   }) {
+    // 없는 bountyId는 FK(fk_highlight_bounty) 위반 → 400 BOUNTY_NOT_FOUND (예전엔 23503 500). 트랜잭션은 이미 롤백된 뒤다
     return this.db.tx(async (tx) => {
       const r = await tx.query<{ id: string }>(
         `INSERT INTO platform_highlight
@@ -37,6 +39,9 @@ export class HighlightAdminService {
       );
       await this.audit.record(adminId, 'HIGHLIGHT_CREATED', 'platform_highlight', r.rows[0].id, tx);
       return r.rows[0];
+    }).catch((err: unknown) => {
+      if (isForeignKeyViolation(err, 'fk_highlight_bounty')) throw new BadRequestException('BOUNTY_NOT_FOUND');
+      throw err;
     });
   }
 

@@ -46,4 +46,15 @@ describe('HighlightAdminService audit transactions', () => {
     await expect(service.remove(highlightId, adminId)).rejects.toMatchObject({ message: 'HIGHLIGHT_NOT_FOUND' });
     expect(query).toHaveBeenCalledTimes(1);
   });
+
+  it('create with a bountyId that does not exist → 400 BOUNTY_NOT_FOUND (FK fk_highlight_bounty), other errors pass through', async () => {
+    const { service, db } = setup();
+    const fk = Object.assign(new Error('fk'), { code: '23503', constraint: 'fk_highlight_bounty' });
+    db.tx.mockRejectedValueOnce(fk);
+    await expect(service.create(adminId, { type: 'MILESTONE', title: 't', description: 'd', bountyId: highlightId }))
+      .rejects.toMatchObject({ status: 400, message: 'BOUNTY_NOT_FOUND' });
+    const other = new Error('boom');
+    db.tx.mockRejectedValueOnce(other);
+    await expect(service.create(adminId, { type: 'MILESTONE', title: 't', description: 'd' })).rejects.toBe(other);
+  });
 });

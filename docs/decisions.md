@@ -65,3 +65,4 @@
 | 마스터 지갑 키 | 기획서는 AWS KMS. MVP는 호스팅 플랫폼 secret + 별도 논의 | 민팅 권한만 있어 탈취 시 자금 피해 없음 (기획 확정 사항) |
 | ORM | 미사용 — raw SQL (pg) | ERD와 1:1 대응 유지. 팀 합의 시 Kysely/Prisma 전환 가능 |
 | Turnstile / rate limit | Phase 1 구현 항목 | 가입 어뷰징 방어 1차선 (기획 확정) |
+| rate limit 공유 저장소 | **Postgres 테이블**(`throttler_storage`, UNLOGGED, 0016) + 원자적 upsert, `THROTTLER_STORAGE=postgres`가 production 기본. 고정 창, DB 오류 시 fail-open | Redis(`@nestjs/throttler-storage-redis`)는 새 인프라·의존성이 필요하다. 요청당 쿼리 1회는 현재 트래픽에서 감당 가능 — 트래픽이 커지면 Redis 저장소로 교체(인터페이스는 `ThrottlerStorage` 그대로) |

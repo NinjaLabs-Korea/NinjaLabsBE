@@ -14,6 +14,8 @@ export default defineRailway(() => {
       NODE_ENV: "production",
       // Railway 엣지 프록시 1홉 — X-Forwarded-For를 신뢰해야 rate limit / auth_session.ip_address가 클라이언트 IP가 된다 (미설정이면 main.ts가 1로 보고 warn, 0이면 기동 거부)
       TRUST_PROXY: "1",
+      // rate limit 카운터를 Postgres(throttler_storage, 0016)에 둔다 — 레플리카 N대여도 한도가 N배가 되지 않는다 (production 기본값이지만 명시, docs/security.md)
+      THROTTLER_STORAGE: "postgres",
       JWT_ACCESS_TTL: "15m",
       JWT_REFRESH_TTL: "14d",
       INJECTIVE_NETWORK: "testnet",

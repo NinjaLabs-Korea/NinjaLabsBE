@@ -73,7 +73,7 @@ describeDb('onboarding over HTTP (e2e)', () => {
     const signer = Wallet.createRandom();
     expect((await e2e.post('/wallets/verify', { address: signer.address, signature: '0x00' }, { token: session.accessToken })).body).toEqual(badRequest('CHALLENGE_NOT_FOUND'));
     expect((await e2e.post('/wallets/challenge', { address: signer.address })).status).toBe(401);
-    expect((await e2e.post('/wallets/challenge', {}, { token: session.accessToken })).body).toEqual(badRequest(['address should not be empty']));
+    expect((await e2e.post('/wallets/challenge', {}, { token: session.accessToken })).body).toEqual(badRequest(['address should not be empty', 'address must be a string']));
   });
 
   describe('profile', () => {

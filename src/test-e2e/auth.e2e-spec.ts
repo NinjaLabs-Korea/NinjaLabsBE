@@ -176,7 +176,7 @@ describeDb('auth over HTTP (e2e)', () => {
     it('missing / unknown refresh tokens: 400 for a missing field, 401 for an unknown token', async () => {
       const missing = await e2e.post('/auth/refresh', {});
       expect(missing.status).toBe(400);
-      expect(missing.body).toEqual({ statusCode: 400, error: 'Bad Request', message: ['refreshToken should not be empty'] });
+      expect(missing.body).toEqual({ statusCode: 400, error: 'Bad Request', message: ['refreshToken should not be empty', 'refreshToken must be a string'] });
       expect((await e2e.post('/auth/refresh', { refreshToken: 'nope' })).status).toBe(401);
     });
   });

@@ -107,13 +107,15 @@ export class UsersService {
       [u.id],
     );
 
+    // soft delete된 바운티는 공개 프로필 어디에도 나오지 않는다 (completedBounties와 같은 기준) — JOIN 조건에 두어 FILTER가 그 행을 버리고,
+    // NFT는 남기되 그 바운티 제목은 NULL이 된다 (FE는 제목 없는 NFT를 "Ninja NFT"로 보여준다)
     const agents = await this.db.query(
       `SELECT a.id, a.name, a.description, a.status, a.wallet_address,
               COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title))
                        FILTER (WHERE b.id IS NOT NULL), '[]') AS completed_bounties
          FROM agent a
          LEFT JOIN bounty_submission s ON s.agent_id = a.id AND s.status = 'APPROVED'
-         LEFT JOIN bounty b ON b.id = s.bounty_id
+         LEFT JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL
         WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL
         GROUP BY a.id`,
       [u.id],
@@ -124,7 +126,7 @@ export class UsersService {
               n.metadata_uri, n.mint_tx_hash, n.attach_tx_hash,
               n.minted_at, n.attached_at, b.title AS bounty_title
          FROM nft n
-         LEFT JOIN bounty b ON b.id = n.bounty_id
+         LEFT JOIN bounty b ON b.id = n.bounty_id AND b.deleted_at IS NULL
         WHERE n.owner_user_id = $1
         ORDER BY n.created_at`,
       [u.id],

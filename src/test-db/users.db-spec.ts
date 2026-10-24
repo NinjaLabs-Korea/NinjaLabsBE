@@ -163,6 +163,7 @@ describeDb('users on a real database', () => {
     const [liveAgent, deletedAgent] = [await agent(false), await agent(true)];
 
     await submission(await bounty(admin, 'by-agent'), { agentId: liveAgent });
+    await submission(await bounty(admin, 'by-agent-deleted-bounty', { deleted: true }), { agentId: liveAgent });
     await submission(await bounty(admin, 'by-deleted-agent'), { agentId: deletedAgent });
     await submission(await bounty(admin, 'rejected'), { userId: owner }, 'REJECTED');
     await submission(await bounty(admin, 'in-review'), { userId: owner }, 'IN_REVIEW');
@@ -174,7 +175,32 @@ describeDb('users on a real database', () => {
     expect((profile.completedBounties as Array<{ title: string }>).map((row) => row.title).sort()).toEqual(['by-agent', 'mine']);
     const agents = profile.agents as Array<{ id: string; completed_bounties: Array<{ title: string }> }>;
     expect(agents.map((a) => a.id)).toEqual([liveAgent]);
+    // the agent's list drops the soft-deleted bounty too (it used to leak its id and title here)
     expect(agents[0].completed_bounties.map((b) => b.title)).toEqual(['by-agent']);
+  });
+
+  it('publicProfile nfts keep a completion NFT of a soft-deleted bounty but drop the bounty title (no bounty id is exposed)', async () => {
+    const admin = await createUser(db, { isAdmin: true });
+    const nickname = `Nft${unique().slice(0, 8)}`;
+    const owner = await createUser(db, { nickname });
+    const wallet = await createPrimaryWallet(db, owner);
+    const nft = async (nftType: string, bountyId: string | null, submissionId: string | null) => (await db.query<{ id: string }>(
+      `INSERT INTO nft (owner_user_id, owner_wallet_id, bounty_id, submission_id, nft_type, contract_address, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'inj1contract', clock_timestamp()) RETURNING id`,
+      [owner, wallet.id, bountyId, submissionId, nftType])).rows[0].id;
+
+    const parent = await nft('NINJA_PARENT', null, null);
+    const liveBounty = await bounty(admin, 'live-nft-bounty');
+    const live = await nft('BOUNTY_COMPLETION_CHILD', liveBounty, await submission(liveBounty, { userId: owner }));
+    const goneBounty = await bounty(admin, 'deleted-nft-bounty', { deleted: true });
+    const gone = await nft('BOUNTY_COMPLETION_CHILD', goneBounty, await submission(goneBounty, { userId: owner }));
+
+    const profile = await users.publicProfile(nickname);
+    const nfts = profile.nfts as Array<Record<string, unknown>>;
+    expect(nfts.map((n) => [n.id, n.bounty_title])).toEqual([[parent, null], [live, 'live-nft-bounty'], [gone, null]]);
+    for (const n of nfts) expect(n).not.toHaveProperty('bounty_id');
+    expect(JSON.stringify(profile)).not.toContain('deleted-nft-bounty');
+    expect(JSON.stringify(profile)).not.toContain(goneBounty);
   });
 
   it('nickname availability and save use the active-user unique index: a deleted user frees the name, a live one is NICKNAME_TAKEN', async () => {

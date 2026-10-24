@@ -62,6 +62,9 @@ describe('AgentApiKeyService', () => {
     const [lookup, touch] = txQuery.mock.calls.map(([sql]) => sql as string);
     expect(lookup).not.toContain('FOR UPDATE');
     expect(lookup).toContain('a.deleted_at IS NULL');
+    // the owner must be an active, undeleted account (a suspended owner's agents stop with them)
+    expect(lookup).toContain('JOIN "user" u ON u.id = a.owner_user_id');
+    expect(lookup).toContain("u.status = 'ACTIVE' AND u.deleted_at IS NULL");
     expect(touch).toContain('UPDATE agent_api_key');
     expect(touch).toContain("WHERE id = $1 AND status = 'ACTIVE' AND expires_at > now()");
     expect(touch).not.toMatch(/UPDATE agent\b/);

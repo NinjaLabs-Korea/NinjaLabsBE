@@ -299,7 +299,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     });
   });
 
-  it.failing('an agent whose owner is suspended or deleted can no longer use its API key (401 INVALID_AGENT_API_KEY)', async () => {
+  it('an agent whose owner is suspended or deleted can no longer use its API key (401 INVALID_AGENT_API_KEY)', async () => {
     const owner = await e2e.login();
     const signer = Wallet.createRandom();
     const registered = await e2e.post('/agents', { name: 'orphan-bot', walletAddress: signer.address }, { token: owner.accessToken });

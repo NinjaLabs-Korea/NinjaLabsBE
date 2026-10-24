@@ -38,6 +38,8 @@ export class AgentApiKeyService {
 
     const presentedHash = Buffer.from(hashAgentApiKey(rawKey), 'hex');
 
+    // 소유자가 정지(SUSPENDED/WITHDRAWN)되거나 탈퇴(deleted_at)하면 그 에이전트의 키도 즉시 거부한다 — 소유자 본인의 refresh/exchange가
+    // 거부되는 것과 같은 기준 (auth.service.ts). 정지가 풀리면 키는 다시 통한다 (키를 폐기하지는 않는다).
     // 잠금/트랜잭션 없음 — 인증은 읽기이고 last_used_at 갱신은 조건부 단일 UPDATE라 잠글 이유가 없다.
     // (예전의 FOR UPDATE는 모든 Agent API 요청을 키 행에 직렬화해 rotate/revoke와 경합하는 병목이었다.)
     const candidates = await this.db.query<AgentApiKeyRow>(
@@ -46,7 +48,9 @@ export class AgentApiKeyService {
               a.wallet_address, a.status AS agent_status
          FROM agent_api_key k
          JOIN agent a ON a.id = k.agent_id
-        WHERE k.key_prefix = $1 AND a.deleted_at IS NULL`,
+         JOIN "user" u ON u.id = a.owner_user_id
+        WHERE k.key_prefix = $1 AND a.deleted_at IS NULL
+          AND u.status = 'ACTIVE' AND u.deleted_at IS NULL`,
       [agentApiKeyPrefix(rawKey)],
     );
 

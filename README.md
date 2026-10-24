@@ -156,6 +156,12 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres npm run
 `TEST_DATABASE_URL`이 없으면 로컬은 skip, `CI=true`면 실패한다 (`test:db`와 동일). CI의 `e2e-tests` 잡이 같은 `postgres:16` 서비스로 실행한다.
 새 전역 파이프/필터/미들웨어는 `main.ts`가 아니라 `configureApp()`에 추가해야 e2e가 검증한다.
 
+### 요청 ID (`X-Request-Id`)
+
+`configureApp()`의 첫 미들웨어(`src/common/http/request-id.ts`)가 모든 응답에 `X-Request-Id`를 붙인다. 들어온 헤더가 `^[A-Za-z0-9._-]{8,64}$`이면 그대로 쓰고,
+아니면(없음·형식 오류·CR/LF 포함·중복 헤더) `randomUUID()`로 새로 만든다. CORS `exposedHeaders`에 포함돼 브라우저 FE가 읽을 수 있다.
+요청 로그 줄(`HTTP`)과 5xx 줄(`HttpException`) 끝에 ` rid=<id>`가 붙어, 장애 시 사용자가 알려준 ID로 두 줄을 묶어 찾는다. 응답 본문과 5xx 버스트 알림 본문은 바뀌지 않는다.
+
 ### 세션: refresh 토큰 HttpOnly 쿠키 (`X-Ninja-Session: cookie`)
 
 FE는 `/api/auth/*`를 Next.js rewrite로 이 서버의 `/auth/*`에 프록시하고, 요청에 `X-Ninja-Session: cookie`를 붙여 쿠키 모드를 켠다.

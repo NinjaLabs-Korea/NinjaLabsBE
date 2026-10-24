@@ -11,9 +11,10 @@ import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { asHttpError } from '../database/pg-errors';
 import { logSafe } from '../logging/log-safe';
+import { ridSuffix } from './request-id';
 
 /**
- * 요청 한 줄 로그 — method path status duration(ms). `/health`(Railway 폴링)는 제외.
+ * 요청 한 줄 로그 — method path status duration(ms) rid=<X-Request-Id>. `/health`(Railway 폴링)는 제외.
  * 경로만 기록하고 쿼리스트링·본문·헤더는 남기지 않는다. 가드에서 거절된 요청(401/403)은
  * 인터셉터 단계에 오지 않으므로 여기 찍히지 않는다 — 5xx는 HttpExceptionFilter가 따로 기록한다.
  *
@@ -34,7 +35,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
 
     const startedAt = Date.now();
     const log = (status: number) =>
-      this.logger.log(`${logSafe(req.method, 16)} ${logSafe(path)} ${status} ${Date.now() - startedAt}ms`);
+      this.logger.log(`${logSafe(req.method, 16)} ${logSafe(path)} ${status} ${Date.now() - startedAt}ms${ridSuffix(req)}`);
     return next.handle().pipe(
       tap({
         next: () => {

@@ -159,4 +159,54 @@ describeDb('account withdrawal on a real database', () => {
     const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [owner])).rows[0].nickname;
     await expect(withdrawal.withdraw(owner, nickname)).rejects.toMatchObject({ message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
   });
+
+  it('withdraws submissions still under review (they can no longer be approved or block completion); reviewed ones stay', async () => {
+    const builder = await createUser(db);
+    await createPrimaryWallet(db, builder);
+    const open = await openBounty();
+    const application = await applications.apply(open.bountyId, builder, 'hi');
+    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+    const submission = await submissions.submit(open.bountyId, builder, { submissionUrl: 'https://x.test/open', description: 'd' });
+    const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [builder])).rows[0].nickname;
+
+    await expect(withdrawal.withdraw(builder, nickname)).resolves.toEqual({ ok: true });
+
+    expect((await db.query<{ status: string }>(`SELECT status FROM bounty_submission WHERE id = $1`, [submission.id])).rows[0].status).toBe('WITHDRAWN');
+    await expect(submissionReview.review(submission.id, 'APPROVE', undefined, adminId)).rejects.toBeDefined();
+    expect((await db.query<{ status: string }>(`SELECT status FROM bounty_application WHERE id = $1`, [application.id])).rows[0].status).toBe('APPROVED');
+  });
+
+  it('a payout request racing a withdrawal waits for it and then refuses (no open payout to a withdrawn user)', async () => {
+    const builder = await createUser(db);
+    await createPrimaryWallet(db, builder);
+    const won = await openBounty();
+    const application = await applications.apply(won.bountyId, builder, 'hi');
+    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+    const submission = await submissions.submit(won.bountyId, builder, { submissionUrl: 'https://x.test/race', description: 'd' });
+    await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
+
+    // Hold the withdrawal's first lock (the user row, FOR UPDATE) open in another transaction, start the payout request,
+    // then finish the withdrawal's writes and commit.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => { locked = resolve; });
+    const withdrawing = db.tx(async (tx) => {
+      await tx.query(`SELECT id FROM "user" WHERE id = $1 FOR UPDATE`, [builder]);
+      locked();
+      await released;
+      await tx.query(`UPDATE "user" SET status = 'WITHDRAWN', deleted_at = now() WHERE id = $1`, [builder]);
+      await tx.query(`UPDATE wallet SET disconnected_at = now() WHERE user_id = $1`, [builder]);
+    });
+    await isLocked;
+    let settled = false;
+    const request = rewards.requestPayout(won.rewardId, submission.id, '1000', adminId).finally(() => { settled = true; });
+    request.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(settled).toBe(false); // blocked on the user row
+    release();
+    await withdrawing;
+    await expect(request).rejects.toMatchObject({ status: 404, message: 'APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND' });
+    expect((await db.query(`SELECT 1 FROM payout WHERE submission_id = $1`, [submission.id])).rowCount).toBe(0);
+  });
 });

@@ -47,13 +47,16 @@ describe('AccountWithdrawalService', () => {
 
     const sqls = calls.map(([sql]) => sql);
     const userUpdate = calls.find(([sql]) => sql.includes(`SET status = 'WITHDRAWN'`))!;
-    expect(userUpdate[1]).toEqual([userId, 'deleted:1700000000000:']);
+    expect(userUpdate[1]).toEqual([userId, 'deleted:1700000000000:', 'withdrawn_']);
     expect(userUpdate[0]).toContain('google_id = left($2 || google_id, 255)');
     expect(userUpdate[0]).toContain('email = left($2 || email, 320)');
     expect(userUpdate[0]).toContain('deleted_at = now()');
     expect(sqls.some((sql) => sql.includes('UPDATE auth_session SET revoked_at = now()'))).toBe(true);
     expect(sqls.some((sql) => sql.includes('UPDATE wallet SET disconnected_at = now()'))).toBe(true);
     expect(sqls.some((sql) => sql.includes(`UPDATE agent_api_key SET status = 'REVOKED'`))).toBe(true);
+    const submissionUpdate = calls.find(([sql]) => sql.includes(`UPDATE bounty_submission SET status = 'WITHDRAWN'`))!;
+    expect(submissionUpdate[1]).toEqual([userId, ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
+    expect(submissionUpdate[0]).toContain('owner_user_id = $1');
     expect(sqls.some((sql) => sql.includes(`UPDATE bounty_application SET status = 'WITHDRAWN'`) && sql.includes(`status = 'PENDING'`))).toBe(true);
     expect(record.mock.calls).toEqual([
       [userId, 'AGENT_REVOKED', 'agent', 'a1', tx],

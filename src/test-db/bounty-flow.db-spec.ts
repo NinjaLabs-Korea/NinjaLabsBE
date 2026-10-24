@@ -31,7 +31,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     nfts = new NftsService(db, config);
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
     rewards = new RewardsService(db, nfts, audit);
-    applications = new ApplicationsService(db);
+    applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
     submissions = new SubmissionsService(db);
     submissionReview = new SubmissionReviewService(db, audit);
@@ -210,6 +210,45 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     const childJobs = await db.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM nft_job j JOIN nft n ON n.id = j.nft_id WHERE n.bounty_id = $1 AND j.job_type = 'MINT_CHILD'`, [bountyId]);
     expect(childJobs.rows[0].n).toBe(2);
+  });
+
+  it('re-applying after withdrawal reopens the same row (PENDING, new message, review fields cleared, APPLICATION_REAPPLIED) only while the bounty accepts applications', async () => {
+    const { bountyId, rewardId } = await createFundedBounty();
+    await rewards.confirmDeposit(rewardId, fakeTxHash(), '1000', adminId);
+    await bounties.transition(bountyId, 'OPEN', adminId);
+    const builderId = await createUser(db);
+
+    const first = await applications.apply(bountyId, builderId, 'first try', 'https://x.test/old');
+    await expect(applications.withdraw(first.id, builderId)).resolves.toEqual({ id: first.id, status: 'WITHDRAWN' });
+    // simulate leftover review fields (e.g. an older review cycle) — re-application must clear them
+    await db.query(`UPDATE bounty_application SET reviewed_by = $2, reviewed_at = now(), review_note = 'old note', applied_at = now() - interval '1 day' WHERE id = $1`, [first.id, adminId]);
+
+    const reopened = await applications.apply(bountyId, builderId, 'second try');
+    expect(reopened).toEqual({ id: first.id, status: 'PENDING', applied_at: expect.any(Date) });
+    const row = await db.query(`SELECT status, message, portfolio_url, reviewed_by, reviewed_at, review_note, applied_at > now() - interval '1 minute' AS fresh
+      FROM bounty_application WHERE id = $1`, [first.id]);
+    expect(row.rows[0]).toEqual({ status: 'PENDING', message: 'second try', portfolio_url: null, reviewed_by: null, reviewed_at: null, review_note: null, fresh: true });
+    const count = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM bounty_application WHERE bounty_id = $1 AND applicant_user_id = $2`, [bountyId, builderId]);
+    expect(count.rows[0].n).toBe(1);
+    expect(await auditActions(db, 'bounty_application', first.id)).toEqual(['APPLICATION_REAPPLIED']);
+
+    // a PENDING (or reviewed) application is still a conflict
+    await expect(applications.apply(bountyId, builderId, 'third')).rejects.toMatchObject({ message: 'ALREADY_APPLIED' });
+    await applicationReview.review(first.id, 'REJECTED', 'no', adminId);
+    await expect(applications.apply(bountyId, builderId, 'after reject')).rejects.toMatchObject({ message: 'ALREADY_APPLIED' });
+
+    // withdrawn on a bounty that no longer accepts applications → same checks as a new application, row stays WITHDRAWN
+    const other = await createFundedBounty();
+    await rewards.confirmDeposit(other.rewardId, fakeTxHash(), '1000', adminId);
+    await bounties.transition(other.bountyId, 'OPEN', adminId);
+    const app2 = await applications.apply(other.bountyId, builderId, 'x');
+    await applications.withdraw(app2.id, builderId);
+    await db.query(`UPDATE bounty SET application_deadline = now() - interval '1 minute' WHERE id = $1`, [other.bountyId]);
+    await expect(applications.apply(other.bountyId, builderId, 'late')).rejects.toMatchObject({ message: 'APPLICATION_DEADLINE_PASSED' });
+    await db.query(`UPDATE bounty SET application_deadline = NULL WHERE id = $1`, [other.bountyId]);
+    await bounties.transition(other.bountyId, 'SUBMISSION_CLOSED', adminId);
+    await expect(applications.apply(other.bountyId, builderId, 'closed')).rejects.toMatchObject({ message: 'BOUNTY_NOT_OPEN' });
+    expect((await db.query<{ status: string }>(`SELECT status FROM bounty_application WHERE id = $1`, [app2.id])).rows[0].status).toBe('WITHDRAWN');
   });
 
   async function approvedWinner(bountyId: string, index: number): Promise<string> {

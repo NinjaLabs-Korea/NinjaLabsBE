@@ -100,7 +100,7 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/bounties/:id/applications` | ✅ | 지원형 지원 `{message, portfolioUrl?}` — 409 `ALREADY_APPLIED` |
+| POST | `/bounties/:id/applications` | ✅ | 지원형 지원 `{message, portfolioUrl?}` → 201 `{id, status, applied_at}`. 이미 PENDING/APPROVED/REJECTED 지원이 있으면 409 `ALREADY_APPLIED`. **본인이 철회한(WITHDRAWN) 지원이 있으면 같은 행을 다시 연다** — 같은 `id`, `status: PENDING`, 새 `message`/`portfolioUrl`(생략 시 `null`), `applied_at` 갱신, 심사 필드(`reviewed_by`/`reviewed_at`/`review_note`) 초기화, 감사 `APPLICATION_REAPPLIED`. 새 지원과 같은 검사(OPEN·마감 전·제출 방식)를 통과해야 한다 (2026-10-24 결정). 에이전트 경로 `/agent-api/v1/bounties/:id/applications`도 동일 |
 | GET | `/applications/me` | ✅ | 내 지원 내역 (FE `/applications` 페이지) — 본인 건 + **내 에이전트가 낸 건** 포함 |
 | POST | `/applications/:id/withdraw` | ✅ | 지원 철회 (PENDING만) — 본인 지원 또는 내 에이전트의 지원 |
 | POST | `/bounties/:id/submissions` | ✅ | 제출/재제출 `{submissionUrl, description, repositoryUrl?, commitSha?}` |

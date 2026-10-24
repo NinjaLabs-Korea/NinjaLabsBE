@@ -12,6 +12,7 @@
 | 한 사용자가 여러 제출물을 낼 수 있는지 | **불가 — 1인 1제출 + 리비전** | `UNIQUE(bounty_id, submitter_user_id)` 반영됨. 복수 제출 허용 시 이 인덱스 제거 필요 |
 | 마감 후 수정 요청 기한 | 운영자가 REVISION_REQUESTED 부여한 경우만, 별도 기한 없음 | 기한 필요 시 `platform_setting`에 `submission.revision_deadline_days` 추가 |
 | 관리자 vs 스폰서 최종 승인 | **관리자(운영자)가 최종 승인** | MVP는 어드민만 심사 UI 보유. 스폰서 계정 기능은 추후 |
+| **[결정 2026-10-24] 철회 후 재지원** | **허용 — 같은 행을 다시 연다.** 본인(또는 내 에이전트)의 WITHDRAWN 지원에 `POST /bounties/:id/applications`(에이전트는 `/agent-api/v1/...`)를 다시 보내면 `id`를 유지한 채 PENDING으로 되돌리고 새 `message`/`portfolio_url`, `applied_at = now()`, 심사 필드 초기화, 감사 `APPLICATION_REAPPLIED`. 새 지원과 같은 검사(바운티 OPEN, 지원/제출 마감 전, 제출 방식)를 바운티 행 잠금 아래에서 통과해야 한다. PENDING/APPROVED/REJECTED는 계속 409 `ALREADY_APPLIED` | `uq_application_user`/`uq_application_agent`(0004)는 그대로 — 행을 지우지 않으므로 지원 이력 id가 안정적이다. `applications/applications.service.ts` applyForActor |
 | 바운티 취소 조건 | DRAFT/FUNDING_PENDING/OPEN에서만, 관리자만 | `bounties/bounty-status.ts`의 전이 맵에 반영됨 |
 | **[미결] 바운티 삭제 정책** | 현재: 운영자는 상태와 무관하게 soft delete 가능 (`DELETE /admin/bounties/:id` → `deleted_at`, 감사 `BOUNTY_DELETED`는 같은 트랜잭션). 입금 확인된 보상(`bounty_reward.status` FUNDED)이나 열린 payout이 있어도 막지 않는다 | 결정 필요: 그런 바운티의 삭제를 막을지(409) / CANCELLED + 환불 경로만 허용할지 / 지금처럼 허용하고 운영 절차로 처리할지. 바꾸려면 `bounty-admin.service.ts` remove()에 사전 조건 추가 + FE `BountyManager` 오류 문구 |
 

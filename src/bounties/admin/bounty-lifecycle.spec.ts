@@ -89,7 +89,7 @@ describe('Bounty lifecycle ordering', () => {
   it.each(['submission_deadline', 'application_deadline'])('blocks new applications after %s', async (field) => {
     const query = jest.fn().mockResolvedValue({ rowCount: 1, rows: [{ application_required: true, status: 'OPEN', submission_mode: 'DIRECT', [field]: '2020-01-01' }] });
     const { db, dbQuery } = dbWith(query);
-    const service = new ApplicationsService(db as never);
+    const service = new ApplicationsService(db as never, { record: jest.fn() } as never);
     await expect(service.apply('b', 'u', 'Apply')).rejects.toThrow('APPLICATION_DEADLINE_PASSED');
     expect(query).toHaveBeenCalledTimes(1);
     expect(dbQuery).not.toHaveBeenCalled();

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { isUniqueViolation } from '../../common/database/pg-errors';
 import { BountyActor } from '../bounty-actor';
@@ -11,10 +12,14 @@ import { BountyActor } from '../bounty-actor';
 /**
  * 지원형 바운티(application_required = true) 참가 신청
  * 상태 흐름: PENDING → APPROVED / REJECTED (본인 철회 시 WITHDRAWN)
+ * 재지원: WITHDRAWN → PENDING (같은 행을 다시 연다 — id 유지, 심사 필드 초기화, 감사 `APPLICATION_REAPPLIED`). docs/decisions.md 참고
  */
 @Injectable()
 export class ApplicationsService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly audit: AuditService,
+  ) {}
 
   async apply(bountyId: string, userId: string, message: string, portfolioUrl?: string) {
     return this.applyForActor(bountyId, BountyActor.user(userId), message, portfolioUrl);
@@ -49,6 +54,26 @@ export class ApplicationsService {
       }
       if ([bounty.rows[0].submission_deadline, bounty.rows[0].application_deadline].some((date) => date && new Date(date).getTime() <= Date.now())) throw new BadRequestException('APPLICATION_DEADLINE_PASSED');
       actor.assertAllowedBy(bounty.rows[0].submission_mode);
+
+      // 바운티 행 잠금(FOR UPDATE) 아래라 같은 주체의 동시 지원은 여기서 직렬화된다
+      const existing = await tx.query<{ id: string; status: string }>(
+        `SELECT id, status FROM bounty_application
+          WHERE bounty_id = $1 AND ${actor.applicationColumn} = $2 FOR UPDATE`,
+        [bountyId, actor.id],
+      );
+      if (existing.rowCount) {
+        if (existing.rows[0].status !== 'WITHDRAWN') throw new ConflictException('ALREADY_APPLIED');
+        const reopened = await tx.query(
+          `UPDATE bounty_application
+              SET status = 'PENDING', message = $2, portfolio_url = $3, applied_at = now(),
+                  reviewed_by = NULL, reviewed_at = NULL, review_note = NULL
+            WHERE id = $1 AND status = 'WITHDRAWN'
+          RETURNING id, status, applied_at`,
+          [existing.rows[0].id, message, portfolioUrl ?? null],
+        );
+        await this.audit.record(actor.userId ?? undefined, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
+        return reopened.rows[0];
+      }
 
       try {
         const r = await tx.query(

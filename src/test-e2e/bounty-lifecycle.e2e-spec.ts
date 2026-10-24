@@ -305,6 +305,24 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
       expect((await e2e.get('/agent-api/v1/me', { token: rotated.body.apiKey })).status).toBe(401);
       expect((await e2e.post(`/agents/${b.agentId}/keys/rotate`, undefined, { token: stranger.accessToken })).status).toBe(404);
     });
+
+    it('an agent re-applies via /agent-api/v1 after its owner withdrew the application: same row reopened as PENDING', async () => {
+      const owner = await e2e.login();
+      const id = await createBounty(bountyForm({ submissionMode: 'agent', reward: { amount: 0, currency: 'INJ' } }));
+      expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
+      const bot = await registerAgent(owner, 'gamma-bot');
+      const applied = await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'gamma applies' }, { token: bot.apiKey });
+      expect(applied.status).toBe(201);
+      await e2e.post(`/applications/${applied.body.id}/withdraw`, undefined, { token: owner.accessToken });
+      const again = await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'gamma again', portfolioUrl: 'https://gamma.example' }, { token: bot.apiKey });
+      expect(again.status).toBe(201);
+      expect(again.body).toMatchObject({ id: applied.body.id, status: 'PENDING' });
+      expect((await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'dup' }, { token: bot.apiKey })).status).toBe(409);
+      const row = await e2e.db.query(`SELECT status, message, portfolio_url FROM bounty_application WHERE id = $1`, [applied.body.id]);
+      expect(row.rows[0]).toEqual({ status: 'PENDING', message: 'gamma again', portfolio_url: 'https://gamma.example' });
+      const audit = await e2e.get(`/admin/audit-logs?entityType=bounty_application&entityId=${applied.body.id}`, asAdmin);
+      expect(audit.body.items.map((i: { action: string }) => i.action)).toEqual(['APPLICATION_REAPPLIED']);
+    });
   });
 
   it('an agent whose owner is suspended or deleted can no longer use its API key (401 INVALID_AGENT_API_KEY)', async () => {
@@ -327,7 +345,33 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await e2e.get('/agent-api/v1/me', { token: verified.body.apiKey })).status).toBe(401);
   });
 
-  it.todo('re-applying after withdrawing an application — product decision: uq_application_user/uq_application_agent (0004) keep the WITHDRAWN row, so POST /bounties/:id/applications answers 409 ALREADY_APPLIED forever; decide whether withdrawal is final or the row should be reopened');
+  it('re-applying after withdrawal reopens the same application (201 PENDING, same id, review cleared, APPLICATION_REAPPLIED); PENDING stays 409; closed bounty refuses', async () => {
+    const builder = await e2e.login();
+    const id = await createBounty(bountyForm({ reward: { amount: 0, currency: 'INJ' } }));
+    expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
+
+    const first = await e2e.post(`/bounties/${id}/applications`, applyBody('first', 'https://old.example'), { token: builder.accessToken });
+    expect(first.status).toBe(201);
+    expect((await e2e.post(`/applications/${first.body.id}/withdraw`, undefined, { token: builder.accessToken })).body).toEqual({ id: first.body.id, status: 'WITHDRAWN' });
+    await e2e.db.query(`UPDATE bounty_application SET review_note = 'stale', reviewed_at = now() WHERE id = $1`, [first.body.id]);
+
+    const again = await e2e.post(`/bounties/${id}/applications`, applyBody('second', 'https://new.example'), { token: builder.accessToken });
+    expect(again.status).toBe(201);
+    expect(again.body).toEqual({ id: first.body.id, status: 'PENDING', applied_at: expect.any(String) });
+    const mine = await e2e.get('/applications/me', { token: builder.accessToken });
+    expect(mine.body).toEqual([expect.objectContaining({ id: first.body.id, status: 'PENDING', message: 'second', review_note: null, reviewed_at: null, bounty_id: id })]);
+    const audit = await e2e.get(`/admin/audit-logs?entityType=bounty_application&entityId=${first.body.id}`, asAdmin);
+    expect(audit.body.items).toEqual([expect.objectContaining({ action: 'APPLICATION_REAPPLIED', actor_user_id: builder.userId })]);
+
+    expect((await e2e.post(`/bounties/${id}/applications`, applyBody('third'), { token: builder.accessToken })).body)
+      .toEqual({ statusCode: 409, error: 'Conflict', message: 'ALREADY_APPLIED' });
+
+    // withdrawn again, then the bounty closes: re-application runs the same checks as a new one
+    await e2e.post(`/applications/${first.body.id}/withdraw`, undefined, { token: builder.accessToken });
+    expect((await transition(id, 'SUBMISSION_CLOSED')).body.status).toBe('SUBMISSION_CLOSED');
+    expect((await e2e.post(`/bounties/${id}/applications`, applyBody('late'), { token: builder.accessToken })).body).toEqual(badRequest('BOUNTY_NOT_OPEN'));
+    expect((await e2e.get('/applications/me', { token: builder.accessToken })).body[0].status).toBe('WITHDRAWN');
+  });
 
   describe('h. admin guard', () => {
     it('a non-admin gets 403 ADMIN_ONLY on every /admin route; no token is 401', async () => {

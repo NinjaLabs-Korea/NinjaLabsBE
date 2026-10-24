@@ -1,6 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { AuthController } from './auth.controller';
-import { normalizeRefreshTtl, refreshTtlSeconds } from './auth.service';
+import { normalizeRefreshTtl, refreshTtlSeconds } from './refresh-ttl';
 
 const COOKIE = { 'x-ninja-session': 'cookie' };
 const CLEARED = 'ninja_rt=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0';

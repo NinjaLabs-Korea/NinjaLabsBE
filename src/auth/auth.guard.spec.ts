@@ -2,7 +2,8 @@ import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { DatabaseService } from '../common/database/database.service';
 import { AuthGuard } from './auth.guard';
-import { AuthService, SessionUser, USER_STATUS_CACHE_MAX } from './auth.service';
+import { AuthService, SessionUser } from './auth.service';
+import { USER_STATUS_CACHE_MAX } from './user-status-cache';
 
 /**
  * 실제 JwtService로 서명한 토큰을 AuthGuard에 넣어 본다 — OAuth state JWT는 같은 시크릿으로 서명되지만

@@ -4,7 +4,7 @@
  * 여기를 바꾸면 같이 움직이는 곳 (전부 이 파일을 import한다 — 사본을 새로 쓰지 말 것):
  *   - rewards/rewards.service.ts        requestPayout(배정 상한), markApproved/markPaid(전이 가능 상태), advanceRewardStatus(보상 PAID 판정)
  *   - rewards/payout.worker.ts          승인 대기 경고
- *   - bounties/admin/bounty-lifecycle.service.ts   COMPLETED 전이 차단(UNPAID_WINNERS)
+ *   - bounties/admin/bounty-lifecycle.service.ts   COMPLETED·CANCELLED 전이 차단(UNPAID_WINNERS)
  *   - bounties/admin/bounty-admin.service.ts       삭제 차단(BOUNTY_HAS_OPEN_FUNDS)
  *   - bounties/admin/bounty-operations.query.ts    운영 화면 allocated_amount / cap
  *   - users/account-withdrawal.service.ts          탈퇴 차단(열린 payout, 미요청 보상)
@@ -30,7 +30,7 @@ export const AWAITING_APPROVAL_PAYOUT_STATUSES = ['REQUESTED', 'AWAITING_MULTISI
 export const SENDABLE_PAYOUT_STATUSES = ['APPROVED', 'BROADCASTING'] as const satisfies readonly PayoutRowStatus[];
 
 /**
- * 진행 중(열린) payout — 하나라도 있으면 탈퇴·바운티 삭제·환불 기록·mainnet 전환·COMPLETED 전이를 막는다.
+ * 진행 중(열린) payout — 하나라도 있으면 탈퇴·바운티 삭제·환불 기록·mainnet 전환·COMPLETED/CANCELLED 전이를 막는다.
  * 사람이 승인/송금을 마쳐야 끝나는 상태들이다.
  */
 export const OPEN_PAYOUT_STATUSES = [...AWAITING_APPROVAL_PAYOUT_STATUSES, ...SENDABLE_PAYOUT_STATUSES] as const;
@@ -142,7 +142,7 @@ export function payoutStatusSql(submission = 's', bounty = 'b'): string {
 }
 
 /**
- * 승인된 제출 `<s>`가 아직 받을 몫을 다 받지 못했나 (payoutStatusSql이 PENDING/PARTIALLY_PAID) — COMPLETED 전이 차단(UNPAID_WINNERS)이
+ * 승인된 제출 `<s>`가 아직 받을 몫을 다 받지 못했나 (payoutStatusSql이 PENDING/PARTIALLY_PAID) — COMPLETED·CANCELLED 전이 차단(UNPAID_WINNERS)이
  * 응답의 payoutStatus와 같은 규칙을 쓰게 한다. 보상이 소진됐거나 수상이 취소된 제출은 막지 않는다.
  */
 export function owesUnpaidRewardSql(submission = 's', bounty = 'b'): string {

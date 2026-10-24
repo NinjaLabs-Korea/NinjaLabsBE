@@ -82,18 +82,19 @@ describeDb('bounty rules over HTTP (e2e)', () => {
     expect((await review(submissionId, { decision: 'START_REVIEW' })).body).toEqual(badRequest('BOUNTY_REVIEW_CLOSED'));
   });
 
-  it('cancelling an OPEN funded bounty closes participation and payouts, and the held deposit still blocks deletion', async () => {
+  it('cancelling an OPEN funded bounty closes participation, reviews and payouts, and the held deposit still blocks deletion', async () => {
     const id = await createBounty(bountyForm({ reward: { amount: 1, currency: 'INJ' } }));
     const rewardId: string = (await e2e.get(`/admin/bounties/${id}/operations`, asAdmin)).body.rewards[0].id;
     expect((await e2e.post(`/admin/rewards/${rewardId}/confirm-deposit`, { txHash: txHash(), depositedAmount: '1000000000000000000' }, asAdmin)).status).toBe(201);
     expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
     const winner = await e2e.login();
     await e2e.onboard(winner);
+    // left unreviewed — an approved winner still owed would block the cancel (UNPAID_WINNERS, bounty-lifecycle e2e)
     const sub = await submit(id, winner, 'w');
-    expect((await review(sub.body.id, { decision: 'APPROVE' })).body.status).toBe('APPROVED');
 
     expect((await transition(id, 'CANCELLED')).body).toEqual({ id, status: 'CANCELLED' });
     expect((await submit(id, await e2e.login(), 'x')).body).toEqual(badRequest('BOUNTY_NOT_OPEN'));
+    expect((await review(sub.body.id, { decision: 'APPROVE' })).body).toEqual(badRequest('BOUNTY_REVIEW_CLOSED'));
     const payout = await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000000' }, asAdmin);
     expect(payout.body).toEqual(badRequest('BOUNTY_REVIEW_CLOSED'));
     expect((await e2e.delete(`/admin/bounties/${id}`, asAdmin)).body).toEqual({ statusCode: 409, error: 'Conflict', message: 'BOUNTY_HAS_OPEN_FUNDS' });

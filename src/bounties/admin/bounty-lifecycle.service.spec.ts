@@ -26,8 +26,8 @@ describe('BountyLifecycleService.blockers', () => {
     const { runner, query } = runnerWith({});
     await expect(lifecycle.blockers(runner, 'bounty-1', { status: 'OPEN', submission_deadline: FUTURE }))
       .resolves.toEqual({
-        blockers: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [] },
-        blockerDetails: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [] },
+        blockers: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [], CANCELLED: [] },
+        blockerDetails: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [], CANCELLED: [] },
       });
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0][1]).toEqual(['bounty-1', expect.any(Array)]);
@@ -168,9 +168,17 @@ describe('BountyAdminService.transition for every pair', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['DRAFT', 'FUNDING_PENDING', 'OPEN'])('cancelling from %s is never blocked by lifecycle counts (no CANCELLED blocker list)', async (from) => {
-    const { service } = setup(from, { pending: 2, unsubmitted: 1, unresolved: 1, unfunded: 1, unpaid: 1, unawarded: 1 }, PAST);
+  it.each(['DRAFT', 'FUNDING_PENDING', 'OPEN'])('cancelling from %s is not blocked by intake/review/funding counts (only owed winners block CANCELLED)', async (from) => {
+    const { service } = setup(from, { pending: 2, unsubmitted: 1, unresolved: 1, unfunded: 1 }, PAST);
     await expect(service.transition('b', 'CANCELLED', 'admin')).resolves.toEqual({ id: 'b', status: 'CANCELLED' });
+  });
+
+  it.each([{ unpaid: 1 }, { unawarded: 1 }])('cancelling (after a reopen) is refused while an approved winner is still owed %j — 400 UNPAID_WINNERS sentence, row untouched', async (counts) => {
+    const { service, query } = setup('OPEN', counts);
+    await expect(service.transition('b', 'CANCELLED', 'admin')).rejects.toMatchObject({
+      response: { message: ['Record completed payments for all approved winners and finish every pending payout.'] },
+    });
+    expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty SET status'))).toBe(false);
   });
 
   it('the blockers of the TARGET status are the 400 body (the full list), and the row is not updated', async () => {

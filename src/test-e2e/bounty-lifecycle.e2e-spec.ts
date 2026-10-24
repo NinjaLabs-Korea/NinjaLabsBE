@@ -196,6 +196,40 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await e2e.delete(`/admin/bounties/${bountyId}`, asAdmin)).body).toEqual({ id: bountyId });
   });
 
+  it('an approved winner still owed blocks IN_REVIEW → OPEN (reopen) → CANCELLED with the same 400 body as the COMPLETED block (docs/decisions.md 2026-10-25)', async () => {
+    const builder = await e2e.login();
+    await e2e.onboard(builder);
+    const id = await createBounty(bountyForm({ intakeEnabled: false, reward: { amount: 1, currency: 'INJ' } }));
+    const rewardId: string = (await e2e.get(`/admin/bounties/${id}/operations`, asAdmin)).body.rewards[0].id;
+    expect((await e2e.post(`/admin/rewards/${rewardId}/confirm-deposit`, { txHash: txHash(), depositedAmount: '1000000000000000000' }, asAdmin)).status).toBe(201);
+    expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
+    const sub = await e2e.post(`/bounties/${id}/submissions`, submitBody({ submissionUrl: 'https://demo.example/c', description: 'c' }), { token: builder.accessToken });
+    expect((await e2e.post(`/admin/submissions/${sub.body.id}/review`, { decision: 'APPROVE' }, asAdmin)).body).toEqual({ id: sub.body.id, status: 'APPROVED' });
+    expect((await transition(id, 'SUBMISSION_CLOSED')).body.status).toBe('SUBMISSION_CLOSED');
+    expect((await transition(id, 'IN_REVIEW')).body.status).toBe('IN_REVIEW');
+
+    const owed = badRequest(['Record completed payments for all approved winners and finish every pending payout.']);
+    const completeBlocked = await transition(id, 'COMPLETED');
+    expect(completeBlocked.status).toBe(400);
+    expect(completeBlocked.body).toEqual(owed);
+    expect((await transition(id, 'OPEN')).body).toEqual({ id, status: 'OPEN' });
+    const cancelBlocked = await transition(id, 'CANCELLED');
+    expect(cancelBlocked.status).toBe(400);
+    expect(cancelBlocked.body).toEqual(owed); // same shape and sentence — the FE shows it like the COMPLETED block
+
+    const ops = await e2e.get(`/admin/bounties/${id}/operations`, asAdmin);
+    expect(ops.body.lifecycle.allowedTransitions).toEqual(['SUBMISSION_CLOSED', 'CANCELLED']);
+    expect(ops.body.lifecycle.blockers.CANCELLED).toEqual(owed.message);
+    expect(ops.body.lifecycle.blockerDetails.CANCELLED).toEqual([{ code: 'UNPAID_WINNERS' }]);
+
+    // an open payout keeps it blocked
+    expect((await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000000' }, asAdmin)).status).toBe(201);
+    expect((await transition(id, 'CANCELLED')).body).toEqual(owed);
+    const audit = await e2e.get(`/admin/audit-logs?entityType=bounty&entityId=${id}`, asAdmin);
+    expect(audit.body.items.map((i: { action: string }) => i.action)).not.toContain('BOUNTY_CANCELLED');
+    expect((await adminRow(id)).status).toBe('OPEN');
+  });
+
   it('a deposit tx hash is never accepted as a payout tx hash (and vice versa) → 409 TX_HASH_ALREADY_USED', async () => {
     const builder = await e2e.login();
     await e2e.onboard(builder);

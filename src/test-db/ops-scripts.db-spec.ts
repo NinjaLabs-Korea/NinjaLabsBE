@@ -5,7 +5,7 @@ import { Pool } from 'pg';
 import { promisify } from 'util';
 import { run as grantAdmin } from '../../scripts/grant-admin';
 import { applyMigrations, sslOptions } from '../../scripts/migrate';
-import { run as recordRefund } from '../../scripts/record-refund';
+import { inspectReward, run as recordRefund } from '../../scripts/record-refund';
 import { run as requeueNftJobs } from '../../scripts/requeue-nft-jobs';
 import { AuditService } from '../audit/audit.service';
 import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
@@ -428,25 +428,40 @@ describeDb('ops scripts on a real database', () => {
     });
   });
 
+  /** docs/runbook.md §7.4 수동 SQL 블록을 그대로 돌린다 (payout SQL 스펙과 취소→환불 스펙이 같이 쓴다) */
+  const runbook = readFileSync(join(__dirname, '..', '..', 'docs', 'runbook.md'), 'utf8');
+  const sqlBlock = (marker: string) => {
+    const block = [...runbook.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1]).find((body) => body.includes(marker));
+    if (!block) throw new Error(`no sql block containing ${marker} in docs/runbook.md`);
+    return block;
+  };
+  /** 자리표시값 치환 → `;`로 끝나는 줄 단위 문장 (주석 줄 제거) */
+  const statements = (block: string, payoutId: string, newAmount = '1') => block
+    .split('\n').map((line) => line.replace(/^\s+/, '')).filter((line) => line && !line.startsWith('--')).join('\n')
+    .replace(/<payout id>/g, payoutId)
+    .replace(/<정정 금액>(?=,)/, newAmount) // UPDATE의 숫자 자리 (JSON 안의 것은 아래에서 문자열로)
+    .replace(/<[^>]+>/g, 'x')
+    .split(/;\s*\n/).map((sql) => sql.trim().replace(/;$/, '')).filter(Boolean);
+
+  async function runTemplate(marker: string, payoutId: string, newAmount?: string) {
+    const client = await pool.connect();
+    const results: { rowCount: number | null; rows: Record<string, unknown>[] }[] = [];
+    try {
+      for (const sql of statements(sqlBlock(marker), payoutId, newAmount)) results.push(await client.query(sql));
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+    return results;
+  }
+
   /**
    * docs/runbook.md §7.4의 수동 payout SQL 템플릿을 문서에서 그대로 꺼내 실 스키마에 돌린다 — 컬럼/상태 값/재계산이 코드와 어긋나면 여기서 깨진다.
    * (`POST /admin/payouts`는 같은 보상·제출물의 payout이 있으면 상태와 무관하게 409라 "취소 후 재요청"이 불가능하다는 것이 템플릿의 전제)
    */
   describe('docs/runbook.md manual payout SQL', () => {
-    const runbook = readFileSync(join(__dirname, '..', '..', 'docs', 'runbook.md'), 'utf8');
-    const sqlBlock = (marker: string) => {
-      const block = [...runbook.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1]).find((body) => body.includes(marker));
-      if (!block) throw new Error(`no sql block containing ${marker} in docs/runbook.md`);
-      return block;
-    };
-    /** 자리표시값 치환 → `;`로 끝나는 줄 단위 문장 (주석 줄 제거) */
-    const statements = (block: string, payoutId: string, newAmount = '1') => block
-      .split('\n').map((line) => line.replace(/^\s+/, '')).filter((line) => line && !line.startsWith('--')).join('\n')
-      .replace(/<payout id>/g, payoutId)
-      .replace(/<정정 금액>(?=,)/, newAmount) // UPDATE의 숫자 자리 (JSON 안의 것은 아래에서 문자열로)
-      .replace(/<[^>]+>/g, 'x')
-      .split(/;\s*\n/).map((sql) => sql.trim().replace(/;$/, '')).filter(Boolean);
-
     async function seedPayouts(maxWinners: number, statuses: string[]) {
       const admin = await createUser({ isAdmin: true });
       const bounty = await pool.query<{ id: string }>(
@@ -472,20 +487,6 @@ describeDb('ops scripts on a real database', () => {
         payouts.push(payout.rows[0].id);
       }
       return { rewardId: reward.rows[0].id, payouts };
-    }
-
-    async function runTemplate(marker: string, payoutId: string, newAmount?: string) {
-      const client = await pool.connect();
-      const results: { rowCount: number | null; rows: Record<string, unknown>[] }[] = [];
-      try {
-        for (const sql of statements(sqlBlock(marker), payoutId, newAmount)) results.push(await client.query(sql));
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => undefined);
-        throw err;
-      } finally {
-        client.release();
-      }
-      return results;
     }
 
     it('PAYOUT_CORRECTED_MANUAL corrects the amount in place, resets approval and records the audit row in one transaction', async () => {
@@ -658,6 +659,205 @@ describeDb('ops scripts on a real database', () => {
       expect(second.code).toBe(1);
       expect(second.out).toContain('already recorded as a refund');
       expect(await rewardStatus(a.rewardId)).toBe('FUNDED');
+    });
+
+    describe('cancel with an approved winner still owed (docs/decisions.md 2026-10-25)', () => {
+      const OWED = 'Record completed payments for all approved winners and finish every pending payout.';
+
+      /** IN_REVIEW bounty, funded 1000 reward, one approved winner — with a payout of `payout` status (or none) */
+      async function seedOwed(payout: string | null) {
+        const admin = await createUser({ isAdmin: true });
+        const bounty = await pool.query<{ id: string }>(
+          `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, max_winners, status)
+           VALUES ($1, 's', 'cancel-owed', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', 3, 'IN_REVIEW') RETURNING id`, [admin.id]);
+        const reward = await pool.query<{ id: string }>(
+          `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, deposited_amount, custody_address, status)
+           VALUES ($1, 'NATIVE', 'inj', 'INJ', 1000, 1000, $2, 'FUNDED') RETURNING id`, [bounty.rows[0].id, `inj1${'q'.repeat(38)}`]);
+        const winner = await createUser();
+        const wallet = await pool.query<{ id: string }>(
+          `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`,
+          [winner.id, `inj1${unique()}`]);
+        const submission = await pool.query<{ id: string }>(
+          `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
+           VALUES ($1, $2, 'https://example.test/s', 'd', 'APPROVED') RETURNING id`, [bounty.rows[0].id, winner.id]);
+        let payoutId: string | null = null;
+        if (payout) {
+          payoutId = (await pool.query<{ id: string }>(
+            `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by)
+             VALUES ($1, $2, $3, 300, $4, $5, $6) RETURNING id`,
+            [reward.rows[0].id, submission.rows[0].id, wallet.rows[0].id, payout, unique('owed-'), admin.id])).rows[0].id;
+        }
+        return { bountyId: bounty.rows[0].id, rewardId: reward.rows[0].id, adminId: admin.id, payoutId };
+      }
+
+      const bountyStatus = async (id: string) =>
+        (await pool.query<{ status: string }>(`SELECT status FROM bounty WHERE id = $1`, [id])).rows[0].status;
+
+      /** IN_REVIEW → OPEN (reopen) succeeds, then → CANCELLED is the 400 UNPAID_WINNERS body; the bounty stays OPEN with no BOUNTY_CANCELLED row */
+      async function expectCancelBlocked(bountyId: string, adminId: string) {
+        await expect(opsBounties.transition(bountyId, 'OPEN', adminId)).resolves.toEqual({ id: bountyId, status: 'OPEN' });
+        const refused = opsBounties.transition(bountyId, 'CANCELLED', adminId);
+        await expect(refused).rejects.toMatchObject({ status: 400, response: { statusCode: 400, error: 'Bad Request', message: [OWED] } });
+        expect(await bountyStatus(bountyId)).toBe('OPEN');
+        expect((await auditRows('bounty', bountyId)).map((r) => r.action)).toEqual(['BOUNTY_OPEN']);
+        const lifecycle = await new BountyLifecycleService().blockers(opsDb, bountyId, { status: 'OPEN', submission_deadline: new Date(Date.now() + 86_400_000) });
+        expect(lifecycle.blockerDetails.CANCELLED).toEqual([{ code: 'UNPAID_WINNERS' }]);
+        expect(lifecycle.blockers.CANCELLED).toEqual([OWED]);
+      }
+
+      it('approved winner with no payout yet: reopen → CANCELLED = 400 UNPAID_WINNERS (the refund would have returned their share)', async () => {
+        const { bountyId, adminId } = await seedOwed(null);
+        await expectCancelBlocked(bountyId, adminId);
+      });
+
+      it.each(['REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING'])('an open %s payout: reopen → CANCELLED = 400 UNPAID_WINNERS', async (status) => {
+        const { bountyId, adminId } = await seedOwed(status);
+        await expectCancelBlocked(bountyId, adminId);
+      });
+
+      it('after the winner is paid, CANCELLED succeeds and record-refund reports deposited − PAID', async () => {
+        const { bountyId, rewardId, adminId, payoutId } = await seedOwed('APPROVED');
+        await expectCancelBlocked(bountyId, adminId);
+        // what markPaid leaves behind: PAID payout, reward PARTIALLY_PAID (3 winners allowed, 300 of 1000 paid)
+        await pool.query(`UPDATE payout SET status = 'PAID', paid_at = now() WHERE id = $1`, [payoutId]);
+        await pool.query(`UPDATE bounty_reward SET status = 'PARTIALLY_PAID' WHERE id = $1`, [rewardId]);
+        await expect(opsBounties.transition(bountyId, 'CANCELLED', adminId)).resolves.toEqual({ id: bountyId, status: 'CANCELLED' });
+        const { reward, refundedAmount } = await inspectReward(pool, rewardId);
+        expect(reward).toMatchObject({ bounty_status: 'CANCELLED', reward_status: 'PARTIALLY_PAID', paid_total: '300', open_payouts: 0 });
+        expect(refundedAmount).toBe('700');
+        const res = await invoke(recordRefund, [rewardId, '--tx', freshTx(), '--yes']);
+        expect(res.code).toBe(0);
+        expect(res.out).toContain('refundedAmount=700');
+      });
+
+      it('after the award is cancelled per runbook §7.4 (PAYOUT_CANCELLED_MANUAL), CANCELLED succeeds and the whole deposit is refundable', async () => {
+        const { bountyId, rewardId, adminId, payoutId } = await seedOwed('REQUESTED');
+        await expectCancelBlocked(bountyId, adminId);
+        await runTemplate('PAYOUT_CANCELLED_MANUAL', payoutId!);
+        expect((await pool.query(`SELECT status FROM payout WHERE id = $1`, [payoutId])).rows[0].status).toBe('CANCELLED');
+        await expect(opsBounties.transition(bountyId, 'CANCELLED', adminId)).resolves.toEqual({ id: bountyId, status: 'CANCELLED' });
+        const { reward, refundedAmount } = await inspectReward(pool, rewardId);
+        expect(reward).toMatchObject({ bounty_status: 'CANCELLED', reward_status: 'FUNDED', paid_total: '0', open_payouts: 0 });
+        expect(refundedAmount).toBe('1000');
+      });
+
+      it.each(['DRAFT', 'FUNDING_PENDING', 'OPEN'])('a %s bounty without approved submissions still cancels', async (status) => {
+        const admin = await createUser({ isAdmin: true });
+        const bounty = await pool.query<{ id: string }>(
+          `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, max_winners, status)
+           VALUES ($1, 's', 'cancel-clean', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', 1, $2) RETURNING id`, [admin.id, status]);
+        await pool.query(
+          `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, deposited_amount, custody_address, status)
+           VALUES ($1, 'NATIVE', 'inj', 'INJ', 1000, $2, $3, $4)`,
+          [bounty.rows[0].id, status === 'OPEN' ? 1000 : 0, `inj1${'q'.repeat(38)}`, status === 'OPEN' ? 'FUNDED' : 'DEPOSIT_PENDING']);
+        if (status === 'OPEN') {
+          // a submission still under review is not an owed winner
+          const user = await createUser();
+          await pool.query(
+            `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
+             VALUES ($1, $2, 'https://example.test/s', 'd', 'SUBMITTED')`, [bounty.rows[0].id, user.id]);
+        }
+        await expect(opsBounties.transition(bounty.rows[0].id, 'CANCELLED', admin.id)).resolves.toEqual({ id: bounty.rows[0].id, status: 'CANCELLED' });
+        expect((await auditRows('bounty', bounty.rows[0].id)).map((r) => r.action)).toEqual(['BOUNTY_CANCELLED']);
+      });
+
+      // other routes to the same outcome (sponsor refunded a winner's share) — multi-reward, agent winners, wallet-less winners,
+      // FAILED payouts, maxWinners raised after the reward closed, headroom freed by a runbook award cancel, SUBMISSION_CLOSED reopen
+      async function seedBounty(maxWinners: number, rewards: Array<{ amount: number; status?: string; denom?: string }>) {
+        const admin = await createUser({ isAdmin: true });
+        const bounty = await pool.query<{ id: string }>(
+          `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, max_winners, status)
+           VALUES ($1, 's', 'cancel-probe', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', $2, 'IN_REVIEW') RETURNING id`, [admin.id, maxWinners]);
+        const rewardIds: string[] = [];
+        for (const rw of rewards) {
+          rewardIds.push((await pool.query<{ id: string }>(
+            `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, deposited_amount, custody_address, status)
+             VALUES ($1, 'NATIVE', $2, 'TKN', $3, $3, $4, $5) RETURNING id`,
+            [bounty.rows[0].id, rw.denom ?? 'inj', rw.amount, `inj1${'q'.repeat(38)}`, rw.status ?? 'FUNDED'])).rows[0].id);
+        }
+        return { bountyId: bounty.rows[0].id, rewardIds, adminId: admin.id };
+      }
+      async function approvedWinner(bountyId: string, opts: { agent?: boolean; wallet?: boolean } = {}) {
+        const owner = await createUser();
+        let walletId: string | null = null;
+        if (opts.wallet !== false) {
+          walletId = (await pool.query<{ id: string }>(
+            `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`,
+            [owner.id, `inj1${unique()}`])).rows[0].id;
+        }
+        let agentId: string | null = null;
+        if (opts.agent) {
+          agentId = (await pool.query<{ id: string }>(
+            `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status) VALUES ($1, 'a', $2, $3, 'ACTIVE') RETURNING id`,
+            [owner.id, unique('pk-'), unique('aw-')])).rows[0].id;
+        }
+        const submissionId = (await pool.query<{ id: string }>(
+          `INSERT INTO bounty_submission (bounty_id, submitter_user_id, agent_id, submission_url, description, status)
+           VALUES ($1, $2, $3, 'https://example.test/s', 'd', 'APPROVED') RETURNING id`,
+          [bountyId, agentId ? null : owner.id, agentId])).rows[0].id;
+        return { ownerId: owner.id, walletId, agentId, submissionId };
+      }
+      async function payout(rewardId: string, w: { submissionId: string; walletId: string | null }, amount: number, status: string, adminId: string) {
+        return (await pool.query<{ id: string }>(
+          `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [rewardId, w.submissionId, w.walletId, amount, status, unique('probe-'), adminId])).rows[0].id;
+      }
+
+      it('multi-reward — paid on reward 1 but still owed on reward 2 blocks the cancel', async () => {
+        const { bountyId, rewardIds: [r1], adminId } = await seedBounty(1, [{ amount: 1000 }, { amount: 500, denom: 'peggy0xusdt' }]);
+        const w = await approvedWinner(bountyId);
+        await payout(r1, w, 1000, 'PAID', adminId);
+        await pool.query(`UPDATE bounty_reward SET status = 'PAID' WHERE id = $1`, [r1]);
+        await expectCancelBlocked(bountyId, adminId);
+      });
+
+      it('agent-owned winner (agent REVOKED, owner active) with no payout blocks the cancel', async () => {
+        const { bountyId, adminId } = await seedBounty(1, [{ amount: 1000 }]);
+        const w = await approvedWinner(bountyId, { agent: true });
+        await pool.query(`UPDATE agent SET status = 'REVOKED' WHERE id = $1`, [w.agentId]);
+        await expectCancelBlocked(bountyId, adminId);
+      });
+
+      it('approved winner without a connected wallet still blocks the cancel (they can reconnect)', async () => {
+        const { bountyId, adminId } = await seedBounty(1, [{ amount: 1000 }]);
+        await approvedWinner(bountyId, { wallet: false });
+        await expectCancelBlocked(bountyId, adminId);
+      });
+
+      it('FAILED payout blocks the cancel', async () => {
+        const { bountyId, rewardIds: [r1], adminId } = await seedBounty(1, [{ amount: 1000 }]);
+        const w = await approvedWinner(bountyId);
+        await payout(r1, w, 1000, 'FAILED', adminId);
+        await expectCancelBlocked(bountyId, adminId);
+      });
+
+      it('maxWinners raised after the reward closed PAID — the new winner with headroom blocks the cancel', async () => {
+        const { bountyId, rewardIds: [r1], adminId } = await seedBounty(1, [{ amount: 1000 }]);
+        const a = await approvedWinner(bountyId);
+        await payout(r1, a, 400, 'PAID', adminId);
+        await pool.query(`UPDATE bounty_reward SET status = 'PAID' WHERE id = $1`, [r1]);
+        await opsBounties.update(bountyId, { maxWinners: 2 }, adminId);
+        await approvedWinner(bountyId);
+        await expect(opsBounties.transition(bountyId, 'OPEN', adminId)).resolves.toMatchObject({ status: 'OPEN' });
+        await expect(opsBounties.transition(bountyId, 'CANCELLED', adminId)).rejects.toMatchObject({ status: 400, response: { message: [OWED] } });
+      });
+
+      it('pool fully allocated to A; A award cancelled per runbook frees headroom for unrequested B → cancel blocked', async () => {
+        const { bountyId, rewardIds: [r1], adminId } = await seedBounty(2, [{ amount: 1000 }]);
+        const a = await approvedWinner(bountyId);
+        await approvedWinner(bountyId);
+        const pa = await payout(r1, a, 1000, 'REQUESTED', adminId);
+        await runTemplate('PAYOUT_CANCELLED_MANUAL', pa);
+        await expectCancelBlocked(bountyId, adminId);
+      });
+
+      it('SUBMISSION_CLOSED → OPEN → CANCELLED is blocked too', async () => {
+        const { bountyId, adminId } = await seedBounty(1, [{ amount: 1000 }]);
+        await pool.query(`UPDATE bounty SET status = 'SUBMISSION_CLOSED' WHERE id = $1`, [bountyId]);
+        await approvedWinner(bountyId);
+        await expectCancelBlocked(bountyId, adminId);
+      });
     });
 
     it('rolls the reward update back when the audit insert fails (same transaction)', async () => {

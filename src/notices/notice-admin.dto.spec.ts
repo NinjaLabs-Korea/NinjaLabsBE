@@ -33,11 +33,12 @@ describe('notice admin DTOs', () => {
     expect(await failedFields(UpdateNoticeDto, { title: '', body: 'b'.repeat(100_001), summary: 's'.repeat(1001) })).toEqual(['body', 'summary', 'title']);
   });
 
-  it('update accepts legacy URL shapes the FE re-sends unchanged (site-relative thumbnail/external link) but not unsafe schemes or a bare host', async () => {
+  it('update accepts legacy URL shapes the FE re-sends unchanged (site-relative or scheme-less thumbnail/external link) but not unsafe schemes', async () => {
     const legacyRow = { ...valid, thumbnailUrl: '/uploads/old-thumb.jpg', externalUrl: '/notices/old-slug' };
     expect(await failedFields(CreateNoticeDto, legacyRow)).toEqual(['externalUrl', 'thumbnailUrl']);
     expect(await failedFields(UpdateNoticeDto, legacyRow)).toEqual([]);
     expect(await failedFields(UpdateNoticeDto, { thumbnailUrl: 'data:image/png;base64,AAAA', externalUrl: 'javascript:alert(1)' })).toEqual(['externalUrl', 'thumbnailUrl']);
-    expect(await failedFields(UpdateNoticeDto, { ...legacyRow, externalUrl: 'ninjalabs.xyz/post' })).toEqual(['externalUrl']);
+    expect(await failedFields(UpdateNoticeDto, { ...legacyRow, externalUrl: 'ninjalabs.xyz/post' })).toEqual([]);
+    expect(await failedFields(CreateNoticeDto, { ...valid, externalUrl: 'ninjalabs.xyz/post' })).toEqual(['externalUrl']);
   });
 });

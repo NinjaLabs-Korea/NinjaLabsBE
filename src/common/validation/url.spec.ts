@@ -88,6 +88,8 @@ describe('URL field validators', () => {
     it.each([
       'https://ninjalabs.xyz/bounties/1', 'http://localhost:3000/x', 'HTTPS://cdn.example/a.png?x=1#y',
       mediaPath, '/uploads/legacy-cover.png', '/images/a b.png', '/bounties/../admin', '/x%2fy', '/', '/bounties?page=2',
+      // legacy scheme-less values typed before the strict rule — not executable, the FE never renders them as links
+      'ninjalabs.xyz/x.png', 'www.example.com', 'cdn.example.co.kr:8443/a.png?v=1', 'Img.Example/T.PNG#x',
     ])('accepts %p', (value) => {
       expect(isSafeUrl(value)).toBe(true);
     });
@@ -100,8 +102,11 @@ describe('URL field validators', () => {
       ['other scheme', 'ftp://ninjalabs.xyz/x'],
       ['protocol-relative', '//evil.com/x'],
       ['protocol-relative via backslash', '/\\evil.com/x'],
-      ['bare host (legacy, no scheme)', 'ninjalabs.xyz/x.png'],
-      ['bare host with www', 'www.example.com'],
+      ['host without a dot (reads as a scheme)', 'localhost:3000/x'],
+      ['bare host with whitespace', 'cdn.example/a b.png'],
+      ['bare host with a backslash', 'cdn.example\\evil'],
+      ['bare host with userinfo', 'user@cdn.example/x'],
+      ['numeric last label', '127.0.0.1/x'],
       ['userinfo', 'https://ninjalabs.xyz@evil.com/x'],
       ['no host', 'https://'],
       ['NUL', '/x\u0000y'],

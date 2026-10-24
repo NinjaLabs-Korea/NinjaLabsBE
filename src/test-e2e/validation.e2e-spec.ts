@@ -187,7 +187,7 @@ describeDb('validation over HTTP (e2e)', () => {
         .toEqual(badRequest(['coverImageUrl must be an http(s) URL or a /media/<uuid> path']));
     });
 
-    it.failing('legacy bare-host URL (no scheme) stored before the strict rule: UPDATE resends it and passes (lenient), CREATE rejects it', async () => {
+    it('legacy bare-host URL (no scheme) stored before the strict rule: UPDATE resends it and passes (lenient), CREATE rejects it', async () => {
       const id = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm(), true), asAdmin())).body.id;
       await e2e.db.query(`UPDATE bounty SET cover_image_url = 'cdn.ninjalabs.xyz/covers/a.png' WHERE id = $1`, [id]);
       const row = (await e2e.get('/admin/bounties', asAdmin())).body.find((r: { id: string }) => r.id === id);

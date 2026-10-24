@@ -70,15 +70,16 @@ describe('bounty admin DTOs', () => {
     expect(await failedFields(UpdateBountyDto, { coverImageUrl: null })).toEqual([]);
   });
 
-  it('update accepts a legacy site-relative cover image (lenient IsSafeUrl) but still rejects unsafe schemes and a bare host', async () => {
+  it('update accepts legacy site-relative and scheme-less cover images (lenient IsSafeUrl) but still rejects unsafe schemes', async () => {
     // the FE PATCH re-sends every field — a legacy row saved before the strict rule must not make the whole edit fail
     const legacyRow = { ...validCreate, coverImageUrl: '/uploads/legacy-cover.png', maxWinners: 1 };
     expect(await failedFields(CreateBountyDto, legacyRow)).toEqual(['coverImageUrl']);
     expect(await failedFields(UpdateBountyDto, legacyRow)).toEqual([]);
     expect(await failedFields(UpdateBountyDto, { coverImageUrl: 'javascript:alert(1)' })).toEqual(['coverImageUrl']);
     expect(await failedFields(UpdateBountyDto, { coverImageUrl: '//evil.com/x.png' })).toEqual(['coverImageUrl']);
-    // a legacy bare-host value (no scheme) is not a URL the browser can resolve either — the admin has to re-save it with https://
-    expect(await failedFields(UpdateBountyDto, { ...legacyRow, coverImageUrl: 'ninjalabs.xyz/x.png' })).toEqual(['coverImageUrl']);
+    // a legacy bare-host value (no scheme) is re-sent unchanged by the FE: it must not block the edit (create stays strict)
+    expect(await failedFields(UpdateBountyDto, { ...legacyRow, coverImageUrl: 'ninjalabs.xyz/x.png' })).toEqual([]);
+    expect(await failedFields(CreateBountyDto, { ...legacyRow, coverImageUrl: 'ninjalabs.xyz/x.png' })).toEqual(['coverImageUrl']);
   });
 
   it('validates the nested reward: token type, amount as integer base units, display symbol', async () => {

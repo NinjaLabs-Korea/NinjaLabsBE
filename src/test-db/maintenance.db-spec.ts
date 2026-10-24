@@ -8,7 +8,7 @@ describeDb('maintenance sweep on a real database', () => {
   beforeAll(() => { db = createDb(); });
   afterAll(async () => db.onModuleDestroy());
 
-  it('deletes stale challenges, old sessions and expired login codes, and clears grace tokens past the 30s window', async () => {
+  it('deletes stale challenges, old sessions and expired login codes hourly, and clears grace tokens past the 30s window in the 5-minute cron', async () => {
     const userId = await createUser(db);
     const address = `inj1${unique()}`;
     const challenge = (expires: string) => db.query<{ id: string }>(
@@ -42,7 +42,10 @@ describeDb('maintenance sweep on a real database', () => {
     const service = new MaintenanceService(db);
     const log = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     await service.sweep();
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^maintenance sweep: challenges=\d+ sessions=\d+ grace_tokens_cleared=\d+ login_codes=\d+$/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^maintenance sweep: challenges=\d+ sessions=\d+ login_codes=\d+$/));
+    // the hourly sweep leaves grace copies to the 5-minute cron
+    expect((await db.query(`SELECT grace_refresh_token FROM auth_session WHERE id = $1`, [staleGrace])).rows[0].grace_refresh_token).toBe('enc');
+    await service.clearGraceCopies();
 
     const ids = async (sql: string, params: unknown[]) => (await db.query<{ id: string }>(sql, params)).rows.map((row) => row.id).sort();
     expect(await ids(`SELECT id FROM wallet_verification_challenge WHERE user_id = $1`, [userId]))

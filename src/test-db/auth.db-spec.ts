@@ -1,5 +1,5 @@
 import { JwtService } from '@nestjs/jwt';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { AuthService, MAX_REVOKE_CHAIN_HOPS } from '../auth/auth.service';
 import { encryptGraceToken } from '../auth/refresh-grace';
 import { DatabaseService } from '../common/database/database.service';
@@ -34,6 +34,19 @@ describeDb('auth sessions on a real database', () => {
     );
     return r.rows;
   }
+
+  it('the grace copy is bound to its session row id (AAD): a copy written for another row is "no grace" → 401 + chain revoked', async () => {
+    const user = await auth.upsertGoogleUser(unique('google-'), `${unique()}@example.test`);
+    const first = await auth.issueSession(user.id, false);
+    const second = await auth.refresh(first.refreshToken);
+    const [successor] = (await sessionRows(user.id)).filter((row) => row.prev_refresh_token_hash === sha256(first.refreshToken));
+    expect(successor.grace_refresh_token).not.toBeNull();
+    // same secret, same plaintext — but sealed for a different row id
+    await db.query(`UPDATE auth_session SET grace_refresh_token = $2 WHERE refresh_token_hash = $1`,
+      [sha256(second.refreshToken), encryptGraceToken(TEST_JWT_SECRET, randomUUID(), second.refreshToken)]);
+    await expect(auth.refresh(first.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    await expect(auth.refresh(second.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+  });
 
   it('upsertGoogleUser → issueSession → refresh → grace reuse within the window → reuse after the window is 401 + chain revoked', async () => {
     const googleId = unique('google-');
@@ -157,6 +170,7 @@ describeDb('auth sessions on a real database', () => {
 
     // X: the legitimate owner's refresh of T2, held open after its conditional UPDATE (locks S2) and the INSERT of S3
     const t3 = unique('t3-');
+    const s3Id = randomUUID();
     let commitX!: () => void;
     const xMayCommit = new Promise<void>((resolve) => { commitX = resolve; });
     const x = db.tx(async (client) => {
@@ -165,9 +179,9 @@ describeDb('auth sessions on a real database', () => {
         [sha256(t2.refreshToken)]);
       expect(consumed.rowCount).toBe(1);
       await client.query(
-        `INSERT INTO auth_session (user_id, refresh_token_hash, expires_at, prev_refresh_token_hash, prev_rotated_at, grace_refresh_token)
-         VALUES ($1, $2, now() + interval '14 days', $3, now(), $4)`,
-        [user.id, sha256(t3), sha256(t2.refreshToken), encryptGraceToken(TEST_JWT_SECRET, t3)]);
+        `INSERT INTO auth_session (id, user_id, refresh_token_hash, expires_at, prev_refresh_token_hash, prev_rotated_at, grace_refresh_token)
+         VALUES ($5, $1, $2, now() + interval '14 days', $3, now(), $4)`,
+        [user.id, sha256(t3), sha256(t2.refreshToken), encryptGraceToken(TEST_JWT_SECRET, s3Id, t3), s3Id]);
       await xMayCommit;
     });
 

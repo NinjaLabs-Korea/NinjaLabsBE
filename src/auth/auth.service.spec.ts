@@ -49,7 +49,7 @@ describe('AuthService refresh rotation', () => {
     expect(sixes).toHaveLength(2);
     expect(new Set(sixes).size).toBe(1);
     expect(sixes[0]).toBe('$6::varchar');
-    expect(params).toHaveLength(7);
+    expect(params).toHaveLength(8); // $8 = the pre-generated row id the grace copy is bound to
   });
 
   it('revokes the old token and inserts its replacement in one transaction', async () => {
@@ -88,6 +88,10 @@ describe('AuthService refresh rotation', () => {
     expect(insertCall[0]).toContain('INSERT INTO auth_session');
     expect(insertCall[0]).toContain('now() + $5::interval');
     expect(insertCall[0]).toContain('prev_refresh_token_hash, prev_rotated_at, grace_refresh_token');
+    // the row id is generated up front ($8) because the grace copy is bound to it (AAD)
+    const sessionId = insertCall[1][7] as string;
+    expect(sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(insertCall[0]).toContain('VALUES ($8::uuid, $1, $2');
     expect(insertCall[1].slice(0, 6)).toEqual([
       userId,
       createHash('sha256').update(result.refreshToken).digest('hex'),
@@ -99,7 +103,8 @@ describe('AuthService refresh rotation', () => {
     // The successor row carries an encrypted copy of its own raw token (never the plaintext) for the 30s reuse grace.
     const grace = insertCall[1][6] as string;
     expect(grace).not.toContain(result.refreshToken);
-    expect(decryptGraceToken(DEV_SECRET, grace)).toBe(result.refreshToken);
+    expect(decryptGraceToken(DEV_SECRET, sessionId, grace)).toBe(result.refreshToken);
+    expect(decryptGraceToken(DEV_SECRET, '00000000-0000-4000-8000-000000000000', grace)).toBeNull();
   });
 
   it.each([
@@ -204,6 +209,7 @@ describe('AuthService refresh rotation', () => {
   function reuseScenario(options: { withinWindow: boolean; successorAlive?: boolean; corruptGrace?: boolean }) {
     let consumed = false;
     let graceToken: string | null = null;
+    let successorId: string | null = null;
     // Like a row lock: the loser's conditional UPDATE only returns (0 rows) once the winner's session INSERT is in.
     let winnerCommitted!: () => void;
     const committed = new Promise<void>((resolve) => { winnerCommitted = resolve; });
@@ -219,13 +225,14 @@ describe('AuthService refresh rotation', () => {
       }
       if (sql.includes('INSERT INTO auth_session')) {
         graceToken = params![6] as string;
+        successorId = params![7] as string;
         winnerCommitted();
         return { rowCount: 1, rows: [] };
       }
       if (sql.includes('s.prev_refresh_token_hash = $1')) {
         const alive = options.withinWindow && (options.successorAlive ?? true) && graceToken;
         return alive
-          ? { rowCount: 1, rows: [{ user_id: userId, is_admin: false, grace_refresh_token: options.corruptGrace ? 'x.y.z' : graceToken }] }
+          ? { rowCount: 1, rows: [{ id: successorId, user_id: userId, is_admin: false, grace_refresh_token: options.corruptGrace ? 'x.y.z' : graceToken }] }
           : { rowCount: 0, rows: [] };
       }
       if (sql.includes('FOR UPDATE') || sql.includes('id = ANY($1::uuid[])')) return { rowCount: 0, rows: [] };

@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import { QueryResult } from 'pg';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
@@ -377,14 +377,14 @@ export class AuthService {
         const next = await this.createSessionTokens(user_id, is_admin);
         await this.saveSession(tx, user_id, next.refreshHash, ip, userAgent, {
           prevHash: hash,
-          graceToken: encryptGraceToken(this.graceSecret, next.refreshToken),
+          graceRefreshToken: next.refreshToken,
         });
         return { tokens: { accessToken: next.accessToken, refreshToken: next.refreshToken } };
       }
 
       // 유예 창: 이 토큰이 30초 안에 회전됐고 그 후속 세션이 아직 살아 있으면 후속 쌍을 그대로 돌려준다
-      const successor = await tx.query<{ user_id: string; is_admin: boolean; grace_refresh_token: string }>(
-        `SELECT s.user_id, u.is_admin, s.grace_refresh_token
+      const successor = await tx.query<{ id: string; user_id: string; is_admin: boolean; grace_refresh_token: string }>(
+        `SELECT s.id, s.user_id, u.is_admin, s.grace_refresh_token
            FROM auth_session AS s
            JOIN "user" AS u ON u.id = s.user_id
           WHERE s.prev_refresh_token_hash = $1
@@ -397,7 +397,7 @@ export class AuthService {
         [hash],
       );
       const graced = successor.rowCount === 1
-        ? decryptGraceToken(this.graceSecret, successor.rows[0].grace_refresh_token)
+        ? decryptGraceToken(this.graceSecret, successor.rows[0].id, successor.rows[0].grace_refresh_token)
         : null;
       if (graced) {
         const { user_id, is_admin } = successor.rows[0];
@@ -471,7 +471,7 @@ export class AuthService {
   /**
    * refresh 세션 저장 — 원문 토큰은 저장하지 않고 해시만, 수명은 JWT_REFRESH_TTL.
    * 회전으로 만들어진 세션은 선행 토큰 해시(prev_refresh_token_hash, 재사용 감지 사슬)와
-   * 30초 유예용 암호화 사본(grace_refresh_token)을 함께 적는다.
+   * 30초 유예용 암호화 사본(grace_refresh_token)을 함께 적는다. 사본은 이 행의 id를 AAD로 묶으므로 id를 앱에서 먼저 만든다 ($8).
    * `$6`은 두 번 쓰이므로 두 자리 모두 같은 캐스트(::varchar)여야 한다 — 한쪽만 캐스트하면 Postgres가
    * 42P08(inconsistent types deduced for parameter)로 거부해 모든 세션 발급이 500이 된다 (test-db가 실제 DB로 검증).
    */
@@ -481,16 +481,19 @@ export class AuthService {
     refreshHash: string,
     ip?: string,
     userAgent?: string,
-    rotation?: { prevHash: string; graceToken: string },
+    rotation?: { prevHash: string; graceRefreshToken: string },
   ) {
+    const sessionId = randomUUID();
     await runner.query(
       `INSERT INTO auth_session
-         (user_id, refresh_token_hash, ip_address, user_agent, expires_at,
+         (id, user_id, refresh_token_hash, ip_address, user_agent, expires_at,
           prev_refresh_token_hash, prev_rotated_at, grace_refresh_token)
-       VALUES ($1, $2, $3, $4, now() + $5::interval,
+       VALUES ($8::uuid, $1, $2, $3, $4, now() + $5::interval,
                $6::varchar, CASE WHEN $6::varchar IS NULL THEN NULL ELSE now() END, $7)`,
       [userId, refreshHash, ip ?? null, userAgent ?? null, this.refreshTtl,
-       rotation?.prevHash ?? null, rotation?.graceToken ?? null],
+       rotation?.prevHash ?? null,
+       rotation ? encryptGraceToken(this.graceSecret, sessionId, rotation.graceRefreshToken) : null,
+       sessionId],
     );
   }
 

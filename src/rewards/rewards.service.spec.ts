@@ -441,7 +441,10 @@ describe('RewardsService remaining guards', () => {
     ]);
     await expect(service.requestPayout('reward-1', 'sub-1', '100', 'admin')).resolves.toEqual({ id: 'payout-1', status: 'REQUESTED' });
     const wallet = query.mock.calls.find(([sql]) => (sql as string).includes('AS wallet_id'))!;
-    expect(wallet[0]).toContain('w.user_id = COALESCE(s.submitter_user_id, a.owner_user_id)');
+    // the recipient user row is joined (and share-locked) so a concurrent account withdrawal serializes with the payout
+    expect(wallet[0]).toContain('u.id = COALESCE(s.submitter_user_id, a.owner_user_id)');
+    expect(wallet[0]).toContain('u.deleted_at IS NULL');
+    expect(wallet[0]).toContain('w.user_id = u.id');
     expect(wallet[0]).toContain('w.is_primary = true AND w.disconnected_at IS NULL');
     expect(wallet[0]).toContain("s.status = 'APPROVED'");
     const insert = query.mock.calls.find(([sql]) => (sql as string).includes('INSERT INTO payout'))!;

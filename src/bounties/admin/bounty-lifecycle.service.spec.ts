@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../../audit/audit.service';
 import { withParamsCheck } from '../../test-support/expect-params-match';
 import { BountyAdminService } from './bounty-admin.service';
@@ -23,7 +24,10 @@ describe('BountyLifecycleService.blockers', () => {
   it('returns no blockers at all for a clean bounty with a future deadline, counting rows of this bounty only', async () => {
     const { runner, query } = runnerWith({});
     await expect(lifecycle.blockers(runner, 'bounty-1', { status: 'OPEN', submission_deadline: FUTURE }))
-      .resolves.toEqual({ blockers: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [] } });
+      .resolves.toEqual({
+        blockers: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [] },
+        blockerDetails: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [] },
+      });
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0][1]).toEqual(['bounty-1']);
   });
@@ -125,7 +129,7 @@ describe('BountyAdminService.transition for every pair', () => {
     });
     const dbQuery = jest.fn();
     const db = { query: dbQuery, tx: (fn: (tx: { query: unknown }) => Promise<unknown>) => fn({ query: withParamsCheck(query) }) };
-    const service = new BountyAdminService(db as never, new AuditService(db as never), new BountyLifecycleService(), {} as RewardTokenResolver);
+    const service = new BountyAdminService(db as never, new AuditService(db as never), new BountyLifecycleService(), {} as RewardTokenResolver, new ConfigService());
     return { service, query, dbQuery };
   }
 

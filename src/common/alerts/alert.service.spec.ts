@@ -1,7 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import { OPS_ALERT_TIMEOUT_MS, postOpsAlert } from '../../../scripts/ops-alert';
-import { ALERT_COOLDOWN_MS, AlertService } from './alert.service';
+import { ALERT_COOLDOWN_MS, ALERT_RETRY_DELAY_MS, AlertService } from './alert.service';
 
 const WEBHOOK = 'https://discord.com/api/webhooks/123/secret-webhook-token';
 
@@ -22,7 +22,9 @@ describe('AlertService', () => {
     const error = jest.spyOn(alerts['logger'], 'error').mockImplementation(() => undefined);
     let clock = 1_000_000;
     alerts['now'] = () => clock;
-    return { alerts, warn, error, advance: (ms: number) => { clock += ms; } };
+    const sleep = jest.fn(async (_ms: number) => undefined);
+    alerts['sleep'] = sleep;
+    return { alerts, warn, error, sleep, advance: (ms: number) => { clock += ms; } };
   }
 
   function sentBody(call = 0): { content: string; text: string } {
@@ -89,21 +91,110 @@ describe('AlertService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('never throws: a network error, a timeout or a non-2xx is a warn log without the webhook URL', async () => {
-    const { alerts, warn, advance } = service();
-    fetchMock.mockRejectedValueOnce(Object.assign(new Error(`connect ECONNREFUSED ${WEBHOOK}`), { name: 'TypeError' }));
+  it('never throws: a network error, a timeout or a non-2xx is a warn log without the webhook URL (after one retry)', async () => {
+    const { alerts, warn } = service();
+    fetchMock.mockRejectedValueOnce(Object.assign(new Error(`connect ECONNREFUSED ${WEBHOOK}`), { name: 'TypeError' }))
+      .mockRejectedValueOnce(Object.assign(new Error(`connect ECONNREFUSED ${WEBHOOK}`), { name: 'TypeError' }));
     await expect(alerts.notify('a', 'x')).resolves.toBe(false);
-    fetchMock.mockRejectedValueOnce(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }));
+    fetchMock.mockRejectedValueOnce(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }))
+      .mockRejectedValueOnce(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }));
     await expect(alerts.notify('b', 'x')).resolves.toBe(false);
-    fetchMock.mockResolvedValueOnce(new Response('rate limited', { status: 429 }));
-    advance(1);
+    fetchMock.mockResolvedValueOnce(new Response('rate limited', { status: 429 })).mockResolvedValueOnce(new Response('rate limited', { status: 429 }));
     await expect(alerts.notify('c', 'x')).resolves.toBe(false);
 
+    expect(fetchMock).toHaveBeenCalledTimes(6);
     const lines = warn.mock.calls.map(([line]) => String(line));
-    expect(lines).toContain('ops alert webhook delivery failed for a: TypeError');
-    expect(lines).toContain('ops alert webhook delivery failed for b: timeout after 5000ms');
-    expect(lines).toContain('ops alert webhook delivery failed for c: HTTP 429');
+    expect(lines).toContain('ops alert webhook delivery failed for a: TypeError (attempt 1/2, retrying in 2s)');
+    expect(lines).toContain('ops alert webhook delivery failed for a: TypeError (attempt 2/2, giving up — the next occurrence will try again)');
+    expect(lines).toContain('ops alert webhook delivery failed for b: timeout after 5000ms (attempt 2/2, giving up — the next occurrence will try again)');
+    expect(lines).toContain('ops alert webhook delivery failed for c: HTTP 429 (attempt 2/2, giving up — the next occurrence will try again)');
     expect(lines.join('\n')).not.toContain('secret-webhook-token');
+  });
+
+  describe('delivery-confirmed cooldown, retry and in-flight dedupe', () => {
+    it(`retries once after ${ALERT_RETRY_DELAY_MS} ms; a successful retry delivers and starts the cooldown`, async () => {
+      const { alerts, sleep, advance } = service();
+      fetchMock.mockResolvedValueOnce(new Response('bad gateway', { status: 502 }));
+      await expect(alerts.notify('k', 'm')).resolves.toBe(true);
+      expect(sleep).toHaveBeenCalledWith(2000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      advance(60_000);
+      await expect(alerts.notify('k', 'm')).resolves.toBe(false); // cooling down
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('a failed delivery (both attempts) starts no cooldown: the next occurrence tries again and reports the lost one', async () => {
+      const { alerts, advance } = service();
+      fetchMock.mockResolvedValueOnce(new Response(null, { status: 500 })).mockResolvedValueOnce(new Response(null, { status: 500 }));
+      await expect(alerts.notify('nft-job-failed:MINT_CHILD', '1 job failed')).resolves.toBe(false);
+      advance(1_000);
+      await expect(alerts.notify('nft-job-failed:MINT_CHILD', '2 jobs failed')).resolves.toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(sentBody(2).content).toBe('[NinjaLabs production] nft-job-failed:MINT_CHILD: 2 jobs failed (+1 similar suppressed in the last 30 min)');
+      advance(1_000);
+      await expect(alerts.notify('nft-job-failed:MINT_CHILD', '3')).resolves.toBe(false); // now cooling down
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('the cooldown counts from the successful delivery, not from the first attempt', async () => {
+      const { alerts, sleep, advance } = service();
+      fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
+      sleep.mockImplementationOnce(async () => { advance(ALERT_RETRY_DELAY_MS); });
+      await alerts.notify('k', 'm'); // delivered at t0 + 2 s
+      advance(ALERT_COOLDOWN_MS - ALERT_RETRY_DELAY_MS); // 30 min after the first attempt, 2 s short of the cooldown
+      await expect(alerts.notify('k', 'm')).resolves.toBe(false);
+      advance(ALERT_RETRY_DELAY_MS);
+      await expect(alerts.notify('k', 'm')).resolves.toBe(true);
+    });
+
+    it('concurrent same-key calls send once while the first is in flight (including its retry wait); others are counted as suppressed', async () => {
+      const { alerts, sleep, advance } = service();
+      let releaseRetry!: () => void;
+      sleep.mockImplementationOnce(() => new Promise<undefined>((resolve) => { releaseRetry = () => resolve(undefined); }));
+      fetchMock
+        .mockResolvedValueOnce(new Response(null, { status: 500 })) // burst, attempt 1
+        .mockResolvedValueOnce(new Response(null, { status: 204 })) // other-key
+        .mockResolvedValueOnce(new Response(null, { status: 500 })); // burst, attempt 2 (retry)
+
+      const first = alerts.notify('http-5xx-burst', 'burst');
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(sleep).toHaveBeenCalledTimes(1); // first attempt failed, waiting to retry
+      const overlapping = await Promise.all([alerts.notify('http-5xx-burst', 'burst'), alerts.notify('http-5xx-burst', 'burst')]);
+      expect(overlapping).toEqual([false, false]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await expect(alerts.notify('other-key', 'x')).resolves.toBe(true); // a different key is not blocked
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      releaseRetry();
+      await expect(first).resolves.toBe(false); // both attempts failed
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+
+      advance(1);
+      await expect(alerts.notify('http-5xx-burst', 'burst')).resolves.toBe(true);
+      // the 2 overlapping calls + the failed delivery itself
+      expect(sentBody(3).content).toBe('[NinjaLabs production] http-5xx-burst: burst (+3 similar suppressed in the last 30 min)');
+    });
+
+    it('suppressions that arrive during a successful delivery are carried to the next alert', async () => {
+      const { alerts, advance } = service();
+      let respond!: (r: Response) => void;
+      fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { respond = resolve; }));
+      const first = alerts.notify('k', 'm');
+      await new Promise((resolve) => setImmediate(resolve));
+      await alerts.notify('k', 'm'); // in flight → suppressed
+      respond(new Response(null, { status: 204 }));
+      await expect(first).resolves.toBe(true);
+      advance(ALERT_COOLDOWN_MS);
+      await alerts.notify('k', 'm');
+      expect(sentBody(1).content).toBe('[NinjaLabs production] k: m (+1 similar suppressed in the last 30 min)');
+    });
+
+    it('without a webhook the log line itself starts the cooldown (no log flood)', async () => {
+      const { alerts, warn } = service({ NODE_ENV: 'production' });
+      await alerts.notify('k', 'm');
+      await alerts.notify('k', 'm');
+      expect(warn.mock.calls.filter(([l]) => String(l).startsWith('ALERT'))).toHaveLength(1);
+    });
   });
 
   it('aborts a hanging webhook after the timeout (5s by default) and reports it as a timeout', async () => {

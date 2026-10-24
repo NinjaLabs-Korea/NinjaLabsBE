@@ -64,7 +64,7 @@
 |---|---|---|
 | **[결정 2026-10-24] 운영 알림 채널** | Discord/Slack 호환 incoming webhook 하나 (`OPS_ALERT_WEBHOOK_URL`, 본문 `{content, text}` — 두 서비스 모두 모르는 키를 무시). 미설정이면 로그만 | 새 의존성 없이 global `fetch`. 채널 분리(심각도별)가 필요해지면 `AlertService`에 키 접두사 → URL 맵을 추가 |
 | 알림 임계값 | payout 48시간 미승인(5분 주기 검사), nft_job FAILED 즉시, 고아 PROCESSING(15분) 재큐잉 즉시, 5xx **5분 안 20건 초과**, 기동 실패·preDeploy 마이그레이션 실패 즉시 | 바꾸려면 `payout.worker.ts`, `nft-job.worker.ts`, `http-exception.filter.ts` `HTTP_5XX_BURST_*` |
-| 중복 억제 | 같은 키 **30분에 1회**, 인스턴스별 in-memory, 억제 건수를 다음 알림에 붙인다. 기동 실패는 프로세스가 곧 죽으므로 억제 없음(재시작 루프마다 1통 — Railway restart 상한까지) | `ALERT_COOLDOWN_MS` (`common/alerts/alert.service.ts`) |
+| 중복 억제 | 같은 키 **30분에 1회**, 인스턴스별 in-memory, 억제 건수를 다음 알림에 붙인다. 쿨다운은 웹훅이 **2xx로 받은 뒤에만** 시작한다 — 실패하면 2초 뒤 1회 재시도, 그래도 실패면 쿨다운 없이 끝나 다음 발생이 다시 보낸다(웹훅 일시 장애가 30분 침묵이 되지 않게, 2026-10-24). 같은 키가 전송 중(재시도 대기 포함)이면 겹친 호출은 억제 수로만 센다. 기동 실패는 프로세스가 곧 죽으므로 억제 없음(재시작 루프마다 1통 — Railway restart 상한까지) | `ALERT_COOLDOWN_MS` (`common/alerts/alert.service.ts`) |
 
 ## 스택 관련 (기획 문서와 다른 점)
 

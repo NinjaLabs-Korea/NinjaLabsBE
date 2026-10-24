@@ -150,7 +150,7 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 - URL `https://<BE>/health`, 메서드 GET, 간격 1분, 타임아웃 10초.
 - 성공 조건: 상태 코드 200 **그리고** 본문에 `"db":"up"` 포함(키워드 모니터). 503은 "DB 다운", 연결 실패/5xx(503 외)는 "앱 다운"으로 구분해 알림 제목에 남긴다.
 - 연속 2회 실패 시 알림(운영 채널 + 당번 이메일). 복구 알림도 켠다.
-- 앱 내부 알림은 별도: `OPS_ALERT_WEBHOOK_URL`이 있으면 payout 48시간 미승인, nft_job FAILED, 고아 PROCESSING 재큐잉, 5분 안에 5xx 20건 초과, 기동 실패, preDeploy 마이그레이션 실패를 같은 채널로 보낸다(같은 알림 30분 쿨다운, 인스턴스별 — security.md "운영 알림").
+- 앱 내부 알림은 별도: `OPS_ALERT_WEBHOOK_URL`이 있으면 payout 48시간 미승인, nft_job FAILED, 고아 PROCESSING 재큐잉, 5분 안에 5xx 20건 초과, 기동 실패, preDeploy 마이그레이션 실패를 같은 채널로 보낸다(같은 알림 30분 쿨다운 — 전달 성공 뒤부터, 실패는 2초 뒤 1회 재시도. 인스턴스별 — security.md "운영 알림").
 - FE도 하나: `https://<FE>/` 200.
 - 참고: DB 장애 중에는 Railway healthcheck도 503이라 **새 배포가 healthy가 되지 않는다** — 장애 중 재배포로 고치려 하지 말 것(§7.1).
 

@@ -1,10 +1,10 @@
 import { NotFoundException } from '@nestjs/common';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { BountiesService, PUBLIC_DETAIL_COLUMNS } from './bounties.service';
 
 function setup(answer: (sql: string) => { rowCount: number; rows: unknown[] }) {
   const query = jest.fn(async (sql: string, _params?: unknown[]) => answer(sql));
-  return { query, service: new BountiesService({ query: withParamsCheck(query) } as never) };
+  return { query, service: new BountiesService(createMockDb({ query: query }).database) };
 }
 
 describe('BountiesService.list (public)', () => {

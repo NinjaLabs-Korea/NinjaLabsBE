@@ -14,3 +14,4 @@ export declare function applyAdminChange(
   pool: Pool,
   options: { email: string; grant: boolean; force?: boolean },
 ): Promise<{ changed: boolean; user: AdminTarget }>;
+export declare function countOtherActiveAdmins(runner: Pick<Pool, 'query'>, userId: string): Promise<number>;

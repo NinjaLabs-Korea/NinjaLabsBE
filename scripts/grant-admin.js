@@ -40,6 +40,20 @@ async function findUserByEmail(runner, email, lock = false) {
   return r.rows[0];
 }
 
+/** user를 뺀 활성(ACTIVE, 미탈퇴) 운영자 수 — AdminGuard가 받아 주는 운영자만 센다 */
+async function countOtherActiveAdmins(runner, userId) {
+  const r = await runner.query(
+    `SELECT count(*)::int AS n FROM "user"
+      WHERE is_admin = true AND status = 'ACTIVE' AND deleted_at IS NULL AND id <> $1`,
+    [userId],
+  );
+  return r.rows[0].n;
+}
+
+function lastAdminError(email) {
+  return new OpsError('LAST_ADMIN', `${email} is the last active admin — pass --force to leave the platform with no admin`);
+}
+
 /**
  * 변경 적용 — 한 트랜잭션: 대상 행 FOR UPDATE → (revoke면) 다른 활성 운영자 수 확인 → UPDATE → 감사 행.
  * 동시에 두 revoke가 돌아 마지막 운영자 둘이 서로를 지우는 일을 막으려고 is_admin 행 전체를 먼저 잠근다.
@@ -55,16 +69,7 @@ async function applyAdminChange(pool, { email, grant, force = false }) {
       await client.query('ROLLBACK');
       return { changed: false, user };
     }
-    if (!grant && !force) {
-      const others = await client.query(
-        `SELECT count(*)::int AS n FROM "user"
-          WHERE is_admin = true AND status = 'ACTIVE' AND deleted_at IS NULL AND id <> $1`,
-        [user.id],
-      );
-      if (others.rows[0].n === 0) {
-        throw new OpsError('LAST_ADMIN', `${user.email} is the last active admin — pass --force to leave the platform with no admin`);
-      }
-    }
+    if (!grant && !force && (await countOtherActiveAdmins(client, user.id)) === 0) throw lastAdminError(user.email);
     await client.query(`UPDATE "user" SET is_admin = $2 WHERE id = $1`, [user.id, grant]);
     await client.query(
       `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, before_data, after_data)
@@ -119,6 +124,8 @@ async function run(argv, deps) {
     if (user.status !== 'ACTIVE') {
       log(`warning  status is ${user.status} — AdminGuard only admits ACTIVE users, so the flag has no effect until the account is ACTIVE`);
     }
+    // 미리 보기에서도(그리고 확인을 묻기 전에) 마지막 운영자 회수를 알린다 — 실제 판정은 applyAdminChange가 잠금 아래에서 다시 한다
+    if (!grant && !flags.force && (await countOtherActiveAdmins(deps.pool, user.id)) === 0) throw lastAdminError(user.email);
     log(`plan     is_admin ${!grant} -> ${grant}  (+ audit_log ${grant ? 'ADMIN_GRANTED' : 'ADMIN_REVOKED'}, actor NULL)`);
     if (flags['dry-run']) {
       log('dry-run  nothing written');
@@ -146,6 +153,6 @@ async function run(argv, deps) {
   }
 }
 
-module.exports = { run, applyAdminChange, findUserByEmail };
+module.exports = { run, applyAdminChange, findUserByEmail, countOtherActiveAdmins };
 
 if (require.main === module) runCli(run);

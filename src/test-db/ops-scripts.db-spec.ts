@@ -8,6 +8,7 @@ import { applyMigrations, sslOptions } from '../../scripts/migrate';
 import { run as requeueNftJobs } from '../../scripts/requeue-nft-jobs';
 import { AlertService } from '../common/alerts/alert.service';
 import { InjectiveNftClient } from '../nfts/injective-nft.client';
+import { STATIC_FILE_EXTENSIONS } from '../users/nickname';
 import { NftJobWorker } from '../nfts/nft-job.worker';
 import { describeDb } from './describe-db';
 import { createDb, testConfig, testSslEnv, unique } from './harness';
@@ -376,6 +377,48 @@ describeDb('ops scripts on a real database', () => {
         .toEqual([malformed]);
       expect((await runPreflight({ expected_custody: `inj1${'q'.repeat(38)}` })).custody_placeholder.map((row) => row.reward_id))
         .toEqual(expect.arrayContaining([evm, malformed]));
+    });
+  });
+
+  describe('scripts/find-static-ext-nicknames.sql', () => {
+    const file = readFileSync(join(SCRIPTS, 'find-static-ext-nicknames.sql'), 'utf8');
+    const statements = file
+      .split('\n')
+      .filter((line) => !line.startsWith('\\') && !line.trimStart().startsWith('--'))
+      .join('\n')
+      .split(/;\s*\n/).map((sql) => sql.trim()).filter(Boolean);
+
+    it('is a single SELECT inside a READ ONLY transaction, with exactly the STATIC_FILE_EXTENSIONS list', () => {
+      expect(statements).toHaveLength(3);
+      expect(statements[0]).toBe('BEGIN TRANSACTION READ ONLY');
+      expect(statements[1]).toMatch(/^SELECT\b/);
+      expect(statements[2]).toBe('ROLLBACK');
+      expect(statements[1]).toContain(`'\\.(${STATIC_FILE_EXTENSIONS.join('|')})$'`);
+    });
+
+    it('lists only ACTIVE, non-deleted users whose nickname ends in a static file extension (case-insensitive), without writing', async () => {
+      const tag = unique().slice(0, 6);
+      const insert = async (nickname: string, status = 'ACTIVE', deleted = false) => (await pool.query<{ id: string }>(
+        `INSERT INTO "user" (google_id, email, nickname, onboarding_step, status, deleted_at)
+         VALUES ($1, $2, $3, 2, $4, $5) RETURNING id`,
+        [`google-${unique()}`, `${unique()}@example.test`, nickname, status, deleted ? new Date() : null])).rows[0].id;
+      const png = await insert(`n${tag}.png`);
+      const upper = await insert(`n${tag}.JSON`);
+      await insert(`n${tag}.jsx`);
+      await insert(`n${tag}_png`);
+      await insert(`s${tag}.css`, 'SUSPENDED');
+      await insert(`d${tag}.js`, 'WITHDRAWN', true);
+
+      const client = await pool.connect();
+      try {
+        const rows: { id: string; nickname: string }[] = [];
+        for (const sql of statements) rows.push(...(await client.query(sql)).rows);
+        const mine = rows.filter((row) => row.nickname.includes(tag)).map((row) => row.id);
+        expect(mine.sort()).toEqual([png, upper].sort());
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
     });
   });
 

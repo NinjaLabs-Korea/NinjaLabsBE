@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { isReservedNickname, isSavableNickname, NICKNAME } from './nickname';
+import { endsWithStaticFileExtension, isReservedNickname, isSavableNickname, NICKNAME, STATIC_FILE_EXTENSIONS } from './nickname';
 import { CompleteProfileDto } from './users.controller';
 
 // 컨트롤러가 서비스 → wallet-signature → @injectivelabs/sdk-ts(ESM)를 끌어오므로 서명 검증 모듈만 껍데기로 대체한다
@@ -47,6 +47,29 @@ describe('CompleteProfileDto', () => {
     async (nickname) => {
       expect(isReservedNickname(nickname)).toBe(true);
       expect(await failedFields({ ...valid, nickname })).toEqual(['nickname']);
+    },
+  );
+
+  it('uses exactly the FE proxy matcher extension list (NinjaLabsFE/src/proxy.ts)', () => {
+    expect(STATIC_FILE_EXTENSIONS).toEqual(['ico', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'avif', 'txt', 'xml', 'json', 'js', 'css', 'map', 'woff', 'woff2', 'ttf']);
+  });
+
+  it.each([
+    ...STATIC_FILE_EXTENSIONS.map((ext) => `ninja.${ext}`),
+    ...STATIC_FILE_EXTENSIONS.map((ext) => `ninja.${ext.toUpperCase()}`),
+    'Ninja.Png', 'a.b.json', '닌자.js', 'ninja.WOFF2', '  ninja.css  ',
+  ])('rejects %p (ends in a static file extension the FE proxy serves as a file, case-insensitive)', async (nickname) => {
+    expect(endsWithStaticFileExtension(nickname)).toBe(true);
+    expect(isSavableNickname(nickname)).toBe(false);
+    expect(await failedFields({ ...valid, nickname })).toEqual(['nickname']);
+  });
+
+  it.each(['ninja.jsx', 'ninja.woff3', 'ninja.pngx', 'ninja.mp4', 'ninjapng', 'ninja_png', 'ninja-json', 'png.ninja', 'js.dev', 'a.jso', 'ninja.j'])(
+    'accepts %p (not one of the listed extensions, or no dot before it)',
+    async (nickname) => {
+      expect(endsWithStaticFileExtension(nickname)).toBe(false);
+      expect(isSavableNickname(nickname)).toBe(true);
+      expect(await failedFields({ ...valid, nickname })).toEqual([]);
     },
   );
 

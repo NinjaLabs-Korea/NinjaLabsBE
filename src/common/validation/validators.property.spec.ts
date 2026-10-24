@@ -189,6 +189,9 @@ describe('nickname — adversarial table', () => {
     ['Check-Nickname', false],
     ['NEW', false],
     ['Edit', false],
+    ['ninja.png', false], // FE proxy treats it as a static file
+    ['Ninja.JSON', false],
+    ['ninja.jsx', true],
   ])('%p savable → %p', (input, expected) => {
     expect(isSavableNickname(input)).toBe(expected);
   });
@@ -207,6 +210,7 @@ describe('nickname — adversarial table', () => {
     const values = [
       'ab', 'a', 'a'.repeat(50), 'a'.repeat(51), '  ab  ', '닌자', '😀😀', '😀a', 'a😀b', '❤\ufe0f❤\ufe0f', 'ab\u0301', 'a..b', '.ab', 'ab.', 'a b',
       `${'가'.repeat(49)}😀`, '가'.repeat(50), '가'.repeat(51), ' x ', 'x', 'ab\u200b',
+      'ninja.png', 'ninja.PNG', 'a.b.json', 'ninja.jsx', 'ninja.woff2', ' ninja.css ',
       ...RESERVED_NICKNAMES.flatMap((word) => [word, word.toUpperCase(), ` ${word} `]),
     ];
     for (const value of values) {

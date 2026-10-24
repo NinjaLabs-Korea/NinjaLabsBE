@@ -103,6 +103,10 @@ describeDb('onboarding over HTTP (e2e)', () => {
       for (const reserved of ['admin', 'Me', 'check-nickname', 'NEW', 'edit']) {
         expect((await save(reserved)).body).toEqual(badRequest(['nickname is a reserved word']));
       }
+      for (const staticLike of ['ninja.png', 'Ninja.JSON', 'a.b.woff2']) {
+        expect((await save(staticLike)).body).toEqual(badRequest([expect.stringMatching(/^nickname must not end with a static file extension \(\.ico, \.png, /)]));
+      }
+      expect((await save('ninja.jsx')).status).toBe(201); // not in the FE proxy list
       expect((await save('닌자_빌더')).status).toBe(201); // unicode letters are allowed
 
       const missing = await e2e.post('/users/me/profile', { nickname: 'okname', bio: '', tags: [] }, { token: session.accessToken });
@@ -165,7 +169,7 @@ describeDb('onboarding over HTTP (e2e)', () => {
       const check = (value: string) => e2e.get(`/users/check-nickname?nickname=${encodeURIComponent(value)}`);
       // the save trims, so " <taken> " collides on save → must not be reported available
       expect((await check(` ${nickname} `)).body).toEqual({ available: false });
-      for (const invalid of ['', 'a', '.ninja', 'has space', 'n'.repeat(51)]) {
+      for (const invalid of ['', 'a', '.ninja', 'has space', 'n'.repeat(51), 'ninja.png', 'Ninja.Js', 'x.WEBP']) {
         expect((await check(invalid)).body).toEqual({ available: false });
       }
       expect((await e2e.get('/users/check-nickname')).body).toEqual({ available: false });

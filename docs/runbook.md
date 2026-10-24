@@ -56,9 +56,19 @@
 | `node scripts/grant-admin.js grant\|revoke <email> [--dry-run] [--yes] [--force]` | `is_admin` 부여/회수 | `"user".is_admin` + `audit_log`(`ADMIN_GRANTED`/`ADMIN_REVOKED`, actor NULL, before/after `{is_admin}`) 한 트랜잭션 |
 | `node scripts/requeue-nft-jobs.js <job-id>... \| --all [--dry-run] [--yes]` | FAILED `nft_job` 수동 재시도 | 잡 → PENDING(`retry_count` 0, 즉시), nft FAILED → `MINTED`(token_id 있음)/`PENDING`, `audit_log` `NFT_JOB_REQUEUED` |
 | `psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql [-v …]` | 메인넷 전환 전 점검 | 없음 — READ ONLY 트랜잭션 + ROLLBACK |
+| `psql "$DATABASE_URL" -X -f scripts/find-static-ext-nicknames.sql` | 정적 파일 확장자로 끝나는 기존 ACTIVE 닉네임 목록 (아래) | 없음 — READ ONLY 트랜잭션 + ROLLBACK |
 | `npm run migrate` | 마이그레이션 적용 | `_migrations` |
 
 종료 코드: 0 성공·변경 없음·dry-run / 1 거부·중단·대상 없음 / 2 사용법 오류. 검증: `src/test-db/ops-scripts.db-spec.ts`.
+
+### 닉네임 규칙 배포 전 점검 — 정적 파일 확장자
+
+닉네임이 `.png`/`.json`/`.js` 등(`src/users/nickname.ts` `STATIC_FILE_EXTENSIONS` = FE `src/proxy.ts` matcher 목록)으로 끝나면 FE proxy가 정적 파일 요청으로 보고 접두사 없는 프로필 링크가 깨진다. 새 BE는 이런 닉네임의 저장을 400으로 거부하지만 **이미 저장된 닉네임은 바꾸지 않는다.** 이 규칙이 들어간 BE를 배포하기 **전에**:
+
+1. 목록을 뽑는다: `railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/find-static-ext-nicknames.sql'` (읽기 전용 — `id, nickname, email, created_at`).
+2. 0행이면 끝. 행이 있으면 각 유저에게 이메일로 연락해 프로필 화면에서 닉네임을 바꾸도록 안내한다 (해당 유저는 프로필을 다시 저장할 때 닉네임도 바꿔야 저장된다).
+3. **자동으로 이름을 바꾸지 않는다** — SQL로 `nickname`을 고치지 말 것. 유저 동의 없는 이름 변경은 공개 프로필 링크·제출 기록의 표시 이름을 예고 없이 바꾼다.
+4. 배포 뒤에도 남은 유저가 있으면 같은 스크립트로 주기적으로 확인한다.
 
 ## 3. 어드민 부트스트랩
 

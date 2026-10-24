@@ -34,6 +34,7 @@ scripts/ops-alert.js   웹훅 전송 함수 postOpsAlert (절대 throw 안 함) 
 scripts/grant-admin.js       운영자 권한 부여/회수 (이메일, --dry-run, 확인 프롬프트, 감사 행) — docs/runbook.md §3
 scripts/requeue-nft-jobs.js  FAILED nft_job 수동 재시도 (id 또는 --all, --dry-run) — docs/runbook.md §7.3
 scripts/mainnet-preflight.sql 메인넷 전환 전 읽기 전용 점검 (psql) — docs/runbook.md §8
+scripts/find-static-ext-nicknames.sql 정적 파일 확장자로 끝나는 기존 닉네임 목록 (psql, 읽기 전용) — docs/runbook.md §2
 scripts/ops-cli.js           운영 스크립트 공용 (migrate.js와 같은 접속 규칙, 인자, 프롬프트)
 docs/
   api-contract.md      FE와 합의할 REST API 계약 (FE docs/auth-api-contract.md 대응)

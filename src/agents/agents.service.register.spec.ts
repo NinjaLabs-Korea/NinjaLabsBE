@@ -2,22 +2,30 @@ import { BadRequestException, ConflictException, NotFoundException, Unauthorized
 import { Wallet } from 'ethers';
 import { AuditService } from '../audit/audit.service';
 import { verifyAdr36Signature } from '../common/crypto/adr36';
+import { getInjectiveAddress } from '../test-e2e/support/injective-sdk.stub';
 import { createMockDb } from '../test-support/mock-db';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 import { AgentsService } from './agents.service';
 
+// sdk-ts is ESM-only: the e2e stub implements the inj1 <-> 0x helpers with real bech32 (byte-identical to sdk-ts)
+jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
 jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
 
 const agentId = '11111111-1111-4111-8111-111111111111';
 const ownerUserId = '22222222-2222-4222-8222-222222222222';
-const INJ_ADDRESS = 'inj1qy352eufqy352eufqy352eufqy352eufpm6h0c';
-const INJ_PUBKEY = 'A0L5tXJ8vJm0pQ1k2yvKcG6m9Wj9u3Yt1C6Vt7m2Q0aP';
+/** A real Injective key pair: inj1 = bech32 of the EVM address, publicKey = compressed key in base64 (Keplr pub_key.value) */
+const injKey = (signer = Wallet.createRandom()) => ({
+  address: getInjectiveAddress(signer.address),
+  publicKey: Buffer.from(signer.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64'),
+});
+const { address: INJ_ADDRESS, publicKey: INJ_PUBKEY } = injKey();
 
 /** register()/verify() against a scripted tx: every statement is checked for $n/params drift. */
 function setup(options: {
   insertError?: unknown;
   pendingAfterConflict?: boolean;
   verifyRow?: { status: string; public_key: string | null; wallet_address: string } | null;
+  activateError?: unknown;
 } = {}) {
   const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
     if (sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')")) return { rowCount: 0, rows: [] };
@@ -29,6 +37,7 @@ function setup(options: {
       const row = options.verifyRow;
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
+    if (sql.includes("SET status = 'ACTIVE'") && options.activateError) throw options.activateError;
     if (sql.includes('INSERT INTO agent_api_key')) return { rowCount: 1, rows: [{ expires_at: '2027-01-01T00:00:00.000Z' }] };
     return { rowCount: 1, rows: [] };
   });
@@ -73,6 +82,29 @@ describe('AgentsService.register input validation', () => {
     });
     expect(txQuery.mock.calls[0][1]).toEqual([INJ_ADDRESS, INJ_PUBKEY]);
     expect(txQuery.mock.calls[1][1]).toEqual([ownerUserId, 'bot', 'desc', INJ_PUBKEY, INJ_ADDRESS]);
+  });
+
+  it('an EVM wallet ignores a client publicKey: NULL is stored and the key is not used for the occupancy check (it comes from the signature at verify)', async () => {
+    const signer = Wallet.createRandom();
+    const someoneElsesKey = Wallet.createRandom().signingKey.compressedPublicKey;
+    const { service, txQuery } = setup();
+    await expect(service.register(ownerUserId, 'bot', undefined, someoneElsesKey, signer.address)).resolves.toMatchObject({ agentId });
+    expect(txQuery.mock.calls[0][1]).toEqual([signer.address, null]);
+    expect(txQuery.mock.calls[1][1]).toEqual([ownerUserId, 'bot', null, null, signer.address]);
+  });
+
+  it.each([
+    ['the key of another wallet', () => injKey().publicKey],
+    ['an EVM-style hex key', () => Wallet.createRandom().signingKey.compressedPublicKey],
+    ['a too-short key', () => 'BAAA'],
+    ['undecodable garbage', () => 'not-a-key'],
+  ])('an inj1 wallet with %s is 400 AGENT_PUBLIC_KEY_MISMATCH before touching the database (no pre-claiming of someone else\'s key)', async (_label, key) => {
+    const { service, db } = setup();
+    await expect(service.register(ownerUserId, 'bot', undefined, key(), INJ_ADDRESS)).rejects.toMatchObject({
+      status: 400,
+      message: 'AGENT_PUBLIC_KEY_MISMATCH',
+    });
+    expect(db.tx).not.toHaveBeenCalled();
   });
 
   it('a unique violation with no own PENDING row on that wallet is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED', async () => {
@@ -140,6 +172,45 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
   it('inj1 agent with a failing ADR-36 check is 401 INVALID_SIGNATURE', async () => {
     const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: INJ_PUBKEY, wallet_address: INJ_ADDRESS } });
     await expect(service.verifyAndIssueKey(ownerUserId, agentId, 'bad')).rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
+  });
+
+  it('an EVM verify first clears the recovered key off other EVM PENDING rows (unverified keys stored by older clients), then activates', async () => {
+    const signer = Wallet.createRandom();
+    const { service, txQuery } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
+    await service.verifyAndIssueKey(ownerUserId, agentId, await signer.signMessage(AgentsService.verificationMessage(agentId, ownerUserId)));
+    const statements = txQuery.mock.calls.map(([sql]) => sql);
+    const clear = statements.findIndex((sql) => sql.includes('SET public_key = NULL'));
+    const activate = statements.findIndex((sql) => sql.includes("SET status = 'ACTIVE'"));
+    expect(clear).toBeGreaterThan(0);
+    expect(clear).toBeLessThan(activate);
+    expect(statements[clear]).toContain("status = 'PENDING_VERIFICATION'");
+    expect(statements[clear]).toContain("wallet_address ILIKE '0x%'");
+    expect(txQuery.mock.calls[clear][1]).toEqual([signer.signingKey.compressedPublicKey, agentId]);
+  });
+
+  it('an inj1 verify does not touch other rows (its key was checked against the address at register)', async () => {
+    (verifyAdr36Signature as jest.Mock).mockReturnValueOnce(true);
+    const { service, txQuery } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: INJ_PUBKEY, wallet_address: INJ_ADDRESS } });
+    await service.verifyAndIssueKey(ownerUserId, agentId, 'adr36-sig');
+    expect(txQuery.mock.calls.some(([sql]) => sql.includes('SET public_key = NULL'))).toBe(false);
+  });
+
+  it('a uq_agent_public_key violation on activation is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED, never a 500', async () => {
+    const signer = Wallet.createRandom();
+    const dup = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_agent_public_key' });
+    const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address }, activateError: dup });
+    const signature = await signer.signMessage(AgentsService.verificationMessage(agentId, ownerUserId));
+    const error = await service.verifyAndIssueKey(ownerUserId, agentId, signature).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as Error).message).toBe('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
+  });
+
+  it('other database errors on activation are rethrown unchanged (a different unique index is not masked as 409)', async () => {
+    const signer = Wallet.createRandom();
+    const other = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_agent_wallet' });
+    const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address }, activateError: other });
+    const signature = await signer.signMessage(AgentsService.verificationMessage(agentId, ownerUserId));
+    await expect(service.verifyAndIssueKey(ownerUserId, agentId, signature)).rejects.toBe(other);
   });
 
   it('issues a fresh random key on every verify (no fixed or reused key material)', async () => {

@@ -8,6 +8,7 @@ import {
 import { randomBytes } from 'crypto';
 import { getAddress, isAddress } from 'ethers';
 import { AuditService } from '../audit/audit.service';
+import { injectivePublicKeyMatchesAddress } from '../common/crypto/injective-public-key';
 import { isEvmAddress, signatureSchemeFor } from '../common/crypto/wallet-signature';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
@@ -44,16 +45,24 @@ export class AgentsService {
       throw new BadRequestException('AGENT_PUBLIC_KEY_REQUIRED');
     }
     const normalizedAddress = isEvm ? getAddress(walletAddress.trim()) : walletAddress.trim();
+    // 저장할 공개키 — 검증되지 않은 키는 uq_agent_public_key를 선점해 그 키 주인의 등록/verify를 막는 데 쓰일 수 있다.
+    //   - EVM(0x): 클라이언트 값은 무시하고 NULL — 키는 verify 때 EIP-191 서명에서 복원한 것만 저장한다 (docs/agent-api.md:
+    //     EVM은 publicKey를 보내지 않는다. 예전 클라이언트 호환을 위해 400 대신 무시)
+    //   - inj1: ADR-36 verify가 이 키로 검증하므로 필요하다. 대신 그 주소의 키인지 지금 확인한다 (남의 키 → 400)
+    if (!isEvm && !injectivePublicKeyMatchesAddress(normalizedAddress, publicKey!)) {
+      throw new BadRequestException('AGENT_PUBLIC_KEY_MISMATCH');
+    }
+    const storedPublicKey = isEvm ? null : publicKey!;
 
     try {
       // 같은 지갑/키를 점유한 행 확인(남의 버려진 PENDING은 soft delete)과 INSERT를 한 트랜잭션에서 — 유니크 위반이면 전체가 롤백되고 아래 catch로 간다
       const r = await this.db.tx(async (tx) => {
-        await this.retireReusableAgents(tx, ownerUserId, publicKey ?? null, normalizedAddress);
+        await this.retireReusableAgents(tx, ownerUserId, storedPublicKey, normalizedAddress);
         return tx.query<{ id: string }>(
           `INSERT INTO agent (owner_user_id, name, description, public_key, wallet_address)
            VALUES ($1, $2, $3, $4, $5)
            RETURNING id`,
-          [ownerUserId, name, description ?? null, publicKey ?? null, normalizedAddress],
+          [ownerUserId, name, description ?? null, storedPublicKey, normalizedAddress],
         );
       });
       return {
@@ -145,7 +154,7 @@ export class AgentsService {
 
   /**
    * 에이전트 지갑 서명 검증 → ACTIVE 전환 → API key 발급
-   * 등록 시 저장한 public_key로 검증하므로 서명 주체 = 에이전트 지갑 키 소유자.
+   * inj1은 등록 시 저장한(주소와 대조된) public_key로, 0x는 서명에서 복원한 키로 검증하므로 서명 주체 = 에이전트 지갑 키 소유자.
    * 검증 성공 시에만 API key를 반환한다 (원문은 이 응답 1회뿐).
    */
   async verifyAndIssueKey(ownerUserId: string, agentId: string, signature: string) {
@@ -180,6 +189,17 @@ export class AgentsService {
         throw new UnauthorizedException('INVALID_SIGNATURE');
       }
 
+      if (verified.publicKey && isEvmAddress(agent.wallet_address)) {
+        // 이 수정 전 등록된 EVM PENDING 행에는 클라이언트가 보낸(검증 안 된) public_key가 남아 있을 수 있다 — 남의 키를 붙여 둔 행이
+        // 아래 UPDATE를 uq_agent_public_key 위반으로 막지 않도록, 서명으로 방금 증명된 이 키를 쥔 다른 EVM PENDING 행의 키를 비운다.
+        // EVM verify는 저장된 키를 쓰지 않으므로(서명에서 복원) 그 행들의 동작은 바뀌지 않는다.
+        await tx.query(
+          `UPDATE agent SET public_key = NULL
+            WHERE public_key = $1 AND id <> $2 AND status = 'PENDING_VERIFICATION' AND deleted_at IS NULL
+              AND wallet_address ILIKE '0x%'`,
+          [verified.publicKey, agentId],
+        );
+      }
       await tx.query(
         `UPDATE agent
             SET status = 'ACTIVE', verified_at = now(), public_key = COALESCE($2, public_key)
@@ -187,6 +207,12 @@ export class AgentsService {
         [agentId, verified.publicKey],
       );
       return this.insertKey(tx, agentId, key);
+    }).catch((err: unknown) => {
+      // 그래도 이 키를 쥔 다른 행(ACTIVE 등)이 있으면 500이 아니라 409 — 트랜잭션은 이미 롤백됐다
+      if (isUniqueViolation(err, 'uq_agent_public_key')) {
+        throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
+      }
+      throw err;
     });
 
     return { agentId, status: 'ACTIVE', apiKey: key.raw, expiresAt: expires };

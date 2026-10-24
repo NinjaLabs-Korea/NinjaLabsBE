@@ -2,9 +2,12 @@ import { ConflictException } from '@nestjs/common';
 import { computeAddress, Wallet } from 'ethers';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
+import { getInjectiveAddress } from '../test-e2e/support/injective-sdk.stub';
 import { withParamsCheck } from '../test-support/expect-params-match';
 import { AgentsService } from './agents.service';
 
+// sdk-ts is ESM-only: the e2e stub implements the inj1 <-> 0x helpers with real bech32 (byte-identical to sdk-ts)
+jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
 jest.mock('../common/crypto/adr36', () => ({
   verifyAdr36Signature: jest.fn(() => false),
 }));
@@ -78,6 +81,7 @@ describe('AgentsService EVM registration', () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }) // clear the recovered key off other EVM PENDING rows (legacy client keys)
       .mockResolvedValueOnce({ rowCount: 1, rows: [] })
       .mockResolvedValueOnce({
         rowCount: 1,
@@ -120,8 +124,11 @@ describe('AgentsService EVM registration', () => {
       expiresAt: '2026-12-01T00:00:00.000Z',
     });
     expect(verifyQuery.mock.calls[0][0]).toContain('FOR UPDATE');
-    const recoveredPublicKey = verifyQuery.mock.calls[1][1][1] as string;
+    const recoveredPublicKey = verifyQuery.mock.calls[2][1][1] as string;
+    expect(verifyQuery.mock.calls[2][0]).toContain("SET status = 'ACTIVE'");
     expect(computeAddress(recoveredPublicKey)).toBe(signer.address);
+    expect(verifyQuery.mock.calls[1][0]).toContain('UPDATE agent SET public_key = NULL');
+    expect(verifyQuery.mock.calls[1][1]).toEqual([recoveredPublicKey, agentId]);
   });
 
   it('returns the existing pending challenge after a rejected signature retry — looked up by (owner, wallet) outside the rolled-back tx', async () => {
@@ -268,10 +275,13 @@ describe('AgentsService EVM registration', () => {
     const registerQuery = registerTxQuery();
     db.tx.mockImplementation(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
       callback({ query: registerQuery }));
-    await service.register(ownerUserId, 'inj-agent', undefined, 'AgentPubKeyBase64', 'inj1agentwallet');
+    const injSigner = Wallet.createRandom();
+    const injAddress = getInjectiveAddress(injSigner.address);
+    const publicKey = Buffer.from(injSigner.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64');
+    await service.register(ownerUserId, 'inj-agent', undefined, publicKey, injAddress);
     // $2 is cast identically in both positions — a bare + cast mix is a 42P08 at parse time on a real Postgres
     expect(registerQuery.mock.calls[0][0]).toContain('($2::text IS NOT NULL AND public_key = $2::text)');
-    expect(registerQuery.mock.calls[0][1]).toEqual(['inj1agentwallet', 'AgentPubKeyBase64']);
+    expect(registerQuery.mock.calls[0][1]).toEqual([injAddress, publicKey]);
   });
 
   it('rejects a signature from a different EVM key', async () => {

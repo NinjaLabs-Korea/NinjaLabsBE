@@ -59,6 +59,7 @@ export const ERROR_CODES = {
   // ── 에이전트 ──
   INVALID_AGENT_WALLET_ADDRESS: { statuses: [400], ko: '에이전트 지갑 주소 형식이 올바르지 않다' },
   AGENT_PUBLIC_KEY_REQUIRED: { statuses: [400], ko: '에이전트 공개키가 필요하다' },
+  AGENT_PUBLIC_KEY_MISMATCH: { statuses: [400], ko: 'inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다' },
   AGENT_KEY_OR_WALLET_ALREADY_REGISTERED: { statuses: [409], ko: '같은 공개키 또는 지갑으로 이미 등록된 에이전트가 있다' },
   AGENT_NOT_FOUND: { statuses: [404], ko: '내 에이전트가 아니거나 없다' },
   AGENT_ALREADY_VERIFIED: { statuses: [409], ko: '이미 검증이 끝난 에이전트다' },

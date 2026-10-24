@@ -3,7 +3,8 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { RegisterAgentDto } from './agents.controller';
 
-// 컨트롤러가 서비스 → wallet-signature → @injectivelabs/sdk-ts(ESM)를 끌어오므로 서명 검증 모듈만 껍데기로 대체한다
+// 컨트롤러가 서비스 → wallet-signature / injective-public-key → @injectivelabs/sdk-ts(ESM)를 끌어오므로 서명 검증 모듈과 sdk-ts를 대체한다
+jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
 jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
 
 const failedFields = async (body: object) =>

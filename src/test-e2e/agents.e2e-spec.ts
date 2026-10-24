@@ -1,6 +1,7 @@
 import { HDNodeWallet, Wallet } from 'ethers';
 import { describeDb } from '../test-db/describe-db';
 import { E2eApp, Session, startApp, UUID } from './support/harness';
+import { getInjectiveAddress } from './support/injective-sdk.stub';
 
 const badRequest = (message: string | string[]) => ({ statusCode: 400, error: 'Bad Request', message });
 const unauthorized = (message: string) => ({ statusCode: 401, error: 'Unauthorized', message });
@@ -112,6 +113,87 @@ describeDb('agents over HTTP (e2e)', () => {
       const foreign = await e2e.post(`/agents/${agentId}/verify`, { signature: await signer.signMessage(verificationMessage) }, { token: stranger.accessToken });
       expect(foreign.status).toBe(404);
       expect(foreign.body.message).toBe('AGENT_NOT_FOUND');
+    });
+  });
+
+  describe('public key pre-claiming (an unverified key must never block its owner)', () => {
+    const agentKey = async (agentId: string) =>
+      (await e2e.db.query<{ public_key: string | null }>(`SELECT public_key FROM agent WHERE id = $1`, [agentId])).rows[0].public_key;
+
+    it("EVM: an attacker registering their own 0x wallet with the victim's publicKey stores NULL — the victim's verify is 201, not a 500", async () => {
+      const attacker = await e2e.login();
+      const victim = await e2e.login();
+      const attackerWallet = Wallet.createRandom();
+      const victimWallet = Wallet.createRandom();
+
+      // 1. attacker: own wallet + the victim's compressed key (the format verify stores for EVM)
+      const squat = await e2e.post('/agents', { name: 'squat', walletAddress: attackerWallet.address, publicKey: victimWallet.signingKey.compressedPublicKey }, { token: attacker.accessToken });
+      expect(squat.status).toBe(201);
+      expect(await agentKey(squat.body.agentId)).toBeNull();
+      // 2. victim registers without a publicKey; 3. verify recovers the key from the signature and activates
+      const registered = await register(victim, victimWallet);
+      const verified = await e2e.post(`/agents/${registered.agentId}/verify`, { signature: await victimWallet.signMessage(registered.verificationMessage) }, { token: victim.accessToken });
+      expect(verified.status).toBe(201);
+      e2e.trackTokens(verified.body);
+      expect(verified.body).toMatchObject({ agentId: registered.agentId, status: 'ACTIVE' });
+      expect(await agentKey(registered.agentId)).toBe(victimWallet.signingKey.compressedPublicKey);
+      // the attacker's row is untouched otherwise and can still be verified by its real key holder
+      const attackerVerify = await e2e.post(`/agents/${squat.body.agentId}/verify`, { signature: await attackerWallet.signMessage(squat.body.verificationMessage) }, { token: attacker.accessToken });
+      expect(attackerVerify.status).toBe(201);
+      e2e.trackTokens(attackerVerify.body);
+      expect(await agentKey(squat.body.agentId)).toBe(attackerWallet.signingKey.compressedPublicKey);
+    });
+
+    it("EVM: a squat row stored before this fix (a PENDING 0x agent holding the victim's key) is cleared by the victim's verify → 201", async () => {
+      const attacker = await e2e.login();
+      const victim = await e2e.login();
+      const victimWallet = Wallet.createRandom();
+      const legacy = await e2e.db.query<{ id: string }>(
+        `INSERT INTO agent (owner_user_id, name, public_key, wallet_address) VALUES ($1, 'legacy-squat', $2, $3) RETURNING id`,
+        [attacker.userId, victimWallet.signingKey.compressedPublicKey, Wallet.createRandom().address]);
+
+      const registered = await register(victim, victimWallet);
+      const verified = await e2e.post(`/agents/${registered.agentId}/verify`, { signature: await victimWallet.signMessage(registered.verificationMessage) }, { token: victim.accessToken });
+      expect(verified.status).toBe(201);
+      e2e.trackTokens(verified.body);
+      expect(await agentKey(legacy.rows[0].id)).toBeNull();
+      expect(await agentKey(registered.agentId)).toBe(victimWallet.signingKey.compressedPublicKey);
+    });
+
+    it('EVM: if the recovered key is held by an ACTIVE agent anyway (data drift), verify is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED and stays pending', async () => {
+      const other = await e2e.login();
+      const victim = await e2e.login();
+      const victimWallet = Wallet.createRandom();
+      await e2e.db.query(
+        `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at) VALUES ($1, 'drift', $2, $3, 'ACTIVE', now())`,
+        [other.userId, victimWallet.signingKey.compressedPublicKey, Wallet.createRandom().address]);
+
+      const registered = await register(victim, victimWallet);
+      const verified = await e2e.post(`/agents/${registered.agentId}/verify`, { signature: await victimWallet.signMessage(registered.verificationMessage) }, { token: victim.accessToken });
+      expect(verified.status).toBe(409);
+      expect(verified.body.message).toBe('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
+      const row = await e2e.db.query(`SELECT status, public_key FROM agent WHERE id = $1`, [registered.agentId]);
+      expect(row.rows[0]).toEqual({ status: 'PENDING_VERIFICATION', public_key: null });
+    });
+
+    it("inj1: a publicKey that is not the wallet's own key is 400 AGENT_PUBLIC_KEY_MISMATCH, so the victim's own registration still goes through", async () => {
+      const attacker = await e2e.login();
+      const victim = await e2e.login();
+      const injKey = (signer: HDNodeWallet) => ({
+        walletAddress: getInjectiveAddress(signer.address),
+        publicKey: Buffer.from(signer.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64'),
+      });
+      const victimKey = injKey(Wallet.createRandom());
+      const attackerKey = injKey(Wallet.createRandom());
+
+      const squat = await e2e.post('/agents', { name: 'squat', walletAddress: attackerKey.walletAddress, publicKey: victimKey.publicKey }, { token: attacker.accessToken });
+      expect(squat.body).toEqual(badRequest('AGENT_PUBLIC_KEY_MISMATCH'));
+      const garbage = await e2e.post('/agents', { name: 'bot', walletAddress: attackerKey.walletAddress, publicKey: 'not-a-key' }, { token: attacker.accessToken });
+      expect(garbage.body).toEqual(badRequest('AGENT_PUBLIC_KEY_MISMATCH'));
+
+      const own = await e2e.post('/agents', { name: 'inj-bot', ...victimKey }, { token: victim.accessToken });
+      expect(own.status).toBe(201);
+      expect(await agentKey(own.body.agentId)).toBe(victimKey.publicKey);
     });
   });
 

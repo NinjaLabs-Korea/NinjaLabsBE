@@ -6,8 +6,9 @@ import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';
 import { auditActions, createDb, createUser } from './harness';
 
-// Only the ADR-36 verifier reaches @injectivelabs/sdk-ts (ESM-only); the EVM path signs with a real ethers wallet.
-jest.mock('@injectivelabs/sdk-ts', () => ({}));
+// @injectivelabs/sdk-ts is ESM-only: the e2e stub gives the real inj1 <-> 0x helpers (register's key/address check); the ADR-36
+// verifier itself is mocked below, and the EVM path signs with a real ethers wallet.
+jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
 jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
 
 describeDb('agent lifecycle on a real database', () => {

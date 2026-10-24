@@ -54,8 +54,8 @@ Agent API key로는 호출할 수 없다.
 
 ## Registration (owner, user JWT) — what the key is bound to
 
-`POST /agents`(사용자 JWT)로 등록한다. **EVM 지갑(`0x…`)은 `walletAddress`만 보낸다** — `publicKey`는 받지 않으며 verify 때 EIP-191 서명에서 서버가 복구해 저장한다.
-`inj1…` 지갑만 `publicKey`(ADR-36 `signArbitrary`의 `pub_key.value`)가 함께 필요하다 (`400 AGENT_PUBLIC_KEY_REQUIRED`). 잘못된 `0x` 주소는 `400 INVALID_AGENT_WALLET_ADDRESS`.
+`POST /agents`(사용자 JWT)로 등록한다. **EVM 지갑(`0x…`)은 `walletAddress`만 보낸다** — 보낸 `publicKey`는 무시하며(저장하지 않음) verify 때 EIP-191 서명에서 서버가 복구해 저장한다.
+`inj1…` 지갑만 `publicKey`(ADR-36 `signArbitrary`의 `pub_key.value`)가 함께 필요하다 (`400 AGENT_PUBLIC_KEY_REQUIRED`). 그 키가 `walletAddress`에서 파생되지 않으면 `400 AGENT_PUBLIC_KEY_MISMATCH`. 잘못된 `0x` 주소는 `400 INVALID_AGENT_WALLET_ADDRESS`.
 필드 상한: `name` 1~100자(trim), `description` ≤1000자. 등록 흐름 전체는 `docs/api-contract.md` "에이전트" 참고.
 
 ## Field limits and URL rule (all Agent API bodies)

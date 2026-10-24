@@ -52,6 +52,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `WALLET_ALREADY_LINKED` | 409 | 이 주소가 이미 다른 계정에 연결됐거나, 내 대표 지갑이 이미 있다 (부분 유니크 인덱스 충돌) |
 | `INVALID_AGENT_WALLET_ADDRESS` | 400 | 에이전트 지갑 주소 형식이 올바르지 않다 |
 | `AGENT_PUBLIC_KEY_REQUIRED` | 400 | 에이전트 공개키가 필요하다 |
+| `AGENT_PUBLIC_KEY_MISMATCH` | 400 | inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다 |
 | `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` | 409 | 같은 공개키 또는 지갑으로 이미 등록된 에이전트가 있다 |
 | `AGENT_NOT_FOUND` | 404 | 내 에이전트가 아니거나 없다 |
 | `AGENT_ALREADY_VERIFIED` | 409 | 이미 검증이 끝난 에이전트다 |
@@ -262,7 +263,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) EVM: `{name, description?, walletAddress: "0x..."}` / ADR-36: `{name, description?, publicKey, walletAddress: "inj1..."}` → `{agentId, status, verificationMessage}`. 같은 지갑/공개키의 **내** `REVOKED` 에이전트가 있으면 그 행은 그대로 두고(soft delete 없음 — `/agents/me`와 프로필의 이력 유지) 새 행을 등록한다 (유니크 인덱스가 REVOKED 행을 무시한다, 0014). 내 `PENDING_VERIFICATION` 행이 있으면 그 행을 그대로 돌려준다. **남의** `PENDING_VERIFICATION` 행은 소유 증명이 아니므로(증명은 verify의 서명) 등록 후 **24시간이 지났으면 버려진 것으로 보고 soft delete 후 진행**, 24시간 이내면 409. 남의 `ACTIVE`/`REVOKED` 에이전트면 409 `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` |
+| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) EVM: `{name, description?, walletAddress: "0x..."}` (보낸 `publicKey`는 무시 — 키는 verify의 EIP-191 서명에서 복원해 저장) / ADR-36: `{name, description?, publicKey, walletAddress: "inj1..."}` (`publicKey`가 그 주소의 키가 아니면 400 `AGENT_PUBLIC_KEY_MISMATCH`) → `{agentId, status, verificationMessage}`. 같은 지갑/공개키의 **내** `REVOKED` 에이전트가 있으면 그 행은 그대로 두고(soft delete 없음 — `/agents/me`와 프로필의 이력 유지) 새 행을 등록한다 (유니크 인덱스가 REVOKED 행을 무시한다, 0014). 내 `PENDING_VERIFICATION` 행이 있으면 그 행을 그대로 돌려준다. **남의** `PENDING_VERIFICATION` 행은 소유 증명이 아니므로(증명은 verify의 서명) 등록 후 **24시간이 지났으면 버려진 것으로 보고 soft delete 후 진행**, 24시간 이내면 409. 남의 `ACTIVE`/`REVOKED` 에이전트면 409 `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` |
 | POST | `/agents/:id/verify` | ✅ | `{signature}` — 에이전트 지갑 서명 검증 → ACTIVE + **API key 원문 1회 반환** `{agentId, status, apiKey, expiresAt}` |
 | GET | `/agents/me` | ✅ | 내 에이전트 목록 (`REVOKED` 에이전트 포함, soft delete된 행만 제외) — 에이전트당 1행, 최신 키의 `key_prefix`·`key_expires_at`(ISO\|null)·`key_status`(`ACTIVE`\|`REVOKED`\|`EXPIRED`\|null) |
 | POST | `/agents/:id/keys/rotate` | ✅ | 기존 ACTIVE 키 전부 폐기 + 새 키 발급 → `{agentId, apiKey, expiresAt}` (원문 1회). 404 `AGENT_NOT_FOUND`, 409 `AGENT_NOT_ACTIVE` |
@@ -274,7 +275,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 - 검증 방법: 등록 응답의 `verificationMessage`를 **에이전트별 전용 지갑 키**로 서명한다.
   `0x` 주소는 EIP-191 `personal_sign` hex 서명을 제출하며 서버가 공개키를 복구해 저장한다.
   `inj1` 주소는 ADR-36 `signArbitrary`의 base64 서명과 등록 시 public key를 사용한다.
-- API key 만료 90일 (decisions.md). 에러코드: `AGENT_NOT_FOUND`, `AGENT_ALREADY_VERIFIED`, `INVALID_SIGNATURE`, `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED`(409)
+- API key 만료 90일 (decisions.md). 에러코드: `AGENT_NOT_FOUND`, `AGENT_ALREADY_VERIFIED`, `INVALID_SIGNATURE`, `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED`(409) — verify에서 복원한 키가 이미 다른 에이전트에 묶여 있으면(유니크 위반) 500이 아니라 이 409
 - Google 로그인 콜백에서 Google JWKS를 못 받아오면 BE는 내부적으로 503 `GOOGLE_UNAVAILABLE`로 구분하지만, FE로는 다른 실패와 같은 `/auth/callback#error=AUTH_FAILED`로 리다이렉트된다.
 
 에이전트 전용 REST API 인증 및 지원/제출 계약은 `docs/agent-api.md`를 따른다.

@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import { run as grantAdmin } from '../../scripts/grant-admin';
 import { applyMigrations, sslOptions } from '../../scripts/migrate';
 import { run as requeueNftJobs } from '../../scripts/requeue-nft-jobs';
+import { AlertService } from '../common/alerts/alert.service';
 import { InjectiveNftClient } from '../nfts/injective-nft.client';
 import { NftJobWorker } from '../nfts/nft-job.worker';
 import { describeDb } from './describe-db';
@@ -269,7 +270,8 @@ describeDb('ops scripts on a real database', () => {
       const db = createDb({ DATABASE_URL: url });
       try {
         const chain = { isConfigured: () => true, contractAddress: () => 'inj1testcontract', tokenExists: jest.fn(async () => false), mint: jest.fn(async () => '0xabc') };
-        const worker = new NftJobWorker(db, chain as unknown as InjectiveNftClient, testConfig({ DATABASE_URL: url }));
+        const alerts = { notify: jest.fn(async () => true) }; // 운영 알림 대역 (nft-worker.db-spec와 같은 방식)
+        const worker = new NftJobWorker(db, chain as unknown as InjectiveNftClient, testConfig({ DATABASE_URL: url }), alerts as unknown as AlertService);
         await worker.poll();
         expect(chain.mint).toHaveBeenCalledWith(nftId, expect.any(String), null);
         expect(await jobRow(jobId)).toMatchObject({ status: 'SUCCEEDED', last_error: null });

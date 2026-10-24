@@ -21,6 +21,7 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
+import { PUBLIC_READ_IP_THROTTLE } from '../common/throttler/public-read-throttle';
 import { MaxChars } from '../common/validation/max-chars';
 import { Trim } from '../common/validation/trim';
 import { AccountWithdrawalService } from './account-withdrawal.service';
@@ -162,6 +163,7 @@ export class UsersController {
   }
 
   /** GET /users/:nickname — 공개 프로필 (커리어 페이지, 로그인 불필요) */
+  @Throttle(PUBLIC_READ_IP_THROTTLE)
   @Get(':nickname')
   async publicProfile(@Param('nickname') nickname: string) {
     onboardingLog(this.logger, 'public-profile.requested', { nickname });

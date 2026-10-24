@@ -1,16 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
-import { DatabaseService } from '../../common/database/database.service';
-import { withParamsCheck } from '../../test-support/expect-params-match';
+import { createMockDb } from '../../test-support/mock-db';
 import { ApplicationsService } from './applications.service';
 
-/** apply() runs inside db.tx; the runner the callback receives is the same checked mock, assertions read the raw jest.fn */
+/** apply() runs inside db.tx; pool and tx share the same checked mock, assertions read the raw jest.fn */
 function serviceWith(query: jest.Mock, audit = { record: jest.fn() }) {
-  const runner = { query: withParamsCheck(query) };
-  return new ApplicationsService(
-    { ...runner, tx: (fn: (tx: typeof runner) => Promise<unknown>) => fn(runner) } as unknown as DatabaseService,
-    audit as unknown as AuditService,
-  );
+  return new ApplicationsService(createMockDb({ query, txQuery: query }).database, audit as unknown as AuditService);
 }
 
 describe('ApplicationsService submission modes', () => {
@@ -92,8 +87,7 @@ describe('ApplicationsService re-application after withdrawal', () => {
 describe('ApplicationsService owner visibility of agent applications', () => {
   function setup() {
     const query = jest.fn().mockResolvedValue({ rowCount: 1, rows: [{ id: 'app', status: 'WITHDRAWN' }] });
-    const db = { query: withParamsCheck(query), tx: jest.fn() };
-    return { query, service: new ApplicationsService(db as unknown as DatabaseService, { record: jest.fn() } as unknown as AuditService) };
+    return { query, service: new ApplicationsService(createMockDb({ query }).database, { record: jest.fn() } as unknown as AuditService) };
   }
 
   it('lists applications made by the user or by agents the user owns, each with agent {id, name} | null', async () => {
@@ -213,7 +207,7 @@ describe('ApplicationsService apply rules', () => {
 
   it('withdraw of a non-pending, foreign or unknown application is 404 APPLICATION_NOT_FOUND_OR_NOT_PENDING', async () => {
     const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
-    const service = new ApplicationsService({ query: withParamsCheck(query), tx: jest.fn() } as unknown as DatabaseService, { record: jest.fn() } as unknown as AuditService);
+    const service = new ApplicationsService(createMockDb({ query }).database, { record: jest.fn() } as unknown as AuditService);
     await expect(service.withdraw('app', 'someone-else')).rejects.toMatchObject({ status: 404, message: 'APPLICATION_NOT_FOUND_OR_NOT_PENDING' });
   });
 });

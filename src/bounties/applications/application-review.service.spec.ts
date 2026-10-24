@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
-import { withParamsCheck } from '../../test-support/expect-params-match';
+import { createMockDb } from '../../test-support/mock-db';
 import { ApplicationReviewService } from './application-review.service';
 
 const FUTURE = '2999-01-01T00:00:00.000Z';
@@ -19,8 +19,8 @@ function setup(options: { bounty?: { status: string; submission_deadline: string
     return { rowCount: 1, rows: [] };
   });
   const dbQuery = jest.fn();
-  const db = { query: dbQuery, tx: (fn: (tx: { query: unknown }) => Promise<unknown>) => fn({ query: withParamsCheck(query) }) };
-  const service = new ApplicationReviewService(db as never, new AuditService(db as never));
+  const { database } = createMockDb({ query: dbQuery, txQuery: query });
+  const service = new ApplicationReviewService(database, new AuditService(database));
   const update = () => query.mock.calls.find(([sql]) => (sql as string).includes('UPDATE bounty_application'));
   const audited = () => query.mock.calls.some(([sql]) => (sql as string).includes('INSERT INTO audit_log'));
   return { service, query, dbQuery, update, audited };

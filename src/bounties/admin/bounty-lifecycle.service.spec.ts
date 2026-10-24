@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../../audit/audit.service';
 import { withParamsCheck } from '../../test-support/expect-params-match';
+import { createMockDb } from '../../test-support/mock-db';
 import { BountyAdminService } from './bounty-admin.service';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { RewardTokenResolver } from './reward-token.resolver';
@@ -130,8 +131,8 @@ describe('BountyAdminService.transition for every pair', () => {
       return { rowCount: 1, rows: [] };
     });
     const dbQuery = jest.fn();
-    const db = { query: dbQuery, tx: (fn: (tx: { query: unknown }) => Promise<unknown>) => fn({ query: withParamsCheck(query) }) };
-    const service = new BountyAdminService(db as never, new AuditService(db as never), new BountyLifecycleService(), {} as RewardTokenResolver, new ConfigService());
+    const { database } = createMockDb({ query: dbQuery, txQuery: query });
+    const service = new BountyAdminService(database, new AuditService(database), new BountyLifecycleService(), {} as RewardTokenResolver, new ConfigService());
     return { service, query, dbQuery };
   }
 

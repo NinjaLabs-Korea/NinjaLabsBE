@@ -1,5 +1,5 @@
 import { AuditService } from '../../audit/audit.service';
-import { withParamsCheck } from '../../test-support/expect-params-match';
+import { createMockDb } from '../../test-support/mock-db';
 import { ApplicationReviewService } from '../applications/application-review.service';
 import { SubmissionReviewService } from '../submissions/submission-review.service';
 import { BountyAdminService } from './bounty-admin.service';
@@ -20,7 +20,7 @@ import { ApplicationsService } from '../applications/applications.service';
 /** `db.query` (autocommit) and `tx.query` are separate mocks — transitions and reviews must never issue a statement outside the transaction */
 function dbWith(txQuery: jest.Mock) {
   const dbQuery = jest.fn();
-  return { dbQuery, db: { query: dbQuery, tx: (fn: (tx: { query: jest.Mock }) => Promise<unknown>) => fn({ query: withParamsCheck(txQuery) }) } };
+  return { dbQuery, db: createMockDb({ query: dbQuery, txQuery }).database };
 }
 
 function setup(status: string, counts: Record<string, number | undefined> = {}, expired = false) {

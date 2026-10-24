@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
-import { withParamsCheck } from '../../test-support/expect-params-match';
+import { createMockDb } from '../../test-support/mock-db';
 import { SubmissionReviewService } from './submission-review.service';
 
 /**
@@ -25,8 +25,8 @@ function setup(options: {
     return { rowCount: 1, rows: [] };
   });
   const dbQuery = jest.fn();
-  const db = { query: dbQuery, tx: jest.fn((fn: (tx: { query: unknown }) => Promise<unknown>) => fn({ query: withParamsCheck(query) })) };
-  const service = new SubmissionReviewService(db as never, new AuditService(db as never));
+  const { database, db } = createMockDb({ query: dbQuery, txQuery: query });
+  const service = new SubmissionReviewService(database, new AuditService(database));
   const call = (fragment: string) => query.mock.calls.find(([sql]) => (sql as string).includes(fragment));
   const wrote = () => query.mock.calls.some(([sql]) => /^\s*(UPDATE|INSERT)/.test(sql as string));
   return { service, query, db, dbQuery, call, wrote };

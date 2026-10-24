@@ -28,6 +28,18 @@ export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+/**
+ * 한 유저의 열린 세션을 전부 폐기 (유예 사본도 비운다) — 그 유저는 이후 refresh할 수 없다.
+ * 호출자의 runner(트랜잭션) 안에서 실행한다: revokeChain의 홉 상한 초과 폴백, 회원 탈퇴(users/account-withdrawal.service.ts).
+ */
+export async function revokeAllSessionsOfUser(runner: QueryRunner, userId: string): Promise<void> {
+  await runner.query(
+    `UPDATE auth_session SET revoked_at = now(), grace_refresh_token = NULL
+      WHERE user_id = $1 AND revoked_at IS NULL`,
+    [userId],
+  );
+}
+
 export class AuthSessions {
   /**
    * @param refreshTtl normalizeRefreshTtl 결과(`'14 days'`) — auth_session.expires_at = now() + 이 interval
@@ -147,11 +159,8 @@ export class AuthSessions {
         this.logger.warn(
           `revokeChain: session chain from ${hash.slice(0, 12)}… exceeds ${MAX_REVOKE_CHAIN_HOPS} hops — revoking every open session of user ${userId} instead`,
         );
-        await runner.query(
-          `UPDATE auth_session SET revoked_at = now(), grace_refresh_token = NULL
-            WHERE user_id = $1 AND revoked_at IS NULL`,
-          [userId],
-        );
+        // 홉이 하나라도 있었으므로 userId는 정해져 있다 (frontier가 비어 있지 않다 = 직전 홉이 행을 돌려줬다)
+        if (userId) await revokeAllSessionsOfUser(runner, userId);
         return;
       }
       for (const h of frontier) seen.add(h);

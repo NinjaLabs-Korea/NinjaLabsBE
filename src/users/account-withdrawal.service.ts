@@ -1,10 +1,13 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { revokeAllAgentsOfOwner } from '../agents/agent-revocation';
 import { AuditService } from '../audit/audit.service';
+import { revokeAllSessionsOfUser } from '../auth/auth-sessions';
 import { AuthService } from '../auth/auth.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
-import { SubmissionStatusPolicy } from '../bounties/submission-status';
+import { withdrawOpenParticipationOfUser } from '../bounties/participation-withdrawal';
 import { DatabaseService } from '../common/database/database.service';
 import { PAYABLE_REWARD_STATUSES } from '../rewards/payout-status';
+import { disconnectAllWalletsOfUser } from '../wallets/wallet-disconnection';
 import { WITHDRAWN_NICKNAME_PREFIX } from './nickname';
 
 /** payout 종료 상태 — 이 밖의 상태(REQUESTED/AWAITING_MULTISIG_APPROVAL/APPROVED/BROADCASTING)가 하나라도 있으면 탈퇴를 막는다 */
@@ -52,10 +55,13 @@ export function nicknameConfirmed(current: string, typed: string): boolean {
  *   3. user: status WITHDRAWN, deleted_at = now(), google_id/email에 `deleted:<ms>:` 프리픽스(같은 구글 계정 재가입 — 0014 부분 유니크 인덱스가
  *      deleted_at IS NULL 행만 보므로 충돌은 없지만, 원래 식별자로 다시 찾히지 않게 한다), 닉네임은 `withdrawn_<id 앞 8자>`로 익명화,
  *      bio 비움, 멤버/운영자 플래그 해제. user_link/user_tag 삭제
- *   4. auth_session 전부 폐기 (refresh 불가), 지갑 연결 해제(disconnected_at — 같은 주소로 새 계정 연결 가능; payout/NFT FK는 행이 남아 유지)
- *   5. 소유 에이전트 전부 REVOKED + 키 REVOKED (각각 감사 AGENT_REVOKED)
+ *   4. auth_session 전부 폐기 (refresh 불가 — auth/auth-sessions.ts revokeAllSessionsOfUser),
+ *      지갑 연결 해제(disconnected_at — 같은 주소로 새 계정 연결 가능; payout/NFT FK는 행이 남아 유지 — wallets/wallet-disconnection.ts)
+ *   5. 소유 에이전트 전부 REVOKED + 키 REVOKED (각각 감사 AGENT_REVOKED — agents/agent-revocation.ts)
  *   6. 본인/내 에이전트의 심사 전 제출(SUBMITTED/RESUBMITTED/IN_REVIEW/REVISION_REQUESTED)과 PENDING 지원 → WITHDRAWN
+ *      (bounties/participation-withdrawal.ts)
  *   7. 감사 USER_WITHDRAWN
+ * 이 파일은 잠금·차단 검사·user 행(+ user_link/user_tag)만 직접 쓰고, 4~6의 다른 모듈 테이블은 각 소유 모듈의 함수가 같은 tx 안에서 쓴다.
  * 승인/반려된 제출·payout·NFT 기록은 그대로 남는다 (표시 이름은 익명화된 닉네임). AuthGuard 상태 캐시는 커밋 뒤 이 프로세스에서 즉시 비운다.
  */
 @Injectable()
@@ -112,49 +118,11 @@ export class AccountWithdrawalService {
       );
       await tx.query(`DELETE FROM user_link WHERE user_id = $1`, [userId]);
       await tx.query(`DELETE FROM user_tag WHERE user_id = $1`, [userId]);
-      await tx.query(
-        `UPDATE auth_session SET revoked_at = now(), grace_refresh_token = NULL
-          WHERE user_id = $1 AND revoked_at IS NULL`,
-        [userId],
-      );
-      await tx.query(
-        `UPDATE wallet SET disconnected_at = now()
-          WHERE user_id = $1 AND disconnected_at IS NULL`,
-        [userId],
-      );
-
-      const agents = await tx.query<{ id: string }>(
-        `UPDATE agent SET status = 'REVOKED'
-          WHERE owner_user_id = $1 AND deleted_at IS NULL AND status <> 'REVOKED'
-          RETURNING id`,
-        [userId],
-      );
-      await tx.query(
-        `UPDATE agent_api_key SET status = 'REVOKED', revoked_at = now()
-          WHERE status = 'ACTIVE' AND agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1))`,
-        [userId],
-      );
-      for (const agent of agents.rows) {
-        await this.audit.record(userId, 'AGENT_REVOKED', 'agent', agent.id, tx);
-      }
-
-      // 아직 심사가 끝나지 않은 제출도 철회한다 — 남겨 두면 운영자가 승인해 max_winners 자리를 지급 불가능한 제출이 차지하거나
-      // (수령 지갑이 없어 requestPayout 404), 미결 제출로 남아 바운티 완료(COMPLETED)를 막는다. 승인/반려된 제출은 기록으로 남는다.
-      await tx.query(
-        `UPDATE bounty_submission SET status = 'WITHDRAWN'
-          WHERE status = ANY($2::text[])
-            AND (submitter_user_id = $1
-                 OR agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1)))`,
-        // 미결 제출 상태 — bounty-lifecycle의 UNRESOLVED_SUBMISSIONS와 같은 집합 (bounties/submission-status.ts)
-        [userId, SubmissionStatusPolicy.unresolvedStatuses()],
-      );
-      await tx.query(
-        `UPDATE bounty_application SET status = 'WITHDRAWN'
-          WHERE status = 'PENDING'
-            AND (applicant_user_id = $1
-                 OR agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1)))`,
-        [userId],
-      );
+      // 다른 모듈이 소유한 테이블은 그 모듈의 in-transaction 함수로 정리한다 (순서 유지 — 감사 행 순서가 AGENT_REVOKED… → USER_WITHDRAWN)
+      await revokeAllSessionsOfUser(tx, userId);
+      await disconnectAllWalletsOfUser(tx, userId);
+      await revokeAllAgentsOfOwner(tx, this.audit, userId, userId);
+      await withdrawOpenParticipationOfUser(tx, userId);
 
       await this.audit.record(userId, 'USER_WITHDRAWN', 'user', userId, tx);
     });

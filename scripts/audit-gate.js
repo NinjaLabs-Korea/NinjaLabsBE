@@ -51,22 +51,72 @@ function evaluate(report, allowlist, today = new Date().toISOString().slice(0, 1
   return { ok: errors.length === 0, errors, allowed, blocked };
 }
 
-function main() {
-  const allowlist = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'audit-allowlist.json'), 'utf8'));
-  const res = spawnSync('npm', ['audit', '--omit=dev', '--json'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  // npm audit exits non-zero when vulnerabilities exist; only unparsable output is a real failure.
+// 네트워크 장애는 advisory가 아니므로 재시도 후에도 실패하면 별도 에러 제목으로 구분한다.
+const NETWORK_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN', 'ENOTFOUND']);
+const MAX_ATTEMPTS = 3;
+const SPAWN_TIMEOUT_MS = 90_000;
+const BACKOFF_MS = 5_000; // attempt n 뒤에 n * BACKOFF_MS 만큼 대기
+const AUDIT_ARGS = ['audit', '--omit=dev', '--json', '--fetch-timeout=30000', '--fetch-retries=2'];
+
+/**
+ * spawnSync 결과 한 번을 분류한다.
+ * - ok: 파싱된 report 반환 (취약점이 있어 exit code가 0이 아니어도 ok)
+ * - network: 재시도 대상 (spawn timeout, 네트워크 error code, 파싱 불가 출력)
+ * - fatal: 재시도해도 소용없는 npm 오류
+ * @returns {{ kind: 'ok', report: object } | { kind: 'network' | 'fatal', reason: string }}
+ */
+function classifyAttempt(res) {
+  const spawnCode = res.error && res.error.code;
+  if (spawnCode === 'ETIMEDOUT' || res.signal === 'SIGTERM') return { kind: 'network', reason: 'npm audit timed out' };
+  if (spawnCode) return { kind: NETWORK_CODES.has(spawnCode) ? 'network' : 'fatal', reason: `spawn failed: ${spawnCode}` };
   let report;
   try {
     report = JSON.parse(res.stdout);
   } catch {
-    console.error('audit-gate: could not parse npm audit output', res.stderr || res.stdout);
+    const detail = String(res.stderr || res.stdout || '').trim().slice(0, 500);
+    return { kind: 'network', reason: `unparsable npm audit output ${detail}`.trim() };
+  }
+  if (report && report.error) {
+    const code = report.error.code;
+    const reason = `npm audit failed: ${report.error.summary || code}`;
+    const text = `${code} ${report.error.summary || ''} ${report.error.detail || ''}`;
+    const isNetwork = [...NETWORK_CODES].some((c) => text.includes(c));
+    return { kind: isNetwork ? 'network' : 'fatal', reason };
+  }
+  return { kind: 'ok', report };
+}
+
+/** attempt 한 번을 실행하는 run()을 최대 maxAttempts번 재시도한다. network 분류만 재시도. */
+function auditWithRetry(run, sleep, maxAttempts = MAX_ATTEMPTS) {
+  let last;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    last = classifyAttempt(run());
+    if (last.kind !== 'network') return last;
+    console.error(`audit-gate: attempt ${attempt}/${maxAttempts} failed (network): ${last.reason}`);
+    if (attempt < maxAttempts) sleep(attempt * BACKOFF_MS);
+  }
+  return last;
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function main() {
+  const allowlist = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'audit-allowlist.json'), 'utf8'));
+  const outcome = auditWithRetry(
+    () => spawnSync('npm', AUDIT_ARGS, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: SPAWN_TIMEOUT_MS }),
+    sleepSync,
+  );
+  if (outcome.kind === 'network') {
+    console.error(`::error title=Dependency audit (network)::npm audit unreachable after ${MAX_ATTEMPTS} attempts, not an advisory: ${outcome.reason}`);
     process.exit(2);
   }
-  if (report.error) {
-    console.error(`audit-gate: npm audit failed: ${report.error.summary || report.error.code}`);
+  if (outcome.kind === 'fatal') {
+    console.error(`audit-gate: ${outcome.reason}`);
     process.exit(2);
   }
-  const result = evaluate(report, allowlist);
+  const result = evaluate(outcome.report, allowlist);
   for (const a of result.allowed) console.log(`allowlisted: ${a.id} ${a.pkg} (${a.severity}) - ${a.title}`);
   if (!result.ok) {
     for (const e of result.errors) console.error(`::error title=Dependency audit::${e}`);
@@ -75,6 +125,6 @@ function main() {
   console.log(`audit-gate: ok (${result.allowed.length} allowlisted high/critical advisories)`);
 }
 
-module.exports = { collectAdvisories, evaluate };
+module.exports = { collectAdvisories, evaluate, classifyAttempt, auditWithRetry };
 
 if (require.main === module) main();

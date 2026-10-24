@@ -17,3 +17,17 @@ export declare function evaluate(
   allowlist: unknown[],
   today?: string,
 ): { ok: boolean; errors: string[]; allowed: AuditAdvisory[]; blocked: AuditAdvisory[] };
+export interface SpawnResultLike {
+  error?: { code?: string };
+  signal?: string | null;
+  status?: number | null;
+  stdout?: string;
+  stderr?: string;
+}
+export type AttemptOutcome = { kind: 'ok'; report: unknown } | { kind: 'network' | 'fatal'; reason: string };
+export declare function classifyAttempt(res: SpawnResultLike): AttemptOutcome;
+export declare function auditWithRetry(
+  run: () => SpawnResultLike,
+  sleep: (ms: number) => void,
+  maxAttempts?: number,
+): AttemptOutcome;

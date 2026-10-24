@@ -102,7 +102,7 @@ jobs:
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -111,6 +111,8 @@ jobs:
           cache: npm
       # Blocking: fails on any high/critical production advisory that is not in audit-allowlist.json
       # (each entry carries a reason and an expiry date; an expired entry fails the job too).
-      - run: npm ci
+      # npm audit reads only package-lock.json, so no `npm ci` (one less registry dependency).
+      # audit-gate.js retries network failures itself; the step timeout is the hard backstop.
       - name: audit gate (production deps, high+)
+        timeout-minutes: 4
         run: node scripts/audit-gate.js

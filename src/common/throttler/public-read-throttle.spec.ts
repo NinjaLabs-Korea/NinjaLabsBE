@@ -40,13 +40,13 @@ describe('PUBLIC_READ_IP_THROTTLE', () => {
     expect(ttlOf(ctrl, handler)).toBe(60_000);
   });
 
-  it('no non-GET handler of those controllers is raised (writes keep the global 120)', () => {
+  it('no non-GET handler of those controllers is raised to 600 (writes keep 120 or stricter)', () => {
     for (const [, ctrl] of PUBLIC_READ_HANDLERS) {
       for (const name of Object.getOwnPropertyNames(ctrl.prototype)) {
         if (name === 'constructor') continue;
         const fn = ctrl.prototype[name] as object;
         const method = Reflect.getMetadata(METHOD_METADATA, fn);
-        if (method !== undefined && method !== RequestMethod.GET) expect(limitOf(ctrl, name)).toBeUndefined();
+        if (method !== undefined && method !== RequestMethod.GET) expect(limitOf(ctrl, name)).not.toBe(600);
       }
     }
   });

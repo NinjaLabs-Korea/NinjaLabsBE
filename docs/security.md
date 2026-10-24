@@ -47,6 +47,7 @@
 | payout / nft_job **멱등키** — 중복 지급·중복 민팅 DB 레벨 차단 | `0006`, `0007` 마이그레이션 |
 | **payout 승인 2인 규칙** — 요청한 운영자(`payout.requested_by`)는 같은 payout을 승인할 수 없다(403 `PAYOUT_SELF_APPROVAL`, 승인 행 `FOR UPDATE`로 읽어 판정). 운영자 1인 배포만 `PAYOUT_ALLOW_SELF_APPROVAL=true`로 끈다 — 기동 시 warn 1회 + 자기 승인마다 warn + 감사 `PAYOUT_SELF_APPROVED`(사후 검토 대상). 운영 기본값은 false(.railway/railway.ts에 넣지 않는다) | `rewards/payout-approval.ts`, `rewards.service.ts` markApproved, test-db `bounty-flow.db-spec`, e2e `bounty-lifecycle` |
 | **배정 상한 / 삭제 가드** — payout 합계는 `LEAST(게시 금액, 입금액)`을 넘지 못한다(초과 입금은 상한을 올리지 않음, 400 `PAYOUT_EXCEEDS_AVAILABLE_REWARD`). 돈이 남았거나 열린 payout이 있는 바운티는 삭제 불가(409 `BOUNTY_HAS_OPEN_FUNDS`, 바운티 행 잠금 아래 검사 — 입금 확인·payout 요청과 직렬화) | `rewards.service.ts`, `bounties/admin/bounty-admin.service.ts` |
+| **회원 탈퇴** — 닉네임 재입력 확인, 유저 행 `FOR UPDATE` 아래 한 트랜잭션: refresh 세션 전부 폐기 + 이 프로세스의 AuthGuard 상태 캐시 즉시 무효화(다른 레플리카는 ≤30초), 에이전트·API 키 즉시 `REVOKED`, 식별자(google_id/email) 프리픽스·닉네임 익명화·프로필 링크 삭제. 열린 payout이 있으면 409 `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS` (지급 도중 수령 지갑이 끊기지 않게) | `users/account-withdrawal.service.ts`, test-db `withdrawal.db-spec`, e2e `withdrawal` |
 | 세션/에이전트/지갑/바운티 흐름을 **실 Postgres**로 검증하는 통합 테스트 (`npm run test:db`, CI `db-tests` 잡) — mock DB로는 통과하는 파라미터 타입 충돌(42P08)·부분 유니크 인덱스·행 잠금 회귀를 막는다 | `src/test-db/*`, `jest.db.config.js` |
 | 지갑 nonce 1회용 + 5분 만료 | `wallets.service.ts`, `0002` |
 | 상태 전이 서버측 검증 (마감 후 제출, 승인 전 제출, 확정 후 수정 차단) | `submissions.service.ts`, `bounties/bounty-status.ts`, `bounties/admin/bounty-admin.service.ts` |

@@ -1,8 +1,14 @@
-import { PAYABLE_REWARD_STATUSES, PAYOUT_STATUSES, payoutStatusSql } from './payout-status';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  ALLOCATED_PAYOUT_STATUSES, allocatedPayoutSumSql, AWAITING_APPROVAL_PAYOUT_STATUSES, OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql,
+  PAYABLE_REWARD_STATUSES, paidPayoutSumSql, PAYOUT_ROW_STATUSES, PAYOUT_STATUSES, payoutStatusSql, rewardCapSql, rewardHeadroomSql,
+  SENDABLE_PAYOUT_STATUSES, sqlStatusList, TERMINAL_PAYOUT_STATUSES, UNSETTLED_PAYOUT_STATUSES,
+} from './payout-status';
 
 jest.mock('../nfts/nfts.service', () => ({ NftsService: class {} })); // rewards.service → nfts → ESM SDK
 
-/** 동작 자체(5가지 경우)는 실 DB에서: src/test-db/users.db-spec.ts "payout status" */
+/** 동작 자체는 실 DB에서: src/test-db/users.db-spec.ts "payout status", src/test-db/bounty-flow.db-spec.ts "cancelled payout" */
 describe('payoutStatusSql', () => {
   const sql = payoutStatusSql('s', 'b');
 
@@ -14,14 +20,20 @@ describe('payoutStatusSql', () => {
     expect(sql).toContain("ELSE 'PENDING' END");
   });
 
-  it('owed = funded rewards of the bounty with a payout row for this submission or remaining headroom; paid = a PAID payout for this submission', () => {
+  it('owed = funded rewards with an allocated payout row for this submission, or no row at all and remaining headroom; paid = a PAID payout', () => {
     expect(sql).toContain('WHERE rw.bounty_id = b.id');
     expect(sql).toContain("AND rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')");
-    expect(sql).toContain('EXISTS (SELECT 1 FROM payout px WHERE px.bounty_reward_id = rw.id AND px.submission_id = s.id)');
-    expect(sql).toContain('OR LEAST(rw.amount, rw.deposited_amount) >');
-    expect(sql).toContain("(SELECT COALESCE(SUM(px.amount), 0) FROM payout px WHERE px.bounty_reward_id = rw.id AND px.status <> 'CANCELLED')");
+    // (a) 이 제출의 배정된(취소 아닌) payout 행
+    expect(sql).toContain("EXISTS (SELECT 1 FROM payout px WHERE px.bounty_reward_id = rw.id AND px.submission_id = s.id AND px.status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING', 'PAID', 'FAILED'))");
+    // (b) 행이 하나도 없고(취소된 행도 없음 — requestPayout이 409로 다시 받지 않는다) 여유분이 남음
+    expect(sql).toContain('OR (NOT EXISTS (SELECT 1 FROM payout px WHERE px.bounty_reward_id = rw.id AND px.submission_id = s.id)');
+    expect(sql).toContain(`AND ${rewardHeadroomSql('rw', 'px')}`);
     expect(sql).toMatch(/px\.submission_id = s\.id\s+AND px\.status = 'PAID'\) AS paid/);
     expect(sql).not.toMatch(/\$\d/); // no bind parameters — safe to embed in any query
+  });
+
+  it('owesUnpaidRewardSql is exactly "payoutStatusSql is PENDING or PARTIALLY_PAID" — the COMPLETED blocker and the response agree', () => {
+    expect(owesUnpaidRewardSql('s', 'b')).toBe(`${payoutStatusSql('s', 'b')} IN ('PENDING', 'PARTIALLY_PAID')`);
   });
 
   it('uses the given aliases and refuses anything that is not an identifier', () => {
@@ -33,5 +45,47 @@ describe('payoutStatusSql', () => {
 
   it('shares the payable reward statuses with requestPayout', () => {
     expect(PAYABLE_REWARD_STATUSES).toEqual(['FUNDED', 'PARTIALLY_PAID', 'PAID']);
+  });
+});
+
+/**
+ * payout 상태 집합 — 이 표가 규칙의 문서다. 바꾸려면 payout-status.ts 하나만 고치고, 아래 기대값과 그 파일 머리 주석의 목록을 같이 고친다.
+ */
+describe('payout status sets', () => {
+  const sorted = (list: readonly string[]) => [...list].sort();
+
+  it('PAYOUT_ROW_STATUSES is exactly the payout.status CHECK in the migration', () => {
+    const migration = readFileSync(join(__dirname, '../../supabase/migrations/0006_rewards.sql'), 'utf8');
+    const table = migration.slice(migration.indexOf('CREATE TABLE payout'));
+    const check = /CHECK \(status IN \(([^)]*)\)\)/.exec(table)![1];
+    expect(sorted(check.split(',').map((v) => v.trim().replace(/'/g, '')))).toEqual(sorted(PAYOUT_ROW_STATUSES));
+  });
+
+  it('open (in flight) and terminal partition every payout status', () => {
+    expect(OPEN_PAYOUT_STATUSES).toEqual(['REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING']);
+    expect(TERMINAL_PAYOUT_STATUSES).toEqual(['PAID', 'CANCELLED', 'FAILED']);
+    expect(sorted([...OPEN_PAYOUT_STATUSES, ...TERMINAL_PAYOUT_STATUSES])).toEqual(sorted(PAYOUT_ROW_STATUSES));
+    expect(OPEN_PAYOUT_STATUSES.filter((s) => (TERMINAL_PAYOUT_STATUSES as readonly string[]).includes(s))).toEqual([]);
+    expect(sorted([...AWAITING_APPROVAL_PAYOUT_STATUSES, ...SENDABLE_PAYOUT_STATUSES])).toEqual(sorted(OPEN_PAYOUT_STATUSES));
+  });
+
+  it('only CANCELLED releases its allocation; FAILED stays allocated (and unsettled) until an operator closes it', () => {
+    expect(sorted(ALLOCATED_PAYOUT_STATUSES)).toEqual(sorted(PAYOUT_ROW_STATUSES.filter((s) => s !== 'CANCELLED')));
+    expect(sorted(UNSETTLED_PAYOUT_STATUSES)).toEqual(sorted(ALLOCATED_PAYOUT_STATUSES.filter((s) => s !== 'PAID')));
+  });
+
+  it('renders the cap, allocated / paid sums and headroom from those sets', () => {
+    expect(rewardCapSql('rw')).toBe('LEAST(rw.amount, rw.deposited_amount)');
+    expect(allocatedPayoutSumSql('rw', 'p')).toBe(
+      `(SELECT COALESCE(SUM(p.amount), 0) FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status IN (${sqlStatusList(ALLOCATED_PAYOUT_STATUSES)}))`);
+    expect(paidPayoutSumSql('r', 'x')).toBe("(SELECT COALESCE(SUM(x.amount), 0) FROM payout x WHERE x.bounty_reward_id = r.id AND x.status = 'PAID')");
+    expect(rewardHeadroomSql('rw', 'p')).toBe(`${rewardCapSql('rw')} > ${allocatedPayoutSumSql('rw', 'p')}`);
+    expect(() => rewardCapSql('rw; --')).toThrow('alias must be an identifier');
+  });
+
+  it('sqlStatusList only renders upper-case status constants', () => {
+    expect(sqlStatusList(['PAID', 'FAILED'])).toBe("'PAID', 'FAILED'");
+    expect(() => sqlStatusList([])).toThrow();
+    expect(() => sqlStatusList(["PAID'); DROP TABLE payout; --"])).toThrow();
   });
 });

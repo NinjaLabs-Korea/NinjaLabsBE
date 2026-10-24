@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
 import { withParamsCheck } from '../../test-support/expect-params-match';
+import { owesUnpaidRewardSql, PAYABLE_REWARD_STATUSES, sqlStatusList } from '../../rewards/payout-status';
 import { createMockDb } from '../../test-support/mock-db';
 import { BountyAdminService } from './bounty-admin.service';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
@@ -100,8 +101,12 @@ describe('BountyLifecycleService.blockers', () => {
     // unresolved = submission-status.ts의 미결 집합을 $2로 바인딩 (탈퇴 시 철회 대상과 같은 집합)
     expect(sql).toContain('status = ANY($2::text[])) AS unresolved');
     expect(query.mock.calls[0][1]).toEqual(['b', ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
-    expect(sql).toContain("status NOT IN ('FUNDED','PARTIALLY_PAID','PAID')) AS unfunded");
-    expect(sql).toContain("p.status <> 'PAID') AS unpaid");
+    // 보상/payout 규칙은 rewards/payout-status.ts가 단일 출처 — 여기 문자열이 아니라 그 상수/헬퍼로 기대값을 만든다
+    expect(sql).toContain(`status NOT IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})) AS unfunded`);
+    // unpaid = 진행 중 payout만 (CANCELLED/FAILED/PAID는 아님 — 수동 취소한 payout이 COMPLETED를 영구히 막지 않게)
+    expect(sql).toContain("p.status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING')) AS unpaid");
+    // unawarded = 응답의 payoutStatus가 PENDING/PARTIALLY_PAID인 승인 제출 (보상 소진·수상 취소는 막지 않는다)
+    expect(sql).toContain(`s.status = 'APPROVED' AND ${owesUnpaidRewardSql('s', 'b')}) AS unawarded`);
   });
 });
 

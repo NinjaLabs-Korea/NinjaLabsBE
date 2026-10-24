@@ -10,6 +10,7 @@ import { SubmissionsService } from '../bounties/submissions/submissions.service'
 import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
+import { UsersService } from '../users/users.service';
 import { describeDb } from './describe-db';
 import { auditActions, createDb, createPrimaryWallet, createUser, deferred, fakeTxHash, testConfig, unique, waitForLockWaiter } from './harness';
 
@@ -381,6 +382,130 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       await expect(bounties.remove(partial.bountyId, adminId)).resolves.toEqual({ id: partial.bountyId });
       const deletedAudit = await auditActions(db, 'bounty', partial.bountyId);
       expect(deletedAudit.filter((a) => a === 'BOUNTY_DELETED')).toEqual(['BOUNTY_DELETED']);
+    });
+  });
+
+  /**
+   * 수상 취소/풀 소진 뒤에도 바운티를 끝낼 수 있다 — 규칙은 rewards/payout-status.ts (OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql).
+   *   - 취소된(CANCELLED) payout은 진행 중이 아니고, 그 수상자는 받을 몫이 없다(NONE) — 같은 (보상, 제출)로 다시 요청할 수 없으므로.
+   *   - 다른 수상자가 풀을 다 가져간 승인 제출도 받을 몫이 없다(NONE).
+   *   - 여유분이 남은 승인 제출, FAILED payout이 걸린 제출은 받을 몫이 남은 것이라 COMPLETED를 막는다 (PENDING).
+   */
+  describe('cancelled payouts and an exhausted pool do not block COMPLETED (runbook §7.4)', () => {
+    async function winner(bountyId: string, index: number) {
+      const nickname = `w${unique().replace(/-/g, '').slice(0, 12)}`;
+      const userId = await createUser(db, { nickname });
+      await createPrimaryWallet(db, userId);
+      const application = await applications.apply(bountyId, userId, 'hi');
+      await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+      const submission = await submissions.submit(bountyId, userId, { submissionUrl: `https://x.test/c${index}`, description: 'd' });
+      await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
+      return { userId, nickname, submissionId: submission.id };
+    }
+
+    async function openBounty(maxWinners: number) {
+      const { bountyId, rewardId } = await createFundedBounty({ maxWinners, amount: '1000' });
+      await rewards.confirmDeposit(rewardId, fakeTxHash(), '1000', adminId);
+      await bounties.transition(bountyId, 'OPEN', adminId);
+      return { bountyId, rewardId };
+    }
+
+    async function pay(rewardId: string, submissionId: string, amount: string) {
+      const payout = await rewards.requestPayout(rewardId, submissionId, amount, adminId);
+      await rewards.markApproved(payout.id, approverId);
+      await rewards.markPaid(payout.id, fakeTxHash(), adminId);
+      return payout.id;
+    }
+
+    /** docs/runbook.md §7.4 "수상 자체를 취소" SQL 그대로 (payout id만 치환) — 문서의 절차가 실제로 바운티를 끝낼 수 있게 두는지 검사한다 */
+    async function runbookCancel(payoutId: string) {
+      await db.tx(async (tx) => {
+        const cancelled = await tx.query(`UPDATE payout SET status = 'CANCELLED', last_error = 'award withdrawn'
+          WHERE id = $1 AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED')`, [payoutId]);
+        expect(cancelled.rowCount).toBe(1);
+        await tx.query(`INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, before_data, after_data)
+          VALUES (NULL, 'PAYOUT_CANCELLED_MANUAL', 'payout', $1, '{"status": "REQUESTED"}', '{"status": "CANCELLED", "by": "ops a+b", "reason": "test"}')`, [payoutId]);
+        await tx.query(`UPDATE bounty_reward rw
+            SET status = CASE WHEN p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= LEAST(rw.amount, rw.deposited_amount))
+                              THEN 'PAID' ELSE 'PARTIALLY_PAID' END
+           FROM bounty b,
+                (SELECT count(*) FILTER (WHERE status = 'PAID')::int AS paid_count,
+                        count(*) FILTER (WHERE status NOT IN ('PAID', 'CANCELLED'))::int AS open_count,
+                        COALESCE(SUM(amount) FILTER (WHERE status = 'PAID'), 0) AS paid_amount
+                   FROM payout WHERE bounty_reward_id = (SELECT bounty_reward_id FROM payout WHERE id = $1)) p
+          WHERE rw.id = (SELECT bounty_reward_id FROM payout WHERE id = $1) AND b.id = rw.bounty_id
+            AND rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID') AND p.paid_count > 0`, [payoutId]);
+      });
+    }
+
+    /** /submissions/me payment_status 와 GET /users/:nickname completedBounties[].payoutStatus — 둘 다 payoutStatusSql */
+    async function shownStatus(who: { userId: string; nickname: string; submissionId: string }) {
+      const mine = (await submissions.mySubmissions(who.userId)).find((row) => row.id === who.submissionId);
+      const profile = await new UsersService(db).publicProfile(who.nickname);
+      return { me: mine?.payment_status, profile: profile.completedBounties.map((row: { payoutStatus: string }) => row.payoutStatus) };
+    }
+
+    async function toInReview(bountyId: string) {
+      await bounties.transition(bountyId, 'SUBMISSION_CLOSED', adminId);
+      await bounties.transition(bountyId, 'IN_REVIEW', adminId);
+    }
+
+    const UNPAID = { response: { message: ['Record completed payments for all approved winners and finish every pending payout.'] } };
+
+    it('after the runbook cancel of one award: that winner shows NONE (not PENDING), and the bounty can be COMPLETED', async () => {
+      const { bountyId, rewardId } = await openBounty(2);
+      const a = await winner(bountyId, 1);
+      const b = await winner(bountyId, 2);
+      await pay(rewardId, a.submissionId, '500');
+      const open = await rewards.requestPayout(rewardId, b.submissionId, '500', adminId);
+      await toInReview(bountyId);
+
+      // B's payout is still in flight → blocked, and B is owed
+      expect(await shownStatus(b)).toEqual({ me: 'PENDING', profile: ['PENDING'] });
+      await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).rejects.toMatchObject(UNPAID);
+
+      await runbookCancel(open.id);
+      expect(await shownStatus(b)).toEqual({ me: 'NONE', profile: ['NONE'] });
+      expect(await shownStatus(a)).toEqual({ me: 'PAID', profile: ['PAID'] });
+      // the cancelled award cannot be re-requested (any payout row for (reward, submission) is a duplicate)
+      await expect(rewards.requestPayout(rewardId, b.submissionId, '500', adminId)).rejects.toMatchObject({ message: 'PAYOUT_ALREADY_REQUESTED' });
+      expect((await rewardRow(rewardId)).status).toBe('PARTIALLY_PAID'); // 500 released back to custody, 1 of 2 winners paid
+
+      await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).resolves.toEqual({ id: bountyId, status: 'COMPLETED' });
+      // what the cancel leaves behind: the released 500 is still held, so delete stays refused (runbook §7.4 note)
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+    });
+
+    it('an approved winner left out because the pool was paid in full to another winner shows NONE and does not block COMPLETED', async () => {
+      const { bountyId, rewardId } = await openBounty(2);
+      const a = await winner(bountyId, 1);
+      const b = await winner(bountyId, 2);
+      await pay(rewardId, a.submissionId, '1000');
+      expect((await rewardRow(rewardId)).status).toBe('PAID');
+      await expect(rewards.requestPayout(rewardId, b.submissionId, '1', adminId)).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' });
+      expect(await shownStatus(b)).toEqual({ me: 'NONE', profile: ['NONE'] });
+
+      await toInReview(bountyId);
+      await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).resolves.toEqual({ id: bountyId, status: 'COMPLETED' });
+    });
+
+    it('still blocks while an approved winner is owed: headroom left and no payout, or a FAILED payout (operator must close it)', async () => {
+      const { bountyId, rewardId } = await openBounty(2);
+      const a = await winner(bountyId, 1);
+      const b = await winner(bountyId, 2);
+      await pay(rewardId, a.submissionId, '400');
+      await toInReview(bountyId);
+
+      // 600 headroom and B has no payout yet → B is owed
+      expect(await shownStatus(b)).toEqual({ me: 'PENDING', profile: ['PENDING'] });
+      await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).rejects.toMatchObject(UNPAID);
+
+      // FAILED is terminal (not in flight) but still allocated and unpaid → B is still owed, still blocked
+      const failed = await rewards.requestPayout(rewardId, b.submissionId, '600', adminId);
+      await db.query(`UPDATE payout SET status = 'FAILED' WHERE id = $1`, [failed.id]);
+      expect(await shownStatus(b)).toEqual({ me: 'PENDING', profile: ['PENDING'] });
+      await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).rejects.toMatchObject(UNPAID);
+      expect(await shownStatus(a)).toEqual({ me: 'PAID', profile: ['PAID'] });
     });
   });
 

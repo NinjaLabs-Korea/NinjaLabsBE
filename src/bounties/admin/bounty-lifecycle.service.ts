@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../common/database/database.service';
+import { OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql, PAYABLE_REWARD_STATUSES, sqlStatusList } from '../../rewards/payout-status';
 import { SubmissionStatusPolicy } from '../submission-status';
 
 /** 전이 차단 사유 코드 — 운영 화면(FE admin.operations.blockers.<code>)이 이 코드로 번역한다. 추가 시 FE 메시지도 함께. */
@@ -16,6 +17,13 @@ type LifecycleBlocker = { code: LifecycleBlockerCode; count?: number; message: s
 /**
  * 바운티 상태 전이 차단 사유(blockers) 계산.
  * 운영 화면 표시와 실제 전이 검증이 같은 규칙을 쓰도록 이 서비스 하나만 사용한다.
+ *
+ * COMPLETED의 UNPAID_WINNERS는 두 가지를 센다 (규칙은 rewards/payout-status.ts — 여기서 상태 목록을 새로 쓰지 말 것):
+ *   unpaid    진행 중 payout(OPEN_PAYOUT_STATUSES) — 승인/송금이 끝나지 않았다. CANCELLED/FAILED/PAID는 세지 않는다.
+ *   unawarded 아직 받을 몫이 남은 승인 제출 (owesUnpaidRewardSql — 응답의 payoutStatus가 PENDING/PARTIALLY_PAID인 것과 같은 규칙).
+ *             보상 풀이 다른 수상자에게 다 배정됐거나(여유분 없음), 수상이 취소된(CANCELLED payout만 있는) 제출은 막지 않는다 —
+ *             IN_REVIEW에서는 CANCELLED로 갈 수 없고 승인도 되돌릴 수 없어서, 그런 제출로 막으면 바운티가 영영 끝나지 않는다.
+ *             FAILED payout이 걸린 제출은 받을 몫이 남은 것이라 막는다 (운영자가 정정/취소로 닫는다, docs/runbook.md §7.4).
  */
 @Injectable()
 export class BountyLifecycleService {
@@ -29,14 +37,13 @@ export class BountyLifecycleService {
       (SELECT count(*)::int FROM bounty_submission WHERE bounty_id = $1
         AND status = ANY($2::text[])) AS unresolved,
       (SELECT count(*)::int FROM bounty_reward WHERE bounty_id = $1
-        AND status NOT IN ('FUNDED','PARTIALLY_PAID','PAID')) AS unfunded,
+        AND status NOT IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})) AS unfunded,
       (SELECT count(*)::int FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
-        WHERE rw.bounty_id = $1 AND p.status <> 'PAID') AS unpaid,
-      (SELECT count(*)::int FROM bounty_submission s WHERE s.bounty_id = $1 AND s.status = 'APPROVED'
-        AND EXISTS (SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = $1)
-        AND NOT EXISTS (SELECT 1 FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
-          WHERE p.submission_id = s.id AND rw.bounty_id = $1 AND p.status = 'PAID')) AS unawarded`,
+        WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(OPEN_PAYOUT_STATUSES)})) AS unpaid,
+      (SELECT count(*)::int FROM bounty_submission s JOIN bounty b ON b.id = s.bounty_id
+        WHERE s.bounty_id = $1 AND s.status = 'APPROVED' AND ${owesUnpaidRewardSql('s', 'b')}) AS unawarded`,
     // $2 미결 제출 상태 — 탈퇴 시 철회 대상과 같은 집합 (bounties/submission-status.ts)
+    // 보상/payout 상태 목록은 rewards/payout-status.ts 상수를 리터럴로 렌더링한다 (지급 규칙을 바꾸려면 그 파일을 고친다)
     [bountyId, SubmissionStatusPolicy.unresolvedStatuses()]);
     const c = r.rows[0];
     const expired = !!bounty.submission_deadline && new Date(bounty.submission_deadline).getTime() <= Date.now();

@@ -137,6 +137,15 @@ describeDb('ops scripts on a real database', () => {
       const user = await createUser({ isAdmin: true });
       await createUser({ isAdmin: true, status: 'SUSPENDED' }); // a suspended admin does not count
 
+      // the preview already reports it, and an interactive run refuses before asking
+      const preview = await invoke(grantAdmin, ['revoke', user.email, '--dry-run']);
+      expect(preview.code).toBe(1);
+      expect(preview.out).toContain('LAST_ADMIN');
+      expect(preview.out).not.toContain('dry-run  nothing written');
+      const interactive = await invoke(grantAdmin, ['revoke', user.email], async () => true);
+      expect(interactive.code).toBe(1);
+      expect(interactive.prompts).toEqual([]);
+
       const refused = await invoke(grantAdmin, ['revoke', user.email, '--yes']);
       expect(refused.code).toBe(1);
       expect(refused.out).toContain('LAST_ADMIN');
@@ -345,6 +354,119 @@ describeDb('ops scripts on a real database', () => {
       expect(loose).toContain(placeholder);
       expect(loose).not.toContain(otherMultisig);
       expect((await pool.query(`SELECT count(*)::int AS n FROM audit_log`)).rows[0].n).toBe(before.rows[0].n);
+    });
+
+    it('accepts an EVM (0x) multisig custody address, compares it case-insensitively and still flags malformed ones', async () => {
+      await pool.query(`UPDATE bounty_reward SET status = 'CANCELLED'`);
+      const user = await createUser();
+      const bounty = await pool.query<{ id: string }>(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline)
+         VALUES ($1, 's', 'preflight-evm', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days') RETURNING id`, [user.id]);
+      const safe = `0x${'Ab'.repeat(20)}`;
+      const insertReward = async (custody: string) => (await pool.query<{ id: string }>(
+        `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, custody_address)
+         VALUES ($1, 'NATIVE', 'inj', 'X', 1, $2) RETURNING id`, [bounty.rows[0].id, custody])).rows[0].id;
+      const evm = await insertReward(safe);
+      const malformed = await insertReward('inj1tooshort');
+
+      expect((await runPreflight()).custody_placeholder.map((row) => row.reward_id)).toEqual([malformed]);
+      expect((await runPreflight({ expected_custody: safe.toLowerCase() })).custody_placeholder.map((row) => row.reward_id))
+        .toEqual([malformed]);
+      expect((await runPreflight({ expected_custody: `inj1${'q'.repeat(38)}` })).custody_placeholder.map((row) => row.reward_id))
+        .toEqual(expect.arrayContaining([evm, malformed]));
+    });
+  });
+
+  /**
+   * docs/runbook.md §7.4의 수동 payout SQL 템플릿을 문서에서 그대로 꺼내 실 스키마에 돌린다 — 컬럼/상태 값/재계산이 코드와 어긋나면 여기서 깨진다.
+   * (`POST /admin/payouts`는 같은 보상·제출물의 payout이 있으면 상태와 무관하게 409라 "취소 후 재요청"이 불가능하다는 것이 템플릿의 전제)
+   */
+  describe('docs/runbook.md manual payout SQL', () => {
+    const runbook = readFileSync(join(__dirname, '..', '..', 'docs', 'runbook.md'), 'utf8');
+    const sqlBlock = (marker: string) => {
+      const block = [...runbook.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1]).find((body) => body.includes(marker));
+      if (!block) throw new Error(`no sql block containing ${marker} in docs/runbook.md`);
+      return block;
+    };
+    /** 자리표시값 치환 → `;`로 끝나는 줄 단위 문장 (주석 줄 제거) */
+    const statements = (block: string, payoutId: string, newAmount = '1') => block
+      .split('\n').map((line) => line.replace(/^\s+/, '')).filter((line) => line && !line.startsWith('--')).join('\n')
+      .replace(/<payout id>/g, payoutId)
+      .replace(/<정정 금액>(?=,)/, newAmount) // UPDATE의 숫자 자리 (JSON 안의 것은 아래에서 문자열로)
+      .replace(/<[^>]+>/g, 'x')
+      .split(/;\s*\n/).map((sql) => sql.trim().replace(/;$/, '')).filter(Boolean);
+
+    async function seedPayouts(maxWinners: number, statuses: string[]) {
+      const admin = await createUser({ isAdmin: true });
+      const bounty = await pool.query<{ id: string }>(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, max_winners)
+         VALUES ($1, 's', 'payout-sql', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', $2) RETURNING id`, [admin.id, maxWinners]);
+      const reward = await pool.query<{ id: string }>(
+        `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, deposited_amount, custody_address, status)
+         VALUES ($1, 'NATIVE', 'inj', 'INJ', 1000, 1000, $2, 'PARTIALLY_PAID') RETURNING id`, [bounty.rows[0].id, `inj1${'q'.repeat(38)}`]);
+      const payouts: string[] = [];
+      for (const status of statuses) {
+        const winner = await createUser();
+        const wallet = await pool.query<{ id: string }>(
+          `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`,
+          [winner.id, `inj1${unique()}`]);
+        const submission = await pool.query<{ id: string }>(
+          `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
+           VALUES ($1, $2, 'https://example.test/s', 'd', 'APPROVED') RETURNING id`, [bounty.rows[0].id, winner.id]);
+        const payout = await pool.query<{ id: string }>(
+          `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by, approved_by, approved_at)
+           VALUES ($1, $2, $3, 400, $4, $5, $6, $7, $8) RETURNING id`,
+          [reward.rows[0].id, submission.rows[0].id, wallet.rows[0].id, status, unique('payout-'), admin.id,
+           status === 'APPROVED' ? admin.id : null, status === 'APPROVED' ? new Date() : null]);
+        payouts.push(payout.rows[0].id);
+      }
+      return { rewardId: reward.rows[0].id, payouts };
+    }
+
+    async function runTemplate(marker: string, payoutId: string, newAmount?: string) {
+      const client = await pool.connect();
+      const results: { rowCount: number | null; rows: Record<string, unknown>[] }[] = [];
+      try {
+        for (const sql of statements(sqlBlock(marker), payoutId, newAmount)) results.push(await client.query(sql));
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
+      return results;
+    }
+
+    it('PAYOUT_CORRECTED_MANUAL corrects the amount in place, resets approval and records the audit row in one transaction', async () => {
+      const { payouts: [payoutId] } = await seedPayouts(2, ['APPROVED', 'PAID']);
+      const results = await runTemplate('PAYOUT_CORRECTED_MANUAL', payoutId, '350');
+      // BEGIN, cap check, UPDATE, INSERT, COMMIT
+      expect(results[1].rows[0]).toMatchObject({ status: 'APPROVED', current_amount: '400', cap: '1000', others: '400' });
+      expect(results[2].rowCount).toBe(1);
+      const row = (await pool.query(`SELECT amount::text, status, approved_by, approved_at FROM payout WHERE id = $1`, [payoutId])).rows[0];
+      expect(row).toEqual({ amount: '350', status: 'REQUESTED', approved_by: null, approved_at: null });
+      expect((await auditRows('payout', payoutId)).map((r) => [r.action, r.actor_user_id])).toEqual([['PAYOUT_CORRECTED_MANUAL', null]]);
+    });
+
+    it('PAYOUT_CORRECTED_MANUAL does not touch a payout that is already PAID', async () => {
+      const { payouts: [payoutId] } = await seedPayouts(1, ['PAID']);
+      const results = await runTemplate('PAYOUT_CORRECTED_MANUAL', payoutId, '350');
+      expect(results[2].rowCount).toBe(0); // the runbook says: UPDATE 0 → ROLLBACK
+      expect((await pool.query(`SELECT amount::text FROM payout WHERE id = $1`, [payoutId])).rows[0].amount).toBe('400');
+    });
+
+    it('PAYOUT_CANCELLED_MANUAL cancels, audits and recomputes the reward to PAID when the remaining winners are paid', async () => {
+      const { rewardId, payouts: [open] } = await seedPayouts(2, ['REQUESTED', 'PAID', 'PAID']);
+      await runTemplate('PAYOUT_CANCELLED_MANUAL', open);
+      expect((await pool.query(`SELECT status FROM payout WHERE id = $1`, [open])).rows[0].status).toBe('CANCELLED');
+      expect((await pool.query(`SELECT status FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0].status).toBe('PAID');
+      expect((await auditRows('payout', open)).map((r) => r.action)).toEqual(['PAYOUT_CANCELLED_MANUAL']);
+    });
+
+    it('PAYOUT_CANCELLED_MANUAL leaves the reward PARTIALLY_PAID while winners remain', async () => {
+      const { rewardId, payouts: [open] } = await seedPayouts(3, ['AWAITING_MULTISIG_APPROVAL', 'PAID']);
+      await runTemplate('PAYOUT_CANCELLED_MANUAL', open);
+      expect((await pool.query(`SELECT status FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0].status).toBe('PARTIALLY_PAID');
     });
   });
 });

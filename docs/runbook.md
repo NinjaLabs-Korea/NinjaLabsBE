@@ -23,6 +23,7 @@
 
 1. **Supabase 프로젝트** 준비 — `Project Settings → Database`에서 접속 문자열(direct 5432 또는 Supavisor session 모드)과 CA 인증서(`SSL Configuration → Download certificate`)를 받는다. Pro 플랜 이상이면 백업 설정을 바로 확인한다(§5).
 2. **Railway 서비스 설정 반영** — `.railway/railway.ts`는 적혀 있을 뿐이다. `railway config plan` → `railway config apply`로 `preDeploy: npm run migrate`, healthcheck `/health`, 공개 env를 서비스에 적용한다. 적용 전 배포는 마이그레이션이 자동으로 돌지 않아 SchemaGuard가 `MIGRATIONS_PENDING`으로 크래시 루프를 만든다.
+   **주의 — IaC는 선언형이다**: `railway.ts`에 없는 변수(아래 표의 `REWARD_MULTISIG_ADDRESS`, `PAYOUT_ALLOW_SELF_APPROVAL`, `LEGACY_ACCESS_TOKEN_CUTOFF`, §8의 `INJECTIVE_GRPC_ENDPOINT`)를 대시보드에서만 넣으면, 이후 `railway config plan`이 그 변수를 **삭제 대상**으로 보여 줄 수 있다. 매번 plan 출력에서 변수 삭제 줄을 확인하고, 보이면 apply하지 말고 그 키를 `railway.ts`에 `preserve()`로 추가하는 PR을 먼저 머지한다. 변수 삭제를 허용하는 `--confirm-destructive`는 쓰지 않는다.
 3. **비밀 env 입력** (Railway 대시보드 → Variables, 첫 컨테이너가 뜨기 **전에**):
 
    | env | 확인 | 빠지면 |
@@ -69,7 +70,7 @@
    `user … status=ACTIVE is_admin=false`와 `plan is_admin false -> true`를 확인한다. `USER_NOT_FOUND`면 1번이 안 된 것(또는 탈퇴 계정), `AMBIGUOUS_EMAIL`이면 대소문자만 다른 행이 두 개 있는 데이터 이상 — 먼저 정리한다.
 3. 실행: `railway run node scripts/grant-admin.js grant ops@example.com` → `yes`.
 4. 반영 시점: JWT의 `adm` 클레임이 필요하므로 대상자의 **다음 토큰 갱신(최대 15분) 또는 재로그인**부터 `/admin`이 열린다.
-5. 회수: `… revoke ops@example.com`. AdminGuard가 요청마다 DB를 다시 보므로 **즉시** 403 `ADMIN_ONLY`. 마지막 활성 운영자는 `--force` 없이 회수할 수 없다(`LAST_ADMIN`).
+5. 회수: `… revoke ops@example.com`. AdminGuard가 요청마다 DB를 다시 보므로 **즉시** 403 `ADMIN_ONLY`. 마지막 활성 운영자는 `--force` 없이 회수할 수 없다(`LAST_ADMIN` — `--dry-run`과 확인 프롬프트 전에 이미 알린다).
 6. 기록: `GET /admin/audit-logs?entityType=user&entityId=<user id>`에 `ADMIN_GRANTED`/`ADMIN_REVOKED`(actor 비어 있음 = 스크립트)가 보인다. 누가 실행했는지는 이 표 아래 "어드민 변경 기록"에 사람이 남긴다.
 
 > 어드민 변경 기록 (운영 레포 밖 비공개 문서에 유지 권장): 날짜 · 대상 이메일 · grant/revoke · 실행자 · 사유
@@ -95,6 +96,7 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
   pg_dump "$DATABASE_URL" -Fc --no-owner --no-privileges --schema=public \
     -f ninjalabs-$(date -u +%Y%m%dT%H%MZ).dump
   ```
+  `pg_dump`의 메이저 버전은 서버(Supabase Postgres) 이상이어야 한다 — 낮으면 `server version mismatch`로 거부된다(`pg_dump --version`으로 확인).
   앱 데이터는 전부 `public` 스키마다(`supabase/migrations`, `_migrations` 포함). 덤프에는 이메일·지갑 주소·암호화된 grace 사본이 들어 있으므로 저장소 접근은 운영자로 제한한다.
 
 | 항목 | 값 (운영 시작 시 채움) |
@@ -111,6 +113,9 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 2. 스크래치 DB를 만든다 — 로컬 Postgres(운영과 같은 메이저 버전)나 임시 Supabase 프로젝트:
    ```bash
    createdb -h localhost -U postgres ninjalabs_restore
+   # --schema=public 덤프에는 `CREATE SCHEMA public`이 들어 있다 — 새 DB의 빈 public을 먼저 지우지 않으면
+   # --exit-on-error가 `schema "public" already exists`에서 멈춘다 (빈 스크래치 DB에만 할 것)
+   psql -h localhost -U postgres -d ninjalabs_restore -c 'DROP SCHEMA public'
    pg_restore -h localhost -U postgres -d ninjalabs_restore --no-owner --no-privileges --exit-on-error ninjalabs-<ts>.dump
    ```
    `schema "extensions" does not exist` 류 오류가 나면 `CREATE SCHEMA extensions;` 후 다시 시도한다(Supabase는 확장을 `extensions` 스키마에 둔다).
@@ -156,11 +161,14 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 3. 원인별: 플랫폼 장애는 대기(재배포 금지 — healthcheck가 실패해 롤아웃이 멈춘다). 접속 수 초과는 Supavisor session 모드 URL로 교체 또는 인스턴스 수 축소. 자격 증명/인증서 문제는 Railway 변수 수정 → 재배포.
 4. 복구 후: `/health` 200, `nft_job`의 PROCESSING 잡은 워커가 15분 뒤 스스로 PENDING으로 되돌린다(조치 불필요). 장애 중 실패한 사용자 요청은 재시도 안내.
 
-### 7.2 Google 장애 → `503 GOOGLE_UNAVAILABLE`
-- 증상: 로그인 콜백이 `503 GOOGLE_UNAVAILABLE`(Google JWKS를 못 받아 id_token 서명을 검증할 수 없음, 로그 `Google id_token verification unavailable`). 토큰 교환 자체가 실패하면 `401 GOOGLE_CODE_EXCHANGE_FAILED`.
+### 7.2 Google 장애 → `GOOGLE_UNAVAILABLE`
+- 증상: 사용자는 Google 동의 뒤 FE `/auth/callback#error=AUTH_FAILED`로 돌아온다 — 콜백(`GET /auth/google/callback`)은 모든 실패를 같은 리다이렉트로 감추므로(api-contract.md) **HTTP 503/401은 브라우저나 업타임 모니터에 보이지 않는다**. 원인은 Railway 로그로만 구분한다:
+  - `Google id_token verification unavailable: …` (warn) 뒤 `[onboarding] {"event":"oauth.callback.failed",…,"errorCode":"GOOGLE_UNAVAILABLE"}` — Google JWKS를 못 받아 id_token 서명을 검증할 수 없음(내부적으로 503).
+  - `"errorCode":"GOOGLE_CODE_EXCHANGE_FAILED"` — 토큰 엔드포인트가 비-2xx 응답(내부적으로 401). `"errorCode":"TypeError"` 등은 토큰 엔드포인트에 연결 자체가 안 된 경우.
+  - `"errorCode":"INVALID_OAUTH_STATE"` — Google 문제가 아니다(state 만료·`JWT_SECRET` 교체 직후, §7.5).
 - 영향: **새 로그인만** 막힌다. 이미 로그인한 사용자는 refresh 토큰(우리 DB)으로 계속 쓴다. 에이전트 API(API 키)는 무관.
 - 조치: Google Cloud status 확인 → 대기. 우리 쪽에서 우회하지 않는다(서명 검증을 끄지 않는다). 공지 채널에 "로그인 일시 장애, 기존 세션은 정상" 안내.
-- `401 GOOGLE_CODE_EXCHANGE_FAILED`가 Google 정상인데 계속 나면: `GOOGLE_CLIENT_SECRET` 회전/만료, 리디렉션 URI 불일치(§4)를 의심한다.
+- `GOOGLE_CODE_EXCHANGE_FAILED`가 Google 정상인데 계속 나면: `GOOGLE_CLIENT_SECRET` 회전/만료, 리디렉션 URI 불일치(§4)를 의심한다.
 
 ### 7.3 NFT 민팅 정체
 1. 상태 보기:
@@ -191,15 +199,46 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 2. 판정:
    - tx가 맞는 주소·금액으로 성공 → 지급 완료. 증거(tx 링크)를 회신한다.
    - payout이 `REQUESTED`/`AWAITING_MULTISIG_APPROVAL`에 머묾 → 멀티시그 서명 대기(§9 서명자에게 요청). 48시간 넘으면 `PayoutWorker`가 warn을 남긴다.
-   - 잘못된 주소/금액으로 **기록만** 됐고 실제 송금 전 → 현재 API에 payout 취소가 없다. 두 운영자 합의 후 SQL로 처리하고 감사 행을 같은 트랜잭션에 남긴다:
+   - 금액이 잘못 **기록만** 됐고 아직 송금 전(`REQUESTED`/`AWAITING_MULTISIG_APPROVAL`/`APPROVED`) → 현재 API에 payout 정정·취소가 없고, **취소 후 다시 요청할 수도 없다** — `POST /admin/payouts`는 같은 (보상, 제출물)에 payout 행이 하나라도 있으면 상태와 무관하게 409 `PAYOUT_ALREADY_REQUESTED`(멱등 키 `submission:<제출물>:reward:<보상>`도 유니크). 그래서 **같은 행을 정정**한다. 두 운영자 합의 후, 감사 행을 같은 트랜잭션에 남긴다. 승인은 초기화되어 2인 승인(`POST /admin/payouts/:id/approve`)을 다시 받는다 — 이미 모은 온체인 서명이 있으면 그 멀티시그 tx는 폐기한다:
      ```sql
      BEGIN;
-     UPDATE payout SET status = 'CANCELLED', last_error = '<사유>' WHERE id = '<payout id>' AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED');
-     INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, after_data)
-     VALUES (NULL, 'PAYOUT_CANCELLED_MANUAL', 'payout', '<payout id>', '{"by": "<운영자 2인>", "reason": "<사유>"}');
+     -- 1) 배정 상한 확인 (requestPayout과 같은 규칙): others + 정정 금액 ≤ cap 이어야 한다
+     SELECT p.status, p.amount::text AS current_amount, LEAST(r.amount, r.deposited_amount)::text AS cap,
+            (SELECT COALESCE(SUM(o.amount), 0) FROM payout o
+              WHERE o.bounty_reward_id = r.id AND o.status <> 'CANCELLED' AND o.id <> p.id)::text AS others
+       FROM payout p JOIN bounty_reward r ON r.id = p.bounty_reward_id
+      WHERE p.id = '<payout id>'
+        FOR UPDATE OF p, r;
+     -- 2) 정정 — 결과가 UPDATE 1이어야 한다. 0이면 이미 송금 중/완료: ROLLBACK
+     UPDATE payout SET amount = <정정 금액>, status = 'REQUESTED', approved_by = NULL, approved_at = NULL, last_error = '<사유>'
+      WHERE id = '<payout id>' AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED');
+     INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, before_data, after_data)
+     VALUES (NULL, 'PAYOUT_CORRECTED_MANUAL', 'payout', '<payout id>',
+             '{"amount": "<이전 금액>"}', '{"amount": "<정정 금액>", "by": "<운영자 2인>", "reason": "<사유>"}');
      COMMIT;
      ```
-     그다음 올바른 값으로 `POST /admin/payouts`를 다시 만든다.
+     `<정정 금액>`은 토큰 최소 단위 정수(USDC 10^6, INJ 10^18)다.
+   - 수상 자체를 **취소**(이 제출물에는 지급하지 않음, 송금 전) → 아래로 닫는다. 위 이유로 이 제출물에는 API로 다시 payout을 만들 수 없으니 정정으로 될 일이면 정정을 쓴다. 마지막 문장은 서비스의 `advanceRewardStatus`와 같은 재계산이다(남은 열린 payout이 없고 지급이 끝났으면 보상을 `PAID`로):
+     ```sql
+     BEGIN;
+     UPDATE payout SET status = 'CANCELLED', last_error = '<사유>'
+      WHERE id = '<payout id>' AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED');
+     INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, before_data, after_data)
+     VALUES (NULL, 'PAYOUT_CANCELLED_MANUAL', 'payout', '<payout id>',
+             '{"status": "<이전 상태>"}', '{"status": "CANCELLED", "by": "<운영자 2인>", "reason": "<사유>"}');
+     UPDATE bounty_reward rw
+        SET status = CASE WHEN p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= LEAST(rw.amount, rw.deposited_amount))
+                          THEN 'PAID' ELSE 'PARTIALLY_PAID' END
+       FROM bounty b,
+            (SELECT count(*) FILTER (WHERE status = 'PAID')::int AS paid_count,
+                    count(*) FILTER (WHERE status NOT IN ('PAID', 'CANCELLED'))::int AS open_count,
+                    COALESCE(SUM(amount) FILTER (WHERE status = 'PAID'), 0) AS paid_amount
+               FROM payout WHERE bounty_reward_id = (SELECT bounty_reward_id FROM payout WHERE id = '<payout id>')) p
+      WHERE rw.id = (SELECT bounty_reward_id FROM payout WHERE id = '<payout id>') AND b.id = rw.bounty_id
+        AND rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID') AND p.paid_count > 0;
+     COMMIT;
+     ```
+   - 수령 지갑이 틀림 → SQL로 `recipient_wallet_id`를 바꾸지 않는다. 수령 지갑은 요청 시점의 대표 지갑이므로 먼저 3번으로 지갑 이력을 확인한다.
    - 잘못된 주소로 **실제 송금됨** → 온체인 회수는 불가. 수령자 연락/추가 지급 여부를 결정하고, 결정과 tx를 사후 기록에 남긴다.
 3. 수령 지갑은 payout 요청 시점의 대표 지갑이다. 사용자가 지갑을 바꿨다고 주장하면 `wallet` 행의 `verified_at`과 비교한다(MVP는 지갑 교체 불허, decisions.md).
 

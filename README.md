@@ -85,11 +85,11 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
    `_migrations`에 있는지 확인하고, 빠진 게 있으면 listen 전에 `FATAL: MIGRATIONS_PENDING: run npm run migrate (missing: 0014_…)`를 찍고 exit 1.
    preDeploy를 우회해 배포했거나(수동 `railway up`, 다른 호스팅) `npm run migrate`가 실패한 채 컨테이너만 올라오는 상황을 잡는다.
 
-첫 배포 전체 순서(Railway 설정 반영 → env → BE → OAuth → FE → 어드민 부트스트랩 → 모니터)와 운영 절차는 **[docs/runbook.md](docs/runbook.md)**.
-
 따라서 수동 배포라면 **`npm run migrate` → 새 코드 기동** 순서를 지킨다. `scripts/migrate.js`는 실행 전체를 `pg_advisory_lock`(고정 키 `MIGRATION_LOCK_KEY`)으로 직렬화한다 — 두 배포의 preDeploy가 겹치면 뒤의 것은 `wait  another migration run holds the lock`을 찍고 기다렸다가 이미 적용된 파일을 skip한다 (`src/test-db/migrate-lock.db-spec.ts`). 파일 하나를 트랜잭션 하나로 적용하고
 `RAISE NOTICE`/실패 시 `HINT`를 그대로 출력한다. `0014`는 `deposit_tx_hash` 중복이 남아 있으면 **에러로 멈춘다**(중복 값·건수·조사 SQL 포함) —
 운영자가 정리한 뒤 다시 `npm run migrate`하면 이어서 적용된다 (`src/test-db/migrations.db-spec.ts`). `payout_tx_hash`는 정규화만 한다 (한 멀티시그 tx가 여러 수상자에게 보낼 수 있어 중복이 정당하다).
+
+첫 배포 전체 순서(Railway 설정 반영 → env → BE → OAuth → FE → 어드민 부트스트랩 → 모니터)와 운영 절차는 **[docs/runbook.md](docs/runbook.md)**.
 
 #### 이 브랜치 첫 배포 전에 있어야 하는 env (production, `NODE_ENV=production`)
 

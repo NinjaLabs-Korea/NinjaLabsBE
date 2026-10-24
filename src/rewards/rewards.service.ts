@@ -86,13 +86,18 @@ export class RewardsService {
       if (!reward.rowCount || !['FUNDED', 'PARTIALLY_PAID', 'PAID'].includes(reward.rows[0].status)) {
         throw new BadRequestException('REWARD_NOT_FUNDED');
       }
+      // 수령자 유저 행을 FOR SHARE로 잠근다 — 회원 탈퇴(AccountWithdrawalService)는 같은 행을 FOR UPDATE로 먼저 잠그고 열린 payout을
+      // 검사하므로, 둘이 겹치면 한쪽이 기다린다: 탈퇴가 먼저면 이 조회가 재평가돼 탈퇴 유저(deleted_at) → 404, 이쪽이 먼저면 탈퇴가 이 payout을 보고 409.
       const wallet = await tx.query<{ wallet_id: string }>(
         `SELECT w.id AS wallet_id
            FROM bounty_submission s
            LEFT JOIN agent a ON a.id = s.agent_id
-           JOIN wallet w ON w.user_id = COALESCE(s.submitter_user_id, a.owner_user_id)
+           JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id)
+                AND u.deleted_at IS NULL
+           JOIN wallet w ON w.user_id = u.id
                 AND w.is_primary = true AND w.disconnected_at IS NULL
-          WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR UPDATE OF s`,
+          WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2
+          FOR UPDATE OF s FOR SHARE OF u`,
         [submissionId, reward.rows[0].bounty_id],
       );
       if (!wallet.rowCount) throw new NotFoundException('APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND');

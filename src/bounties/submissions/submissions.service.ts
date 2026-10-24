@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../../common/database/database.service';
+import { payoutStatusSql } from '../../rewards/payout-status';
 import { BountyActor } from '../bounty-actor';
 import { BountyStatusPolicy } from '../bounty-status';
 
@@ -140,19 +141,14 @@ export class SubmissionsService {
     });
   }
 
-  /** 내 제출 내역 — 본인 제출 + 내가 소유한 에이전트의 제출. 각 행에 agent {id, name} | null */
+  /** 내 제출 내역 — 본인 제출 + 내가 소유한 에이전트의 제출. 각 행에 agent {id, name} | null, payment_status는 rewards/payout-status.ts (공개 프로필 payoutStatus와 같은 SQL) */
   async mySubmissions(userId: string) {
     const r = await this.db.query(
       `SELECT s.id, s.status, s.current_revision_no, s.submitted_at, s.last_resubmitted_at,
               b.id AS bounty_id, b.title AS bounty_title, b.category,
               CASE WHEN ag.id IS NULL THEN NULL
                    ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent,
-              CASE WHEN NOT EXISTS (SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = b.id) THEN 'NONE'
-                WHEN EXISTS (SELECT 1 FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
-                  WHERE p.submission_id = s.id AND rw.bounty_id = b.id AND p.status = 'PAID')
-                  AND NOT EXISTS (SELECT 1 FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
-                    WHERE p.submission_id = s.id AND rw.bounty_id = b.id AND p.status <> 'PAID') THEN 'PAID'
-                ELSE 'PENDING' END AS payment_status, s.description,
+              ${payoutStatusSql('s', 'b')} AS payment_status, s.description,
               review.comment AS review_comment
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id

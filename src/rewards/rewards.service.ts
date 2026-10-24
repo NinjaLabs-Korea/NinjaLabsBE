@@ -9,8 +9,10 @@ import { normalizeTxHash } from '../common/validation/tx-hash';
 import { NftsService } from '../nfts/nfts.service';
 import { allowsPayoutSelfApproval, PAYOUT_ALLOW_SELF_APPROVAL_ENV } from './payout-approval';
 
-/** payout을 새로 요청할 수 있는(입금 확인된) 보상 상태 — requestPayout과 회원 탈퇴의 미요청 보상 검사(account-withdrawal.service.ts)가 같이 쓴다 */
-export const PAYABLE_REWARD_STATUSES = ['FUNDED', 'PARTIALLY_PAID', 'PAID'] as const;
+import { PAYABLE_REWARD_STATUSES } from './payout-status';
+
+/** payout을 새로 요청할 수 있는(입금 확인된) 보상 상태 — 정의는 payout-status.ts (requestPayout, 회원 탈퇴 검사, 지급 상태 SQL이 공유) */
+export { PAYABLE_REWARD_STATUSES };
 
 /**
  * MVP 보상 흐름 (ERD §10)

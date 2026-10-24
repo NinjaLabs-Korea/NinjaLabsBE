@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
+import { payoutStatusSql } from '../rewards/payout-status';
 import { isSavableNickname } from './nickname';
 
 /** 활성 유저 닉네임 유니크 인덱스 (0001_users.sql, lower(nickname) WHERE deleted_at IS NULL) */
@@ -83,8 +84,8 @@ export class UsersService {
 
     // 본인 + 소유 에이전트의 APPROVED 제출 (highlights stats의 builders 기준과 동일), soft delete 바운티 제외.
     // rewards는 바운티에 걸린 보상이 아니라 이 제출에 실제 PAID된 payout 목록이다 (금액은 최소 단위 정수 문자열).
-    // postedRewards는 바운티에 걸린 보상(bounty_reward) 목록(같은 원소 모양), payoutStatus는 /submissions/me의 payment_status와 같은 규칙 —
-    // 보상 없는 바운티 NONE, PAID payout만 있으면 PAID, 그 외(아직 지급 전·진행 중인 payout) PENDING. FE가 "지급 대기"를 0 INJ와 구분해 보여준다.
+    // postedRewards는 바운티에 걸린 보상(bounty_reward) 목록(같은 원소 모양), payoutStatus는 /submissions/me의 payment_status와 같은 SQL
+    // (rewards/payout-status.ts — 이 제출에 지급될 보상 기준 PAID / PARTIALLY_PAID / PENDING / NONE). FE가 "지급 대기"를 0 INJ와 구분해 보여준다.
     const completedBounties = await this.db.query(
       `SELECT b.id, b.title, b.category, s.reviewed_at AS completed_at,
               COALESCE(json_agg(json_build_object(
@@ -93,12 +94,7 @@ export class UsersService {
               ) ORDER BY p.paid_at) FILTER (WHERE p.id IS NOT NULL), '[]') AS rewards,
               COALESCE((SELECT json_agg(json_build_object('amount', rw.amount::text, 'symbol', rw.display_symbol) ORDER BY rw.created_at)
                           FROM bounty_reward rw WHERE rw.bounty_id = b.id), '[]') AS "postedRewards",
-              CASE WHEN NOT EXISTS (SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = b.id) THEN 'NONE'
-                WHEN EXISTS (SELECT 1 FROM payout px JOIN bounty_reward rw ON rw.id = px.bounty_reward_id
-                  WHERE px.submission_id = s.id AND rw.bounty_id = b.id AND px.status = 'PAID')
-                  AND NOT EXISTS (SELECT 1 FROM payout px JOIN bounty_reward rw ON rw.id = px.bounty_reward_id
-                    WHERE px.submission_id = s.id AND rw.bounty_id = b.id AND px.status <> 'PAID') THEN 'PAID'
-                ELSE 'PENDING' END AS "payoutStatus"
+              ${payoutStatusSql('s', 'b')} AS "payoutStatus"
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id
          LEFT JOIN payout p ON p.submission_id = s.id AND p.status = 'PAID'

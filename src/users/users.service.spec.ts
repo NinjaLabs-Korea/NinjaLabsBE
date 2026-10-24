@@ -1,5 +1,6 @@
 import { DatabaseService } from '../common/database/database.service';
 import { withParamsCheck } from '../test-support/expect-params-match';
+import { payoutStatusSql } from '../rewards/payout-status';
 import { UsersService } from './users.service';
 
 describe('UsersService publicProfile', () => {
@@ -43,11 +44,8 @@ describe('UsersService publicProfile', () => {
     // same element shape as rewards, but from bounty_reward (what was posted) rather than payout (what was paid)
     expect(sql).toContain(`json_build_object('amount', rw.amount::text, 'symbol', rw.display_symbol) ORDER BY rw.created_at)
                           FROM bounty_reward rw WHERE rw.bounty_id = b.id), '[]') AS "postedRewards"`);
-    // NONE (no reward posted) / PAID (only PAID payouts for this submission) / PENDING (everything else) — same rule as /submissions/me
-    expect(sql).toContain(`CASE WHEN NOT EXISTS (SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = b.id) THEN 'NONE'`);
-    expect(sql).toContain(`WHERE px.submission_id = s.id AND rw.bounty_id = b.id AND px.status = 'PAID')`);
-    expect(sql).toContain(`WHERE px.submission_id = s.id AND rw.bounty_id = b.id AND px.status <> 'PAID') THEN 'PAID'`);
-    expect(sql).toContain(`ELSE 'PENDING' END AS "payoutStatus"`);
+    // PAID / PARTIALLY_PAID / PENDING / NONE over the rewards owed to this submission — the shared helper, same as /submissions/me
+    expect(sql).toContain(`${payoutStatusSql('s', 'b')} AS "payoutStatus"`);
     // existing fields stay
     expect(sql).toContain('SELECT b.id, b.title, b.category, s.reviewed_at AS completed_at');
   });

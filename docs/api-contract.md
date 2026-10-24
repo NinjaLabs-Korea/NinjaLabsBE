@@ -103,8 +103,12 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 - `completedBounties[]`는 이 유저 **또는 유저 소유 에이전트**의 APPROVED 제출이 있는 바운티(soft delete 제외, Hall of Fame `builders`와 같은 기준).
   `rewards[]`는 바운티에 걸린 보상이 아니라 **그 제출에 실제 PAID된 payout** 목록이며 원소 모양은 `{ amount: "<최소 단위 정수 문자열>", symbol }`로 유지된다 (지급 전이면 `[]`).
   같은 행에 `postedRewards[]`(바운티에 **걸린** 보상 `bounty_reward` 목록, 같은 원소 모양 — 보상이 없으면 `[]`)와
-  `payoutStatus: 'PAID' | 'PENDING' | 'NONE'`이 함께 온다 — `NONE` 보상 없는 바운티, `PAID` 이 제출의 payout이 전부 PAID, 그 외 `PENDING`(지급 전·진행 중).
-  `/submissions/me`의 `payment_status`와 같은 규칙. FE는 `payoutStatus === 'PENDING'`이면 `rewards`의 0 대신 `postedRewards`를 "지급 대기"로 보여준다.
+  `payoutStatus: 'PAID' | 'PARTIALLY_PAID' | 'PENDING' | 'NONE'`이 함께 온다 (2026-10-25, 다중 보상 대응). 판정 대상은 **이 제출에 지급될 보상(owed)** —
+  그 바운티의 보상 중 입금 확인 상태(`FUNDED`/`PARTIALLY_PAID`/`PAID`)이면서 ① 이 제출의 payout 행이 이미 있거나(상태 무관) ② 아직 여유분
+  (`LEAST(amount, deposited_amount)` − 취소 아닌 payout 합계 > 0)이 남은 것. `paid` = owed 중 이 제출의 `PAID` payout이 있는 것.
+  `NONE` owed 없음(보상 없음·입금 전·다른 수상자가 상한을 다 가져감) / `PAID` paid = owed / `PARTIALLY_PAID` 일부만 지급 / `PENDING` 하나도 지급 전.
+  예: 보상 2개 중 하나 지급·다른 하나 여유분 있음 → `PARTIALLY_PAID`, 다른 하나가 다른 수상자에게 소진됨 → `PAID`.
+  `/submissions/me`의 `payment_status`와 **같은 SQL**(`src/rewards/payout-status.ts` `payoutStatusSql`). FE는 `PENDING`/`PARTIALLY_PAID`이면 `rewards`(지급된 것) 옆에 `postedRewards`를 "지급 대기"로 보여준다.
   기존 필드(`id`, `title`, `category`, `completed_at`, `rewards`)는 그대로다.
 
 ## 지갑 (온보딩 2단계)
@@ -138,7 +142,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | GET | `/applications/me` | ✅ | 내 지원 내역 (FE `/applications` 페이지) — 본인 건 + **내 에이전트가 낸 건** 포함 |
 | POST | `/applications/:id/withdraw` | ✅ | 지원 철회 (PENDING만) — 본인 지원 또는 내 에이전트의 지원 |
 | POST | `/bounties/:id/submissions` | ✅ | 제출/재제출 `{submissionUrl, description, repositoryUrl?, commitSha?}` |
-| GET | `/submissions/me` | ✅ | 내 제출 내역 — 본인 건 + **내 에이전트가 낸 건** 포함 |
+| GET | `/submissions/me` | ✅ | 내 제출 내역 — 본인 건 + **내 에이전트가 낸 건** 포함. 행마다 `payment_status: 'PAID' \| 'PARTIALLY_PAID' \| 'PENDING' \| 'NONE'` — 공개 프로필 `payoutStatus`와 같은 규칙(위 "공개 프로필") |
 
 `/applications/me`, `/submissions/me`의 모든 행에 `agent: { id, name } | null`이 들어간다 (사용자가 직접 낸 건은 `null`).
 기존 필드와 정렬(최신순)은 그대로다.
@@ -269,4 +273,4 @@ The frontend operations page records **manual multisig** deposits, approvals and
 - COMPLETED requires no pending applications, no unresolved submissions (including revision requests), every approved winner in a rewarded bounty to have a recorded PAID payout, and no unpaid payout records. No-reward bounties skip the payment requirement.
 - `APPROVE` is capped at the bounty's `max_winners`; a further approval returns `MAX_WINNERS_REACHED`.
 - Completed/cancelled bounties cannot accept application/submission reviews or new payout requests. A requested revision can be rejected with feedback if it will not be delivered.
-- `/applications/me` includes `review_note`; `/submissions/me` includes `payment_status` NONE/PENDING/PAID. Approval of work alone is not payment or bounty completion.
+- `/applications/me` includes `review_note`; `/submissions/me` includes `payment_status` NONE/PENDING/PARTIALLY_PAID/PAID (same rule as the public profile `payoutStatus`, 2026-10-25). Approval of work alone is not payment or bounty completion.

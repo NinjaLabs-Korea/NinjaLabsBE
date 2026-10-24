@@ -53,15 +53,19 @@ export class FakeGoogle {
 export const TURNSTILE_SITEVERIFY_URL_E2E = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
 export class FakeTurnstile {
-  private readonly valid = new Set<string>();
+  /** 토큰 → siteverify가 돌려줄 hostname/action (위젯을 렌더한 페이지 호스트와 위젯 action) */
+  private readonly valid = new Map<string, { hostname: string; action: string }>();
   requests: URLSearchParams[] = [];
   /** true면 siteverify가 네트워크 오류를 낸다 (503 TURNSTILE_UNAVAILABLE 경로) */
   outage = false;
 
-  /** 위젯이 브라우저에 주는 토큰 하나 — siteverify에서 한 번만 success:true */
-  issueToken(): string {
+  /**
+   * 위젯이 브라우저에 주는 토큰 하나 — siteverify에서 한 번만 success:true. 기본은 로컬 FE(localhost, e2e AUTH_SUCCESS_REDIRECT)의
+   * login 위젯이 낸 토큰. 다른 사이트/위젯에서 받은 토큰은 hostname/action으로 흉내 낸다.
+   */
+  issueToken(widget: { hostname?: string; action?: string } = {}): string {
     const token = `0.e2e-turnstile-${Math.random().toString(36).slice(2)}`;
-    this.valid.add(token);
+    this.valid.set(token, { hostname: widget.hostname ?? 'localhost', action: widget.action ?? 'login' });
     return token;
   }
 
@@ -70,8 +74,12 @@ export class FakeTurnstile {
     const form = new URLSearchParams(String(init?.body ?? ''));
     this.requests.push(form);
     const token = form.get('response') ?? '';
-    const success = this.valid.delete(token);
-    return new Response(JSON.stringify({ success, 'error-codes': success ? [] : ['invalid-input-response'] }), {
+    const widget = this.valid.get(token);
+    this.valid.delete(token);
+    const body = widget
+      ? { success: true, 'error-codes': [], challenge_ts: new Date().toISOString(), ...widget }
+      : { success: false, 'error-codes': ['invalid-input-response'] };
+    return new Response(JSON.stringify(body), {
       status: 200, headers: { 'content-type': 'application/json' },
     });
   }

@@ -231,3 +231,20 @@ describe('OriginAllowlist — entry parsing', () => {
     expect(error).not.toHaveBeenCalled();
   });
 });
+
+describe('OriginAllowlist.allowsHostname (Turnstile siteverify hostname — no scheme/port)', () => {
+  const list = new OriginAllowlist([
+    'https://ninjalabsfe.vercel.app',
+    'http://localhost:3000',
+    'https://preview-*.ninjalabs.xyz',
+  ]);
+
+  it.each(['ninjalabsfe.vercel.app', 'localhost', 'preview-1.ninjalabs.xyz', 'NINJALABSFE.vercel.app', 'ninjalabsfe.vercel.app.'])(
+    'allows %p', (host) => expect(list.allowsHostname(host)).toBe(true),
+  );
+
+  it.each([
+    'evil.example', 'ninjalabsfe.vercel.app.evil.example', 'xninjalabsfe.vercel.app', 'a.preview-1.ninjalabs.xyz',
+    'ninjalabsfe-evil-team.vercel.app', 'localhost:3000', 'https://ninjalabsfe.vercel.app', '', '  ', undefined, null,
+  ])('rejects %p', (host) => expect(list.allowsHostname(host as string | undefined)).toBe(false));
+});

@@ -21,6 +21,7 @@ const LABEL = /^[a-z0-9-]*\*?[a-z0-9-]*$/;
 
 type Pattern = { protocol: string; port: string; host: RegExp };
 
+
 /** 누구나 하위 호스트를 등록할 수 있는 공용 호스팅 접미사 — 이 도메인 위의 와일드카드 항목은 위치와 무관하게 거부 대상 */
 export const SHARED_HOSTING_SUFFIXES: ReadonlySet<string> = new Set([
   'vercel.app', 'netlify.app', 'pages.dev', 'github.io', 'railway.app',
@@ -48,6 +49,8 @@ function escapeRegExp(value: string): string {
 export class OriginAllowlist {
   private static readonly logger = new Logger(OriginAllowlist.name);
   private readonly exact = new Set<string>();
+  /** 정확한 항목의 호스트만 (allowsHostname용 — 스킴/포트 무시) */
+  private readonly exactHosts = new Set<string>();
   private readonly patterns: Pattern[] = [];
 
   constructor(entries: Iterable<string>) {
@@ -61,6 +64,7 @@ export class OriginAllowlist {
       const port = match[3] ?? defaultPort(protocol);
       if (!host.includes('*')) {
         this.exact.add(`${protocol}//${host}:${port}`);
+        this.exactHosts.add(host);
         continue;
       }
       const labels = host.split('.');
@@ -88,6 +92,18 @@ export class OriginAllowlist {
   /** 허용 목록이 비어 있는지 (기본값 적용 여부 판단용) */
   get size(): number {
     return this.exact.size + this.patterns.length;
+  }
+
+  /**
+   * 호스트 이름만 비교 — 스킴·포트를 모르는 값(Cloudflare Turnstile siteverify의 `hostname`)용. 정확한 항목의 호스트이거나
+   * 와일드카드 항목의 호스트 패턴에 맞으면 true. 대소문자·끝의 점 무시. 공용 호스팅 와일드카드는 생성 시 이미 빠져 있다.
+   */
+  allowsHostname(hostname: string | undefined | null): boolean {
+    if (typeof hostname !== 'string') return false;
+    const host = hostname.trim().toLowerCase().replace(/\.+$/, '');
+    if (!host || !/^[a-z0-9.-]+$/.test(host)) return false;
+    if (this.exactHosts.has(host)) return true;
+    return this.patterns.some((pattern) => pattern.host.test(host));
   }
 
   allows(origin: string | undefined | null): boolean {

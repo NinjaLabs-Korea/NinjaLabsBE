@@ -9,6 +9,9 @@ function verifierWith(env: Record<string, string | undefined>) {
   return new TurnstileVerifier({ get: (key: string) => env[key] } as never);
 }
 
+/** 로컬 FE(AUTH_SUCCESS_REDIRECT 미설정 → http://localhost:3000/)의 login 위젯이 낸 토큰의 siteverify 성공 응답 */
+const OK = { success: true, 'error-codes': [], hostname: 'localhost', action: 'login' };
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
@@ -48,7 +51,7 @@ describe('TurnstileVerifier', () => {
   });
 
   it('posts secret, response and remoteip as a form to siteverify with a 5 s abort signal, and passes on success:true', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ success: true, 'error-codes': [] }));
+    fetchMock.mockResolvedValue(jsonResponse(OK));
     const timeout = jest.spyOn(AbortSignal, 'timeout');
     await expect(verifierWith({ TURNSTILE_SECRET_KEY: SECRET }).verify(TOKEN, '203.0.113.7')).resolves.toBeUndefined();
 
@@ -63,7 +66,7 @@ describe('TurnstileVerifier', () => {
   });
 
   it('omits remoteip when the request IP is unknown', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ success: true }));
+    fetchMock.mockResolvedValue(jsonResponse(OK));
     await verifierWith({ TURNSTILE_SECRET_KEY: SECRET }).verify(TOKEN, undefined);
     const body = new URLSearchParams(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
     expect(body.has('remoteip')).toBe(false);
@@ -105,6 +108,51 @@ describe('TurnstileVerifier', () => {
     const err = await verifierWith({ TURNSTILE_SECRET_KEY: SECRET }).verify(TOKEN, '10.0.0.1').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ServiceUnavailableException);
     expect((err as ServiceUnavailableException).message).toBe('TURNSTILE_UNAVAILABLE');
+  });
+
+  describe('hostname and action binding', () => {
+    const env = {
+      TURNSTILE_SECRET_KEY: SECRET,
+      AUTH_SUCCESS_REDIRECT: 'https://ninjalabsfe.vercel.app/',
+      AUTH_ALLOWED_REDIRECT_ORIGINS: 'https://ninjalabsfe-git-develop-team.vercel.app, https://preview-*.ninjalabs.xyz',
+    };
+    const verifyWith = (body: Record<string, unknown>) => {
+      fetchMock.mockResolvedValue(jsonResponse({ success: true, 'error-codes': [], ...body }));
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      return verifierWith(env).verify(TOKEN, '10.0.0.1');
+    };
+
+    it.each([
+      ['the AUTH_SUCCESS_REDIRECT host', 'ninjalabsfe.vercel.app'],
+      ['an exact AUTH_ALLOWED_REDIRECT_ORIGINS host', 'ninjalabsfe-git-develop-team.vercel.app'],
+      ['a wildcard AUTH_ALLOWED_REDIRECT_ORIGINS host', 'preview-42.ninjalabs.xyz'],
+      ['an upper-case host', 'NinjaLabsFE.Vercel.App'],
+    ])('passes a login-action token rendered on %s', async (_label, hostname) => {
+      await expect(verifyWith({ hostname, action: 'login' })).resolves.toBeUndefined();
+    });
+
+    it.each([
+      ['a foreign host', { hostname: 'evil.example', action: 'login' }],
+      ['a suffix lookalike', { hostname: 'ninjalabsfe.vercel.app.evil.example', action: 'login' }],
+      ['another Vercel project', { hostname: 'ninjalabsfe-evil.vercel.app', action: 'login' }],
+      ['no hostname', { action: 'login' }],
+      ['a non-string hostname', { hostname: ['ninjalabsfe.vercel.app'], action: 'login' }],
+      ['another action', { hostname: 'ninjalabsfe.vercel.app', action: 'signup' }],
+      ['an empty action', { hostname: 'ninjalabsfe.vercel.app', action: '' }],
+      ['no action', { hostname: 'ninjalabsfe.vercel.app' }],
+    ])('rejects a success:true token from %s with 400 TURNSTILE_FAILED', async (_label, body) => {
+      await expect(verifyWith(body)).rejects.toMatchObject({ status: 400, message: 'TURNSTILE_FAILED' });
+    });
+
+    it('logs the mismatch with CR/LF escaped, without the token', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      fetchMock.mockResolvedValue(jsonResponse({ success: true, hostname: 'evil.example\r\nFAKE', action: 'login' }));
+      await verifierWith(env).verify(TOKEN, '10.0.0.1').catch(() => undefined);
+      const line = String(log.mock.calls[0][0]);
+      expect(line).toContain('hostname/action mismatch');
+      expect(line).not.toMatch(/[\r\n]/);
+      expect(line).not.toContain(TOKEN);
+    });
   });
 
   it('never logs the token or the secret', async () => {

@@ -64,10 +64,11 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 |---|---|
 | 토큰 없음/빈 값/2048자 초과/배열 | `400 TURNSTILE_FAILED` (siteverify 호출 없음) |
 | siteverify `success:false` (위조·만료·재사용 — 토큰은 1회용, 300초) | `400 TURNSTILE_FAILED` |
+| `success:true`지만 `hostname`이 로그인 FE 오리진(`AUTH_SUCCESS_REDIRECT`의 오리진 + `AUTH_ALLOWED_REDIRECT_ORIGINS`, returnTo와 같은 목록)의 호스트가 아니거나 `action`이 `login`이 아님 (같은 사이트 키를 쓰는 다른 사이트/위젯의 토큰) | `400 TURNSTILE_FAILED` |
 | 네트워크 오류·5초 초과·비2xx·JSON 아님·`invalid-input-secret`/`missing-input-secret`/`internal-error` | `503 TURNSTILE_UNAVAILABLE` |
 | `TURNSTILE_SECRET_KEY` 미설정 | 검사 생략 — `turnstileToken`이 와도 무시 (production이면 기동 시 warn) |
 
-이 라우트는 브라우저 전체 페이지 이동이라 400/503은 JSON 본문 그대로 보인다. FE는 위젯 토큰을 받은 뒤에만 이동하고(`NEXT_PUBLIC_TURNSTILE_SITE_KEY`),
+이 라우트는 브라우저 전체 페이지 이동이라 400/503은 JSON 본문 그대로 보인다. FE 위젯은 `action: "login"`으로 렌더해야 한다(NinjaLabsFE `TurnstileWidget`). FE는 위젯 토큰을 받은 뒤에만 이동하고(`NEXT_PUBLIC_TURNSTILE_SITE_KEY`),
 만료되면 위젯을 다시 돌린다. FE↔BE 키 짝: FE site key가 있는데 BE secret이 없으면 토큰이 무시될 뿐 로그인은 된다. 반대(BE secret만)는 모든 로그인이 400이므로
 **FE를 먼저 배포**한다.
 

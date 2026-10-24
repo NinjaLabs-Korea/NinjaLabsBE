@@ -22,11 +22,11 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
-import { OriginAllowlist } from '../common/origin-allowlist';
 import { AUTH_PROXIED_ROUTE_IP_THROTTLE, AuthTokenThrottlerGuard } from './auth-throttler.guard';
 import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
 import { clearRefreshCookie, isCookieMode, readRefreshCookie, setRefreshCookie } from './session-cookie';
+import { authSuccessRedirectUrl, feRedirectAllowlist } from './fe-origins';
 import { TurnstileVerifier } from './turnstile.verifier';
 
 /**
@@ -63,15 +63,13 @@ export class AuthController {
   ) {}
 
   private authSuccessRedirect(requested?: string): string {
-    const fallback = this.config.get<string>('AUTH_SUCCESS_REDIRECT') ?? 'http://localhost:3000/';
-    if (!requested) return fallback;
+    const fallback = authSuccessRedirectUrl(this.config);
+    // 기본값이 URL이 아니면 returnTo도 받지 않는다
+    if (!requested || !URL.canParse(fallback)) return fallback;
 
     try {
-      // 기본 리다이렉트 오리진 + AUTH_ALLOWED_REDIRECT_ORIGINS (정확한 오리진 또는 `*` 와일드카드 1개, Vercel preview)
-      const allowedOrigins = new OriginAllowlist([
-        new URL(fallback).origin,
-        ...(this.config.get<string>('AUTH_ALLOWED_REDIRECT_ORIGINS') ?? '').split(','),
-      ]);
+      // 기본 리다이렉트 오리진 + AUTH_ALLOWED_REDIRECT_ORIGINS (정확한 오리진 또는 `*` 와일드카드 1개) — fe-origins.ts
+      const allowedOrigins = feRedirectAllowlist(this.config);
       const requestedUrl = new URL(requested);
       if (!allowedOrigins.allows(requestedUrl.origin)) return fallback;
       return `${requestedUrl.origin}/`;

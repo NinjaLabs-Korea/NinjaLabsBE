@@ -1,5 +1,5 @@
 import { describeDb } from '../test-db/describe-db';
-import { E2eApp, randomIp, startApp } from './support/harness';
+import { E2eApp, PREVIEW_ORIGIN, randomIp, startApp } from './support/harness';
 
 const TURNSTILE_SECRET = '0x4AAAAAAA-e2e-turnstile-secret';
 
@@ -38,6 +38,23 @@ describeDb('turnstile on GET /auth/google (e2e)', () => {
     const replay = await start({ turnstileToken: token });
     expect(replay.status).toBe(400);
     expect(replay.body.message).toBe('TURNSTILE_FAILED');
+  });
+
+  it.each([
+    ['another site using the same sitekey', { hostname: 'evil.example' }],
+    ['a lookalike of the FE host', { hostname: 'localhost.evil.example' }],
+    ['a widget rendered with another action', { action: 'signup' }],
+    ['a widget without an action', { action: '' }],
+  ])('a valid token from %s → 400 TURNSTILE_FAILED, no redirect', async (_label, widget) => {
+    const res = await start({ turnstileToken: e2e.turnstile.issueToken(widget) });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ statusCode: 400, error: 'Bad Request', message: 'TURNSTILE_FAILED' });
+    expect(res.headers.location).toBeUndefined();
+  });
+
+  it('a token rendered on an allowed preview origin (AUTH_ALLOWED_REDIRECT_ORIGINS) → 302', async () => {
+    const res = await start({ turnstileToken: e2e.turnstile.issueToken({ hostname: new URL(PREVIEW_ORIGIN).hostname }) });
+    expect(res.status).toBe(302);
   });
 
   it('siteverify unreachable → 503 TURNSTILE_UNAVAILABLE', async () => {

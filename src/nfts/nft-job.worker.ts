@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BeforeApplicationShutdown, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
+import { SHUTDOWN_DRAIN_TIMEOUT_MS, SingleFlightTask } from '../common/lifecycle/single-flight-task';
 import { InjectiveNftClient } from './injective-nft.client';
 
 /** 잡당 총 시도 횟수 — 첫 시도 + 재시도 4회. MAX_RETRY번째 실패에서 FAILED로 고정된다 (docs/decisions.md) */
@@ -11,6 +12,12 @@ const MAX_RETRY = 5;
 const MAX_LAST_ERROR_LENGTH = 500;
 /** 이 시간보다 오래 PROCESSING인 잡은 워커 크래시로 고아가 된 것으로 보고 다시 PENDING으로 돌린다 */
 const STALE_PROCESSING_INTERVAL = '15 minutes';
+/**
+ * 잡 하나의 execute() 최대 시간 — 체인 호출(mint/tokenExists)에는 앱 수준 타임아웃이 없어서, gRPC가 멈추면 poll()이 영원히 끝나지 않고
+ * (한 번에 하나만 돌므로) 이 인스턴스의 민팅이 조용히 멈췄다. 넘기면 일반 실패로 기록해 10분 뒤 재시도한다.
+ * 늦게 착지한 mint는 다음 시도의 tokenExists 확인이 MINTED로 복구한다. 15분 고아 기준보다 충분히 짧아야 한다.
+ */
+export const JOB_EXECUTION_DEADLINE_MS = 3 * 60_000;
 /** 니모닉 단어가 이 개수 이상 연달아 나오면(순서·구분자 무관) 니모닉 유출로 보고 가린다 */
 const MNEMONIC_RUN = 3;
 /** 32바이트 hex — secp256k1 개인키 (`0x` 접두사 유무 모두). tx 해시도 같은 모양이라 함께 가려진다 (안전 쪽으로) */
@@ -40,6 +47,16 @@ export function redactMnemonicRuns(message: string, words: ReadonlySet<string>):
   return out + message.slice(cursor);
 }
 
+/** work가 ms 안에 끝나지 않으면 message로 reject한다 (work 자체는 취소되지 않고 뒤에서 계속 돈다) */
+function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer.unref();
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
 /**
  * nft_job 큐 워커 — 1분마다 PENDING 잡을 집어 온체인 실행
  *
@@ -53,6 +70,9 @@ export function redactMnemonicRuns(message: string, words: ReadonlySet<string>):
  * 경로 A(표준 cw721-base): MINT_PARENT/MINT_CHILD는 mint 실행,
  * ATTACH 계열은 온체인 nest가 없으므로 DB 상태 전이만 수행한다.
  * (2팀 Nestable 컨트랙트 전환 시 InjectiveNftClient와 이 분기만 교체)
+ *
+ * 종료(배포): beforeApplicationShutdown에서 새 선점을 멈추고, 진행 중인 잡 하나는 끝까지 처리한 뒤, 배치에 남은 잡은 PENDING으로 돌려놓는다
+ * (PROCESSING으로 남기면 15분 뒤 고아 재큐잉 알림이 배포마다 울린다). 드레인은 SHUTDOWN_DRAIN_TIMEOUT_MS까지만 기다린다.
  *
  * 부모/자식 순서: 자식은 **부모가 MINTED/ATTACHED일 때만** ATTACH_CHILD를 큐에 넣는다 — 부모가 PENDING/MINTING/FAILED이면 자식은 MINTED로
  * 머문다 (FE "포트폴리오 연결 중", decisions.md). 부모 민팅이 끝나면(MINT_PARENT 성공) 그 부모에 연결된(parent_nft_id) MINTED 자식 전부에
@@ -82,9 +102,12 @@ export const CLAIM_PENDING_JOBS_SQL = `UPDATE nft_job
 const ATTACH_DEFER_INTERVAL = '1 hour';
 
 @Injectable()
-export class NftJobWorker {
+export class NftJobWorker implements BeforeApplicationShutdown {
   private readonly logger = new Logger(NftJobWorker.name);
-  private running = false;
+  /** poll() 중복 실행 방지 + 종료 드레인 */
+  private readonly polling = new SingleFlightTask();
+  /** 테스트가 줄일 수 있도록 인스턴스 필드로 둔다 */
+  private readonly executionDeadlineMs = JOB_EXECUTION_DEADLINE_MS;
 
   constructor(
     private readonly db: DatabaseService,
@@ -111,27 +134,57 @@ export class NftJobWorker {
 
   @Cron(CronExpression.EVERY_MINUTE)
   async poll() {
-    if (this.running) return; // 중복 실행 방지
-    this.running = true;
-    try {
-      await this.requeueStaleJobs();
+    await this.polling.run(() => this.pollOnce());
+  }
 
-      // 선점(claim)을 단일 문장으로 — autocommit에서도 SELECT ... FOR UPDATE SKIP LOCKED와
-      // PROCESSING 전환이 같은 스냅샷/잠금 안에서 끝나므로 워커 다중 인스턴스에도 안전
-      const jobs = await this.db.query<ClaimedJob>(CLAIM_PENDING_JOBS_SQL);
+  /** 종료 훅 — 새 배치를 막고 진행 중인 배치를 기다린다. 이 훅이 끝난 뒤에야 DB 풀이 닫힌다 (DatabaseService.onApplicationShutdown) */
+  async beforeApplicationShutdown() {
+    const drained = await this.polling.stop();
+    if (!drained) {
+      this.logger.warn(
+        `shutdown: nft_job batch still running after ${SHUTDOWN_DRAIN_TIMEOUT_MS / 1000}s — its current job stays PROCESSING until the ${STALE_PROCESSING_INTERVAL} stale requeue`,
+      );
+    }
+  }
 
-      // RETURNING 순서는 힙 순서(서브쿼리의 ORDER BY와 무관) — 오래 기다린 잡부터 처리하도록 다시 정렬한다
-      const batch = [...jobs.rows].sort((a, b) => a.scheduled_at.getTime() - b.scheduled_at.getTime());
-      for (const job of batch) {
-        try {
-          await this.process(job);
-        } catch (err) {
-          // 잡 하나의 예기치 않은 오류(DB 단절 등)가 배치의 나머지를 버리게 두지 않는다 — 이 잡은 PROCESSING에 남았다가 고아 정리가 되돌린다
-          this.logger.error(`nft_job ${job.id} processing threw: ${this.sanitizeError(err)}`);
-        }
+  private async pollOnce() {
+    await this.requeueStaleJobs();
+    if (this.polling.isStopping) return; // 종료 중 — 새로 선점하지 않는다
+
+    // 선점(claim)을 단일 문장으로 — autocommit에서도 SELECT ... FOR UPDATE SKIP LOCKED와
+    // PROCESSING 전환이 같은 스냅샷/잠금 안에서 끝나므로 워커 다중 인스턴스에도 안전
+    const jobs = await this.db.query<ClaimedJob>(CLAIM_PENDING_JOBS_SQL);
+
+    // RETURNING 순서는 힙 순서(서브쿼리의 ORDER BY와 무관) — 오래 기다린 잡부터 처리하도록 다시 정렬한다
+    const batch = [...jobs.rows].sort((a, b) => a.scheduled_at.getTime() - b.scheduled_at.getTime());
+    for (const [index, job] of batch.entries()) {
+      if (this.polling.isStopping) {
+        await this.releaseUnstarted(batch.slice(index));
+        return;
       }
-    } finally {
-      this.running = false;
+      try {
+        await this.process(job);
+      } catch (err) {
+        // 잡 하나의 예기치 않은 오류(DB 단절 등)가 배치의 나머지를 버리게 두지 않는다 — 이 잡은 PROCESSING에 남았다가 고아 정리가 되돌린다
+        this.logger.error(`nft_job ${job.id} processing threw: ${this.sanitizeError(err)}`);
+      }
+    }
+  }
+
+  /**
+   * 종료 중 배치에서 아직 손대지 않은 잡을 PENDING으로 돌려놓는다 — 다음 인스턴스가 곧바로 다시 선점한다.
+   * 시도하지 않았으므로 retry_count/scheduled_at은 그대로. `status = 'PROCESSING'`이 소유 확인이다.
+   */
+  private async releaseUnstarted(jobs: ClaimedJob[]) {
+    try {
+      const released = await this.db.query(
+        `UPDATE nft_job SET status = 'PENDING' WHERE id = ANY($1::uuid[]) AND status = 'PROCESSING'`,
+        [jobs.map((job) => job.id)],
+      );
+      this.logger.log(`shutdown: released ${released.rowCount ?? 0} unstarted nft_job(s) back to PENDING`);
+    } catch (err) {
+      // 실패해도 15분 고아 정리가 되돌린다
+      this.logger.error(`shutdown: could not release unstarted nft_job(s): ${this.sanitizeError(err)}`);
     }
   }
 
@@ -185,7 +238,11 @@ export class NftJobWorker {
     }
 
     try {
-      const outcome = await this.execute(job);
+      const outcome = await withDeadline(
+        this.execute(job),
+        this.executionDeadlineMs,
+        `nft_job execution timed out after ${this.executionDeadlineMs / 1000}s (chain call hung?)`,
+      );
       if (outcome === 'deferred') {
         // 부모 NFT가 아직 준비되지 않은 ATTACH_CHILD — retry_count를 소모하지 않고 뒤로 미룬다 (성공으로 닫지 않는다: 멱등 키가 재큐잉을 막는다)
         await this.db.query(

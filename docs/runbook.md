@@ -33,14 +33,14 @@
    | `JWT_SECRET` | `openssl rand -base64 48` | 미설정/자리표시값 → 기동 거부. 32바이트 미만 → `error` 로그 |
    | `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth 클라이언트 | 기동 거부 |
    | `MASTER_WALLET_MNEMONIC` | 민팅 전용 지갑 (§7.6) | 민팅 잡이 1시간씩 미뤄짐(`not configured`) |
-   | `REWARD_MULTISIG_ADDRESS` | 멀티시그 주소 (§9) | **새 보상의 `custody_address`가 `PENDING_MULTISIG_SETUP`** — 스폰서가 입금할 곳이 없다. `railway.ts`는 `preserve()` 자리만 잡으므로 값은 대시보드/CLI로 넣는다 |
+   | `REWARD_MULTISIG_ADDRESS` | 멀티시그 주소 (§9) | 기동은 한다. **새 보상의 `custody_address`가 `PENDING_MULTISIG_SETUP`** — 스폰서가 입금할 곳이 없다. 미설정·빈 값·모양 불일치(`inj1` bech32 체크섬 / EVM `0x`)면 기동 로그에 `REWARD_MULTISIG_ADDRESS … required in production` **`error`** — 4번에서 이 줄이 보이면 바로 넣고 재배포. `railway.ts`는 `preserve()` 자리만 잡으므로 값은 대시보드/CLI로 넣는다 |
    | `PAYOUT_ALLOW_SELF_APPROVAL` | 넣지 않는다(기본 false, 2인 승인) | 운영자 1인일 때만 `true` |
    | `LEGACY_ACCESS_TOKEN_CUTOFF` | 선택 | 미설정이면 프로세스 시작 시각 |
    | `OPS_ALERT_WEBHOOK_URL` | 운영 채널 Discord/Slack incoming webhook (https, `railway.ts` `preserve()`) | 알림이 `OpsAlert` warn 로그로만 남아 아무도 못 본다 (README env 표, security.md "운영 알림") |
    | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile 시크릿 (`railway.ts` `preserve()`) — **FE `NEXT_PUBLIC_TURNSTILE_SITE_KEY` 배포 뒤** 넣는다 | 로그인 봇 방지 생략 + production 기동 시 `warn`. 순서가 바뀌면 모든 로그인이 400 `TURNSTILE_FAILED` |
 
    공개 값(`NODE_ENV=production`, `TRUST_PROXY=1`, `THROTTLER_STORAGE=postgres`(레플리카 간 공유 rate limit — 0016), `CORS_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT`, `INJECTIVE_*`, `NFT_CONTRACT_ADDRESS`, `USDC_EVM_CONTRACT_ADDRESS`, `JWT_ACCESS_TTL=15m`, `JWT_REFRESH_TTL=14d`)은 `railway.ts`가 넣는다. 두 TTL은 형식(`<정수><단위>`)·범위(access 60초~60분, refresh 60초~90일)가 틀리면 **기동 거부**다 — 대시보드에서 단위 없는 `900` 같은 값으로 덮어쓰지 않는다. `CORS_ORIGINS`·`GOOGLE_CLIENT_ID`·`GOOGLE_CALLBACK_URL`·`AUTH_SUCCESS_REDIRECT`는 production에서 **비어 있으면 기동 거부**(예전엔 localhost로 조용히 폴백), `GOOGLE_CALLBACK_URL`·`AUTH_SUCCESS_REDIRECT`가 localhost/`127.x`이거나 URL이 아니어도 기동 거부, `CORS_ORIGINS`의 localhost 항목은 빠지고 `error` 로그 — **2번(`railway config apply`)을 이 배포보다 먼저** 해야 하는 이유가 하나 더 생겼다. 수동 배포라면 `NODE_ENV=production`이 빠지지 않았는지 본다 — 빠지면 기동 검사가 전부 꺼진다.
-4. **BE 배포** — `main` 머지 → Railway가 `npm run migrate` 후 새 컨테이너 기동. 로그에서 `apply 00xx_…`/`skip`, 그리고 `warn`/`error` 줄(특히 `DATABASE_CA_CERT`, `TRUST_PROXY`, `JWT_SECRET`)을 확인한다. `curl -fsS https://<BE>/health` → `{"status":"ok","db":"up"}`.
+4. **BE 배포** — `main` 머지 → Railway가 `npm run migrate` 후 새 컨테이너 기동. 로그에서 `apply 00xx_…`/`skip`, 그리고 `warn`/`error` 줄(특히 `DATABASE_CA_CERT`, `TRUST_PROXY`, `JWT_SECRET`, `REWARD_MULTISIG_ADDRESS`, `CORS_ORIGINS … IGNORED`)을 확인한다. `curl -fsS https://<BE>/health` → `{"status":"ok","db":"up"}`.
 5. **Google OAuth** — 승인된 리디렉션 URI가 `GOOGLE_CALLBACK_URL`과 정확히 같은지, 동의 화면이 "In production"인지(§4).
 6. **FE 배포** — FE `develop` 머지(preview 확인) → 릴리스 PR `develop → main`(Vercel prod). FE `.env.production`의 `NINJA_API_BASE_URL`이 BE 주소, chain ID와 RPC URL이 같은 네트워크인지.
 7. **어드민 부트스트랩** (§3) → 운영자 로그인 → `/admin` 접근 확인.

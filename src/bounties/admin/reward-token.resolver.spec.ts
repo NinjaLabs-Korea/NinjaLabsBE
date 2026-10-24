@@ -1,6 +1,6 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { RewardTokenResolver } from './reward-token.resolver';
+import { RewardTokenResolver, rewardMultisigAddressProblem } from './reward-token.resolver';
 
 const USDC_CONTRACT = '0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d';
 const resolverWith = (values: Record<string, string | undefined> = {}) =>
@@ -62,8 +62,68 @@ describe('RewardTokenResolver', () => {
     }
   });
 
-  it('custody address comes from REWARD_MULTISIG_ADDRESS, with a visible placeholder when unset', () => {
+  it('custody address comes from REWARD_MULTISIG_ADDRESS, with a visible placeholder when unset or empty', () => {
     expect(resolverWith({ REWARD_MULTISIG_ADDRESS: 'inj1multisig' }).custodyAddress()).toBe('inj1multisig');
+    expect(resolverWith({ REWARD_MULTISIG_ADDRESS: ` ${ACCOUNT} ` }).custodyAddress()).toBe(ACCOUNT);
     expect(resolverWith().custodyAddress()).toBe('PENDING_MULTISIG_SETUP');
+    // a Railway variable left as '' must not store an empty custody address
+    expect(resolverWith({ REWARD_MULTISIG_ADDRESS: '' }).custodyAddress()).toBe('PENDING_MULTISIG_SETUP');
+    expect(resolverWith({ REWARD_MULTISIG_ADDRESS: '   ' }).custodyAddress()).toBe('PENDING_MULTISIG_SETUP');
+  });
+});
+
+// real bech32 encodings of 20 bytes 0x11 / 32 bytes 0x22 (same set as scripts/mainnet-preflight.sql)
+const ACCOUNT = 'inj1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3t5qxqh';
+const CONTRACT = 'inj1yg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3qunr3kj';
+const EVM = '0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d';
+
+describe('rewardMultisigAddressProblem (REWARD_MULTISIG_ADDRESS shape)', () => {
+  it.each([ACCOUNT, CONTRACT, EVM, EVM.toLowerCase(), ` ${ACCOUNT} `])('accepts %s', (value) => {
+    expect(rewardMultisigAddressProblem(value)).toBeNull();
+  });
+
+  it.each([undefined, '', '   '])('%p → not set', (value) => {
+    expect(rewardMultisigAddressProblem(value)).toBe('is not set');
+  });
+
+  it.each([
+    ['inj1multisig', 'is not shaped like'],
+    ['cosmos1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3t5qxqh', 'is not shaped like'],
+    [ACCOUNT.toUpperCase(), 'is not shaped like'],
+    ['PENDING_MULTISIG_SETUP', 'is not shaped like'],
+    [`${ACCOUNT.slice(0, -1)}j`, 'invalid bech32 checksum'], // one-character typo
+    [`${CONTRACT.slice(0, 10)}x${CONTRACT.slice(11)}`, 'invalid bech32 checksum'],
+    ['0x1234', 'is not a valid EVM address'],
+    ['0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5D', 'is not a valid EVM address'], // bad checksum casing
+  ])('%s → %s', (value, problem) => {
+    expect(rewardMultisigAddressProblem(value)).toContain(problem);
+  });
+});
+
+describe('RewardTokenResolver boot check (production only, logs — never refuses to boot)', () => {
+  let error: jest.SpyInstance;
+  beforeEach(() => {
+    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('is silent outside production even when unset, and in production with a valid address', () => {
+    resolverWith({}).onModuleInit();
+    resolverWith({ NODE_ENV: 'development', REWARD_MULTISIG_ADDRESS: 'inj1multisig' }).onModuleInit();
+    resolverWith({ NODE_ENV: 'production', REWARD_MULTISIG_ADDRESS: ACCOUNT }).onModuleInit();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, ''])('logs an error in production when REWARD_MULTISIG_ADDRESS is %p (custody falls back to the placeholder)', (value) => {
+    expect(() => resolverWith({ NODE_ENV: 'production', REWARD_MULTISIG_ADDRESS: value }).onModuleInit()).not.toThrow();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^REWARD_MULTISIG_ADDRESS is not set — required in production\. New bounty rewards get custody_address PENDING_MULTISIG_SETUP/));
+  });
+
+  it('logs an error in production naming a malformed value (the value is still used — the operator fixes it)', () => {
+    const resolver = resolverWith({ NODE_ENV: 'production', REWARD_MULTISIG_ADDRESS: 'inj1multisig' });
+    expect(() => resolver.onModuleInit()).not.toThrow();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('REWARD_MULTISIG_ADDRESS="inj1multisig" is not shaped like an Injective address'));
+    expect(resolver.custodyAddress()).toBe('inj1multisig');
   });
 });

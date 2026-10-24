@@ -136,6 +136,12 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
       expect(String(bad.headers['x-request-id'])).not.toContain('spaces');
     });
 
+    it('guard-rejected (401) and CORS-rejected responses still carry X-Request-Id (middleware runs first)', async () => {
+      const res = await e2e.request('GET', '/admin/notices');
+      expect(res.status).toBe(401);
+      expect(String(res.headers['x-request-id'])).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
     it('4xx are not logged as errors by the filter', async () => {
       const before = e2e.linesFor('HttpException').length;
       expect((await e2e.get('/bounties/not-a-uuid')).status).toBe(400);

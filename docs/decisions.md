@@ -64,4 +64,4 @@
 | 서버 호스팅 | NestJS — Vercel 부적합 → **Railway/Fly.io 등 검토 필요** | Vercel은 FE 전용으로 유지 |
 | 마스터 지갑 키 | 기획서는 AWS KMS. MVP는 호스팅 플랫폼 secret + 별도 논의 | 민팅 권한만 있어 탈취 시 자금 피해 없음 (기획 확정 사항) |
 | ORM | 미사용 — raw SQL (pg) | ERD와 1:1 대응 유지. 팀 합의 시 Kysely/Prisma 전환 가능 |
-| Turnstile / rate limit | Phase 1 구현 항목 | 가입 어뷰징 방어 1차선 (기획 확정) |
+| Turnstile / rate limit | **구현됨** — `/auth/google`에 Turnstile(선택, `TURNSTILE_SECRET_KEY`) + IP 20/min | 가입 어뷰징 방어 1차선 (기획 확정). 첫 로그인인지는 Google 콜백 뒤에 알 수 있어 모든 로그인 시작에 건다. Cloudflare 불통 시 fail-closed(503) — 봇 방지를 조용히 끄지 않는다 |

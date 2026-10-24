@@ -34,6 +34,8 @@ export default defineRailway(() => {
       GOOGLE_CLIENT_SECRET: preserve(),
       JWT_SECRET: preserve(),
       MASTER_WALLET_MNEMONIC: preserve(),
+      // 선택 — 비어 있으면 로그인 봇 방지 생략 + 기동 시 warn. FE NEXT_PUBLIC_TURNSTILE_SITE_KEY 배포 후 설정 (README env 표)
+      TURNSTILE_SECRET_KEY: preserve(),
     },
   });
 

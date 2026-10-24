@@ -19,7 +19,7 @@ afterEach(() => jest.restoreAllMocks());
 describe('AuthController.googleCallback — rejected before touching Google', () => {
   function setup(config: Record<string, string> = { AUTH_SUCCESS_REDIRECT: 'https://app.example/' }) {
     const auth = { verifyOauthState: jest.fn(), exchangeGoogleCode: jest.fn(), upsertGoogleUser: jest.fn(), issueLoginCode: jest.fn() };
-    const controller = new AuthController(auth as never, { get: (key: string) => config[key] } as never);
+    const controller = new AuthController(auth as never, { get: (key: string) => config[key] } as never, { enabled: false } as never);
     const res = { redirect: jest.fn() };
     return { auth, controller, res };
   }
@@ -63,9 +63,9 @@ describe('AuthController.googleRedirect', () => {
   it('an unparseable AUTH_SUCCESS_REDIRECT is still the fallback for any returnTo (the allowlist cannot be built)', async () => {
     logs();
     const auth = { issueOauthState: jest.fn(async () => 'state'), buildGoogleAuthUrl: jest.fn((state: string) => `https://accounts.google.com/?state=${state}`) };
-    const controller = new AuthController(auth as never, { get: (key: string) => (key === 'AUTH_SUCCESS_REDIRECT' ? 'not a url' : undefined) } as never);
+    const controller = new AuthController(auth as never, { get: (key: string) => (key === 'AUTH_SUCCESS_REDIRECT' ? 'not a url' : undefined) } as never, { enabled: false } as never);
     const res = { redirect: jest.fn() };
-    await controller.googleRedirect('trace-1', 'https://app.example/x', challenge, res as never);
+    await controller.googleRedirect('trace-1', 'https://app.example/x', challenge, undefined, { ip: '1.2.3.4' } as never, res as never);
     expect(auth.issueOauthState).toHaveBeenCalledWith('trace-1', 'not a url', challenge);
     expect(res.redirect).toHaveBeenCalledWith('https://accounts.google.com/?state=state');
   });
@@ -73,8 +73,8 @@ describe('AuthController.googleRedirect', () => {
   it('logs the requested/selected origins only (null for garbage), never the full returnTo, and passes an absent challenge as ""', async () => {
     const { logged } = logs();
     const auth = { issueOauthState: jest.fn(async () => 'state'), buildGoogleAuthUrl: jest.fn(() => 'https://accounts.google.com/') };
-    const controller = new AuthController(auth as never, { get: (key: string) => (key === 'AUTH_SUCCESS_REDIRECT' ? 'https://app.example/' : undefined) } as never);
-    await controller.googleRedirect(undefined, 'garbage?secret=1', undefined, { redirect: jest.fn() } as never);
+    const controller = new AuthController(auth as never, { get: (key: string) => (key === 'AUTH_SUCCESS_REDIRECT' ? 'https://app.example/' : undefined) } as never, { enabled: false } as never);
+    await controller.googleRedirect(undefined, 'garbage?secret=1', undefined, undefined, { ip: '1.2.3.4' } as never, { redirect: jest.fn() } as never);
     expect(auth.issueOauthState).toHaveBeenCalledWith(undefined, 'https://app.example/', '');
     expect(logged()[0]).toEqual({ event: 'oauth.redirect.requested', requestedReturnOrigin: null, selectedReturnOrigin: 'https://app.example' });
   });
@@ -84,7 +84,7 @@ describe('AuthController.refresh / me', () => {
   it('body mode returns the rotated pair as-is and sets no cookie', async () => {
     logs();
     const auth = { refreshTtlSeconds: 60, refresh: jest.fn(async () => ({ accessToken: 'a', refreshToken: 'r2' })) };
-    const controller = new AuthController(auth as never, { get: () => undefined } as never);
+    const controller = new AuthController(auth as never, { get: () => undefined } as never, { enabled: false } as never);
     const res = { append: jest.fn() };
     await expect(controller.refresh({ refreshToken: 'r1' }, { headers: { 'user-agent': 'ua' }, ip: '1.2.3.4' } as never, res as never))
       .resolves.toEqual({ accessToken: 'a', refreshToken: 'r2' });
@@ -96,7 +96,7 @@ describe('AuthController.refresh / me', () => {
     logs();
     const outage = new Error('connection terminated');
     const auth = { refreshTtlSeconds: 60, refresh: jest.fn(async () => { throw outage; }) };
-    const controller = new AuthController(auth as never, { get: () => undefined } as never);
+    const controller = new AuthController(auth as never, { get: () => undefined } as never, { enabled: false } as never);
     const res = { append: jest.fn() };
     const req = { headers: { 'x-ninja-session': 'cookie', cookie: 'ninja_rt=live' } } as never;
     await expect(controller.refresh({}, req, res as never)).rejects.toBe(outage);
@@ -107,7 +107,7 @@ describe('AuthController.refresh / me', () => {
     const { logged, errored } = logs();
     const me = { onboardingStep: 3, onboardingCompleted: false, wallet: { address: 'inj1x' }, nft: { status: 'PENDING' } };
     const auth = { getMe: jest.fn(async () => me) };
-    const controller = new AuthController(auth as never, { get: () => undefined } as never);
+    const controller = new AuthController(auth as never, { get: () => undefined } as never, { enabled: false } as never);
     const req = { headers: { 'x-onboarding-trace-id': 'trace-9' }, user: { userId, isAdmin: false } } as never;
     await expect(controller.me(req)).resolves.toBe(me);
     expect(auth.getMe).toHaveBeenCalledWith(userId);

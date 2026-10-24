@@ -396,3 +396,101 @@ describe('RewardsService payout allocation', () => {
     expect(query).not.toHaveBeenCalled();
   });
 });
+
+describe('RewardsService remaining guards', () => {
+  /** Answers by statement shape; `answers` overrides by SQL fragment */
+  function serviceWith(answers: Array<[string, { rowCount: number; rows: unknown[] }]>, nfts: unknown = {}) {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+      for (const [fragment, answer] of answers) if (sql.includes(fragment)) return answer;
+      return { rowCount: 1, rows: [] };
+    });
+    const db = { query: jest.fn(), tx: jest.fn((fn: (tx: { query: unknown }) => Promise<unknown>) => fn({ query: withParamsCheck(query) })) };
+    return { service: new RewardsService(db as never, nfts as never, new AuditService(db as never), config()), query, db };
+  }
+  const has = (query: jest.Mock, fragment: string) => query.mock.calls.some(([sql]) => (sql as string).includes(fragment));
+
+  it.each(['DRAFT', 'FUNDING_PENDING', 'COMPLETED', 'CANCELLED'])('requestPayout on a %s bounty is 400 BOUNTY_REVIEW_CLOSED before the reward is read', async (status) => {
+    const { service, query } = serviceWith([['FROM bounty b JOIN bounty_reward rw', { rowCount: 1, rows: [{ status }] }]]);
+    await expect(service.requestPayout('reward', 'sub', '1', 'admin')).rejects.toMatchObject({ status: 400, message: 'BOUNTY_REVIEW_CLOSED' });
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it('requestPayout for an unknown reward or a deleted bounty is 404 REWARD_NOT_FOUND', async () => {
+    const { service, query } = serviceWith([['FROM bounty b JOIN bounty_reward rw', { rowCount: 0, rows: [] }]]);
+    await expect(service.requestPayout('reward', 'sub', '1', 'admin')).rejects.toMatchObject({ status: 404, message: 'REWARD_NOT_FOUND' });
+    expect(query.mock.calls[0][0]).toContain('b.deleted_at IS NULL FOR UPDATE OF b');
+  });
+
+  it.each(['DEPOSIT_PENDING', 'REFUND_PENDING', 'REFUNDED', 'CANCELLED'])('requestPayout against a %s reward is 400 REWARD_NOT_FUNDED', async (status) => {
+    const { service, query } = serviceWith([
+      ['FROM bounty b JOIN bounty_reward rw', { rowCount: 1, rows: [{ status: 'OPEN' }] }],
+      ['AS cap FROM bounty_reward', { rowCount: 1, rows: [{ bounty_id: 'b', status, cap: '100' }] }],
+    ]);
+    await expect(service.requestPayout('reward', 'sub', '1', 'admin')).rejects.toMatchObject({ message: 'REWARD_NOT_FUNDED' });
+    expect(has(query, 'INSERT INTO payout')).toBe(false);
+  });
+
+  it('pays the primary, connected wallet of the submitter (or the agent owner) and stores a per-(submission, reward) idempotency key', async () => {
+    const { service, query } = serviceWith([
+      ['FROM bounty b JOIN bounty_reward rw', { rowCount: 1, rows: [{ status: 'SUBMISSION_CLOSED' }] }],
+      ['AS cap FROM bounty_reward', { rowCount: 1, rows: [{ bounty_id: 'b', status: 'FUNDED', cap: '100' }] }],
+      ['AS wallet_id', { rowCount: 1, rows: [{ wallet_id: 'wallet-1' }] }],
+      ['SELECT id FROM payout WHERE', { rowCount: 0, rows: [] }],
+      ['COALESCE(SUM(amount), 0)::text AS amount', { rowCount: 1, rows: [{ amount: '0' }] }],
+      ['INSERT INTO payout', { rowCount: 1, rows: [{ id: 'payout-1', status: 'REQUESTED' }] }],
+    ]);
+    await expect(service.requestPayout('reward-1', 'sub-1', '100', 'admin')).resolves.toEqual({ id: 'payout-1', status: 'REQUESTED' });
+    const wallet = query.mock.calls.find(([sql]) => (sql as string).includes('AS wallet_id'))!;
+    expect(wallet[0]).toContain('w.user_id = COALESCE(s.submitter_user_id, a.owner_user_id)');
+    expect(wallet[0]).toContain('w.is_primary = true AND w.disconnected_at IS NULL');
+    expect(wallet[0]).toContain("s.status = 'APPROVED'");
+    const insert = query.mock.calls.find(([sql]) => (sql as string).includes('INSERT INTO payout'))!;
+    expect(insert[1]).toEqual(['reward-1', 'sub-1', 'wallet-1', '100', 'submission:sub-1:reward:reward-1', 'admin']);
+    // cancelled payouts free their allocation; everything else (requested, approved, paid…) holds it
+    expect(query.mock.calls.find(([sql]) => (sql as string).includes('AS amount FROM payout'))![0]).toContain("status <> 'CANCELLED'");
+  });
+
+  it('the allocation check is exact at the cap with 78-digit amounts (BigInt, no float rounding)', async () => {
+    const cap = '9'.repeat(78);
+    const almost = `${'9'.repeat(77)}8`;
+    const make = () => serviceWith([
+      ['FROM bounty b JOIN bounty_reward rw', { rowCount: 1, rows: [{ status: 'OPEN' }] }],
+      ['AS cap FROM bounty_reward', { rowCount: 1, rows: [{ bounty_id: 'b', status: 'FUNDED', cap }] }],
+      ['AS wallet_id', { rowCount: 1, rows: [{ wallet_id: 'w' }] }],
+      ['SELECT id FROM payout WHERE', { rowCount: 0, rows: [] }],
+      ['COALESCE(SUM(amount), 0)::text AS amount', { rowCount: 1, rows: [{ amount: almost }] }],
+      ['INSERT INTO payout', { rowCount: 1, rows: [{ id: 'p', status: 'REQUESTED' }] }],
+    ]);
+    await expect(make().service.requestPayout('r', 's', '1', 'admin')).resolves.toMatchObject({ status: 'REQUESTED' });
+    await expect(make().service.requestPayout('r', 's', '2', 'admin')).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' });
+  });
+
+  it('markPaid whose submission is no longer APPROVED (or has no owner) is 404 APPROVED_SUBMISSION_NOT_FOUND — no NFT, no audit', async () => {
+    const nfts = { enqueueChildMintInTransaction: jest.fn() };
+    const { service, query } = serviceWith([
+      ['SELECT rw.bounty_id FROM payout p', { rowCount: 1, rows: [{ bounty_id: 'b' }] }],
+      ['count(*) FILTER', { rowCount: 1, rows: [{ same_bounty: 0, other_bounty: 0 }] }],
+      ['FROM bounty_reward WHERE deposit_tx_hash', { rowCount: 0, rows: [] }],
+      [`UPDATE payout SET status = 'PAID'`, { rowCount: 1, rows: [{ id: 'p', status: 'PAID', submission_id: 's', recipient_wallet_id: 'w', bounty_reward_id: 'r' }] }],
+      ['FROM bounty_submission s', { rowCount: 0, rows: [] }],
+    ], nfts);
+    await expect(service.markPaid('p', txHash, 'admin')).rejects.toMatchObject({ status: 404, message: 'APPROVED_SUBMISSION_NOT_FOUND' });
+    expect(nfts.enqueueChildMintInTransaction).not.toHaveBeenCalled();
+    expect(has(query, 'INSERT INTO audit_log')).toBe(false);
+  });
+
+  it('markApproved: a payout that left the approvable states between the lock and the UPDATE is 404, not audited', async () => {
+    const { service, query } = serviceWith([
+      ['SELECT requested_by FROM payout', { rowCount: 1, rows: [{ requested_by: 'requester' }] }],
+      ["SET status = 'APPROVED'", { rowCount: 0, rows: [] }],
+    ]);
+    await expect(service.markApproved('p', 'approver')).rejects.toMatchObject({ status: 404, message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
+    expect(has(query, 'INSERT INTO audit_log')).toBe(false);
+  });
+
+  it.each(['0', '01', '1.0', '-5', ' 1', '1e3', '9'.repeat(79)])('confirmDeposit with deposited amount %p is 400 INVALID_TOKEN_AMOUNT before any transaction', async (amount) => {
+    const { service, db } = serviceWith([]);
+    await expect(service.confirmDeposit('r', txHash, amount, 'admin')).rejects.toMatchObject({ message: 'INVALID_TOKEN_AMOUNT' });
+    expect(db.tx).not.toHaveBeenCalled();
+  });
+});

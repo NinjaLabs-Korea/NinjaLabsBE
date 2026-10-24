@@ -15,6 +15,16 @@ describe('BountyStatusPolicy', () => {
     expect(BountyStatusPolicy.canTransition(from, to)).toBe(expected);
   });
 
+  it('lists the operator transitions available from each status (empty for finished/unknown)', () => {
+    expect(BountyStatusPolicy.transitionsFrom('DRAFT')).toEqual(['FUNDING_PENDING', 'OPEN', 'CANCELLED']);
+    expect(BountyStatusPolicy.transitionsFrom('OPEN')).toEqual(['SUBMISSION_CLOSED', 'CANCELLED']);
+    expect(BountyStatusPolicy.transitionsFrom('SUBMISSION_CLOSED')).toEqual(['IN_REVIEW', 'OPEN']);
+    expect(BountyStatusPolicy.transitionsFrom('IN_REVIEW')).toEqual(['COMPLETED', 'OPEN']);
+    expect(BountyStatusPolicy.transitionsFrom('COMPLETED')).toEqual([]);
+    expect(BountyStatusPolicy.transitionsFrom('CANCELLED')).toEqual([]);
+    expect(BountyStatusPolicy.transitionsFrom('UNKNOWN')).toEqual([]);
+  });
+
   it('treats only OPEN, SUBMISSION_CLOSED and IN_REVIEW as in progress', () => {
     expect(['DRAFT', 'FUNDING_PENDING', 'OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED', 'CANCELLED']
       .filter(BountyStatusPolicy.isInProgress)).toEqual(['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW']);

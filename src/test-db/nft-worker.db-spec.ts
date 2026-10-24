@@ -2,6 +2,8 @@ import { InjectiveNftClient } from '../nfts/injective-nft.client';
 import { CLAIM_PENDING_JOBS_SQL, NftJobWorker } from '../nfts/nft-job.worker';
 import { NftsService } from '../nfts/nfts.service';
 import { AlertService } from '../common/alerts/alert.service';
+import { NftJobsAdminService } from '../nfts/nft-jobs-admin.service';
+import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';
 import { createDb, createPrimaryWallet, createUser, deferred, testConfig, unique, waitFor } from './harness';
@@ -128,6 +130,55 @@ describeDb('nft_job worker on a real database', () => {
     expect(chain.mint).toHaveBeenCalledTimes(2);
     // FAILED에 도달한 순간 운영 알림 한 번 (잡 종류별 키)
     expect(worker['alerts'].notify).toHaveBeenCalledWith('nft-job-failed:MINT_PARENT', expect.stringContaining(`nft_job ${jobId} (MINT_PARENT, nft ${nftId}) reached FAILED`));
+  });
+
+  it('operator retry of a permanently FAILED mint: PENDING with retry_count 0, the nft back to PENDING, audited — and the next poll mints it', async () => {
+    const { nftId, jobId } = await parentJob('1 minute');
+    const failing = chainStub(async () => { throw new Error('node unreachable'); });
+    await db.query(`UPDATE nft_job SET retry_count = 4 WHERE id = $1`, [jobId]);
+    await createWorker(failing).poll();
+    expect(await jobRow(jobId)).toMatchObject({ status: 'FAILED', retry_count: 5 });
+    expect((await nftRow(nftId)).status).toBe('FAILED');
+
+    const admin = await createUser(db);
+    const jobs = new NftJobsAdminService(db, new AuditService(db));
+    const listed = await jobs.list({ status: 'FAILED', page: 1 });
+    expect(listed.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: jobId, nft_status: 'FAILED', last_error: 'node unreachable' })]));
+    await expect(jobs.retry(jobId, admin)).resolves.toEqual({ id: jobId, nft_id: nftId, status: 'PENDING', retry_count: 0 });
+    expect(await jobRow(jobId)).toMatchObject({ status: 'PENDING', retry_count: 0, processed_at: null, last_error: 'node unreachable' });
+    expect((await nftRow(nftId)).status).toBe('PENDING');
+    const audit = await db.query(`SELECT actor_user_id, action FROM audit_log WHERE entity_type = 'nft_job' AND entity_id = $1`, [jobId]);
+    expect(audit.rows).toEqual([{ actor_user_id: admin, action: 'NFT_JOB_RETRIED' }]);
+    await expect(jobs.retry(jobId, admin)).rejects.toThrow('NFT_JOB_NOT_FOUND_OR_NOT_FAILED');
+
+    const healthy = chainStub(async () => '0xretried');
+    await createWorker(healthy).poll();
+    expect(await jobRow(jobId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0, last_error: null });
+    expect(await nftRow(nftId)).toEqual({ status: 'MINTED', token_id: nftId, mint_tx_hash: '0xretried' });
+  });
+
+  it('operator retry of a FAILED attach restores the already-minted child to MINTED (no re-mint) so the attach can run', async () => {
+    const userId = await createUser(db);
+    const wallet = await createPrimaryWallet(db, userId);
+    const parent = (await nfts.enqueueParentMint(userId, wallet.id))!;
+    await db.query(`UPDATE nft SET status = 'MINTED', minted_at = now() WHERE id = $1`, [parent.nftId]);
+    await db.query(`UPDATE nft_job SET status = 'SUCCEEDED' WHERE nft_id = $1`, [parent.nftId]);
+    const child = await childJob(userId, wallet.id);
+    await db.query(`UPDATE nft_job SET status = 'SUCCEEDED' WHERE id = $1`, [child.jobId]);
+    // the child was minted, then its attach exhausted its retries: the worker marks the nft FAILED
+    await db.query(`UPDATE nft SET status = 'FAILED', minted_at = now(), token_id = id::text WHERE id = $1`, [child.nftId]);
+    const attach = await db.query<{ id: string }>(
+      `INSERT INTO nft_job (nft_id, job_type, idempotency_key, status, retry_count, last_error)
+       VALUES ($1, 'ATTACH_CHILD', $2, 'FAILED', 5, 'attach failed') RETURNING id`, [child.nftId, `attach-child:${child.nftId}`]);
+
+    await new NftJobsAdminService(db, new AuditService(db)).retry(attach.rows[0].id, userId);
+    expect((await nftRow(child.nftId)).status).toBe('MINTED');
+
+    const chain = chainStub(async () => '0xnever');
+    await createWorker(chain).poll();
+    expect(chain.mint).not.toHaveBeenCalled();
+    expect((await nftRow(child.nftId)).status).toBe('ATTACHED');
+    expect((await attachJob(child.nftId)).status).toBe('SUCCEEDED');
   });
 
   it('two instances claiming inside two open transactions at the same time each get a disjoint, non-empty batch immediately (FOR UPDATE SKIP LOCKED)', async () => {

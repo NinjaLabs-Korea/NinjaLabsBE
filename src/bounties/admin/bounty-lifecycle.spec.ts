@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 const adminServicesFor = (db: unknown) => {
   const audit = new AuditService(db as never);
   return {
-    bounties: new BountyAdminService(db as never, audit, new BountyLifecycleService(), new RewardTokenResolver(new ConfigService())),
+    bounties: new BountyAdminService(db as never, audit, new BountyLifecycleService(), new RewardTokenResolver(new ConfigService()), new ConfigService()),
     applicationReviews: new ApplicationReviewService(db as never, audit),
     submissionReviews: new SubmissionReviewService(db as never, audit),
   };
@@ -93,6 +93,34 @@ describe('Bounty lifecycle ordering', () => {
     await expect(service.apply('b', 'u', 'Apply')).rejects.toThrow('APPLICATION_DEADLINE_PASSED');
     expect(query).toHaveBeenCalledTimes(1);
     expect(dbQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('Lifecycle blocker codes (operations UI)', () => {
+  const blockersFor = async (counts: Record<string, number>, expired = false) => {
+    const query = jest.fn(async () => ({ rowCount: 1, rows: [counts] }));
+    return new BountyLifecycleService().blockers({ query } as never, 'b', { status: 'OPEN', submission_deadline: expired ? '2020-01-01' : '2099-01-01' });
+  };
+
+  it('returns the same list as stable codes with counts next to the English sentences', async () => {
+    const result = await blockersFor({ pending: 2, unsubmitted: 1, unresolved: 3, unfunded: 1, unpaid: 1 }, false);
+    expect(result.blockerDetails).toEqual({
+      OPEN: [{ code: 'REWARDS_UNFUNDED', count: 1 }],
+      SUBMISSION_CLOSED: [{ code: 'PENDING_APPLICATIONS', count: 2 }, { code: 'UNSUBMITTED_PARTICIPANTS', count: 1 }],
+      IN_REVIEW: [],
+      COMPLETED: [{ code: 'PENDING_APPLICATIONS', count: 2 }, { code: 'UNRESOLVED_SUBMISSIONS', count: 3 }, { code: 'UNPAID_WINNERS' }],
+    });
+    expect(result.blockers.SUBMISSION_CLOSED).toEqual([
+      'Review 2 pending application(s) before closing submissions.',
+      '1 approved participant(s) have not submitted. Wait for their work or the submission deadline.',
+    ]);
+    for (const to of Object.keys(result.blockers)) expect(result.blockerDetails[to]).toHaveLength(result.blockers[to].length);
+  });
+
+  it('an expired deadline blocks re-opening (DEADLINE_PASSED) and no longer waits for unsubmitted participants', async () => {
+    const result = await blockersFor({ unsubmitted: 1 }, true);
+    expect(result.blockerDetails.OPEN).toEqual([{ code: 'DEADLINE_PASSED' }]);
+    expect(result.blockerDetails.SUBMISSION_CLOSED).toEqual([]);
   });
 });
 

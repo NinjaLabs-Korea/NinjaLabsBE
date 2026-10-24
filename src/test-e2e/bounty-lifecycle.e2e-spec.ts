@@ -65,8 +65,12 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
 
     const ops = await e2e.get(`/admin/bounties/${bountyId}/operations`, asAdmin);
     expect(ops.status).toBe(200);
-    expect(Object.keys(ops.body).sort()).toEqual(['applications', 'bounty', 'lifecycle', 'payouts', 'rewards', 'submissions']);
+    expect(Object.keys(ops.body).sort()).toEqual(['applications', 'bounty', 'lifecycle', 'payouts', 'policy', 'rewards', 'submissions']);
     expect(ops.body.lifecycle.blockers.OPEN).toEqual(['Confirm all reward deposits before opening this bounty.']);
+    expect(ops.body.lifecycle.blockerDetails.OPEN).toEqual([{ code: 'REWARDS_UNFUNDED', count: 1 }]);
+    expect(ops.body.lifecycle.allowedTransitions).toEqual(['OPEN', 'CANCELLED']);
+    expect(ops.body.policy).toEqual({ payoutSelfApprovalAllowed: false });
+    expect(ops.body.bounty).toMatchObject({ id: bountyId, status: 'FUNDING_PENDING', max_winners: 1, application_required: true, submission_mode: 'DIRECT' });
     const rewardId: string = ops.body.rewards[0].id;
     expect(ops.body.rewards[0]).toMatchObject({ status: 'DEPOSIT_PENDING', display_symbol: 'INJ', amount: '100000000000000000000', custody_address: 'inj1e2emultisig' });
 
@@ -123,6 +127,23 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect(requested.status).toBe(201);
     expect(requested.body).toEqual({ id: expect.stringMatching(UUID), status: 'REQUESTED', requested_at: expect.any(String) });
     const payoutId: string = requested.body.id;
+    // operations: applicant identity, recipient wallet, latest revision and the viewer-relative two-person flag
+    const opsReview = await e2e.get(`/admin/bounties/${bountyId}/operations`, asAdmin);
+    expect(opsReview.body.applications).toEqual([expect.objectContaining({
+      id: applied.body.id, status: 'APPROVED', review_note: 'welcome', reviewed_at: expect.any(String),
+      actor_kind: 'USER', user_id: builder.userId, nickname, agent_id: null, agent_name: null, actor_name: nickname,
+    })]);
+    expect(opsReview.body.submissions).toEqual([expect.objectContaining({
+      id: submissionId, status: 'APPROVED', current_revision_no: 2, actor_kind: 'USER', user_id: builder.userId, nickname,
+      recipient_wallet_address: walletAddress, review_comment: 'great',
+      revisions: [expect.objectContaining({ revision_no: 2, submission_url: 'https://demo.example/v2' }), expect.objectContaining({ revision_no: 1 })],
+      reviews: [expect.objectContaining({ revision_no: 2, decision: 'APPROVE', comment: 'great' })],
+    })]);
+    expect(opsReview.body.rewards[0]).toMatchObject({ cap: '100000000000000000000', allocated_amount: '100000000000000000000', token_type: 'NATIVE' });
+    expect(opsReview.body.payouts).toEqual([expect.objectContaining({
+      id: payoutId, status: 'REQUESTED', requested_by: admin.userId, requested_by_me: true, approved_by: null, approved_at: null, requested_at: expect.any(String),
+    })]);
+    expect((await e2e.get(`/admin/bounties/${bountyId}/operations`, asApprover)).body.payouts[0].requested_by_me).toBe(false);
     expect((await e2e.post('/admin/payouts', { rewardId, submissionId, amount: '1' }, asAdmin)).body)
       .toEqual({ statusCode: 409, error: 'Conflict', message: 'PAYOUT_ALREADY_REQUESTED' });
     const closed = await transition(bountyId, 'SUBMISSION_CLOSED');
@@ -144,7 +165,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect(paid.status).toBe(201);
     expect(paid.body).toMatchObject({ id: payoutId, status: 'PAID', payout_tx_hash: payoutHash.toLowerCase() });
     const opsAfter = await e2e.get(`/admin/bounties/${bountyId}/operations`, asAdmin);
-    expect(opsAfter.body.payouts).toEqual([expect.objectContaining({ id: payoutId, status: 'PAID', payout_tx_hash: payoutHash.toLowerCase(), recipient_address: walletAddress, display_symbol: 'INJ' })]);
+    expect(opsAfter.body.payouts).toEqual([expect.objectContaining({ id: payoutId, status: 'PAID', payout_tx_hash: payoutHash.toLowerCase(), recipient_address: walletAddress, display_symbol: 'INJ', approved_by: approver.userId, paid_at: expect.any(String) })]);
     expect(opsAfter.body.rewards[0].status).toBe('PAID');
 
     const child = await e2e.db.query<{ job_type: string; idempotency_key: string; status: string; parent: boolean }>(
@@ -416,10 +437,44 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await e2e.get('/applications/me', { token: builder.accessToken })).body[0].status).toBe('WITHDRAWN');
   });
 
+  it('NFT job console: GET /admin/nft-jobs lists FAILED jobs (paged); retry → PENDING with retry_count 0, nft restored, NFT_JOB_RETRIED; a second retry is 404', async () => {
+    const owner = await e2e.login();
+    await e2e.onboard(owner);
+    // the wallet verify queued the parent mint; force it into the worker's permanent-failure state
+    const job = await e2e.db.query<{ id: string; nft_id: string }>(
+      `UPDATE nft_job j SET status = 'FAILED', retry_count = 5, last_error = 'boom', processed_at = now()
+         FROM nft n WHERE n.id = j.nft_id AND n.owner_user_id = $1 AND j.job_type = 'MINT_PARENT' RETURNING j.id, j.nft_id`, [owner.userId]);
+    expect(job.rowCount).toBe(1);
+    const { id: jobId, nft_id: nftId } = job.rows[0];
+    await e2e.db.query(`UPDATE nft SET status = 'FAILED' WHERE id = $1`, [nftId]);
+
+    const failed = await e2e.get('/admin/nft-jobs?status=FAILED', asAdmin);
+    expect(failed.status).toBe(200);
+    expect(failed.body).toMatchObject({ page: 1, pageSize: 30, total: expect.any(Number) });
+    expect(failed.body.items).toEqual(expect.arrayContaining([expect.objectContaining({
+      id: jobId, nft_id: nftId, job_type: 'MINT_PARENT', status: 'FAILED', retry_count: 5, last_error: 'boom',
+      nft_type: 'NINJA_PARENT', nft_status: 'FAILED', owner_user_id: owner.userId, owner_wallet_address: expect.any(String), bounty_id: null,
+    })]));
+    expect((await e2e.get('/admin/nft-jobs', asAdmin)).body.items.map((i: { id: string }) => i.id)).toContain(jobId); // FAILED is the default
+    expect((await e2e.get('/admin/nft-jobs?status=SUCCEEDED', asAdmin)).status).toBe(400);
+
+    const retried = await e2e.post(`/admin/nft-jobs/${jobId}/retry`, undefined, asAdmin);
+    expect(retried.status).toBe(201);
+    expect(retried.body).toEqual({ id: jobId, nft_id: nftId, status: 'PENDING', retry_count: 0 });
+    const rows = await e2e.db.query(`SELECT j.status, j.retry_count, j.processed_at, n.status AS nft_status FROM nft_job j JOIN nft n ON n.id = j.nft_id WHERE j.id = $1`, [jobId]);
+    expect(rows.rows[0]).toEqual({ status: 'PENDING', retry_count: 0, processed_at: null, nft_status: 'PENDING' });
+    expect((await e2e.get('/admin/nft-jobs?status=PENDING', asAdmin)).body.items.map((i: { id: string }) => i.id)).toContain(jobId);
+
+    const again = await e2e.post(`/admin/nft-jobs/${jobId}/retry`, undefined, asAdmin);
+    expect(again.body).toEqual({ statusCode: 404, error: 'Not Found', message: 'NFT_JOB_NOT_FOUND_OR_NOT_FAILED' });
+    const audit = await e2e.get(`/admin/audit-logs?entityType=nft_job&entityId=${jobId}`, asAdmin);
+    expect(audit.body.items).toEqual([expect.objectContaining({ action: 'NFT_JOB_RETRIED', actor_user_id: admin.userId })]);
+  });
+
   describe('h. admin guard', () => {
     it('a non-admin gets 403 ADMIN_ONLY on every /admin route; no token is 401', async () => {
       const user = await e2e.login();
-      for (const [method, path] of [['GET', '/admin/bounties'], ['GET', '/admin/users'], ['GET', '/admin/notices'], ['GET', '/admin/audit-logs'], ['POST', '/admin/payouts']] as const) {
+      for (const [method, path] of [['GET', '/admin/bounties'], ['GET', '/admin/users'], ['GET', '/admin/notices'], ['GET', '/admin/audit-logs'], ['POST', '/admin/payouts'], ['GET', '/admin/nft-jobs'], ['POST', `/admin/nft-jobs/${'1'.repeat(8)}-1111-4111-8111-111111111111/retry`]] as const) {
         const res = await e2e.request(method, path, { token: user.accessToken, json: method === 'POST' ? {} : undefined });
         expect(res.status).toBe(403);
         expect(res.body).toEqual({ statusCode: 403, error: 'Forbidden', message: 'ADMIN_ONLY' });

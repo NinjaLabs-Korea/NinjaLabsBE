@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { withParamsCheck } from '../../test-support/expect-params-match';
@@ -28,6 +29,7 @@ describe('BountyAdminService update safeguards', () => {
       new AuditService(db as unknown as DatabaseService),
       {} as BountyLifecycleService,
       {} as RewardTokenResolver,
+      { get: () => undefined } as unknown as ConfigService,
     );
     return { service, query, db };
   }

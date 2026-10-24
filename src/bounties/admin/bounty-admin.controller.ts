@@ -15,8 +15,8 @@ export class BountyAdminController {
   }
 
   @Get(':id/operations')
-  operations(@Param('id', ParseUUIDPipe) bountyId: string) {
-    return this.bounties.operations(bountyId);
+  operations(@Param('id', ParseUUIDPipe) bountyId: string, @Req() req: AuthedRequest) {
+    return this.bounties.operations(bountyId, req.user.userId);
   }
 
   @Post()

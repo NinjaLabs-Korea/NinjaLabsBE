@@ -140,7 +140,7 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 | GET | `/notices/:id` | - | 상세 (삭제/비공개 → 404, FE는 목록으로 안내) |
 | GET | `/members` | - | 공식 멤버 리스트 (역할·링크 포함, display_order 정렬) |
 | GET | `/hall-of-fame` | - | 큐레이션 하이라이트 |
-| GET | `/hall-of-fame/stats` | - | 자동 집계 지표 (완료 바운티/빌더/NFT/스폰서 수). 서버 인스턴스별 인메모리 캐시 **60초** — 완료 전이/민팅 직후 최대 1분 늦게 반영된다 (`highlights.service.ts`) |
+| GET | `/hall-of-fame/stats` | - | 자동 집계 지표 `{completedBounties, builders, completionNfts, sponsors, paidTotals}` (완료 바운티/빌더/NFT/스폰서 수 + 지급 완료 보상 총액). `paidTotals: [{symbol, tokenType, decimals, amount}]` — status `PAID` payout만 `(upper(display_symbol), token_type)`별로 합산, 삭제된 바운티 제외, `amount`는 base unit 정수 **문자열**, `decimals`는 서버가 아는 토큰만(INJ 18, USDC 6; 그 밖은 `null`), 심볼 순 정렬, 지급 이력이 없으면 `[]`. 서버 인스턴스별 인메모리 캐시 **60초** — 완료 전이/민팅 직후 최대 1분 늦게 반영된다 (`highlights.service.ts`) |
 
 ## 에이전트
 

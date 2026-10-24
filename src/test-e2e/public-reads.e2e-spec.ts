@@ -172,8 +172,14 @@ describeDb('public reads over HTTP (e2e)', () => {
       const statsQueries = () => spy.mock.calls.filter(([sql]) => String(sql).includes('completed_bounties')).length;
       const [first, concurrent] = await Promise.all([e2e.get('/hall-of-fame/stats'), e2e.get('/hall-of-fame/stats')]);
       expect(first.status).toBe(200);
-      expect(Object.keys(first.body).sort()).toEqual(['builders', 'completedBounties', 'completionNfts', 'sponsors']);
-      expect(Object.values(first.body).every((v) => typeof v === 'number')).toBe(true);
+      expect(Object.keys(first.body).sort()).toEqual(['builders', 'completedBounties', 'completionNfts', 'paidTotals', 'sponsors']);
+      const { paidTotals, ...counts } = first.body;
+      expect(Object.values(counts).every((v) => typeof v === 'number')).toBe(true);
+      expect(Array.isArray(paidTotals)).toBe(true);
+      for (const t of paidTotals) {
+        expect(Object.keys(t).sort()).toEqual(['amount', 'decimals', 'symbol', 'tokenType']);
+        expect(t.amount).toMatch(/^\d+$/);
+      }
       expect(concurrent.body).toEqual(first.body);
       expect(statsQueries()).toBe(1);
       const before = spy.mock.calls.length;

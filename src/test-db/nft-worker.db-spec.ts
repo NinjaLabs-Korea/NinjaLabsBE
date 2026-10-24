@@ -1,6 +1,7 @@
 import { InjectiveNftClient } from '../nfts/injective-nft.client';
 import { CLAIM_PENDING_JOBS_SQL, NftJobWorker } from '../nfts/nft-job.worker';
 import { NftsService } from '../nfts/nfts.service';
+import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';
 import { createDb, createPrimaryWallet, createUser, deferred, testConfig, unique, waitFor } from './harness';
@@ -36,7 +37,9 @@ describeDb('nft_job worker on a real database', () => {
   }
 
   function createWorker(chain: ReturnType<typeof chainStub>): NftJobWorker {
-    const worker = new NftJobWorker(db, chain as unknown as InjectiveNftClient, testConfig());
+    // 운영 알림은 대역 — 호출만 기록한다 (worker['alerts'].notify)
+    const alerts = { notify: jest.fn(async () => true) };
+    const worker = new NftJobWorker(db, chain as unknown as InjectiveNftClient, testConfig(), alerts as unknown as AlertService);
     jest.spyOn(worker['logger'], 'error').mockImplementation(() => undefined);
     jest.spyOn(worker['logger'], 'warn').mockImplementation(() => undefined);
     return worker;
@@ -116,12 +119,15 @@ describeDb('nft_job worker on a real database', () => {
     await worker.poll();
     expect(await jobRow(jobId)).toMatchObject({ status: 'PENDING', retry_count: 4, processed_at: null });
     expect((await nftRow(nftId)).status).not.toBe('FAILED');
+    expect(worker['alerts'].notify).not.toHaveBeenCalled();
 
     await db.query(`UPDATE nft_job SET scheduled_at = now() WHERE id = $1`, [jobId]);
     await worker.poll();
     expect(await jobRow(jobId)).toMatchObject({ status: 'FAILED', retry_count: 5, last_error: 'node unreachable', processed_at: expect.any(Date) });
     expect((await nftRow(nftId)).status).toBe('FAILED');
     expect(chain.mint).toHaveBeenCalledTimes(2);
+    // FAILED에 도달한 순간 운영 알림 한 번 (잡 종류별 키)
+    expect(worker['alerts'].notify).toHaveBeenCalledWith('nft-job-failed:MINT_PARENT', expect.stringContaining(`nft_job ${jobId} (MINT_PARENT, nft ${nftId}) reached FAILED`));
   });
 
   it('two instances claiming inside two open transactions at the same time each get a disjoint, non-empty batch immediately (FOR UPDATE SKIP LOCKED)', async () => {
@@ -181,6 +187,7 @@ describeDb('nft_job worker on a real database', () => {
     // both of A's jobs look abandoned (started_at 16 minutes ago) → B's stale sweep requeues them and B claims + finishes them
     await db.query(`UPDATE nft_job SET started_at = now() - interval '16 minutes' WHERE id = ANY($1::uuid[])`, [[first.jobId, second.jobId]]);
     await b.poll();
+    expect(b['alerts'].notify).toHaveBeenCalledWith('nft-job-stale-requeue', expect.stringContaining('requeued 2 nft_job(s)'));
     expect(chainB.mint.mock.calls.map(([tokenId]) => tokenId).sort()).toEqual([first.nftId, second.nftId].sort());
     expect(await jobRow(first.jobId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0 });
     expect(await jobRow(second.jobId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0 });

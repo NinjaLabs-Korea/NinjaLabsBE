@@ -1,9 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
-import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { RewardsService } from './rewards.service';
 
 const txHash = `0x${'ab'.repeat(32)}`;
@@ -22,7 +21,7 @@ describe('RewardsService markPaid', () => {
   function setup(options: { payout?: Partial<PayoutRow>; others?: PayoutRow[]; found?: boolean; deposits?: string[] } = {}) {
     const target: PayoutRow = { id: 'payout', bounty_id: 'bounty', payout_tx_hash: null, status: 'APPROVED', ...options.payout };
     const table = [target, ...(options.others ?? [])];
-    const query = jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
+    const query = jest.fn(async (sql: string, params?: unknown[]) => {
       if (sql.includes('SELECT rw.bounty_id FROM payout p')) {
         return options.found === false || params![0] !== target.id ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ bounty_id: target.bounty_id }] };
       }
@@ -58,22 +57,18 @@ describe('RewardsService markPaid', () => {
         return { rowCount: hit ? 1 : 0, rows: hit ? [{}] : [] };
       }
       return { rowCount: 1, rows: [] };
-    }));
-    const tx = { query };
-    const db = {
-      query: jest.fn(),
-      tx: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
-    };
+    });
+    const { database, db, txClient } = createMockDb({ txQuery: query });
     const nfts = {
       enqueueChildMintInTransaction: jest.fn().mockResolvedValue({ nftId: 'nft' }),
     };
     const service = new RewardsService(
-      db as unknown as DatabaseService,
+      database,
       nfts as unknown as NftsService,
-      new AuditService(db as unknown as DatabaseService),
+      new AuditService(database),
       config(),
     );
-    return { service, query, tx, db, nfts, target };
+    return { service, query, db, txClient, nfts, target };
   }
 
   const paidElsewhere = (id: string, bounty_id: string, hash = txHash): PayoutRow => ({ id, bounty_id, payout_tx_hash: hash, status: 'PAID' });
@@ -86,11 +81,9 @@ describe('RewardsService markPaid', () => {
   });
 
   it('enqueues a completion NFT in the same transaction when a payout is paid', async () => {
-    const { service, tx, db, nfts } = setup();
+    const { service, txClient, db, nfts } = setup();
     await expect(service.markPaid('payout', txHash, 'admin')).resolves.toMatchObject({ status: 'PAID' });
-    expect(nfts.enqueueChildMintInTransaction).toHaveBeenCalledWith(
-      tx, 'user', 'wallet', 'bounty', 'submission',
-    );
+    expect(nfts.enqueueChildMintInTransaction).toHaveBeenCalledWith(txClient, 'user', 'wallet', 'bounty', 'submission');
     expect(db.query).not.toHaveBeenCalled();
   });
 
@@ -217,8 +210,8 @@ describe('RewardsService confirmDeposit', () => {
       if (sql.includes("SET status = 'FUNDED'")) return { rowCount, rows: rowCount ? [{ id: 'reward', bounty_id: 'bounty', status: 'FUNDED' }] : [] };
       return { rowCount: 1, rows: [] };
     });
-    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) as unknown as jest.Mock })) };
-    const service = new RewardsService(db as never, {} as never, new AuditService(db as never), config());
+    const { database, db } = createMockDb({ txQuery: query });
+    const service = new RewardsService(database, {} as never, new AuditService(database), config());
     return { service, query, db };
   }
   const sqlIndex = (query: jest.Mock, fragment: string) => query.mock.calls.findIndex(([sql]) => (sql as string).includes(fragment));
@@ -290,8 +283,8 @@ describe('RewardsService markApproved (two-person rule)', () => {
       if (sql.includes("SET status = 'APPROVED'")) return { rowCount: 1, rows: [{ id: 'payout', status: 'APPROVED' }] };
       return { rowCount: 1, rows: [] };
     });
-    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) as unknown as jest.Mock })) };
-    const service = new RewardsService(db as never, {} as never, new AuditService(db as never),
+    const { database, db } = createMockDb({ txQuery: query });
+    const service = new RewardsService(database, {} as never, new AuditService(database),
       config(options.allowSelf === undefined ? {} : { PAYOUT_ALLOW_SELF_APPROVAL: options.allowSelf }));
     const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
     return { service, query, db, warn };
@@ -345,8 +338,8 @@ describe('RewardsService payout allocation', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ amount: options.allocated ?? '0' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'payout', status: 'REQUESTED' }] })
       .mockResolvedValue({ rowCount: 1, rows: [] });
-    const db = { query: jest.fn(), tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) }) };
-    const service = new RewardsService(db as never, {} as never, new AuditService(db as never), config());
+    const { database, db } = createMockDb({ txQuery: query });
+    const service = new RewardsService(database, {} as never, new AuditService(database), config());
     return { service, query, db };
   }
   it('caps the allocation at LEAST(posted amount, deposit): the reward is read as that cap, so an over-deposit does not raise it', async () => {
@@ -404,8 +397,8 @@ describe('RewardsService remaining guards', () => {
       for (const [fragment, answer] of answers) if (sql.includes(fragment)) return answer;
       return { rowCount: 1, rows: [] };
     });
-    const db = { query: jest.fn(), tx: jest.fn((fn: (tx: { query: unknown }) => Promise<unknown>) => fn({ query: withParamsCheck(query) })) };
-    return { service: new RewardsService(db as never, nfts as never, new AuditService(db as never), config()), query, db };
+    const { database, db } = createMockDb({ txQuery: query });
+    return { service: new RewardsService(database, nfts as never, new AuditService(database), config()), query, db };
   }
   const has = (query: jest.Mock, fragment: string) => query.mock.calls.some(([sql]) => (sql as string).includes(fragment));
 

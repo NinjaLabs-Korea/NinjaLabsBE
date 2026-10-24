@@ -10,6 +10,14 @@ Injective 생태계 빌더 커뮤니티 & 바운티 마켓플레이스 [NinjaLab
 supabase/migrations/   스키마의 소스 오브 트루스 (ERD v1 → SQL, 24 테이블 + 운영용 `throttler_storage`)
 src/
   common/database/     pg Pool 기반 DatabaseService (query + tx 헬퍼, 연결/문장 타임아웃 — pool-timeouts.ts) + SchemaGuard (미적용 마이그레이션이 있으면 기동 거부)
+  common/http/         요청 id, 쿠키, 전역 예외 필터, 요청 로깅 인터셉터, 에러 코드 카탈로그(error-codes.ts)
+  common/logging/      로그 안전 헬퍼(log-safe) + 온보딩 로그
+  common/throttler/    rate limit 설정 (memory | postgres 저장소, 공개 읽기 스로틀)
+  common/maintenance/  만료 데이터 정리 크론 (MaintenanceService)
+  common/validation/   DTO 공용 검증기 (trim, URL, tx hash, 토큰 금액, 글자 수)
+  common/crypto/      지갑 서명 검증 (EIP-191 / ADR-36)
+  health/              GET /health (DB 연결 확인)
+  deploy/              배포 설정 가드 스펙 (railway-config, audit-gate) — 런타임 코드 없음
   common/alerts/       운영 알림 AlertService (OPS_ALERT_WEBHOOK_URL 웹훅, 없으면 로그만) + 기동 실패 알림 + 5xx 버스트 감지
   auth/                구글 OAuth → JWT 세션, AuthGuard / AdminGuard
   users/               온보딩 프로필, 닉네임 중복검사, 공개 프로필, 회원 탈퇴(account-withdrawal.service)
@@ -30,7 +38,12 @@ src/
   test-db/             실 Postgres 통합 테스트 (npm run test:db) — 하네스 + *.db-spec.ts
   test-e2e/            HTTP e2e (npm run test:e2e) — 진짜 AppModule + 실 Postgres, 외부 I/O만 대역 (support/)
   app-setup.ts         configureApp(): 전역 파이프/필터/인터셉터/CORS/trust proxy — main.ts와 e2e가 공유
-  test-support/        유닛 스펙 공용 헬퍼 (expectParamsMatch: SQL $n 수와 바인딩 수 일치 검사)
+  test-support/        유닛 스펙 공용 헬퍼 + 정적 가드 스펙
+    mock-db.ts           createMockDb({ query?, txQuery? }) — DatabaseService stand-in. pool(db.query)과 tx 클라이언트 두 경로 모두 withParamsCheck 적용.
+                         새 서비스 스펙은 직접 { query, tx }를 만들지 말고 이걸 쓴다
+    expect-params-match.ts expectParamsMatch / withParamsCheck (SQL $n 수와 바인딩 수 일치 검사)
+    migration-check.ts   마이그레이션 CHECK 값 집합 파서 (상태 집합 스펙이 코드 ↔ 스키마 대조에 사용)
+    *.spec.ts            정적 가드: status-literals(상태 집합 리터럴), error-codes(코드 카탈로그), sql-param-casts($n 캐스트 일관성), ops-cli(scripts/ops-cli.js)
 scripts/migrate.js     Supabase CLI 없이 쓰는 마이그레이션 러너 (applyMigrations는 test-db도 사용). 실패 시 운영 알림
 scripts/ops-alert.js   웹훅 전송 함수 postOpsAlert (절대 throw 안 함) — migrate.js와 src/common/alerts가 공유
 scripts/grant-admin.js       운영자 권한 부여/회수 (이메일, --dry-run, 확인 프롬프트, 감사 행) — docs/runbook.md §3

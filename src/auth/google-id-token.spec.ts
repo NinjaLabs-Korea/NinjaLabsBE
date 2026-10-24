@@ -2,6 +2,7 @@ import { Logger, ServiceUnavailableException, UnauthorizedException } from '@nes
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { GoogleIdTokenVerifier, GoogleVerifierUnavailableError } from './google-id-token.verifier';
+import { createMockDb } from '../test-support/mock-db';
 
 describe('AuthService Google id_token verification', () => {
   const clientId = 'client-id.apps.googleusercontent.com';
@@ -15,7 +16,7 @@ describe('AuthService Google id_token verification', () => {
       json: async () => tokenResponse.body ?? {},
     })) as unknown as typeof fetch;
     const service = new AuthService(
-      { query: jest.fn(), tx: jest.fn() } as never,
+      createMockDb().database,
       { signAsync: jest.fn() } as never,
       { get: jest.fn((key: string) => ({ GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: 's', GOOGLE_CALLBACK_URL: 'http://cb' })[key]) } as never,
       'dev-only-secret',

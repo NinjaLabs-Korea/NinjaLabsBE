@@ -1,6 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { DatabaseService } from '../../common/database/database.service';
-import { withParamsCheck } from '../../test-support/expect-params-match';
+import { createMockDb } from '../../test-support/mock-db';
 import { payoutStatusSql } from '../../rewards/payout-status';
 import { SubmissionsService } from './submissions.service';
 
@@ -8,11 +7,8 @@ describe('SubmissionsService submission modes', () => {
   const input = { submissionUrl: 'https://example.com/result', description: 'done' };
 
   function serviceWith(query: jest.Mock) {
-    const db = {
-      query: jest.fn(),
-      tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) })),
-    };
-    return { db, service: new SubmissionsService(db as unknown as DatabaseService) };
+    const { database, db } = createMockDb({ txQuery: query });
+    return { db, service: new SubmissionsService(database) };
   }
 
   it('rejects a browser user on an agent-only bounty', async () => {
@@ -48,8 +44,7 @@ describe('SubmissionsService submission modes', () => {
 describe('SubmissionsService owner visibility of agent submissions', () => {
   it('lists submissions made by the user or by agents the user owns, keeping existing fields', async () => {
     const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
-    const db = { query: withParamsCheck(query), tx: jest.fn() };
-    await new SubmissionsService(db as unknown as DatabaseService).mySubmissions('user');
+    await new SubmissionsService(createMockDb({ query }).database).mySubmissions('user');
     const [sql, params] = query.mock.calls[0];
     expect(params).toEqual(['user']);
     expect(sql).toContain("json_build_object('id', ag.id, 'name', ag.name) END AS agent");
@@ -72,8 +67,8 @@ describe('SubmissionsService revisions after closing intake', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ application_required: false, submission_mode: 'DIRECT', status, submission_deadline: '2000-01-01' }] })
       .mockResolvedValueOnce({ rowCount: existingStatus ? 1 : 0, rows: existingStatus ? [{ id: 'sub', status: existingStatus, current_revision_no: 2 }] : [] })
       .mockResolvedValue({ rowCount: 1, rows: [] });
-    const db = { query: jest.fn(), tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) }) };
-    return { service: new SubmissionsService(db as never), query, db };
+    const { database, db } = createMockDb({ txQuery: query });
+    return { service: new SubmissionsService(database), query, db };
   }
   it.each(['SUBMISSION_CLOSED', 'IN_REVIEW'])('allows requested revisions in %s after the deadline', async (status) => {
     const { service, query, db } = setup(status, 'REVISION_REQUESTED');
@@ -116,10 +111,10 @@ describe('SubmissionsService submit rules', () => {
       if (sql.includes('INSERT INTO bounty_submission')) return { rowCount: 1, rows: [{ id: 'new-sub' }] };
       return { rowCount: 1, rows: [] };
     });
-    const db = { query: jest.fn(), tx: (fn: (tx: { query: unknown }) => Promise<unknown>) => fn({ query: withParamsCheck(query) }) };
+    const { database, db } = createMockDb({ txQuery: query });
     const wrote = () => query.mock.calls.some(([sql]) => /^\s*(UPDATE|INSERT)/.test(sql as string));
     const call = (fragment: string) => query.mock.calls.find(([sql]) => (sql as string).includes(fragment));
-    return { service: new SubmissionsService(db as never), query, db, wrote, call };
+    return { service: new SubmissionsService(database), query, db, wrote, call };
   }
 
   it('404 BOUNTY_NOT_FOUND for an unknown or deleted bounty', async () => {

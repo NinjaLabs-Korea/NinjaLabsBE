@@ -1,6 +1,6 @@
 import { ConflictException, Logger } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
@@ -14,7 +14,7 @@ afterEach(() => jest.restoreAllMocks());
 describe('UsersService.nicknameAvailable', () => {
   function setup(rowCount: number) {
     const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount, rows: [] }));
-    return { query, service: new UsersService({ query: withParamsCheck(query) } as unknown as DatabaseService) };
+    return { query, service: new UsersService(createMockDb({ query }).database) };
   }
 
   it('looks up the trimmed value case-insensitively among active users: free → true, taken → false', async () => {
@@ -38,8 +38,8 @@ describe('UsersService.nicknameAvailable', () => {
 describe('UsersService.completeProfile / completeOnboarding', () => {
   it('updates nickname/bio/step 4 for the active user, replaces the tag set, and answers {ok:true} — all in one transaction', async () => {
     const txQuery = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [] }));
-    const db = { query: jest.fn(), tx: jest.fn(async (run: (tx: unknown) => Promise<unknown>) => run({ query: withParamsCheck(txQuery) })) };
-    const service = new UsersService(db as unknown as DatabaseService);
+    const { database, db } = createMockDb({ txQuery });
+    const service = new UsersService(database);
     await expect(service.completeProfile(userId, 'ninja', 'bio', ['DESIGN', 'DEV'])).resolves.toEqual({ ok: true });
     expect(db.tx).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
@@ -62,7 +62,7 @@ describe('UsersService.completeProfile / completeOnboarding', () => {
 
   it('completeOnboarding only stamps a user that has not completed yet (the first completion time is kept)', async () => {
     const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 0, rows: [] }));
-    const service = new UsersService({ query: withParamsCheck(query) } as unknown as DatabaseService);
+    const service = new UsersService(createMockDb({ query }).database);
     await expect(service.completeOnboarding(userId)).resolves.toEqual({ ok: true });
     expect(query.mock.calls[0][0]).toContain('SET onboarding_completed_at = now()');
     expect(query.mock.calls[0][0]).toContain('WHERE id = $1 AND onboarding_completed_at IS NULL');
@@ -83,7 +83,7 @@ describe('UsersService.publicProfile result shape', () => {
       if (sql.includes('FROM nft n')) return { rowCount: 1, rows: [nft] };
       throw new Error(`unexpected ${sql}`);
     });
-    const service = new UsersService({ query: withParamsCheck(query) } as unknown as DatabaseService);
+    const service = new UsersService(createMockDb({ query }).database);
     await expect(service.publicProfile('ninja')).resolves.toEqual({ ...user, completedBounties: [bounty], agents: [agent], nfts: [nft] });
     expect(query.mock.calls[0][1]).toEqual(['ninja']);
     expect(query.mock.calls[0][0]).toContain("u.deleted_at IS NULL AND u.status = 'ACTIVE'");

@@ -1,5 +1,4 @@
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { payoutStatusSql } from '../rewards/payout-status';
 import { UsersService } from './users.service';
 
@@ -7,11 +6,11 @@ describe('UsersService publicProfile', () => {
   const userId = '11111111-1111-4111-8111-111111111111';
 
   function setup() {
-    const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FROM "user" u')) return { rowCount: 1, rows: [{ id: userId, nickname: 'ryan', tags: [] }] };
       return { rowCount: 0, rows: [] };
-    }));
-    return { query, service: new UsersService({ query } as unknown as DatabaseService) };
+    });
+    return { query, service: new UsersService(createMockDb({ query }).database) };
   }
 
   it('lists only what the user (or their agents) actually received: PAID payouts, excluding deleted bounties', async () => {
@@ -52,7 +51,7 @@ describe('UsersService publicProfile', () => {
 
   it('returns 404 for unknown or inactive users', async () => {
     const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
-    await expect(new UsersService({ query: withParamsCheck(query) } as unknown as DatabaseService).publicProfile('ghost'))
+    await expect(new UsersService(createMockDb({ query }).database).publicProfile('ghost'))
       .rejects.toMatchObject({ message: 'USER_NOT_FOUND' });
     expect(query.mock.calls[0][1]).toEqual(['ghost']);
   });
@@ -66,8 +65,7 @@ describe('UsersService completeProfile', () => {
       if (failOn && sql.includes(failOn.sql)) throw failOn.error;
       return { rowCount: 1, rows: [] };
     });
-    const db = { tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query })) };
-    return { query, service: new UsersService(db as unknown as DatabaseService) };
+    return { query, service: new UsersService(createMockDb({ txQuery: query }).database) };
   }
 
   it('maps only the nickname unique index to 409 NICKNAME_TAKEN', async () => {

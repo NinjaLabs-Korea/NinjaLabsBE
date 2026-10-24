@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import { Wallet } from 'ethers';
 import { verifyAdr36Signature } from '../common/crypto/adr36';
 import { getInjectiveAddress } from '../test-e2e/support/injective-sdk.stub';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { WalletsController } from './wallets.controller';
 import { WalletsService } from './wallets.service';
 
@@ -19,7 +19,7 @@ const userId = '11111111-1111-4111-8111-111111111111';
 function setup() {
   const challenges: Array<{ id: string; wallet_address: string; message: string; used: boolean }> = [];
   const wallets: Array<{ user_id: string; address: string; public_key: string | null }> = [];
-  const txQuery = jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
+  const txQuery = jest.fn(async (sql: string, params?: unknown[]) => {
     const p = params ?? [];
     if (sql.includes('pg_advisory_xact_lock') || sql.includes('DELETE FROM wallet_verification_challenge')) return { rowCount: 0, rows: [] };
     if (sql.includes('INSERT INTO wallet_verification_challenge')) {
@@ -43,13 +43,11 @@ function setup() {
     }
     if (sql.includes('onboarding_step')) return { rowCount: 1, rows: [] };
     throw new Error(`unexpected tx query: ${sql}`);
-  }));
-  const db = {
-    query: jest.fn(withParamsCheck(async () => ({ rowCount: wallets.length, rows: wallets.length ? [{ id: 'wallet-id', chain: 'INJECTIVE', address: wallets[0].address }] : [] }))),
-    tx: jest.fn(async (run: (tx: { query: typeof txQuery }) => Promise<unknown>) => run({ query: txQuery })),
-  };
+  });
+  const query = jest.fn(async () => ({ rowCount: wallets.length, rows: wallets.length ? [{ id: 'wallet-id', chain: 'INJECTIVE', address: wallets[0].address }] : [] }));
+  const { database, db } = createMockDb({ query, txQuery });
   const nfts = { enqueueParentMintInTransaction: jest.fn(async () => ({ nftId: 'nft' })) };
-  return { service: new WalletsService(db as never, nfts as never), db, txQuery, challenges, wallets, nfts };
+  return { service: new WalletsService(database, nfts as never), db, txQuery, challenges, wallets, nfts };
 }
 
 beforeEach(() => adr36.mockReset().mockReturnValue(false));

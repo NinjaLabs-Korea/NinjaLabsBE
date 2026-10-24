@@ -1,14 +1,13 @@
 import 'reflect-metadata';
 import { NotFoundException } from '@nestjs/common';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { NoticesController } from './notices.controller';
 import { NoticesService } from './notices.service';
 
 function setup(rows: unknown[] = [], count = '0') {
-  const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) =>
-    sql.includes('count(*)') ? { rowCount: 1, rows: [{ count }] } : { rowCount: rows.length, rows }));
-  return { query, service: new NoticesService({ query } as unknown as DatabaseService) };
+  const query = jest.fn(async (sql: string, _params?: unknown[]) =>
+    sql.includes('count(*)') ? { rowCount: 1, rows: [{ count }] } : { rowCount: rows.length, rows });
+  return { query, service: new NoticesService(createMockDb({ query }).database) };
 }
 
 const listCall = (query: jest.Mock) => query.mock.calls.find(([sql]) => sql.includes('LIMIT'))!;

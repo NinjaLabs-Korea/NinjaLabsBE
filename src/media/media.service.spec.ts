@@ -1,7 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { MAX_MEDIA_BYTES, MediaService, UploadedImage } from './media.service';
 
 describe('MediaService', () => {
@@ -18,7 +17,7 @@ describe('MediaService', () => {
     };
   }
 
-  const serviceWith = (query: jest.Mock) => new MediaService({ query: withParamsCheck(query) } as unknown as DatabaseService);
+  const serviceWith = (query: jest.Mock) => new MediaService(createMockDb({ query: query }).database);
 
   it('persists a validated image and returns its public URL', async () => {
     const query = jest.fn().mockResolvedValue({

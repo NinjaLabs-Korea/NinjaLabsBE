@@ -1,13 +1,12 @@
 import { AlertService } from '../common/alerts/alert.service';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { PayoutWorker } from './payout.worker';
 
 describe('PayoutWorker.monitor', () => {
   function setup(count: number) {
     const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [{ count: String(count) }] }));
     const alerts = { notify: jest.fn(async () => true) };
-    const worker = new PayoutWorker({ query: withParamsCheck(query) } as unknown as DatabaseService, alerts as unknown as AlertService);
+    const worker = new PayoutWorker(createMockDb({ query }).database, alerts as unknown as AlertService);
     const warn = jest.spyOn(worker['logger'], 'warn').mockImplementation(() => undefined);
     return { worker, query, alerts, warn };
   }

@@ -1,14 +1,13 @@
-import { DatabaseService } from '../common/database/database.service';
 import { HighlightsController } from '../highlights/highlights.controller';
 import { HighlightsService } from '../highlights/highlights.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { MembersController } from './members.controller';
 import { MembersService } from './members.service';
 
 /** Public list reads — the real-database behaviour (filters, ordering, link aggregation) is in src/test-db/public-lists.db-spec.ts */
 function fakeDb(rows: unknown[]) {
-  const query = jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: rows.length, rows })));
-  return { query, db: { query } as unknown as DatabaseService };
+  const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: rows.length, rows }));
+  return { query, db: createMockDb({ query }).database };
 }
 
 describe('MembersService.list (GET /members)', () => {
@@ -42,10 +41,10 @@ describe('HighlightsService.list (GET /hall-of-fame)', () => {
 
   it('GET /hall-of-fame/stats goes through the cached stats()', async () => {
     // two reads: the counts row and the per-token PAID totals (FROM payout)
-    const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => (sql.includes('FROM payout')
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => (sql.includes('FROM payout')
       ? { rowCount: 1, rows: [{ symbol: 'INJ', token_type: 'NATIVE', amount: '5' }] }
-      : { rowCount: 1, rows: [{ completed_bounties: '3', builders: '2', completion_nfts: '1', sponsors: '4' }] })));
-    const db = { query } as unknown as DatabaseService;
+      : { rowCount: 1, rows: [{ completed_bounties: '3', builders: '2', completion_nfts: '1', sponsors: '4' }] }));
+    const db = createMockDb({ query }).database;
     await expect(new HighlightsController(new HighlightsService(db)).stats()).resolves.toEqual({
       completedBounties: 3, builders: 2, completionNfts: 1, sponsors: 4,
       paidTotals: [{ symbol: 'INJ', tokenType: 'NATIVE', decimals: 18, amount: '5' }],

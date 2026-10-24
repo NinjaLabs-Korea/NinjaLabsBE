@@ -3,6 +3,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { DatabaseService } from '../common/database/database.service';
 import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { AuditController, AuditLogsQueryDto } from './audit.controller';
 import { AuditService } from './audit.service';
 
@@ -26,9 +27,9 @@ describe('GET /admin/audit-logs query validation', () => {
 describe('AuditService.list', () => {
   function setup(rows: unknown[] = [], total = 0) {
     // list() assembles WHERE / LIMIT / OFFSET placeholders dynamically — every statement is checked for $n/params drift
-    const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) =>
-      sql.includes('count(*)') ? { rowCount: 1, rows: [{ total }] } : { rowCount: rows.length, rows }));
-    return { query, service: new AuditService({ query } as unknown as DatabaseService) };
+    const query = jest.fn(async (sql: string, _params?: unknown[]) =>
+      sql.includes('count(*)') ? { rowCount: 1, rows: [{ total }] } : { rowCount: rows.length, rows });
+    return { query, service: new AuditService(createMockDb({ query }).database) };
   }
 
   it('returns the paginated envelope { items, page, pageSize, total } with bound filters', async () => {
@@ -64,8 +65,8 @@ describe('AuditService.list', () => {
 
 describe('AuditService.record', () => {
   it('binds actor/action/entity in order and stores a missing actor (system job) as NULL', async () => {
-    const query = jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [] })));
-    const service = new AuditService({ query } as unknown as DatabaseService);
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [] }));
+    const service = new AuditService(createMockDb({ query }).database);
     await service.record(undefined, 'NFT_MINTED', 'nft', 'e1');
     await service.record('u1', 'BOUNTY_UPDATED', 'bounty', 'e2');
     expect(query.mock.calls.map(([sql, params]) => [sql.includes('INSERT INTO audit_log'), params])).toEqual([

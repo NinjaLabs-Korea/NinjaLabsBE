@@ -1,4 +1,4 @@
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { HighlightsService, STATS_CACHE_TTL_MS } from './highlights.service';
 
 describe('HighlightsService stats', () => {
@@ -21,7 +21,7 @@ describe('HighlightsService stats', () => {
     );
     const countsSql = () => query.mock.calls.map(([sql]) => sql).filter((sql) => !isPaidQuery(sql));
     const paidSql = () => query.mock.calls.map(([sql]) => sql).filter(isPaidQuery);
-    return { query, countsSql, paidSql, service: new HighlightsService({ query: withParamsCheck(query) } as never) };
+    return { query, countsSql, paidSql, service: new HighlightsService(createMockDb({ query: query }).database) };
   }
 
   afterEach(() => jest.restoreAllMocks());

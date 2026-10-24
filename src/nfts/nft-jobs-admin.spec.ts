@@ -2,8 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { AuditService } from '../audit/audit.service';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { NftJobsQueryDto } from './nft-jobs-admin.controller';
 import { NFT_JOB_PAGE_SIZE, NftJobsAdminService } from './nft-jobs-admin.service';
 
@@ -12,18 +11,18 @@ const nftId = '22222222-2222-4222-8222-222222222222';
 
 /** `db.query` (autocommit) and `tx.query` are separate mocks — the retry must run entirely inside the transaction */
 function setup(txRows: { job: number }) {
-  const dbQuery = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
+  const dbQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
     if (sql.includes('count(*)')) return { rowCount: 1, rows: [{ total: 42 }] };
     return { rowCount: 1, rows: [{ id: jobId }] };
-  }));
-  const txQuery = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
+  });
+  const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
     if (sql.includes('UPDATE nft_job')) {
       return txRows.job ? { rowCount: 1, rows: [{ id: jobId, nft_id: nftId, status: 'PENDING', retry_count: 0 }] } : { rowCount: 0, rows: [] };
     }
     return { rowCount: 1, rows: [] };
-  }));
-  const db = { query: dbQuery, tx: (fn: (tx: { query: jest.Mock }) => Promise<unknown>) => fn({ query: txQuery }) } as unknown as DatabaseService;
-  return { service: new NftJobsAdminService(db, new AuditService(db)), dbQuery, txQuery };
+  });
+  const { database } = createMockDb({ query: dbQuery, txQuery });
+  return { service: new NftJobsAdminService(database, new AuditService(database)), dbQuery, txQuery };
 }
 
 describe('NftJobsAdminService', () => {

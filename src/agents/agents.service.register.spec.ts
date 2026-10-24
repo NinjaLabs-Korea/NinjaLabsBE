@@ -2,8 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException, Unauthorized
 import { Wallet } from 'ethers';
 import { AuditService } from '../audit/audit.service';
 import { verifyAdr36Signature } from '../common/crypto/adr36';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 import { AgentsService } from './agents.service';
 
@@ -20,7 +19,7 @@ function setup(options: {
   pendingAfterConflict?: boolean;
   verifyRow?: { status: string; public_key: string | null; wallet_address: string } | null;
 } = {}) {
-  const txQuery = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
+  const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
     if (sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')")) return { rowCount: 0, rows: [] };
     if (sql.includes('INSERT INTO agent (')) {
       if (options.insertError) throw options.insertError;
@@ -32,14 +31,11 @@ function setup(options: {
     }
     if (sql.includes('INSERT INTO agent_api_key')) return { rowCount: 1, rows: [{ expires_at: '2027-01-01T00:00:00.000Z' }] };
     return { rowCount: 1, rows: [] };
-  }));
-  const query = jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) =>
-    options.pendingAfterConflict ? { rowCount: 1, rows: [{ id: 'own-pending' }] } : { rowCount: 0, rows: [] }));
-  const db = {
-    query,
-    tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) => callback({ query: txQuery })),
-  };
-  const service = new AgentsService(db as unknown as DatabaseService, new AuditService(db as unknown as DatabaseService));
+  });
+  const query = jest.fn(async (_sql: string, _params?: unknown[]) =>
+    options.pendingAfterConflict ? { rowCount: 1, rows: [{ id: 'own-pending' }] } : { rowCount: 0, rows: [] });
+  const { database, db } = createMockDb({ query, txQuery });
+  const service = new AgentsService(database, new AuditService(database));
   return { service, db, txQuery, query };
 }
 

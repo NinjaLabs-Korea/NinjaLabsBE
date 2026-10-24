@@ -1,6 +1,5 @@
 import { AuditService } from '../audit/audit.service';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { MemberAdminService } from './member-admin.service';
 
 describe('MemberAdminService', () => {
@@ -12,11 +11,8 @@ describe('MemberAdminService', () => {
     // separate mocks: reads (searchUsers) go to the pool, the membership mutation + audit must stay on the transaction client
     const dbQuery = jest.fn().mockResolvedValue(result);
     const txQuery = jest.fn().mockResolvedValue(result);
-    const db = {
-      query: withParamsCheck(dbQuery),
-      tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(txQuery) })),
-    };
-    const service = new MemberAdminService(db as unknown as DatabaseService, new AuditService({ query: jest.fn() } as unknown as DatabaseService));
+    const { database, db } = createMockDb({ query: dbQuery, txQuery });
+    const service = new MemberAdminService(database, new AuditService(createMockDb().database));
     return { service, dbQuery, txQuery, db };
   }
 

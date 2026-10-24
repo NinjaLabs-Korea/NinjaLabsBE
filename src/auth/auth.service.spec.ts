@@ -1,8 +1,8 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { DatabaseService } from '../common/database/database.service';
 import { AuthController } from './auth.controller';
 import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { legacyAccessTokenCutoff } from './access-token.verifier';
 import { MAX_REVOKE_CHAIN_HOPS } from './auth-sessions';
 import { AuthService } from './auth.service';
@@ -20,17 +20,10 @@ describe('AuthService refresh rotation', () => {
     config: Record<string, string> = {},
   ) {
     // Every statement issued through the tx is checked for parameter-count drift ($n vs params.length).
-    const checkedQuery = withParamsCheck(txQuery);
-    const db = {
-      query: jest.fn(),
-      tx: jest.fn(
-        async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) =>
-          callback({ query: checkedQuery }),
-      ),
-    };
+    const { database, db } = createMockDb({ txQuery });
     const jwt = { signAsync };
     const service = new AuthService(
-      db as unknown as DatabaseService,
+      database,
       jwt as never,
       { get: jest.fn((key: string) => config[key]) } as never,
       DEV_SECRET,
@@ -374,9 +367,9 @@ describe('AuthService access token type binding', () => {
   const userId = '11111111-1111-4111-8111-111111111111';
 
   function createService(verifyAsync: jest.Mock) {
-    const db = { query: jest.fn(), tx: jest.fn() };
+    const { database, db } = createMockDb();
     const service = new AuthService(
-      db as unknown as DatabaseService,
+      database,
       { signAsync: jest.fn(), verifyAsync } as never,
       { get: jest.fn() } as never,
       DEV_SECRET,
@@ -413,7 +406,7 @@ describe('AuthService access token type binding', () => {
 
     const iat = Math.floor(Date.parse('2026-10-23T00:00:00Z') / 1000);
     const service = new AuthService(
-      { query: jest.fn(), tx: jest.fn() } as unknown as DatabaseService,
+      createMockDb().database,
       { verifyAsync: jest.fn(async () => ({ sub: userId, iat })) } as never,
       { get: (key: string) => (key === 'LEGACY_ACCESS_TOKEN_CUTOFF' ? '2026-10-22T00:00:00Z' : undefined) } as never,
       DEV_SECRET,
@@ -447,7 +440,7 @@ describe('AuthService upsertGoogleUser', () => {
   function createService(query: jest.Mock) {
     return new AuthService(
       // every upsert statement is checked for $n/params drift; assertions still read the original mock's calls
-      { query: withParamsCheck(query), tx: jest.fn() } as unknown as DatabaseService,
+      createMockDb({ query }).database,
       { signAsync: jest.fn(), verifyAsync: jest.fn() } as never,
       { get: jest.fn() } as never,
       DEV_SECRET,

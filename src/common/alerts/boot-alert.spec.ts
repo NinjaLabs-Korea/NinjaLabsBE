@@ -67,4 +67,16 @@ describe('boot / migration failure alerts', () => {
   it('redactSecrets leaves ordinary text alone', () => {
     expect(redactSecrets('3 payout(s) pending for over 48h — nft 1111-2222')).toBe('3 payout(s) pending for over 48h — nft 1111-2222');
   });
+
+  it('redactSecrets hides URL credentials even when the password contains a slash', () => {
+    expect(redactSecrets('connect failed postgresql://user:pa/ss@db.example.internal:5432/postgres'))
+      .toBe('connect failed postgresql://[redacted]@db.example.internal:5432/postgres');
+  });
+
+  it('redactSecrets neutralises channel-wide mentions (Discord @everyone/@here, Slack <!channel>)', () => {
+    const out = redactSecrets('chain said: @everyone @here <!channel> <!here|here> <!everyone>');
+    expect(out).not.toMatch(/@(everyone|here)\b/);
+    expect(out).not.toMatch(/<!/);
+    expect(out).toContain('@\u200beveryone');
+  });
 });

@@ -19,15 +19,19 @@ const MAX_ALERT_CHARS = 1800;
  *   - Bearer 토큰, JWT 모양(eyJ….….…)
  *   - 64자리 hex (개인키/tx 해시 모양)
  *   - 이메일 주소 (PII)
+ *   - 채널 전체 멘션(Discord `@everyone`/`@here`, Slack `<!channel>`/`<!here>`/`<!everyone>`) — 에러 문자열에 섞여 오면 채널 전원을 호출하므로 무력화
+ * userinfo는 비밀번호에 `/`가 들어 있어도 가려지도록 같은 토큰 안의 마지막 `@`까지 본다 (과하게 가리는 쪽이 안전하다).
  * @param {string} text
  */
 function redactSecrets(text) {
   return String(text)
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[redacted]@')
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s@]+@/gi, '$1[redacted]@')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[redacted]')
     .replace(/\b(?:0x)?[0-9a-f]{64}\b/gi, '[redacted]')
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]');
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
+    .replace(/@(everyone|here)\b/gi, '@\u200b$1')
+    .replace(/<!(channel|here|everyone)\b[^>]*>/gi, '[$1]');
 }
 
 /**

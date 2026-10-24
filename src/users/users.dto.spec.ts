@@ -34,7 +34,7 @@ describe('CompleteProfileDto', () => {
     },
   );
 
-  it.each(['a.b', 'a-b', 'a_b', 'ninja-dev', 'n.i.n.j.a', '닌자.개발자', '01', 'me2', 'admin1', 'newbie', 'edits'])(
+  it.each(['a.b', 'a-b', 'a_b', 'ninja-dev', 'n.i.n.j.a', '닌자.개발자', '01', 'me2', 'admin1', 'newbie', 'edits', 'withdrawn', 'withdrawn-1', 'unwithdrawn_1'])(
     'accepts nickname %p (letters/digits at both ends)',
     async (nickname) => {
       expect(await failedFields({ ...valid, nickname })).toEqual([]);
@@ -42,7 +42,7 @@ describe('CompleteProfileDto', () => {
     },
   );
 
-  it.each(['me', 'ME', 'Me', 'check-nickname', 'Check-Nickname', 'admin', 'ADMIN', 'new', 'New', 'edit', 'EDIT', '  me  '])(
+  it.each(['me', 'ME', 'Me', 'check-nickname', 'Check-Nickname', 'admin', 'ADMIN', 'new', 'New', 'edit', 'EDIT', '  me  ', 'withdrawn_1a2b3c4d', 'Withdrawn_x'])(
     'rejects the reserved route word %p (case-insensitive)',
     async (nickname) => {
       expect(isReservedNickname(nickname)).toBe(true);

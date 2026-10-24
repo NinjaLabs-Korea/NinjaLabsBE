@@ -12,7 +12,7 @@ src/
   common/database/     pg Pool 기반 DatabaseService (query + tx 헬퍼) + SchemaGuard (미적용 마이그레이션이 있으면 기동 거부)
   common/alerts/       운영 알림 AlertService (OPS_ALERT_WEBHOOK_URL 웹훅, 없으면 로그만) + 기동 실패 알림 + 5xx 버스트 감지
   auth/                구글 OAuth → JWT 세션, AuthGuard / AdminGuard
-  users/               온보딩 프로필, 닉네임 중복검사, 공개 프로필
+  users/               온보딩 프로필, 닉네임 중복검사, 공개 프로필, 회원 탈퇴(account-withdrawal.service)
   wallets/             지갑 연결 challenge/verify (nonce 서명 방식)
   members/             공식 멤버 탭 (공개) + 운영자 멤버 지정
   notices/             공지/소식 (공개 읽기) + 운영자 공지 관리

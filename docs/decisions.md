@@ -42,8 +42,9 @@
 
 | 항목 | MVP 디폴트 | 근거 / 비고 |
 |---|---|---|
-| 탈퇴 시 NFT/에이전트 처리 | user soft delete + agent `REVOKED` + API key `REVOKED`. NFT는 온체인이라 회수 불가 — DB 기록만 유지 | 탈퇴 트랜잭션 하나로 처리 |
-| 동일 구글 계정 재가입 | **허용** — 단 이전 활동과 연결되지 않는 새 계정 | `UNIQUE(google_id)`가 soft-deleted 행과 충돌 → 탈퇴 시 google_id에 `deleted:{ts}:` 프리픽스 부여 필요 (구현 시 주의) |
+| 탈퇴 시 NFT/에이전트 처리 | user soft delete + agent `REVOKED` + API key `REVOKED`. NFT는 온체인이라 회수 불가 — DB 기록만 유지 | 탈퇴 트랜잭션 하나로 처리 — **[구현 2026-10-24]** `DELETE /users/me` `{confirmNickname}`, `users/account-withdrawal.service.ts` |
+| **[결정 2026-10-24] 탈퇴 차단 / 남기는 것** | 종료 상태(`PAID`/`CANCELLED`/`FAILED`)가 아닌 payout(본인·내 에이전트 제출 또는 내 지갑 수령)이 있으면 409 `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS`. 통과하면 PENDING 지원과 심사 전 제출(`SUBMITTED`/`RESUBMITTED`/`IN_REVIEW`/`REVISION_REQUESTED` — 남기면 운영자가 승인해 지급 불가능한 제출이 `max_winners` 자리를 차지하거나 미결 제출로 바운티 완료를 막는다)은 `WITHDRAWN`, 승인된 지원·승인/반려된 제출·payout·NFT·감사 기록은 그대로 두고 표시 이름만 `withdrawn_<id 8hex>`로 익명화(bio·링크·태그·멤버 플래그 제거; 활성 유저는 `withdrawn_` 접두사 닉네임을 쓸 수 없다 — 사칭 방지), 지갑은 연결 해제(같은 주소로 새 계정 연결 가능). **아직 payout이 요청되지 않은 승인 제출의 보상은 탈퇴와 함께 포기**된다 — 수령 지갑이 없어 `requestPayout`이 404 `APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND` (`requestPayout`은 수령자 유저 행을 `FOR SHARE`로 잠가 동시 탈퇴와 직렬화한다). FE 탈퇴 확인 문구가 이를 알린다 | 스키마 변경 없음 (0014 부분 유니크 인덱스가 deleted 행을 무시, 닉네임 인덱스는 0001부터 부분 인덱스) |
+| 동일 구글 계정 재가입 | **허용** — 단 이전 활동과 연결되지 않는 새 계정 | 0014부터 `uq_user_google_id`/`uq_user_email`은 `deleted_at IS NULL` 부분 인덱스라 충돌하지 않지만, 탈퇴 시 google_id/email에 `deleted:{ms}:` 프리픽스를 붙여 원래 식별자로 다시 찾히지 않게 한다 (구현됨, test-db `withdrawal.db-spec`) |
 | 멤버 해제 시 멤버 정보 | member_role/display_order NULL 처리, bio·링크는 유지 | `members/member-admin.service.ts` setMember 반영됨 |
 | 지갑 교체 | MVP **불허** (연결 해제 후 재연결만 운영자 문의) | NFT가 지갑에 귀속되므로 교체는 NFT 이전 문제를 수반 — Phase 3 논의 |
 

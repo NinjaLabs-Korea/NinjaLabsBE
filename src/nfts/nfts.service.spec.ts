@@ -1,6 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { NftsService } from './nfts.service';
 
 describe('NftsService', () => {
@@ -12,7 +11,7 @@ describe('NftsService', () => {
   const newNftId = '66666666-6666-4666-8666-666666666666';
 
   function setup(options: { contract?: string; nftInserted?: boolean; parentExists?: boolean } = {}) {
-    const txQuery = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
+    const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes(`SELECT id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`)) {
         return options.parentExists ? { rowCount: 1, rows: [{ id: parentNftId }] } : { rowCount: 0, rows: [] };
       }
@@ -20,14 +19,11 @@ describe('NftsService', () => {
         return options.nftInserted === false ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ id: newNftId }] };
       }
       return { rowCount: 1, rows: [] };
-    }));
-    const query = jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 2, rows: [{ id: 'a' }, { id: 'b' }] })));
-    const db = {
-      query,
-      tx: jest.fn(async (callback: (tx: { query: typeof txQuery }) => Promise<unknown>) => callback({ query: txQuery })),
-    };
+    });
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 2, rows: [{ id: 'a' }, { id: 'b' }] }));
+    const { database, db } = createMockDb({ query, txQuery });
     const config = { get: jest.fn((key: string) => (key === 'NFT_CONTRACT_ADDRESS' ? options.contract : undefined)) };
-    const service = new NftsService(db as unknown as DatabaseService, config as unknown as ConfigService);
+    const service = new NftsService(database, config as unknown as ConfigService);
     return { service, db, txQuery, query };
   }
 

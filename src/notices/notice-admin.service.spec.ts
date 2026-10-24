@@ -1,6 +1,5 @@
 import { AuditService } from '../audit/audit.service';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { NoticeAdminService } from './notice-admin.service';
 
 describe('NoticeAdminService update', () => {
@@ -11,15 +10,8 @@ describe('NoticeAdminService update', () => {
     // tx.query (transaction client) and db.query (autocommit pool) are separate mocks: the mutation AND its audit row must both run on
     // the transaction client, so anything reaching db.query is a bug. The dynamic UPDATE builder is checked for $n/params drift on every call.
     const query = jest.fn().mockResolvedValue({ rowCount: 1, rows: [{ id: noticeId, status: 'PUBLISHED' }] });
-    const tx = { query: withParamsCheck(query) };
-    const db = {
-      query: jest.fn(),
-      tx: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
-    };
-    const service = new NoticeAdminService(
-      db as unknown as DatabaseService,
-      new AuditService({ query: jest.fn() } as unknown as DatabaseService),
-    );
+    const { database, db } = createMockDb({ txQuery: query });
+    const service = new NoticeAdminService(database, new AuditService(createMockDb().database));
     return { db, query, service };
   }
 

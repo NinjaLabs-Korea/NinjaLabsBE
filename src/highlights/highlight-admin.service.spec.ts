@@ -1,6 +1,5 @@
 import { AuditService } from '../audit/audit.service';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { HighlightAdminService } from './highlight-admin.service';
 
 describe('HighlightAdminService audit transactions', () => {
@@ -10,8 +9,8 @@ describe('HighlightAdminService audit transactions', () => {
   function setup(rowCount = 1) {
     // tx.query and db.query are separate: mutation + audit must both run on the transaction client. The dynamic UPDATE builder is checked for $n drift.
     const query = jest.fn().mockResolvedValue({ rowCount, rows: rowCount ? [{ id: highlightId, is_published: true }] : [] });
-    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) })) };
-    const service = new HighlightAdminService(db as unknown as DatabaseService, new AuditService(db as unknown as DatabaseService));
+    const { database, db } = createMockDb({ txQuery: query });
+    const service = new HighlightAdminService(database, new AuditService(database));
     return { service, query, db };
   }
 

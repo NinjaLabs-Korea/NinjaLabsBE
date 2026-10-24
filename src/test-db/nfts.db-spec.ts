@@ -1,3 +1,4 @@
+import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
 import { InjectiveNftClient } from '../nfts/injective-nft.client';
 import { NftJobWorker } from '../nfts/nft-job.worker';
@@ -6,6 +7,9 @@ import { describeDb } from './describe-db';
 import { createDb, createPrimaryWallet, createUser, testConfig, unique } from './harness';
 
 jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
+
+/** 운영 알림 대역 — 호출만 기록한다 (nft-worker.db-spec와 같은 방식) */
+const opsAlerts = () => ({ notify: jest.fn(async () => true) }) as unknown as AlertService;
 
 /**
  * NftsService enqueue idempotency (partial unique indexes uq_nft_parent_per_user / uq_nft_child_per_submission / uq_nft_job_idempotency)
@@ -32,7 +36,7 @@ describeDb('nft enqueue and worker recovery on a real database', () => {
       tokenExists: jest.fn(async () => chain.exists ?? false),
       mint: jest.fn(async (tokenId: string) => `0x${tokenId.replace(/-/g, '').slice(0, 8)}`),
     };
-    const w = new NftJobWorker(db, stub as unknown as InjectiveNftClient, testConfig());
+    const w = new NftJobWorker(db, stub as unknown as InjectiveNftClient, testConfig(), opsAlerts());
     jest.spyOn(w['logger'], 'warn').mockImplementation(() => undefined);
     jest.spyOn(w['logger'], 'error').mockImplementation(() => undefined);
     jest.spyOn(w['logger'], 'log').mockImplementation(() => undefined);
@@ -173,7 +177,7 @@ describeDb('nft enqueue and worker recovery on a real database', () => {
       tokenExists: async () => false,
       mint: async () => { throw new Error(`signing with "${mnemonic}" key=0x${'ab'.repeat(32)} failed`); },
     };
-    const w = new NftJobWorker(db, stub as unknown as InjectiveNftClient, testConfig({ MASTER_WALLET_MNEMONIC: mnemonic }));
+    const w = new NftJobWorker(db, stub as unknown as InjectiveNftClient, testConfig({ MASTER_WALLET_MNEMONIC: mnemonic }), opsAlerts());
     await w.poll();
     const job = await jobOf(nftId);
     expect(job).toMatchObject({ status: 'PENDING', retry_count: 1 });

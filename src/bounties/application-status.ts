@@ -12,7 +12,7 @@
  * 상태 **값** 자체를 추가/개명하려면 DB CHECK(supabase/migrations/0004_bounties.sql)도 새 마이그레이션으로 바꿔야 한다 —
  * application-status.spec.ts가 둘이 같은지 검사한다.
  * 심사·철회는 PENDING에서만 된다 — 이 규칙은 동시성 보호를 위해 SQL 조건부 UPDATE(`WHERE ... AND status = 'PENDING'`)가 직접
- * 집행하므로 TS helper가 없다 (값 개명 시 grep 대상: applications.service.ts, application-review.service.ts, account-withdrawal.service.ts,
+ * 집행하므로 TS helper가 없다 (값 개명 시 grep 대상: applications.service.ts, application-review.service.ts, participation-withdrawal.ts (회원 탈퇴),
  * bounty-lifecycle.service.ts). 같은 이유로 재지원의 `status = 'WITHDRAWN'` 조건도 SQL에 있다.
  */
 export const ApplicationStatus = {

@@ -12,6 +12,7 @@ import { isEvmAddress, signatureSchemeFor } from '../common/crypto/wallet-signat
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
+import { revokeActiveAgentKeys } from './agent-revocation';
 
 /**
  * AI 에이전트 등록 (ERD §12, 기획 PART 2-4)
@@ -212,7 +213,7 @@ export class AgentsService {
     const expires = await this.db.tx(async (tx) => {
       const agent = await this.lockOwnedAgent(tx, ownerUserId, agentId);
       if (agent.status !== 'ACTIVE') throw new ConflictException('AGENT_NOT_ACTIVE');
-      await this.revokeActiveKeys(tx, agentId);
+      await revokeActiveAgentKeys(tx, agentId);
       const expiresAt = await this.insertKey(tx, agentId, key);
       await this.audit.record(ownerUserId, 'AGENT_KEY_ROTATED', 'agent', agentId, tx);
       return expiresAt;
@@ -229,7 +230,7 @@ export class AgentsService {
       const agent = await this.lockOwnedAgent(tx, ownerUserId, agentId);
       if (agent.status === 'REVOKED') return;
       await tx.query(`UPDATE agent SET status = 'REVOKED' WHERE id = $1`, [agentId]);
-      await this.revokeActiveKeys(tx, agentId);
+      await revokeActiveAgentKeys(tx, agentId);
       await this.audit.record(ownerUserId, 'AGENT_REVOKED', 'agent', agentId, tx);
     });
     return { agentId, status: 'REVOKED' };
@@ -245,14 +246,6 @@ export class AgentsService {
     )) as { rowCount: number | null; rows: Array<{ status: string }> };
     if (!r.rowCount) throw new NotFoundException('AGENT_NOT_FOUND');
     return r.rows[0];
-  }
-
-  private async revokeActiveKeys(tx: QueryRunner, agentId: string) {
-    await tx.query(
-      `UPDATE agent_api_key SET status = 'REVOKED', revoked_at = now()
-        WHERE agent_id = $1 AND status = 'ACTIVE'`,
-      [agentId],
-    );
   }
 
   /** API key 생성 헬퍼 — nj_ 프리픽스 + 랜덤, DB엔 sha256 해시만 */

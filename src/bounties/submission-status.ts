@@ -8,7 +8,7 @@
  * 여기를 바꾸면 영향 받는 곳:
  *   - 심사 가능/코멘트 필수/결정→상태: submissions/submission-review.service.ts (+ 컨트롤러 DTO의 @IsIn)
  *   - 재제출 가능/확정:                 submissions/submissions.service.ts
- *   - 미결(unresolved):                 admin/bounty-lifecycle.service.ts (COMPLETED 전이 차단), users/account-withdrawal.service.ts (탈퇴 시 철회)
+ *   - 미결(unresolved):                 admin/bounty-lifecycle.service.ts (COMPLETED 전이 차단), participation-withdrawal.ts (회원 탈퇴 시 철회)
  *
  * 상태 **값** 자체를 추가/개명하려면 DB CHECK(supabase/migrations/0005_submissions.sql)도 새 마이그레이션으로 바꿔야 한다 —
  * submission-status.spec.ts가 이 파일의 값 집합과 마이그레이션 CHECK가 같은지 검사한다.
@@ -22,7 +22,7 @@ export const SubmissionStatus = {
   RESUBMITTED: 'RESUBMITTED',
   APPROVED: 'APPROVED',
   REJECTED: 'REJECTED',
-  /** 제출자 탈퇴 시 미결 제출을 철회한 상태 (account-withdrawal.service.ts) */
+  /** 제출자 탈퇴 시 미결 제출을 철회한 상태 (participation-withdrawal.ts) */
   WITHDRAWN: 'WITHDRAWN',
 } as const;
 

@@ -8,11 +8,7 @@ import { TOKEN_AMOUNT } from '../common/validation/token-amount';
 import { normalizeTxHash } from '../common/validation/tx-hash';
 import { NftsService } from '../nfts/nfts.service';
 import { allowsPayoutSelfApproval, PAYOUT_ALLOW_SELF_APPROVAL_ENV } from './payout-approval';
-
 import { PAYABLE_REWARD_STATUSES } from './payout-status';
-
-/** payout을 새로 요청할 수 있는(입금 확인된) 보상 상태 — 정의는 payout-status.ts (requestPayout, 회원 탈퇴 검사, 지급 상태 SQL이 공유) */
-export { PAYABLE_REWARD_STATUSES };
 
 /**
  * MVP 보상 흐름 (ERD §10)

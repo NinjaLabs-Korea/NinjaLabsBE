@@ -3,6 +3,7 @@ import { validateSync } from 'class-validator';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { DatabaseService } from '../common/database/database.service';
+import { withParamsCheck } from '../test-support/expect-params-match';
 import {
   AccountWithdrawalService,
   nicknameConfirmed,
@@ -31,7 +32,7 @@ describe('AccountWithdrawalService', () => {
       }
       return { rowCount: 0, rows: [] };
     });
-    const tx = { query };
+    const tx = { query: withParamsCheck(query) };
     const db = { tx: jest.fn(async (fn: (client: unknown) => Promise<unknown>) => fn(tx)) } as unknown as DatabaseService;
     const record = jest.fn().mockResolvedValue(undefined);
     const forgetUserStatus = jest.fn();
@@ -66,6 +67,16 @@ describe('AccountWithdrawalService', () => {
       [userId, 'USER_WITHDRAWN', 'user', userId, tx],
     ]);
     expect(forgetUserStatus).toHaveBeenCalledWith(userId);
+  });
+
+  it('keeps the write order: user row, links/tags, sessions, wallets, agents, keys, submissions, applications', async () => {
+    const { service, calls } = setup({ agents: ['a1'] });
+    await service.withdraw(userId, 'Ryan');
+    const writes = calls.map(([sql]) => sql).filter((sql) => /^\s*(UPDATE|DELETE)/.test(sql));
+    const tables = writes.map((sql) => /^\s*(?:UPDATE|DELETE FROM)\s+("?\w+"?)/.exec(sql)![1]);
+    expect(tables).toEqual([
+      '"user"', 'user_link', 'user_tag', 'auth_session', 'wallet', 'agent', 'agent_api_key', 'bounty_submission', 'bounty_application',
+    ]);
   });
 
   it('rejects a mismatched confirmation nickname without writing anything', async () => {

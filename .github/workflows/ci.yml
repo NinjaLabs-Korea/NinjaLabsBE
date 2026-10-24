@@ -31,21 +31,88 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  audit:
-    name: Dependency audit (report only)
+  db-tests:
+    name: Real-database tests (Postgres 16)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
-      # Report-only: the job stays green and known advisories surface as a warning annotation.
-      # Once the pinned dependencies are upgraded, replace this step with a plain
-      # `npm audit --omit=dev --audit-level=high` so new advisories block the PR.
-      - name: npm audit (production deps, high+)
-        run: |
-          if ! npm audit --omit=dev --audit-level=high; then
-            echo "::warning title=Dependency audit::Production dependencies have high/critical advisories. See this job's log."
-          fi
+      - run: npm ci
+      # Creates a fresh database per run, applies supabase/migrations with scripts/migrate.js and runs src/test-db/*.db-spec.ts
+      # against the real DatabaseService (no SQL mocks). Locally the suite skips itself when TEST_DATABASE_URL is unset; under
+      # CI=true (set here explicitly, GitHub also sets it) a missing TEST_DATABASE_URL FAILS the job instead of skipping, so a
+      # dropped variable can never turn this job green without running anything (src/test-db/harness.ts testDatabaseUrl()).
+      - run: npm run test:db
+        env:
+          CI: 'true'
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+  e2e-tests:
+    name: HTTP end-to-end tests (Postgres 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Boots the real AppModule through the same configureApp() as src/main.ts (ValidationPipe, filters, interceptor, CORS,
+      # trust proxy, throttlers, SchemaGuard) on a fresh database with every migration applied, and drives it over HTTP
+      # (src/test-e2e/*.e2e-spec.ts). Only external I/O is faked: Google token endpoint + id_token verifier, Injective chain client.
+      # Like db-tests, CI=true turns a missing TEST_DATABASE_URL into a failure instead of a skip.
+      - run: npm run test:e2e
+        env:
+          CI: 'true'
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      # Blocking: fails on any high/critical production advisory that is not in audit-allowlist.json
+      # (each entry carries a reason and an expiry date; an expired entry fails the job too).
+      # npm audit reads only package-lock.json, so no `npm ci` (one less registry dependency).
+      # audit-gate.js retries network failures itself; the step timeout is the hard backstop.
+      - name: audit gate (production deps, high+)
+        timeout-minutes: 4
+        run: node scripts/audit-gate.js

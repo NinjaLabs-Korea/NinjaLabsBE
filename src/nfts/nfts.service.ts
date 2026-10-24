@@ -25,25 +25,28 @@ export class NftsService {
 
   /** 부모 NFT 레코드 생성 + 민팅 잡 등록 (지갑 연결 성공 시 호출) */
   async enqueueParentMint(userId: string, walletId: string) {
+    return this.db.tx((tx) => this.enqueueParentMintInTransaction(tx, userId, walletId));
+  }
+
+  /** 호출자의 트랜잭션 안에서 부모 NFT + MINT_PARENT 잡을 멱등 등록 (wallets verify가 지갑 저장과 같은 tx로 호출) */
+  async enqueueParentMintInTransaction(tx: QueryRunner, userId: string, walletId: string) {
     const contract = this.contractAddress();
-    return this.db.tx(async (tx) => {
-      const nft = await tx.query<{ id: string }>(
-        `INSERT INTO nft (owner_user_id, owner_wallet_id, nft_type, contract_address)
-         VALUES ($1, $2, 'NINJA_PARENT', $3)
-         ON CONFLICT DO NOTHING
-         RETURNING id`,
-        [userId, walletId, contract],
-      );
-      if (!nft.rowCount) return null; // 이미 부모 NFT 존재 (1유저 1부모)
-      const nftId = nft.rows[0].id;
-      await tx.query(
-        `INSERT INTO nft_job (nft_id, job_type, idempotency_key)
-         VALUES ($1, 'MINT_PARENT', $2)
-         ON CONFLICT (idempotency_key) DO NOTHING`,
-        [nftId, `mint-parent:${userId}`],
-      );
-      return { nftId };
-    });
+    const nft = (await tx.query(
+      `INSERT INTO nft (owner_user_id, owner_wallet_id, nft_type, contract_address)
+       VALUES ($1, $2, 'NINJA_PARENT', $3)
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [userId, walletId, contract],
+    )) as QueryResult<{ id: string }>;
+    if (!nft.rowCount) return null; // 이미 부모 NFT 존재 (1유저 1부모)
+    const nftId = nft.rows[0].id;
+    await tx.query(
+      `INSERT INTO nft_job (nft_id, job_type, idempotency_key)
+       VALUES ($1, 'MINT_PARENT', $2)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [nftId, `mint-parent:${userId}`],
+    );
+    return { nftId };
   }
 
   /** 자식 NFT 레코드 생성 + 민팅/attach 잡 등록 (제출물 승인 시 호출) */

@@ -8,18 +8,21 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsNotEmpty, IsOptional, IsUrl } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Request } from 'express';
 import { AuthGuard } from '../../auth/auth.guard';
 import { SessionUser } from '../../auth/auth.service';
+import { IsHttpUrl } from '../../common/validation/url';
 import { ApplicationsService } from './applications.service';
 
-class ApplyDto {
+export class ApplyDto {
+  @IsString()
   @IsNotEmpty()
+  @MaxLength(4000)
   message!: string;
 
   @IsOptional()
-  @IsUrl()
+  @IsHttpUrl()
   portfolioUrl?: string;
 }
 

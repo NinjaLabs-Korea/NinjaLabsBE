@@ -1,4 +1,4 @@
-import { ExecutionContext } from '@nestjs/common';
+import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { AgentApiGuard, AgentApiRequest } from './agent-api.guard';
 import { AgentApiKeyService, AgentPrincipal } from './agent-api-key.service';
 
@@ -44,4 +44,18 @@ describe('AgentApiGuard', () => {
       expect(apiKeys.authenticate).not.toHaveBeenCalled();
     },
   );
+  it('accepts the scheme case-insensitively (RFC 7235) and passes only the token', async () => {
+    const apiKeys = { authenticate: jest.fn().mockResolvedValue(principal) };
+    const guard = new AgentApiGuard(apiKeys as unknown as AgentApiKeyService);
+    await expect(guard.canActivate(context('bearer nj_lowercase-scheme').executionContext)).resolves.toBe(true);
+    expect(apiKeys.authenticate).toHaveBeenCalledWith('nj_lowercase-scheme');
+  });
+
+  it('propagates the key service rejection (401 INVALID_AGENT_API_KEY) and leaves no principal on the request', async () => {
+    const apiKeys = { authenticate: jest.fn().mockRejectedValue(new UnauthorizedException('INVALID_AGENT_API_KEY')) };
+    const guard = new AgentApiGuard(apiKeys as unknown as AgentApiKeyService);
+    const { executionContext, request } = context('Bearer nj_revoked-key-0000');
+    await expect(guard.canActivate(executionContext)).rejects.toMatchObject({ status: 401, message: 'INVALID_AGENT_API_KEY' });
+    expect(request.agent).toBeUndefined();
+  });
 });

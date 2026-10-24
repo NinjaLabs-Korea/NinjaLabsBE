@@ -1,12 +1,13 @@
 import { Body, Controller, Param, ParseUUIDPipe, Post, Req, UseGuards } from '@nestjs/common';
-import { IsIn, IsOptional } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { AdminGuard } from '../../auth/admin.guard';
 import { AuthedRequest } from '../../auth/authed-request';
+import { ApplicationReviewDecision, ApplicationStatusPolicy } from '../application-status';
 import { ApplicationReviewService } from './application-review.service';
 
-class ReviewApplicationDto {
-  @IsIn(['APPROVED', 'REJECTED']) decision!: 'APPROVED' | 'REJECTED';
-  @IsOptional() note?: string;
+export class ReviewApplicationDto {
+  @IsIn(ApplicationStatusPolicy.reviewDecisions()) decision!: ApplicationReviewDecision;
+  @IsOptional() @IsString() @MaxLength(2000) note?: string;
 }
 
 @Controller('admin/applications')

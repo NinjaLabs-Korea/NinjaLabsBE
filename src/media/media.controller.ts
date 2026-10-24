@@ -7,13 +7,17 @@ import {
   Req,
   Res,
   UploadedFile,
+  UseFilters,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
+import { PUBLIC_READ_IP_THROTTLE } from '../common/throttler/public-read-throttle';
 import { Request, Response } from 'express';
 import { AdminGuard } from '../auth/admin.guard';
 import { SessionUser } from '../auth/auth.service';
+import { MediaFileTooLargeFilter } from './media-file-too-large.filter';
 import { MAX_MEDIA_BYTES, MediaService, UploadedImage } from './media.service';
 
 @Controller()
@@ -22,7 +26,11 @@ export class MediaController {
 
   @Post('admin/media')
   @UseGuards(AdminGuard)
-  @UseInterceptors(FileInterceptor('file', { limits: { files: 1, fileSize: MAX_MEDIA_BYTES } }))
+  // multer 한도: 파일 1개·5 MiB 외에 필드/파트 수와 필드명 길이도 막는다 (multipart 폭탄 방지)
+  @UseInterceptors(FileInterceptor('file', {
+    limits: { files: 1, fileSize: MAX_MEDIA_BYTES, fields: 5, parts: 10, fieldNameSize: 100 },
+  }))
+  @UseFilters(MediaFileTooLargeFilter)
   upload(
     @Req() req: Request & { user: SessionUser },
     @UploadedFile() file?: UploadedImage,
@@ -30,6 +38,7 @@ export class MediaController {
     return this.media.create(req.user.userId, file);
   }
 
+  @Throttle(PUBLIC_READ_IP_THROTTLE)
   @Get('media/:id')
   async get(
     @Param('id', ParseUUIDPipe) id: string,

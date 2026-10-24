@@ -1,23 +1,29 @@
 import {
+  ConflictException,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { createHash, randomBytes } from 'crypto';
-import { DatabaseService, QueryRunner } from '../common/database/database.service';
+import { randomBytes } from 'crypto';
+import { DatabaseService } from '../common/database/database.service';
+import { isUniqueViolation } from '../common/database/pg-errors';
+import { JWT_SECRET } from './jwt-secret';
+import { AuthSessions } from './auth-sessions';
+import { LoginCodes } from './login-codes';
+import { GoogleIdTokenVerifier } from './google-id-token.verifier';
+import { AccessTokenVerifier, legacyAccessTokenCutoff, SessionUser } from './access-token.verifier';
+import { GoogleOAuthFlow, OAuthState } from './google-oauth.flow';
+import { normalizeRefreshTtl, refreshTtlSeconds } from './refresh-ttl';
+import { UserStatusCache } from './user-status-cache';
 
-export interface SessionUser {
-  userId: string;
-  isAdmin: boolean;
-}
-
-export interface OAuthState {
-  traceId?: string;
-  redirectUrl?: string;
-  codeChallenge: string;
-}
+// SessionUser는 컨트롤러·가드 등 여러 모듈이 이 경로로 import한다 — 정의는 access-token.verifier.ts 한 곳
+export type { SessionUser } from './access-token.verifier';
+export type { OAuthState } from './google-oauth.flow';
 
 /**
  * 인증 흐름 (Google OAuth → 자체 JWT 세션)
@@ -28,92 +34,76 @@ export interface OAuthState {
  * 4. user upsert (신규면 온보딩 단계 1로 생성)
  * 5. 브라우저 challenge에 연결된 일회용 코드 전달 (URL에 세션 토큰 없음)
  * 6. POST /auth/exchange로 코드를 소비하고 세션 발급, refresh는 해시만 저장
+ *
+ * AuthService는 **창구(facade)**다 — 컨트롤러·가드·탈퇴 서비스가 보는 공개 메서드와 생성자 시그니처를 고정하고, 실제 규칙은
+ * 아래 협력자에 있다. 규칙을 고칠 때는 이 파일이 아니라 해당 파일을 연다:
+ *   - Google state / 동의 URL / code 교환          → google-oauth.flow.ts   (id_token 서명 검증: google-id-token.verifier.ts)
+ *   - 일회용 로그인 코드 발급·소비                  → login-codes.ts
+ *   - 세션 발급·refresh 회전·재사용 감지·로그아웃   → auth-sessions.ts       (유예 사본 암호화: refresh-grace.ts)
+ *   - access JWT 검증 + 레거시 전환기               → access-token.verifier.ts
+ *   - JWT_REFRESH_TTL 해석                          → refresh-ttl.ts
+ *   - AuthGuard 유저 상태 캐시(30초)                → user-status-cache.ts
+ * 이 파일에 직접 남은 규칙은 유저 조회/생성(getMe, upsertGoogleUser)과 assertActiveUser의 "ACTIVE" SQL뿐이다.
+ * 협력자는 Nest provider가 아닌 일반 클래스로, 생성자에서 만든다 — 그래서 `new AuthService(db, jwt, config, secret)` 하나로 스펙이 전부 조립된다.
  */
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+  /** JWT_REFRESH_TTL을 정규화한 Postgres interval 문자열 — 생성 시 검증해 잘못된 값이면 부팅이 실패한다 (JWT_SECRET과 동일) */
+  private readonly refreshTtl: string;
+  /** refreshTtl을 초로 — refresh 쿠키 Max-Age */
+  readonly refreshTtlSeconds: number;
+  /** Google OAuth 왕복 (state, 동의 URL, code 교환) — google-oauth.flow.ts */
+  private readonly oauth: GoogleOAuthFlow;
+  /** 세션 발급·회전·폐기 — auth-sessions.ts */
+  private readonly sessions: AuthSessions;
+  /** OAuth 콜백 일회용 로그인 코드 — login-codes.ts */
+  private readonly loginCodes: LoginCodes;
+  /** access JWT 검증 (레거시 전환기 포함) — access-token.verifier.ts */
+  private readonly accessTokens: AccessTokenVerifier;
+  /** AuthGuard용 유저 상태 캐시 (프로세스별, 30초) — user-status-cache.ts */
+  private readonly userStatusCache = new UserStatusCache();
+
+  /**
+   * @param graceSecret grace_refresh_token 암호화 키 재료 (refresh-grace.ts). JwtModule이 서명에 쓰는 것과 **같은 provider**(JWT_SECRET,
+   *   jwt-secret.ts)에서 주입받으므로 두 값이 어긋날 수 없다 — ConfigModule이 .env를 읽은 뒤 한 번만 계산된다.
+   */
   constructor(
     private readonly db: DatabaseService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
-  ) {}
-
-  private googleClientId(): string {
-    const id = this.config.get<string>('GOOGLE_CLIENT_ID');
-    if (!id) throw new Error('GOOGLE_CLIENT_ID is not configured');
-    return id;
-  }
-
-  /**
-   * CSRF 방어용 state — 서명된 단기 JWT라 서버 측 저장소/쿠키 없이 검증 가능.
-   * 콜백에서 서명·만료·용도(p)를 확인한다.
-   */
-  async issueOauthState(traceId: string | undefined, redirectUrl: string, codeChallenge: string): Promise<string> {
-    if (!/^[A-Za-z0-9_-]{43}$/.test(codeChallenge)) {
-      throw new UnauthorizedException('INVALID_CODE_CHALLENGE');
-    }
-    const safeTraceId = traceId && /^[a-zA-Z0-9-]{1,64}$/.test(traceId) ? traceId : undefined;
-    return this.jwt.signAsync(
-      { p: 'gstate', t: safeTraceId, r: redirectUrl, c: codeChallenge },
-      { expiresIn: '10m' },
+    @Inject(JWT_SECRET) private readonly graceSecret: string,
+    @Optional() googleVerifier: GoogleIdTokenVerifier = new GoogleIdTokenVerifier(),
+  ) {
+    this.refreshTtl = normalizeRefreshTtl(this.config.get<string>('JWT_REFRESH_TTL'));
+    this.refreshTtlSeconds = refreshTtlSeconds(this.refreshTtl);
+    this.accessTokens = new AccessTokenVerifier(
+      this.jwt,
+      legacyAccessTokenCutoff(this.config.get<string>('LEGACY_ACCESS_TOKEN_CUTOFF')),
     );
+    this.oauth = new GoogleOAuthFlow(this.jwt, this.config, googleVerifier, this.logger);
+    this.sessions = new AuthSessions(this.db, this.jwt, this.refreshTtl, this.graceSecret, this.logger);
+    this.loginCodes = new LoginCodes(this.db, this.sessions);
   }
 
-  async verifyOauthState(state: string): Promise<OAuthState> {
-    try {
-      const payload = await this.jwt.verifyAsync<{ p?: string; t?: string; r?: string; c?: string }>(state);
-      if (payload.p !== 'gstate' || !payload.c || !/^[A-Za-z0-9_-]{43}$/.test(payload.c)) {
-        throw new Error('invalid state');
-      }
-      return { traceId: payload.t, redirectUrl: payload.r, codeChallenge: payload.c };
-    } catch {
-      throw new UnauthorizedException('INVALID_OAUTH_STATE');
-    }
+  /** CSRF 방어용 서명 state(10분 JWT) 발급 — google-oauth.flow.ts */
+  issueOauthState(traceId: string | undefined, redirectUrl: string, codeChallenge: string): Promise<string> {
+    return this.oauth.issueOauthState(traceId, redirectUrl, codeChallenge);
   }
 
+  /** 콜백의 state 검증 → trace/redirect/PKCE challenge — google-oauth.flow.ts */
+  verifyOauthState(state: string): Promise<OAuthState> {
+    return this.oauth.verifyOauthState(state);
+  }
+
+  /** Google 동의 화면 URL — google-oauth.flow.ts */
   buildGoogleAuthUrl(state: string): string {
-    const params = new URLSearchParams({
-      client_id: this.googleClientId(),
-      redirect_uri: this.config.get<string>('GOOGLE_CALLBACK_URL') ?? '',
-      response_type: 'code',
-      scope: 'openid email',
-      state,
-      // 매 로그인마다 계정 선택 화면 노출 (공용 PC에서 자동 재로그인 방지)
-      prompt: 'select_account',
-    });
-    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+    return this.oauth.buildGoogleAuthUrl(state);
   }
 
-  /** code → 토큰 교환 후 구글 프로필(google_id, email) 반환 */
-  async exchangeGoogleCode(code: string): Promise<{ googleId: string; email: string }> {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: this.googleClientId(),
-        client_secret: this.config.get<string>('GOOGLE_CLIENT_SECRET') ?? '',
-        redirect_uri: this.config.get<string>('GOOGLE_CALLBACK_URL') ?? '',
-        grant_type: 'authorization_code',
-      }),
-    });
-    if (!res.ok) throw new UnauthorizedException('GOOGLE_CODE_EXCHANGE_FAILED');
-    const body = (await res.json()) as { id_token?: string };
-    if (!body.id_token) throw new UnauthorizedException('GOOGLE_CODE_EXCHANGE_FAILED');
-
-    // id_token은 구글 토큰 엔드포인트에서 TLS로 직접 받았으므로 서명 재검증은 생략하고
-    // 클레임(iss/aud/email_verified)만 확인한다.
-    const claims = JSON.parse(
-      Buffer.from(body.id_token.split('.')[1], 'base64url').toString('utf8'),
-    ) as { iss?: string; aud?: string; sub?: string; email?: string; email_verified?: boolean };
-
-    const issOk = claims.iss === 'https://accounts.google.com' || claims.iss === 'accounts.google.com';
-    if (!issOk || claims.aud !== this.googleClientId() || !claims.sub || !claims.email) {
-      throw new UnauthorizedException('INVALID_GOOGLE_ID_TOKEN');
-    }
-    if (claims.email_verified === false) {
-      throw new UnauthorizedException('GOOGLE_EMAIL_NOT_VERIFIED');
-    }
-    return { googleId: claims.sub, email: claims.email };
+  /** code → 구글 프로필(google_id, email), id_token 서명·클레임 검증 포함 — google-oauth.flow.ts */
+  exchangeGoogleCode(code: string): Promise<{ googleId: string; email: string }> {
+    return this.oauth.exchangeGoogleCode(code);
   }
 
   /** GET /auth/me — 프로필 + 온보딩/지갑/NFT 상태 (api-contract.md 응답 형태) */
@@ -172,129 +162,71 @@ export class AuthService {
 
     // Google 인증(1단계)은 완료됐으므로 다음 화면인 지갑 연결(2단계)부터 시작한다.
     // 닉네임은 온보딩 3단계에서 입력받으므로 임시값으로 생성한다.
-    const created = await this.db.query(
-      `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step)
-       VALUES ($1, $2, $3, '', 2)
-       RETURNING id, is_admin, onboarding_step, onboarding_completed_at`,
-      [googleId, email, `user_${randomBytes(4).toString('hex')}`],
-    );
-    return created.rows[0];
-  }
-
-  /** OAuth callback carries only a 60-second code bound to the initiating browser. */
-  async issueLoginCode(userId: string, codeChallenge: string): Promise<string> {
-    const code = randomBytes(32).toString('base64url');
-    await this.db.query('DELETE FROM oauth_login_code WHERE expires_at <= now()');
-    await this.db.query(
-      `INSERT INTO oauth_login_code (code_hash, user_id, code_challenge)
-       VALUES ($1, $2, $3)`,
-      [createHash('sha256').update(code).digest('hex'), userId, codeChallenge],
-    );
-    return code;
-  }
-
-  async exchangeLoginCode(code: string, codeVerifier: string, ip?: string, userAgent?: string) {
-    if (!/^[A-Za-z0-9_-]{43}$/.test(code) || !/^[A-Za-z0-9._~-]{43,128}$/.test(codeVerifier)) {
-      throw new UnauthorizedException('INVALID_LOGIN_CODE');
-    }
-    const codeHash = createHash('sha256').update(code).digest('hex');
-    const challenge = createHash('sha256').update(codeVerifier).digest('base64url');
-    return this.db.tx(async (tx) => {
-      // Conditional DELETE atomically consumes the code, including across server replicas.
-      const consumed = await tx.query<{ user_id: string; is_admin: boolean }>(
-        `DELETE FROM oauth_login_code AS c USING "user" AS u
-          WHERE c.code_hash = $1 AND c.code_challenge = $2
-            AND c.expires_at > now() AND c.user_id = u.id
-            AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
-          RETURNING c.user_id, u.is_admin`,
-        [codeHash, challenge],
+    try {
+      const created = await this.db.query(
+        `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step)
+         VALUES ($1, $2, $3, '', 2)
+         RETURNING id, is_admin, onboarding_step, onboarding_completed_at`,
+        [googleId, email, `user_${randomBytes(4).toString('hex')}`],
       );
-      if (consumed.rowCount !== 1) throw new UnauthorizedException('INVALID_LOGIN_CODE');
-      const { user_id, is_admin } = consumed.rows[0];
-      const session = await this.createSessionTokens(user_id, is_admin);
-      await this.saveSession(tx, user_id, session.refreshHash, ip, userAgent);
-      return { accessToken: session.accessToken, refreshToken: session.refreshToken };
-    });
+      return created.rows[0];
+    } catch (err: unknown) {
+      // uq_user_email / uq_user_google_id는 deleted_at IS NULL 행만 본다(0014). 그래도 같은 이메일/구글 계정의 활성 행과
+      // 충돌하면(동시 첫 로그인, 또는 탈퇴 후 다른 google_id로 같은 이메일) 500 대신 409 → 콜백이 #error=AUTH_FAILED로 보낸다
+      if (isUniqueViolation(err)) throw new ConflictException('ACCOUNT_CONFLICT');
+      throw err;
+    }
   }
 
-  /** JWT access + refresh 발급, refresh 해시는 auth_session에 저장 */
-  async issueSession(userId: string, isAdmin: boolean, ip?: string, userAgent?: string) {
-    const session = await this.createSessionTokens(userId, isAdmin);
+  /** OAuth 콜백용 60초 일회용 코드 발급 (브라우저 PKCE challenge에 묶임) — login-codes.ts */
+  issueLoginCode(userId: string, codeChallenge: string): Promise<string> {
+    return this.loginCodes.issueLoginCode(userId, codeChallenge);
+  }
 
-    await this.saveSession(this.db, userId, session.refreshHash, ip, userAgent);
-    return { accessToken: session.accessToken, refreshToken: session.refreshToken };
+  /** POST /auth/exchange — 코드를 원자적으로 소비하고 세션 발급 — login-codes.ts */
+  exchangeLoginCode(code: string, codeVerifier: string, ip?: string, userAgent?: string) {
+    return this.loginCodes.exchangeLoginCode(code, codeVerifier, ip, userAgent);
+  }
+
+  /** JWT access + refresh 발급, refresh 해시만 저장 — auth-sessions.ts */
+  issueSession(userId: string, isAdmin: boolean, ip?: string, userAgent?: string) {
+    return this.sessions.issue(userId, isAdmin, ip, userAgent);
+  }
+
+  /** refresh 회전 + 30초 유예 + 재사용 감지 시 사슬 폐기 — auth-sessions.ts */
+  refresh(refreshToken: string, ip?: string, userAgent?: string) {
+    return this.sessions.refresh(refreshToken, ip, userAgent);
+  }
+
+  /** 세션 폐기 (로그아웃) — auth-sessions.ts */
+  revoke(refreshToken: string) {
+    return this.sessions.revoke(refreshToken);
+  }
+
+  /** 이 프로세스의 유저 상태 캐시에서 한 유저를 지운다 — 탈퇴처럼 본인이 상태를 바꾼 직후 다음 요청부터 바로 반영되게 (다른 레플리카는 TTL ≤ 30초) */
+  forgetUserStatus(userId: string): void {
+    this.userStatusCache.forget(userId);
   }
 
   /**
-   * refresh token 재발급 — **회전(rotation) 방식**
-   * 구 refresh token은 즉시 폐기하고 새 토큰을 발급한다.
-   * 탈취된 토큰의 유효 기간을 "다음 갱신까지"로 최소화하고,
-   * 이미 폐기된 토큰 재사용 시도(= 탈취 신호)는 거부된다.
+   * access 토큰의 주인이 지금도 ACTIVE이고 삭제되지 않았는지 — 아니면 401 INVALID_ACCESS_TOKEN (FE는 refresh를 시도하고, refresh도 같은 조건으로
+   * 거부되므로 세션을 비운다). 결과는 USER_STATUS_CACHE_TTL_MS 동안 캐시한다 (정지/삭제 반영 지연 ≤ 30초).
    */
-  async refresh(refreshToken: string, ip?: string, userAgent?: string) {
-    const hash = createHash('sha256').update(refreshToken).digest('hex');
-    return this.db.tx(async (tx) => {
-      // 유효한 기존 세션을 조건부 UPDATE로 선점한다. 같은 토큰의 동시 요청 중
-      // 첫 요청만 row를 반환하고, 나머지는 커밋 이후 조건 재평가에서 거부된다.
-      const consumed = await tx.query<{ user_id: string; is_admin: boolean }>(
-        `UPDATE auth_session AS s
-            SET revoked_at = now()
-           FROM "user" AS u
-          WHERE s.refresh_token_hash = $1
-            AND s.user_id = u.id
-            AND s.revoked_at IS NULL
-            AND s.expires_at > now()
-          RETURNING s.user_id, u.is_admin`,
-        [hash],
+  async assertActiveUser(userId: string, now = Date.now()): Promise<void> {
+    let active = this.userStatusCache.get(userId, now);
+    if (active === undefined) {
+      const r = await this.db.query(
+        `SELECT 1 FROM "user" WHERE id = $1 AND status = 'ACTIVE' AND deleted_at IS NULL`,
+        [userId],
       );
-      if (consumed.rowCount !== 1) {
-        throw new UnauthorizedException('INVALID_REFRESH_TOKEN');
-      }
-
-      const { user_id, is_admin } = consumed.rows[0];
-      const next = await this.createSessionTokens(user_id, is_admin);
-      await this.saveSession(tx, user_id, next.refreshHash, ip, userAgent);
-      return { accessToken: next.accessToken, refreshToken: next.refreshToken };
-    });
-  }
-
-  private async createSessionTokens(userId: string, isAdmin: boolean) {
-    const accessToken = await this.jwt.signAsync({ sub: userId, adm: isAdmin });
-    const refreshToken = randomBytes(48).toString('base64url');
-    const refreshHash = createHash('sha256').update(refreshToken).digest('hex');
-    return { accessToken, refreshToken, refreshHash };
-  }
-
-  /** refresh 세션 저장 — 원문 토큰은 저장하지 않고 해시만, 수명 14일 */
-  private async saveSession(
-    runner: QueryRunner,
-    userId: string,
-    refreshHash: string,
-    ip?: string,
-    userAgent?: string,
-  ) {
-    await runner.query(
-      `INSERT INTO auth_session (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
-       VALUES ($1, $2, $3, $4, now() + interval '14 days')`,
-      [userId, refreshHash, ip ?? null, userAgent ?? null],
-    );
-  }
-
-  /** 세션 폐기 (로그아웃) */
-  async revoke(refreshToken: string) {
-    const hash = createHash('sha256').update(refreshToken).digest('hex');
-    await this.db.query(
-      `UPDATE auth_session SET revoked_at = now() WHERE refresh_token_hash = $1 AND revoked_at IS NULL`,
-      [hash],
-    );
-  }
-
-  async verifyAccessToken(token: string): Promise<SessionUser> {
-    try {
-      const payload = await this.jwt.verifyAsync<{ sub: string; adm: boolean }>(token);
-      return { userId: payload.sub, isAdmin: payload.adm === true };
-    } catch {
-      throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
+      active = r.rowCount === 1;
+      this.userStatusCache.set(userId, active, now);
     }
+    if (!active) throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
+  }
+
+  /** access JWT → SessionUser (typ/sub 규칙과 레거시 전환기) — access-token.verifier.ts */
+  verifyAccessToken(token: string): Promise<SessionUser> {
+    return this.accessTokens.verify(token);
   }
 }

@@ -1,36 +1,25 @@
-import { ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { configureApp } from './app-setup';
+import { alertBootFailure } from './common/alerts/boot-alert';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // 전역 파이프/필터/인터셉터/CORS/trust proxy — HTTP e2e(src/test-e2e)도 같은 함수를 쓴다
+  configureApp(app);
 
-  // 리버스 프록시(Railway/Fly/LB) 뒤에서는 X-Forwarded-For를 신뢰해야 rate limit과
-  // auth_session.ip_address가 클라이언트 IP로 잡힌다. 홉 수를 TRUST_PROXY로 지정한다 (기본 0 = 신뢰 안 함).
-  const trustProxy = Number(process.env.TRUST_PROXY ?? 0);
-  if (trustProxy > 0) app.set('trust proxy', trustProxy);
-
-  // SIGTERM/SIGINT 시 onModuleDestroy(pg Pool 종료)까지 실행 — 컨테이너 재배포 중 연결 누수 방지
-  app.enableShutdownHooks();
-
-  // 보안 헤더 (CSP는 API 서버라 기본값으로 충분)
-  app.use(helmet());
-
-  app.enableCors({
-    origin: (process.env.CORS_ORIGINS ?? 'http://localhost:3000').split(','),
-    credentials: true,
-  });
-
-  // DTO 검증: 정의되지 않은 필드 제거 + 타입 자동 변환
-  app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, transform: true }),
-  );
-
-  const port = Number(process.env.PORT ?? 4000);
+  const port = Number(app.get(ConfigService).get<string>('PORT') ?? 4000);
   await app.listen(port);
   console.log(`NinjaLabs backend listening on :${port}`);
 }
 
-void bootstrap();
+// 기동 검사 실패(MIGRATIONS_PENDING, TRUST_PROXY/JWT_SECRET 등)는 스택 대신 메시지 한 줄로 끝낸다 — 재시작 루프 로그에서 원인이 바로 보이도록.
+// OPS_ALERT_WEBHOOK_URL이 있으면 exit 전에 운영 알림을 한 번 보낸다 (최대 5초, 실패하면 로그만 — common/alerts/boot-alert.ts)
+bootstrap().catch(async (err: unknown) => {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`FATAL: ${message}`);
+  await alertBootFailure(process.env, message);
+  process.exit(1);
+});

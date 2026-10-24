@@ -484,7 +484,7 @@ describe('AuthService upsertGoogleUser', () => {
       upsertGoogleUser: jest.fn(async () => { throw new ConflictException('ACCOUNT_CONFLICT'); }),
       issueLoginCode: jest.fn(),
     };
-    const controller = new AuthController(auth as never, { get: () => 'https://app.example/' } as never);
+    const controller = new AuthController(auth as never, { get: () => 'https://app.example/' } as never, { enabled: false } as never);
     const res = { redirect: jest.fn() };
     await controller.googleCallback('google-code', 'state', undefined, { headers: {} } as never, res as never);
     expect(res.redirect).toHaveBeenCalledWith('https://app.example/auth/callback#error=AUTH_FAILED');

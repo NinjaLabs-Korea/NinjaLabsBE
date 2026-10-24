@@ -114,7 +114,7 @@ describe('AuthController OAuth callback failure redirect', () => {
       upsertGoogleUser: jest.fn(),
       issueLoginCode: jest.fn(),
     };
-    const controller = new AuthController(auth as never, config as never);
+    const controller = new AuthController(auth as never, config as never, { enabled: false } as never);
     const res = { redirect: jest.fn() };
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
@@ -132,9 +132,9 @@ describe('AuthController returnTo allowlist', () => {
       issueOauthState: jest.fn(async (_trace: string | undefined, _redirect: string, _challenge: string) => 'state'),
       buildGoogleAuthUrl: jest.fn(() => 'https://accounts.google.com/x'),
     };
-    const controller = new AuthController(auth as never, config as never);
+    const controller = new AuthController(auth as never, config as never, { enabled: false } as never);
     const res = { redirect: jest.fn() };
-    return controller.googleRedirect(undefined, returnTo, 'c'.repeat(43), res as never).then(() => auth.issueOauthState.mock.calls[0][1]);
+    return controller.googleRedirect(undefined, returnTo, 'c'.repeat(43), undefined, {} as never, res as never).then(() => auth.issueOauthState.mock.calls[0][1]);
   }
 
   it('accepts wildcard preview origins on team-owned domains and exact Vercel branch aliases, falling back for anything else', async () => {

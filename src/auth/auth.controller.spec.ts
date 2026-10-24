@@ -13,7 +13,7 @@ function setup() {
     refresh: jest.fn(async () => ({ accessToken: 'access', refreshToken: 'rotated' })),
     revoke: jest.fn(async () => undefined),
   };
-  const controller = new AuthController(auth as never, { get: () => undefined } as never);
+  const controller = new AuthController(auth as never, { get: () => undefined } as never, { enabled: false } as never);
   const res = { append: jest.fn() };
   const req = (headers: Record<string, string> = {}) => ({ headers, ip: '10.0.0.1' }) as never;
   const setCookies = () => res.append.mock.calls.filter(([name]) => name === 'Set-Cookie').map(([, value]) => value);

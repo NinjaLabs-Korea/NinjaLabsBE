@@ -20,4 +20,9 @@ describe('.railway/railway.ts production origins', () => {
       for (const origin of (envValue(key) ?? '').split(',').filter(Boolean)) expect([key, origin]).toEqual([key, expect.stringMatching(/^https:\/\/(?!localhost|127\.)/)]);
     }
   });
+
+  it('OPS_ALERT_WEBHOOK_URL is a secret: preserve()d, never a literal in git', () => {
+    expect(source).toMatch(/OPS_ALERT_WEBHOOK_URL:\s*preserve\(\)/);
+    expect(envValue('OPS_ALERT_WEBHOOK_URL')).toBeUndefined();
+  });
 });

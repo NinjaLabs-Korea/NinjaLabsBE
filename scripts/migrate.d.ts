@@ -12,3 +12,5 @@ export declare function applyMigrations(
   pool: Pool,
   options?: { dir?: string; log?: (line: string) => void },
 ): Promise<{ applied: string[]; skipped: string[] }>;
+/** preDeploy 마이그레이션 실패 운영 알림 (OPS_ALERT_WEBHOOK_URL 없으면 아무것도 안 함). throw하지 않는다 */
+export declare function alertMigrationFailure(env: Record<string, string | undefined>, err: unknown): Promise<void>;

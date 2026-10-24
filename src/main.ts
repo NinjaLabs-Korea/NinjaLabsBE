@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { configureApp } from './app-setup';
+import { alertBootFailure } from './common/alerts/boot-alert';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -14,8 +15,11 @@ async function bootstrap() {
   console.log(`NinjaLabs backend listening on :${port}`);
 }
 
-// 기동 검사 실패(MIGRATIONS_PENDING, TRUST_PROXY/JWT_SECRET 등)는 스택 대신 메시지 한 줄로 끝낸다 — 재시작 루프 로그에서 원인이 바로 보이도록
-bootstrap().catch((err: unknown) => {
-  console.error(`FATAL: ${err instanceof Error ? err.message : String(err)}`);
+// 기동 검사 실패(MIGRATIONS_PENDING, TRUST_PROXY/JWT_SECRET 등)는 스택 대신 메시지 한 줄로 끝낸다 — 재시작 루프 로그에서 원인이 바로 보이도록.
+// OPS_ALERT_WEBHOOK_URL이 있으면 exit 전에 운영 알림을 한 번 보낸다 (최대 5초, 실패하면 로그만 — common/alerts/boot-alert.ts)
+bootstrap().catch(async (err: unknown) => {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`FATAL: ${message}`);
+  await alertBootFailure(process.env, message);
   process.exit(1);
 });

@@ -102,6 +102,22 @@ async function applyMigrations(pool, options = {}) {
   }
 }
 
+/**
+ * preDeploy 마이그레이션 실패 운영 알림 — OPS_ALERT_WEBHOOK_URL이 있으면 한 번 보낸다 (최대 5초).
+ * 웹훅이 없거나 닿지 않으면 로그만 남긴다. 절대 throw하지 않는다 (scripts/ops-alert.js).
+ */
+async function alertMigrationFailure(env, err) {
+  const { postOpsAlert, webhookStatus } = require('./ops-alert');
+  if (webhookStatus(env.OPS_ALERT_WEBHOOK_URL) !== 'ok') return;
+  const environment = env.RAILWAY_ENVIRONMENT_NAME || env.NODE_ENV || 'development';
+  const detail = String((err && err.message) || err).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500);
+  const result = await postOpsAlert(
+    env.OPS_ALERT_WEBHOOK_URL,
+    `[NinjaLabs ${environment}] migration-failure: npm run migrate failed${err && err.file ? ` at ${err.file}` : ''} — deploy aborted, previous version keeps serving: ${detail}`,
+  );
+  if (!result.ok) console.error(`ops alert webhook unreachable for migration failure: ${result.reason}`);
+}
+
 async function main() {
   // NestJS 밖에서 단독 실행되므로 .env를 직접 로드한다
   require('dotenv').config({ path: join(__dirname, '..', '.env') });
@@ -117,12 +133,13 @@ async function main() {
   } catch (err) {
     console.error(`FAIL  ${err.file || ''}\n`, err.message);
     if (err.hint) console.error('HINT ', err.hint);
+    await alertMigrationFailure(process.env, err);
     process.exit(1);
   }
   await pool.end();
   console.log('done');
 }
 
-module.exports = { applyMigrations, migrationFiles, sslOptions, MIGRATIONS_DIR, MIGRATION_LOCK_KEY };
+module.exports = { alertMigrationFailure, applyMigrations, migrationFiles, sslOptions, MIGRATIONS_DIR, MIGRATION_LOCK_KEY };
 
 if (require.main === module) main();

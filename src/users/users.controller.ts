@@ -21,6 +21,7 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
+import { requestIdOf } from '../common/http/request-id';
 import { PUBLIC_READ_IP_THROTTLE } from '../common/throttler/public-read-throttle';
 import { MaxChars } from '../common/validation/max-chars';
 import { Trim } from '../common/validation/trim';
@@ -87,7 +88,9 @@ export class UsersController {
     @Body() dto: CompleteProfileDto,
   ) {
     const traceId = requestTraceId(req.headers);
+    const rid = requestIdOf(req);
     onboardingLog(this.logger, 'profile.save.requested', {
+      rid,
       traceId,
       userId: req.user.userId,
       nicknameLength: dto.nickname.length,
@@ -102,6 +105,7 @@ export class UsersController {
         dto.tags,
       );
       onboardingLog(this.logger, 'profile.save.succeeded', {
+        rid,
         traceId,
         userId: req.user.userId,
         onboardingStep: 4,
@@ -109,6 +113,7 @@ export class UsersController {
       return result;
     } catch (caught) {
       onboardingError(this.logger, 'profile.save.failed', caught, {
+        rid,
         traceId,
         userId: req.user.userId,
       });
@@ -121,19 +126,23 @@ export class UsersController {
   @UseGuards(AuthGuard)
   async completeOnboarding(@Req() req: Request & { user: SessionUser }) {
     const traceId = requestTraceId(req.headers);
+    const rid = requestIdOf(req);
     onboardingLog(this.logger, 'onboarding.complete.requested', {
+      rid,
       traceId,
       userId: req.user.userId,
     });
     try {
       const result = await this.users.completeOnboarding(req.user.userId);
       onboardingLog(this.logger, 'onboarding.complete.succeeded', {
+        rid,
         traceId,
         userId: req.user.userId,
       });
       return result;
     } catch (caught) {
       onboardingError(this.logger, 'onboarding.complete.failed', caught, {
+        rid,
         traceId,
         userId: req.user.userId,
       });
@@ -151,13 +160,14 @@ export class UsersController {
   @Throttle({ default: { ttl: 60_000, limit: 5 } })
   async withdraw(@Req() req: Request & { user: SessionUser }, @Body() dto: WithdrawAccountDto) {
     const traceId = requestTraceId(req.headers);
-    onboardingLog(this.logger, 'account.withdraw.requested', { traceId, userId: req.user.userId });
+    const rid = requestIdOf(req);
+    onboardingLog(this.logger, 'account.withdraw.requested', { rid, traceId, userId: req.user.userId });
     try {
       const result = await this.withdrawal.withdraw(req.user.userId, dto.confirmNickname);
-      onboardingLog(this.logger, 'account.withdraw.succeeded', { traceId, userId: req.user.userId });
+      onboardingLog(this.logger, 'account.withdraw.succeeded', { rid, traceId, userId: req.user.userId });
       return result;
     } catch (caught) {
-      onboardingError(this.logger, 'account.withdraw.failed', caught, { traceId, userId: req.user.userId });
+      onboardingError(this.logger, 'account.withdraw.failed', caught, { rid, traceId, userId: req.user.userId });
       throw caught;
     }
   }
@@ -165,17 +175,12 @@ export class UsersController {
   /** GET /users/:nickname — 공개 프로필 (커리어 페이지, 로그인 불필요) */
   @Throttle(PUBLIC_READ_IP_THROTTLE)
   @Get(':nickname')
-  async publicProfile(@Param('nickname') nickname: string) {
-    onboardingLog(this.logger, 'public-profile.requested', { nickname });
+  async publicProfile(@Param('nickname') nickname: string, @Req() req: Request) {
+    // 성공 경로는 요청 로그(rid=…)로 충분하다 — 600/min 공개 읽기에 줄을 더 쓰지 않고 실패만 남긴다.
     try {
-      const profile = await this.users.publicProfile(nickname);
-      onboardingLog(this.logger, 'public-profile.succeeded', {
-        nickname,
-        found: true,
-      });
-      return profile;
+      return await this.users.publicProfile(nickname);
     } catch (caught) {
-      onboardingError(this.logger, 'public-profile.failed', caught, { nickname });
+      onboardingError(this.logger, 'public-profile.failed', caught, { rid: requestIdOf(req), nickname });
       throw caught;
     }
   }

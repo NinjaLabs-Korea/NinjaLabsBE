@@ -15,11 +15,15 @@ function safeString(value: string): string {
   return capLogValue(value.replace(/[\u2028\u2029]/g, (char) => `\\u${char.charCodeAt(0).toString(16)}`));
 }
 
-/** Temporary structured onboarding diagnostics. Never pass tokens, codes, signatures, or messages. */
+/**
+ * Structured onboarding/auth diagnostics (JSON after the `[onboarding]` tag). Never pass tokens, codes, signatures, or messages.
+ * Pass `rid: requestIdOf(req)` so a line joins the request log (`... rid=<id>`); `traceId` is the FE's `x-onboarding-trace-id`.
+ */
 export function onboardingLog(logger: Logger, event: string, details: LogDetails = {}) {
   logger.log(`[onboarding] ${JSON.stringify({ event, ...safeDetails(details) })}`);
 }
 
+/** 예상된 4xx(닉네임 중복·확인 불일치·Turnstile 거절 등 사용자 실수)는 warn, 5xx와 예기치 못한 예외만 error — error 레벨 필터에 장애만 남기려는 규칙 */
 export function onboardingError(
   logger: Logger,
   event: string,
@@ -33,7 +37,9 @@ export function onboardingError(
       ? response
       : String((response as { message?: string | string[] }).message ?? error.name);
   }
-  logger.error(`[onboarding] ${JSON.stringify({ event, ...safeDetails(details), errorCode: safeString(code) })}`);
+  const line = `[onboarding] ${JSON.stringify({ event, ...safeDetails(details), errorCode: safeString(code) })}`;
+  if (error instanceof HttpException && error.getStatus() < 500) logger.warn(line);
+  else logger.error(line);
 }
 
 export function maskWalletAddress(address: string): string {

@@ -102,8 +102,9 @@ describe('UsersController', () => {
     };
     const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const req = { headers: { 'x-onboarding-trace-id': 't-1' }, user: { userId, isAdmin: false } } as never;
-    return { users, controller: new UsersController(users as never, {} as never), req, log, error };
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const req = { headers: { 'x-onboarding-trace-id': 't-1' }, requestId: 'req-id-1234', user: { userId, isAdmin: false } } as never;
+    return { users, controller: new UsersController(users as never, {} as never), req, log, error, warn };
   }
 
   it('check-nickname wraps the answer as {available}', async () => {
@@ -125,7 +126,7 @@ describe('UsersController', () => {
   });
 
   it('profile save / complete-onboarding / public profile failures are logged with the error code and rethrown unchanged', async () => {
-    const { users, controller, req, error } = setup();
+    const { users, controller, req, error, warn } = setup();
     const taken = new ConflictException('NICKNAME_TAKEN');
     users.completeProfile.mockRejectedValueOnce(taken);
     await expect(controller.completeProfile(req, { nickname: 'n', bio: 'b', tags: ['DEV'] })).rejects.toBe(taken);
@@ -134,20 +135,25 @@ describe('UsersController', () => {
     await expect(controller.completeOnboarding(req)).rejects.toBe(down);
     const missing = new Error('nope');
     users.publicProfile.mockRejectedValueOnce(missing);
-    await expect(controller.publicProfile('ghost')).rejects.toBe(missing);
-    const codes = error.mock.calls.map(([line]) => JSON.parse(String(line).replace('[onboarding] ', '')));
-    expect(codes).toEqual([
-      expect.objectContaining({ event: 'profile.save.failed', userId, errorCode: 'NICKNAME_TAKEN' }),
-      expect.objectContaining({ event: 'onboarding.complete.failed', userId, errorCode: 'Error' }),
-      expect.objectContaining({ event: 'public-profile.failed', nickname: 'ghost', errorCode: 'Error' }),
+    await expect(controller.publicProfile('ghost', req)).rejects.toBe(missing);
+    const parse = (calls: unknown[][]) => calls.map(([line]) => JSON.parse(String(line).replace('[onboarding] ', '')));
+    // the expected 409 is a warn; unexpected errors stay at error. Every line carries the request id
+    expect(parse(warn.mock.calls)).toEqual([
+      expect.objectContaining({ event: 'profile.save.failed', userId, rid: 'req-id-1234', errorCode: 'NICKNAME_TAKEN' }),
+    ]);
+    expect(parse(error.mock.calls)).toEqual([
+      expect.objectContaining({ event: 'onboarding.complete.failed', userId, rid: 'req-id-1234', errorCode: 'Error' }),
+      expect.objectContaining({ event: 'public-profile.failed', nickname: 'ghost', rid: 'req-id-1234', errorCode: 'Error' }),
     ]);
   });
 
   it('complete-onboarding and public profile return the service result for the session user / the path nickname', async () => {
-    const { users, controller, req } = setup();
+    const { users, controller, req, log } = setup();
     await expect(controller.completeOnboarding(req)).resolves.toEqual({ ok: true });
+    log.mockClear();
     expect(users.completeOnboarding).toHaveBeenCalledWith(userId);
-    await expect(controller.publicProfile('Ninja')).resolves.toEqual({ id: userId });
+    await expect(controller.publicProfile('Ninja', req)).resolves.toEqual({ id: userId });
+    expect(log).not.toHaveBeenCalled(); // GET /users/:nickname (600/min) writes no per-request success lines
     expect(users.publicProfile).toHaveBeenCalledWith('Ninja');
   });
 });

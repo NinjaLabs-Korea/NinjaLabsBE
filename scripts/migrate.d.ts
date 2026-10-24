@@ -8,6 +8,10 @@ export declare function migrationFiles(dir?: string): string[];
 export declare function sslOptions(
   env: Record<string, string | undefined>,
 ): { ca: string[]; rejectUnauthorized: true } | { rejectUnauthorized: false } | undefined;
+/** connectionTimeoutMillis(DB_CONNECTION_TIMEOUT_MS, 기본 5000) + idleTimeoutMillis 30000. statement_timeout은 걸지 않는다 */
+export declare function poolTimeoutOptions(
+  env: Record<string, string | undefined>,
+): { connectionTimeoutMillis: number; idleTimeoutMillis: number };
 export declare function applyMigrations(
   pool: Pool,
   options?: { dir?: string; log?: (line: string) => void },

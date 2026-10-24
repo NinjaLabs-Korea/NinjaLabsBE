@@ -3,7 +3,7 @@ import { BaseExceptionFilter } from '@nestjs/core';
 import { Request } from 'express';
 import { AlertService } from '../alerts/alert.service';
 import { ErrorBurstDetector } from '../alerts/error-burst';
-import { asClientError } from '../database/pg-errors';
+import { asHttpError } from '../database/pg-errors';
 import { logSafe } from '../logging/log-safe';
 
 /**
@@ -41,13 +41,14 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
   }
 
   catch(caught: unknown, host: ArgumentsHost) {
-    // 요청 값(NUL 등)을 DB가 거부한 것은 400 — pg-errors.ts asClientError
-    const exception = asClientError(caught);
+    // 요청 값(NUL 등)을 DB가 거부한 것은 400, 풀 연결/응답 타임아웃은 503 DATABASE_UNAVAILABLE — pg-errors.ts asHttpError
+    const exception = asHttpError(caught);
     const status = HttpExceptionFilter.statusOf(exception);
     if (status >= 500) {
       const req = host.switchToHttp().getRequest<Request | undefined>();
-      const name = exception instanceof Error ? exception.name : 'UnknownError';
-      const message = exception instanceof Error ? exception.message : String(exception);
+      // 503 DATABASE_UNAVAILABLE처럼 바꾼 응답이어도 로그에는 원래 원인(pg 타임아웃 메시지)을 남긴다
+      const name = caught instanceof Error ? caught.name : 'UnknownError';
+      const message = caught instanceof Error ? caught.message : String(caught);
       // 경로·메시지는 사용자 값이 섞일 수 있다(DB 오류 메시지는 요청 값을 인용) — CR/LF 이스케이프 + 200자 상한 (logging/log-safe.ts)
       this.logger.error(`${logSafe(req?.method ?? '-', 16)} ${logSafe(req?.path ?? req?.url ?? '-')} ${status} ${logSafe(name, 100)}: ${logSafe(message)}`);
       if (this.alerts && this.burst.record()) {

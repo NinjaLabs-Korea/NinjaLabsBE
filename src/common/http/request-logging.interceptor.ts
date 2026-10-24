@@ -9,7 +9,7 @@ import {
 import { Request, Response } from 'express';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
-import { asClientError } from '../database/pg-errors';
+import { asHttpError } from '../database/pg-errors';
 import { logSafe } from '../logging/log-safe';
 
 /**
@@ -42,7 +42,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
           else res.once('finish', () => log(res.statusCode));
         },
         error: (caught: unknown) => {
-          const err = asClientError(caught); // HttpExceptionFilter와 같은 판단 — NUL 문자 등 입력 탓 DB 오류는 400
+          const err = asHttpError(caught); // HttpExceptionFilter와 같은 판단 — 입력 탓 DB 오류는 400, DB 연결 타임아웃은 503
           log(err instanceof HttpException ? err.getStatus() : 500);
         },
       }),

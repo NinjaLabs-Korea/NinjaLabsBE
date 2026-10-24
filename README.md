@@ -9,7 +9,7 @@ Injective 생태계 빌더 커뮤니티 & 바운티 마켓플레이스 [NinjaLab
 ```
 supabase/migrations/   스키마의 소스 오브 트루스 (ERD v1 → SQL, 24 테이블 + 운영용 `throttler_storage`)
 src/
-  common/database/     pg Pool 기반 DatabaseService (query + tx 헬퍼) + SchemaGuard (미적용 마이그레이션이 있으면 기동 거부)
+  common/database/     pg Pool 기반 DatabaseService (query + tx 헬퍼, 연결/문장 타임아웃 — pool-timeouts.ts) + SchemaGuard (미적용 마이그레이션이 있으면 기동 거부)
   common/alerts/       운영 알림 AlertService (OPS_ALERT_WEBHOOK_URL 웹훅, 없으면 로그만) + 기동 실패 알림 + 5xx 버스트 감지
   auth/                구글 OAuth → JWT 세션, AuthGuard / AdminGuard
   users/               온보딩 프로필, 닉네임 중복검사, 공개 프로필, 회원 탈퇴(account-withdrawal.service)
@@ -110,6 +110,7 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
 | `JWT_REFRESH_TTL` | 미설정이면 `14d`. 형식/범위(60초~90일)가 틀리면 기동 거부 |
 | `LEGACY_ACCESS_TOKEN_CUTOFF` | 선택. 미설정이면 프로세스 시작 시각 — 그 전에 발급된 `typ` 없는 구 access 토큰만 받는다(15분 뒤 자연 소멸). ISO 8601이 아니면 기동 거부. 2026-11-30 이후 코드와 함께 제거 |
 | `DATABASE_CA_CERT` | 비어 있으면 기동하되 `warn` 1회 (TLS 인증서 미검증 — 운영 전 설정) |
+| `DB_CONNECTION_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS` | 선택, 기본 `5000`/`15000` ms (잘못된 값은 기본값). 연결 수립·풀 대기 초과 → 그 요청 `503 DATABASE_UNAVAILABLE`, 문장 초과 → Postgres 취소(500). migrate/운영 스크립트는 연결 타임아웃만 쓰고 문장 타임아웃은 걸지 않는다 (`common/database/pool-timeouts.ts`) |
 | `THROTTLER_STORAGE` | 선택. 미설정이면 production은 `postgres`(레플리카 간 공유 rate limit 카운터, `throttler_storage` — 0016), 그 외는 `memory`(인스턴스별). `postgres`/`memory` 외의 값은 **기동 거부**. railway.ts가 `postgres`를 명시한다 — `memory`로 바꾸면 레플리카 N대에서 한도가 N배 (`docs/security.md`) |
 | `TURNSTILE_SECRET_KEY` | 선택. 설정하면 `GET /auth/google`이 Cloudflare Turnstile 토큰(`turnstileToken`)을 요구한다 (400 `TURNSTILE_FAILED` / 503 `TURNSTILE_UNAVAILABLE`). 미설정이면 검사 생략 + production 기동 시 `warn`. **FE(`NEXT_PUBLIC_TURNSTILE_SITE_KEY`)를 먼저 배포**한 뒤 넣는다 — 순서가 바뀌면 모든 로그인이 400 |
 | `REWARD_MULTISIG_ADDRESS` | 기동은 하지만 비우면 새 보상의 `custody_address`가 자리표시값 `PENDING_MULTISIG_SETUP` — 스폰서가 입금할 주소가 없다. `railway.ts`에 자리가 없으므로 대시보드에서 추가 (`docs/runbook.md` §1, §8) |

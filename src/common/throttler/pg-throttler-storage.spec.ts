@@ -47,4 +47,14 @@ describe('PgThrottlerStorage', () => {
       now.mockRestore();
     }
   });
+
+  it.each(['timeout exceeded when trying to connect', 'Connection terminated due to connection timeout', 'Query read timeout'])(
+    'fails open when the pool times out (%s) — a stalled DB never blocks or 500s the throttled request',
+    async (message) => {
+      const { storage, query } = setup();
+      query.mockRejectedValue(new Error(message));
+      await expect(storage.increment('k', 30_000, 5, 0, 'default'))
+        .resolves.toEqual({ totalHits: 0, timeToExpire: 30, isBlocked: false, timeToBlockExpire: 0 });
+    },
+  );
 });

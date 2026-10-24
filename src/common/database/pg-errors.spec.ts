@@ -1,5 +1,5 @@
-import { BadRequestException } from '@nestjs/common';
-import { asClientError, isForeignKeyViolation, isUniqueViolation } from './pg-errors';
+import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
+import { asClientError, asHttpError, isDatabaseUnavailable, isForeignKeyViolation, isUniqueViolation } from './pg-errors';
 
 const pgError = (fields: Record<string, string>) => Object.assign(new Error('pg'), fields);
 
@@ -58,5 +58,26 @@ describe('asClientError — only request-caused Postgres errors become 400', () 
     ['an HttpException', new BadRequestException('X')],
   ])('%s passes through unchanged', (_label, err) => {
     expect(asClientError(err)).toBe(err);
+  });
+});
+
+describe('asHttpError — DB connection/response timeouts become 503 DATABASE_UNAVAILABLE', () => {
+  it.each([
+    'timeout exceeded when trying to connect',
+    'Connection terminated due to connection timeout',
+    'Query read timeout',
+  ])('%s → 503', (message) => {
+    const err = new Error(message);
+    expect(isDatabaseUnavailable(err)).toBe(true);
+    const mapped = asHttpError(err) as ServiceUnavailableException;
+    expect(mapped).toBeInstanceOf(ServiceUnavailableException);
+    expect(mapped.getResponse()).toMatchObject({ statusCode: 503, message: 'DATABASE_UNAVAILABLE' });
+  });
+
+  it('leaves a server-side statement timeout (57014) and other errors as they are, and still applies the 400 mapping', () => {
+    const canceled = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+    expect(asHttpError(canceled)).toBe(canceled);
+    expect(isDatabaseUnavailable('timeout exceeded when trying to connect')).toBe(false); // only Error instances
+    expect(asHttpError(pgError({ code: '22021' }))).toBeInstanceOf(BadRequestException);
   });
 });

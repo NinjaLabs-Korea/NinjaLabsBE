@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { databaseSslOptions } from './database-ssl';
+import { databaseTimeoutOptions } from './pool-timeouts';
 
 /** DatabaseService와 트랜잭션 클라이언트(PoolClient)를 함께 받는 최소 쿼리 인터페이스 */
 export type QueryRunner = {
@@ -88,6 +89,11 @@ export class DatabaseService implements OnModuleDestroy {
       // Supabase는 TLS 필수 (로컬 Postgres 개발 시 PGSSLMODE=disable).
       // DATABASE_CA_CERT가 있으면 서버 인증서를 검증한다 — database-ssl.ts
       ssl: databaseSslOptions(ssl),
+      // 연결/풀 대기/문장/응답 타임아웃 — 블랙홀 DB나 풀 고갈이 요청을 무한히 붙잡지 않게 (pool-timeouts.ts)
+      ...databaseTimeoutOptions({
+        DB_CONNECTION_TIMEOUT_MS: config.get<string>('DB_CONNECTION_TIMEOUT_MS'),
+        DB_STATEMENT_TIMEOUT_MS: config.get<string>('DB_STATEMENT_TIMEOUT_MS'),
+      }),
     });
     attachPoolErrorHandler(this.pool, DatabaseService.logger);
   }

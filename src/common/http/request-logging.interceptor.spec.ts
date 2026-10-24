@@ -147,6 +147,7 @@ describe('RequestLoggingInterceptor — status of thrown errors, non-HTTP contex
     ['FK to a missing row', Object.assign(new Error('fk'), { code: '23503', detail: 'Key (bounty_id)=(x) is not present in table "bounty".' }), 400],
     ['FK still referenced (server policy, not the client)', Object.assign(new Error('fk'), { code: '23503', detail: 'Key (id)=(x) is still referenced from table "nft".' }), 500],
     ['unique violation', Object.assign(new Error('dup'), { code: '23505' }), 500],
+    ['pool connect timeout', new Error('timeout exceeded when trying to connect'), 503],
   ])('%s → logged with status %i, original error re-thrown unchanged', async (_label, caught, status) => {
     const lines = await failWith(caught);
     expect(lines).toHaveLength(1);

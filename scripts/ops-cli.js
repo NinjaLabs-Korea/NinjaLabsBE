@@ -6,7 +6,7 @@
  */
 const { join } = require('path');
 const { createInterface } = require('readline');
-const { sslOptions } = require('./migrate');
+const { poolTimeoutOptions, sslOptions } = require('./migrate');
 
 /** 레포 루트 .env를 읽는다 (이미 셸에 있는 값은 덮어쓰지 않는다 — dotenv 기본 동작) */
 function loadDotEnv() {
@@ -17,7 +17,7 @@ function loadDotEnv() {
 function createPool(env = process.env) {
   const { Pool } = require('pg');
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  return new Pool({ connectionString: env.DATABASE_URL, ssl: sslOptions(env), max: 1 });
+  return new Pool({ connectionString: env.DATABASE_URL, ssl: sslOptions(env), max: 1, ...poolTimeoutOptions(env) });
 }
 
 /**

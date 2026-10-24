@@ -26,6 +26,18 @@ function sslOptions(env) {
   return { rejectUnauthorized: false };
 }
 
+/**
+ * migrate/운영 스크립트용 pg Pool 타임아웃 — src/common/database/pool-timeouts.ts와 같은 DB_CONNECTION_TIMEOUT_MS 규칙(기본 5000, 잘못된 값은 기본값).
+ * 블랙홀 DB에서 preDeploy가 무한히 매달리지 않고 실패(→ 배포 중단 + 알림)하게 한다.
+ * statement_timeout / query_timeout은 **걸지 않는다** — 마이그레이션의 긴 DDL·백필, pg_advisory_lock 대기를 끊으면 안 된다.
+ */
+function poolTimeoutOptions(env) {
+  const raw = String(env.DB_CONNECTION_TIMEOUT_MS || '').trim();
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  const connectionTimeoutMillis = Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 5000;
+  return { connectionTimeoutMillis, idleTimeoutMillis: 30000 };
+}
+
 /** 적용 순서대로 정렬된 마이그레이션 파일 이름 */
 function migrationFiles(dir = MIGRATIONS_DIR) {
   return readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
@@ -127,7 +139,7 @@ async function main() {
     console.error('DATABASE_URL is required');
     process.exit(1);
   }
-  const pool = new Pool({ connectionString: url, ssl: sslOptions(process.env) });
+  const pool = new Pool({ connectionString: url, ssl: sslOptions(process.env), ...poolTimeoutOptions(process.env) });
   try {
     await applyMigrations(pool, { log: console.log });
   } catch (err) {
@@ -140,6 +152,6 @@ async function main() {
   console.log('done');
 }
 
-module.exports = { alertMigrationFailure, applyMigrations, migrationFiles, sslOptions, MIGRATIONS_DIR, MIGRATION_LOCK_KEY };
+module.exports = { alertMigrationFailure, applyMigrations, migrationFiles, poolTimeoutOptions, sslOptions, MIGRATIONS_DIR, MIGRATION_LOCK_KEY };
 
 if (require.main === module) main();

@@ -57,6 +57,17 @@ describe('HttpExceptionFilter', () => {
     expect(sent.getResponse()).toMatchObject({ message: 'INVALID_CHARACTER' });
   });
 
+  it.each(['timeout exceeded when trying to connect', 'Connection terminated due to connection timeout'])(
+    'answers 503 DATABASE_UNAVAILABLE for a pool connect timeout (%s) and logs the original cause',
+    (message) => {
+      new HttpExceptionFilter().catch(new Error(message), host);
+      const [sent] = base.mock.calls[0] as [HttpException];
+      expect(sent).toBeInstanceOf(ServiceUnavailableException);
+      expect(sent.getResponse()).toMatchObject({ statusCode: 503, message: 'DATABASE_UNAVAILABLE' });
+      expect(error).toHaveBeenCalledWith(`POST /admin/bounties 503 Error: ${message}`);
+    },
+  );
+
   it('treats non-HttpException throwables as 500 and HttpException status as given', () => {
     new HttpExceptionFilter().catch(new HttpException('TEAPOT', 418), host);
     expect(error).not.toHaveBeenCalled();

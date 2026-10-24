@@ -7,11 +7,13 @@ import {
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { isUniqueViolation } from '../../common/database/pg-errors';
+import { ApplicationStatusPolicy } from '../application-status';
 import { BountyActor } from '../bounty-actor';
+import { BountyStatus } from '../bounty-status';
 
 /**
  * 지원형 바운티(application_required = true) 참가 신청
- * 상태 흐름: PENDING → APPROVED / REJECTED (본인 철회 시 WITHDRAWN)
+ * 상태 흐름: PENDING → APPROVED / REJECTED (본인 철회 시 WITHDRAWN) — 규칙의 단일 출처는 bounties/application-status.ts
  * 재지원: WITHDRAWN → PENDING (같은 행을 다시 연다 — id 유지, 심사 필드 초기화, 감사 `APPLICATION_REAPPLIED`). docs/decisions.md 참고
  */
 @Injectable()
@@ -49,7 +51,7 @@ export class ApplicationsService {
       if (!bounty.rows[0].application_required) {
         throw new BadRequestException('SUBMISSION_TYPE_BOUNTY'); // 제출형은 바로 제출
       }
-      if (bounty.rows[0].status !== 'OPEN') {
+      if (bounty.rows[0].status !== BountyStatus.OPEN) {
         throw new BadRequestException('BOUNTY_NOT_OPEN');
       }
       if ([bounty.rows[0].submission_deadline, bounty.rows[0].application_deadline].some((date) => date && new Date(date).getTime() <= Date.now())) throw new BadRequestException('APPLICATION_DEADLINE_PASSED');
@@ -62,7 +64,7 @@ export class ApplicationsService {
         [bountyId, actor.id],
       );
       if (existing.rowCount) {
-        if (existing.rows[0].status !== 'WITHDRAWN') throw new ConflictException('ALREADY_APPLIED');
+        if (!ApplicationStatusPolicy.canReapply(existing.rows[0].status)) throw new ConflictException('ALREADY_APPLIED');
         const reopened = await tx.query(
           `UPDATE bounty_application
               SET status = 'PENDING', message = $2, portfolio_url = $3, applied_at = now(),

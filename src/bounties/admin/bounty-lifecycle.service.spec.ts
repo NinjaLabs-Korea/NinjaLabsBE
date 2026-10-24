@@ -29,7 +29,7 @@ describe('BountyLifecycleService.blockers', () => {
         blockerDetails: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [] },
       });
     expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0][1]).toEqual(['bounty-1']);
+    expect(query.mock.calls[0][1]).toEqual(['bounty-1', expect.any(Array)]);
   });
 
   it('an expired submission deadline blocks (re)opening', async () => {
@@ -97,7 +97,9 @@ describe('BountyLifecycleService.blockers', () => {
     await lifecycle.blockers(runner, 'b', { status: 'OPEN' });
     const sql = query.mock.calls[0][0] as string;
     expect(sql).toContain("bounty_application WHERE bounty_id = $1 AND status = 'PENDING') AS pending");
-    expect(sql).toContain("status IN ('SUBMITTED','RESUBMITTED','IN_REVIEW','REVISION_REQUESTED')) AS unresolved");
+    // unresolved = submission-status.ts의 미결 집합을 $2로 바인딩 (탈퇴 시 철회 대상과 같은 집합)
+    expect(sql).toContain('status = ANY($2::text[])) AS unresolved');
+    expect(query.mock.calls[0][1]).toEqual(['b', ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
     expect(sql).toContain("status NOT IN ('FUNDED','PARTIALLY_PAID','PAID')) AS unfunded");
     expect(sql).toContain("p.status <> 'PAID') AS unpaid");
   });

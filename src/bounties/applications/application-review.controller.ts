@@ -2,10 +2,11 @@ import { Body, Controller, Param, ParseUUIDPipe, Post, Req, UseGuards } from '@n
 import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { AdminGuard } from '../../auth/admin.guard';
 import { AuthedRequest } from '../../auth/authed-request';
+import { ApplicationReviewDecision, ApplicationStatusPolicy } from '../application-status';
 import { ApplicationReviewService } from './application-review.service';
 
 export class ReviewApplicationDto {
-  @IsIn(['APPROVED', 'REJECTED']) decision!: 'APPROVED' | 'REJECTED';
+  @IsIn(ApplicationStatusPolicy.reviewDecisions()) decision!: ApplicationReviewDecision;
   @IsOptional() @IsString() @MaxLength(2000) note?: string;
 }
 

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { BountyStatusPolicy } from '../bounty-status';
+import { SubmissionDecision, SubmissionStatusPolicy } from '../submission-status';
 
 /** 운영자의 제출물 심사 — 심사 시작/수정 요청/승인/반려와 리비전별 심사 기록 */
 @Injectable()
@@ -12,13 +13,8 @@ export class SubmissionReviewService {
   ) {}
 
   async review(submissionId: string, decision: string, comment: string | undefined, adminId: string, revisionNo?: number) {
-    const statusMap: Record<string, string> = {
-      START_REVIEW: 'IN_REVIEW',
-      REQUEST_REVISION: 'REVISION_REQUESTED',
-      APPROVE: 'APPROVED',
-      REJECT: 'REJECTED',
-    };
-    const newStatus = statusMap[decision];
+    // 결정 → 상태, 심사 가능 상태, 코멘트 필수 규칙은 모두 bounties/submission-status.ts
+    const newStatus = SubmissionStatusPolicy.statusAfter(decision);
     if (!newStatus) throw new NotFoundException('INVALID_DECISION');
 
     return this.db.tx(async (tx) => {
@@ -31,17 +27,17 @@ export class SubmissionReviewService {
         [submissionId],
       );
       if (!sub.rowCount) throw new NotFoundException('SUBMISSION_NOT_FOUND');
-      if (!['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW'].includes(sub.rows[0].status) && !(sub.rows[0].status === 'REVISION_REQUESTED' && decision === 'REJECT')) {
+      if (!SubmissionStatusPolicy.canReview(sub.rows[0].status, decision)) {
         throw new BadRequestException('SUBMISSION_NOT_REVIEWABLE');
       }
       if (revisionNo !== undefined && revisionNo !== sub.rows[0].current_revision_no) {
         throw new BadRequestException('SUBMISSION_REVISION_CHANGED');
       }
-      if ((decision === 'REQUEST_REVISION' || (sub.rows[0].status === 'REVISION_REQUESTED' && decision === 'REJECT')) && !comment?.trim()) {
+      if (SubmissionStatusPolicy.requiresComment(sub.rows[0].status, decision) && !comment?.trim()) {
         throw new BadRequestException('REVISION_COMMENT_REQUIRED');
       }
       // 승인 수는 바운티의 max_winners를 넘을 수 없다 (바운티 행 잠금으로 동시 승인도 직렬화된다).
-      if (decision === 'APPROVE') {
+      if (decision === SubmissionDecision.APPROVE) {
         const approved = await tx.query<{ count: string }>(
           `SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`,
           [parent.rows[0].id],

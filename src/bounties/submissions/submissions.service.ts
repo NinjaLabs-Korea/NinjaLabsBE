@@ -8,7 +8,8 @@ import {
 import { DatabaseService } from '../../common/database/database.service';
 import { payoutStatusSql } from '../../rewards/payout-status';
 import { BountyActor } from '../bounty-actor';
-import { BountyStatusPolicy } from '../bounty-status';
+import { BountyStatus, BountyStatusPolicy } from '../bounty-status';
+import { SubmissionStatus, SubmissionStatusPolicy } from '../submission-status';
 
 export interface SubmitInput {
   submissionUrl: string;
@@ -22,6 +23,7 @@ export interface SubmitInput {
  * - 제출자당 제출 레코드 1개(최신본) + submission_revision 스냅샷
  * - 지원형 바운티는 APPROVED 지원서가 있어야 제출 가능
  * - 마감 전 자유 수정, 마감 후엔 REVISION_REQUESTED 상태에서만 재제출
+ * 제출 상태 규칙(재제출 가능·확정)의 단일 출처는 bounties/submission-status.ts
  */
 @Injectable()
 export class SubmissionsService {
@@ -81,7 +83,7 @@ export class SubmissionsService {
       const deadlinePassed = new Date(b.submission_deadline) < new Date();
 
       if (!existing.rowCount) {
-        if (b.status !== 'OPEN') throw new BadRequestException('BOUNTY_NOT_OPEN');
+        if (b.status !== BountyStatus.OPEN) throw new BadRequestException('BOUNTY_NOT_OPEN');
         if (deadlinePassed) throw new BadRequestException('DEADLINE_PASSED');
         const created = await tx.query<{ id: string }>(
           `INSERT INTO bounty_submission
@@ -103,19 +105,20 @@ export class SubmissionsService {
            input.repositoryUrl ?? null, input.commitSha ?? null,
            actor.userId, actor.agentId],
         );
-        return { id: submissionId, revisionNo: 1, status: 'SUBMITTED' };
+        return { id: submissionId, revisionNo: 1, status: SubmissionStatus.SUBMITTED };
       }
 
       const sub = existing.rows[0];
-      if (b.status !== 'OPEN' && sub.status !== 'REVISION_REQUESTED') {
+      const resubmitAfterClose = SubmissionStatusPolicy.canResubmitAfterIntakeClosed(sub.status);
+      if (b.status !== BountyStatus.OPEN && !resubmitAfterClose) {
         throw new BadRequestException('BOUNTY_NOT_OPEN');
       }
       // 마감 후에는 REVISION_REQUESTED 상태에서만 재제출 허용
-      if (deadlinePassed && sub.status !== 'REVISION_REQUESTED') {
+      if (deadlinePassed && !resubmitAfterClose) {
         throw new BadRequestException('DEADLINE_PASSED');
       }
       // 승인/거절 확정 후에는 수정 불가
-      if (['APPROVED', 'REJECTED'].includes(sub.status)) {
+      if (SubmissionStatusPolicy.isFinalized(sub.status)) {
         throw new ConflictException('SUBMISSION_FINALIZED');
       }
 
@@ -137,7 +140,7 @@ export class SubmissionsService {
          input.repositoryUrl ?? null, input.commitSha ?? null,
          actor.userId, actor.agentId],
       );
-      return { id: sub.id, revisionNo: nextRev, status: 'RESUBMITTED' };
+      return { id: sub.id, revisionNo: nextRev, status: SubmissionStatus.RESUBMITTED };
     });
   }
 

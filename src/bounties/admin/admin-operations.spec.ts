@@ -122,7 +122,7 @@ describe('Admin review safeguards', () => {
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ unfunded: 1 }] });
     const { db, dbQuery } = dbWith(query);
     await expect(adminServicesFor(db).bounties.transition('bounty', 'OPEN', 'admin')).rejects.toThrow('Bad Request Exception');
-    expect(query.mock.calls[1][1]).toEqual(['bounty']); // lifecycle blockers count the bounty's own rows
+    expect(query.mock.calls[1][1]).toEqual(['bounty', expect.any(Array)]); // lifecycle blockers count the bounty's own rows ($2 = unresolved submission statuses)
     expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty'))).toBe(false);
     expect(dbQuery).not.toHaveBeenCalled();
   });

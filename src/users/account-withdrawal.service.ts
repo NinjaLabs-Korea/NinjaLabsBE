@@ -2,15 +2,13 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
+import { SubmissionStatusPolicy } from '../bounties/submission-status';
 import { DatabaseService } from '../common/database/database.service';
 import { PAYABLE_REWARD_STATUSES } from '../rewards/rewards.service';
 import { WITHDRAWN_NICKNAME_PREFIX } from './nickname';
 
 /** payout 종료 상태 — 이 밖의 상태(REQUESTED/AWAITING_MULTISIG_APPROVAL/APPROVED/BROADCASTING)가 하나라도 있으면 탈퇴를 막는다 */
 export const TERMINAL_PAYOUT_STATUSES = ['PAID', 'CANCELLED', 'FAILED'] as const;
-
-/** 심사가 끝나지 않은 제출 상태 — 탈퇴 시 WITHDRAWN으로 철회한다 (bounty-lifecycle의 unresolved 집합과 같다) */
-export const OPEN_SUBMISSION_STATUSES = ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED'] as const;
 
 /**
  * 승인됐지만 아직 payout이 요청되지 않은(그래서 아직 받을 수 있는) 보상 — 하나라도 있으면 탈퇴를 막는다 (409 WITHDRAWAL_BLOCKED_PENDING_REWARDS).
@@ -147,7 +145,8 @@ export class AccountWithdrawalService {
           WHERE status = ANY($2::text[])
             AND (submitter_user_id = $1
                  OR agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1)))`,
-        [userId, [...OPEN_SUBMISSION_STATUSES]],
+        // 미결 제출 상태 — bounty-lifecycle의 UNRESOLVED_SUBMISSIONS와 같은 집합 (bounties/submission-status.ts)
+        [userId, SubmissionStatusPolicy.unresolvedStatuses()],
       );
       await tx.query(
         `UPDATE bounty_application SET status = 'WITHDRAWN'

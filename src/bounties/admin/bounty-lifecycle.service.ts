@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../common/database/database.service';
+import { SubmissionStatusPolicy } from '../submission-status';
 
 /** 전이 차단 사유 코드 — 운영 화면(FE admin.operations.blockers.<code>)이 이 코드로 번역한다. 추가 시 FE 메시지도 함께. */
 export type LifecycleBlockerCode =
@@ -26,7 +27,7 @@ export class BountyLifecycleService {
         AND NOT EXISTS (SELECT 1 FROM bounty_submission s WHERE s.bounty_id = a.bounty_id
           AND (s.submitter_user_id = a.applicant_user_id OR s.agent_id = a.agent_id))) AS unsubmitted,
       (SELECT count(*)::int FROM bounty_submission WHERE bounty_id = $1
-        AND status IN ('SUBMITTED','RESUBMITTED','IN_REVIEW','REVISION_REQUESTED')) AS unresolved,
+        AND status = ANY($2::text[])) AS unresolved,
       (SELECT count(*)::int FROM bounty_reward WHERE bounty_id = $1
         AND status NOT IN ('FUNDED','PARTIALLY_PAID','PAID')) AS unfunded,
       (SELECT count(*)::int FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
@@ -34,7 +35,9 @@ export class BountyLifecycleService {
       (SELECT count(*)::int FROM bounty_submission s WHERE s.bounty_id = $1 AND s.status = 'APPROVED'
         AND EXISTS (SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = $1)
         AND NOT EXISTS (SELECT 1 FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
-          WHERE p.submission_id = s.id AND rw.bounty_id = $1 AND p.status = 'PAID')) AS unawarded`, [bountyId]);
+          WHERE p.submission_id = s.id AND rw.bounty_id = $1 AND p.status = 'PAID')) AS unawarded`,
+    // $2 미결 제출 상태 — 탈퇴 시 철회 대상과 같은 집합 (bounties/submission-status.ts)
+    [bountyId, SubmissionStatusPolicy.unresolvedStatuses()]);
     const c = r.rows[0];
     const expired = !!bounty.submission_deadline && new Date(bounty.submission_deadline).getTime() <= Date.now();
     const details: Record<string, LifecycleBlocker[]> = { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [] };

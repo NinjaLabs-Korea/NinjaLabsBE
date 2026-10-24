@@ -20,6 +20,8 @@ src/
   media/               관리자 이미지 업로드 + 공개 immutable 조회
   bounties/            바운티 목록/상세 + applications + submissions(리비전)
     bounty-status.ts     바운티 상태 집합·전이표의 단일 출처
+    submission-status.ts 제출물 상태 집합·심사 결정표·코멘트 필수 규칙의 단일 출처
+    application-status.ts 지원서 상태·심사 결정·재지원 규칙의 단일 출처
     admin/               운영자 바운티 관리 + 전이 차단 사유(lifecycle)
   rewards/             선입금 확인 → payout 멱등 지급 흐름 (운영자 API 포함)
   nfts/                부모/자식 NFT + nft_job 비동기 워커 (1분 폴링) + 운영자 잡 콘솔(nft-jobs-admin.*: 목록/재시도)
@@ -52,6 +54,8 @@ docs/
 - **운영 알림은 `AlertService.notify(key, message)`로만 보낸다** (`common/alerts/alert.service.ts`, 전역 모듈). 절대 throw하지 않으므로 try/catch 불필요.
   `key`는 고정 문자열(또는 `종류:작은 고정 집합` — 예 `nft-job-failed:MINT_CHILD`)이고 같은 키는 30분에 한 번만 나간다(웹훅 전달 성공 기준 — 실패는 2초 뒤 1회 재시도 후 다음 발생이 다시 시도). 메시지에 비밀·PII(이메일, 닉네임, 요청 본문, 실제 경로 값)를 넣지 않는다 — id·개수·상태·라우트 패턴만.
 - **바운티 상태 문자열 배열을 직접 만들지 않는다.** `bounties/bounty-status.ts`의 `BountyStatusPolicy`를 쓴다.
+  제출물·지원서 상태도 같다 — `bounties/submission-status.ts`(`SubmissionStatusPolicy`), `bounties/application-status.ts`(`ApplicationStatusPolicy`).
+  SQL의 상태 집합은 helper가 주는 배열을 `= ANY($n::text[])`로 바인딩한다. `src/test-support/status-literals.spec.ts`가 상태 리터럴 집합(`['APPROVED', 'REJECTED']`, `IN ('SUBMITTED', …)`)을 막는다.
 - **유니크 충돌 판별은 `isUniqueViolation(err)`** (`common/database/pg-errors.ts`).
 - **사람/에이전트 참여는 `BountyActor`로 표현한다** (`bounties/bounty-actor.ts`). `isAgent ? ... : ...` 분기를 새로 만들지 않는다.
 - **지갑 서명 검증은 `signatureSchemeFor(address).verify()`** (`common/crypto/wallet-signature.ts`). 새 지갑 종류는 구현체를 추가한다.

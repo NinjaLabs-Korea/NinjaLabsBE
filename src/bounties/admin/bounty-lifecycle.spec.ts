@@ -41,7 +41,7 @@ describe('Bounty lifecycle ordering', () => {
     await expect(services.bounties.transition('b', 'SUBMISSION_CLOSED', 'admin')).rejects.toMatchObject({ response: { message: [expect.any(String)] } });
     expect(query.mock.calls.some(([sql]) => sql.startsWith('UPDATE bounty'))).toBe(false);
     // the blockers query counts the rows of THIS bounty
-    expect(query.mock.calls.find(([sql]) => sql.includes('AS pending'))![1]).toEqual(['b']);
+    expect(query.mock.calls.find(([sql]) => sql.includes('AS pending'))![1]).toEqual(['b', expect.any(Array)]);
     expect(dbQuery).not.toHaveBeenCalled();
   });
   it('allows closing after the submission deadline when approved participants never submitted', async () => {

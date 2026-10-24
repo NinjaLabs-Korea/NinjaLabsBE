@@ -44,6 +44,7 @@ export function e2eEnv(): Record<string, string> {
     PGSSLMODE: process.env.TEST_PGSSLMODE ?? 'disable',
     DATABASE_CA_CERT: '',
     TRUST_PROXY: '1',
+    THROTTLER_STORAGE: 'memory', // 인스턴스별 in-memory — throttling 스펙의 버킷이 실행 간 DB에 남지 않게 (공유 저장소는 test-db throttler-storage.db-spec)
     CORS_ORIGINS: `${FE_ORIGIN},${PREVIEW_ORIGIN},https://ninjalabsfe-*-team.vercel.app`,
     AUTH_SUCCESS_REDIRECT: `${FE_ORIGIN}/`,
     AUTH_ALLOWED_REDIRECT_ORIGINS: `${PREVIEW_ORIGIN},https://ninjalabsfe-*-team.vercel.app`,

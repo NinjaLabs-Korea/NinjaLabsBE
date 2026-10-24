@@ -5,7 +5,7 @@ import { Request } from 'express';
 import { presentedRefreshToken } from './session-cookie';
 
 /**
- * `/auth/exchange`·`/auth/refresh` 전용 한도 — **제시된 자격 증명의 해시** 기준 10/min (auth.module.ts의 ThrottlerModule.forRoot에 같은 이름).
+ * `/auth/exchange`·`/auth/refresh` 전용 한도 — **제시된 자격 증명의 해시** 기준 10/min (auth.module.ts의 throttlerModule()에 같은 이름).
  *
  * FE가 `/api/auth/*`를 Vercel(Next.js rewrite)로 프록시하면 이 서버가 보는 클라이언트 IP는 Vercel의 공유 egress IP다 — IP 기준
  * 10/min이면 서로 다른 사용자들이 한 버킷을 나눠 쓰다 정당한 refresh가 429가 된다. 그래서 refresh는 refresh 토큰(쿠키 또는 본문)의

@@ -2,7 +2,7 @@ import { ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/com
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AgentApiRequest } from './agent-api.guard';
 
-/** Agent API 키당 분당 요청 한도 — agents.module.ts의 ThrottlerModule.forRoot에 같은 이름으로 등록된다 */
+/** Agent API 키당 분당 요청 한도 — agents.module.ts의 throttlerModule()에 같은 이름으로 등록된다 */
 export const AGENT_API_THROTTLER = { name: 'agent-api', ttl: 60_000, limit: 60 } as const;
 
 /**

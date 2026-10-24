@@ -1,4 +1,12 @@
-import { MAX_REFRESH_TTL_SECONDS, MIN_REFRESH_TTL_SECONDS, normalizeRefreshTtl, refreshTtlSeconds } from './refresh-ttl';
+import {
+  MAX_ACCESS_TTL_SECONDS,
+  MAX_REFRESH_TTL_SECONDS,
+  MIN_ACCESS_TTL_SECONDS,
+  MIN_REFRESH_TTL_SECONDS,
+  accessTtlSeconds,
+  normalizeRefreshTtl,
+  refreshTtlSeconds,
+} from './refresh-ttl';
 
 /**
  * JWT_REFRESH_TTL 규칙 문서 — 문법(`<정수>[공백]<단위>`), 단위 정규화, 허용 범위(60초~90일), 미설정 기본값(14d).
@@ -31,5 +39,42 @@ describe('normalizeRefreshTtl (JWT_REFRESH_TTL grammar)', () => {
     expect(() => normalizeRefreshTtl('91d')).toThrow('must be between');
     expect(normalizeRefreshTtl('1m')).toBe('1 minutes');
     expect(refreshTtlSeconds(normalizeRefreshTtl('90d'))).toBe(MAX_REFRESH_TTL_SECONDS);
+  });
+});
+
+/**
+ * JWT_ACCESS_TTL 규칙 문서 — 문법은 JWT_REFRESH_TTL과 같고, 결과는 jsonwebtoken `expiresIn`에 넘길 **초**(숫자), 허용 범위 60초~60분, 미설정 기본값 15m.
+ */
+describe('accessTtlSeconds (JWT_ACCESS_TTL grammar)', () => {
+  it.each([
+    ['15m', 900],
+    ['900s', 900],
+    ['60s', 60], // FE integration harness value
+    ['1h', 3600],
+    ['30 minutes', 1800],
+    ['  5m ', 300],
+  ])('%j → %d seconds', (raw, seconds) => {
+    expect(accessTtlSeconds(raw)).toBe(seconds);
+  });
+
+  it('defaults to 15 minutes when unset', () => {
+    expect(accessTtlSeconds(undefined)).toBe(900);
+  });
+
+  it.each(['900', '15', 'm', '1.5m', '-5m', '15mo', '15 minutes ago', ''])(
+    'rejects %j as not "<integer> <unit>" (a bare number would be milliseconds to jsonwebtoken → expired at issue)',
+    (raw) => {
+      expect(() => accessTtlSeconds(raw)).toThrow('JWT_ACCESS_TTL must be "<integer> <unit>"');
+    },
+  );
+
+  it(`rejects lifetimes outside ${MIN_ACCESS_TTL_SECONDS} s .. 60 min, accepts both bounds`, () => {
+    expect(() => accessTtlSeconds('0s')).toThrow('JWT_ACCESS_TTL must be between');
+    expect(() => accessTtlSeconds('59s')).toThrow('must be between');
+    expect(() => accessTtlSeconds('61m')).toThrow('must be between');
+    expect(() => accessTtlSeconds('2h')).toThrow('must be between');
+    expect(() => accessTtlSeconds('1d')).toThrow('must be between');
+    expect(accessTtlSeconds('1m')).toBe(MIN_ACCESS_TTL_SECONDS);
+    expect(accessTtlSeconds('60m')).toBe(MAX_ACCESS_TTL_SECONDS);
   });
 });

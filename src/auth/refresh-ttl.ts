@@ -1,10 +1,13 @@
 /**
- * JWT_REFRESH_TTL(refresh 세션 수명) 해석의 단일 출처 — 순수 함수만 둔다 (DB/Nest 의존 없음).
+ * JWT_REFRESH_TTL(refresh 세션 수명)과 JWT_ACCESS_TTL(access 토큰 수명) 해석의 단일 출처 — 순수 함수만 둔다 (DB/Nest 의존 없음).
+ * 두 값은 같은 문법(`<정수>[공백]<단위>`)을 쓰고 허용 범위만 다르다.
  *
  * 여기를 고치는 경우:
- *   - 받을 단위를 늘리거나 줄일 때 → REFRESH_TTL 정규식과 REFRESH_TTL_UNITS 표를 **함께** 고친다.
- *   - 허용 범위를 바꿀 때 → MIN_REFRESH_TTL_SECONDS / MAX_REFRESH_TTL_SECONDS (에러 메시지의 "90 days"도 같이).
- * 쓰는 곳: AuthService 생성자(부팅 시 검증 → auth_session.expires_at interval), refresh 쿠키 Max-Age(session-cookie.ts 경유).
+ *   - 받을 단위를 늘리거나 줄일 때 → REFRESH_TTL 정규식과 REFRESH_TTL_UNITS 표를 **함께** 고친다 (두 TTL에 같이 적용된다).
+ *   - refresh 허용 범위를 바꿀 때 → MIN_REFRESH_TTL_SECONDS / MAX_REFRESH_TTL_SECONDS (에러 메시지의 "90 days"도 같이).
+ *   - access 허용 범위를 바꿀 때 → MIN_ACCESS_TTL_SECONDS / MAX_ACCESS_TTL_SECONDS. 최소 60초는 FE 통합 하네스(`JWT_ACCESS_TTL=60s`)가 쓴다.
+ * 쓰는 곳: AuthService 생성자(부팅 시 검증 → auth_session.expires_at interval), refresh 쿠키 Max-Age(session-cookie.ts 경유),
+ * AuthModule의 JwtModule 팩토리(access 토큰 `expiresIn` — 부팅 시 검증).
  * 규칙은 refresh-ttl.spec.ts가 문서 역할을 한다.
  */
 
@@ -54,4 +57,30 @@ export function refreshTtlSeconds(normalized: string): number {
   const perUnit = REFRESH_TTL_SECONDS[unit];
   if (!perUnit || !/^\d+$/.test(amount)) throw new Error(`not a normalized refresh TTL: "${normalized}"`);
   return Number(amount) * perUnit;
+}
+
+/** access 토큰 수명 허용 범위 — 1분 미만은 발급 직후 만료(무한 refresh), 60분 초과는 정지/권한 회수가 늦게 반영된다 (adm 클레임, 탈취 토큰 수명) */
+export const MIN_ACCESS_TTL_SECONDS = 60;
+export const MAX_ACCESS_TTL_SECONDS = 60 * 60;
+
+/**
+ * JWT_ACCESS_TTL → 초 (jsonwebtoken `expiresIn`에 **숫자**로 넘긴다 — 숫자는 초로 해석된다).
+ * 미설정이면 15분. 문법은 JWT_REFRESH_TTL과 같다 — 단위 없는 `900`은 jsonwebtoken이 밀리초 문자열로 읽어 발급 즉시 만료되므로 거부한다.
+ * 문법이 틀리거나 60초 미만 / 60분 초과면 throw (부팅 시 fail-fast — JWT_REFRESH_TTL과 같이 환경 무관).
+ */
+export function accessTtlSeconds(raw: string | undefined): number {
+  const ttl = (raw ?? '15m').trim();
+  const match = REFRESH_TTL.exec(ttl);
+  if (!match) {
+    throw new Error(
+      `JWT_ACCESS_TTL must be "<integer> <unit>" with unit s/m/h or their long forms (e.g. 15m, 900s, 1h) — a bare number is read as milliseconds by jsonwebtoken, got "${ttl}"`,
+    );
+  }
+  const seconds = Number(match[1]) * REFRESH_TTL_SECONDS[REFRESH_TTL_UNITS[match[2]]];
+  if (seconds < MIN_ACCESS_TTL_SECONDS || seconds > MAX_ACCESS_TTL_SECONDS) {
+    throw new Error(
+      `JWT_ACCESS_TTL must be between ${MIN_ACCESS_TTL_SECONDS} seconds and 60 minutes (got "${ttl}" = ${seconds} seconds)`,
+    );
+  }
+  return seconds;
 }

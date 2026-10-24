@@ -76,6 +76,22 @@ describe('AuthModule boots its secrets from the .env ConfigModule loads (not imp
     await expect(auth.verifyAccessToken(token)).resolves.toEqual({ userId: 'user-1', isAdmin: false });
   });
 
+  // ConfigModule copies the .env into process.env, so each boot whose values must not leak into the next gets its own test (afterEach restores)
+  it('signs a 15-minute access token when JWT_ACCESS_TTL is unset', async () => {
+    const app = await boot(`JWT_SECRET=${STRONG_SECRET}\n`);
+    const { exp, iat } = app.get(JwtService).decode(app.get(JwtService).sign({ sub: 'u', typ: 'access' })) as { exp: number; iat: number };
+    expect(exp - iat).toBe(900);
+  });
+
+  it('refuses to boot on a unitless JWT_ACCESS_TTL (jsonwebtoken would read `900` as 900 ms — every access token expired at issue)', async () => {
+    await expect(boot(`JWT_SECRET=${STRONG_SECRET}\nJWT_ACCESS_TTL=900\n`)).rejects.toThrow(/JWT_ACCESS_TTL must be "<integer> <unit>"/);
+  });
+
+  it('refuses to boot in production on a JWT_ACCESS_TTL above 60 minutes', async () => {
+    await expect(boot(`NODE_ENV=production\nGOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${STRONG_SECRET}\nJWT_ACCESS_TTL=2h\n`))
+      .rejects.toThrow(/JWT_ACCESS_TTL must be between/);
+  });
+
   it('falls back to the dev secret outside production when the file only has the placeholder', async () => {
     const app = await boot('JWT_SECRET=change-me-long-random-string\n');
     expect(app.get<string>(JWT_SECRET)).toBe('dev-only-secret');

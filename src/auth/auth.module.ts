@@ -9,6 +9,7 @@ import { AdminGuard } from './admin.guard';
 import { GoogleIdTokenVerifier } from './google-id-token.verifier';
 import { JWT_SECRET, JwtSecretModule } from './jwt-secret';
 import { TurnstileVerifier } from './turnstile.verifier';
+import { accessTtlSeconds } from './refresh-ttl';
 import { requireGoogleClientSecret } from '../common/bootstrap-checks';
 import { throttlerModule } from '../common/throttler/throttler-options';
 
@@ -18,6 +19,7 @@ import { throttlerModule } from '../common/throttler/throttler-options';
  *
  * 두 검사 모두 ConfigService를 통해 **모듈 초기화 시점**에 실행된다 — import 시점의 process.env는 ConfigModule.forRoot()가
  * .env를 읽기 전이라, 그때 읽으면 로컬 `start:prod`가 .env의 시크릿 대신 dev 폴백 시크릿으로 서명할 수 있다.
+ * JWT_ACCESS_TTL은 JwtModule 팩토리에서 검증한다 — 단위 없는 값/60초~60분 밖이면 환경과 무관하게 부팅 실패 (JWT_REFRESH_TTL과 같은 규칙, refresh-ttl.ts).
  * TURNSTILE_SECRET_KEY는 선택 — 미설정이면 production에서 기동 시 warn만 한다 (turnstile.verifier.ts).
  * 서명 시크릿은 JwtSecretModule의 JWT_SECRET provider 하나를 JwtModule과 AuthService가 함께 쓴다 (jwt-secret.ts).
  */
@@ -32,7 +34,8 @@ import { throttlerModule } from '../common/throttler/throttler-options';
       inject: [JWT_SECRET, ConfigService],
       useFactory: (secret: string, config: ConfigService) => ({
         secret,
-        signOptions: { expiresIn: config.get<string>('JWT_ACCESS_TTL') ?? '15m' },
+        // 초 단위 숫자로 넘긴다 — 문자열 `900`은 jsonwebtoken이 밀리초로 읽어 발급 즉시 만료된다. 형식/범위(60초~60분)가 틀리면 부팅 실패 (refresh-ttl.ts)
+        signOptions: { expiresIn: accessTtlSeconds(config.get<string>('JWT_ACCESS_TTL')) },
       }),
     }),
   ],

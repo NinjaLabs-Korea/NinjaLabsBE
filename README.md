@@ -131,6 +131,7 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
 | `GOOGLE_CLIENT_SECRET` | 없으면 **기동 거부** (로그인이 어차피 전부 실패) |
 | `TRUST_PROXY` | 미설정/빈 값이면 **1로 보고 `warn`** (Railway는 항상 프록시 1홉 뒤). 명시적 `0`/비정수는 **기동 거부** — railway.ts가 `1`을 넣는다 |
 | `JWT_REFRESH_TTL` | 미설정이면 `14d`. 형식/범위(60초~90일)가 틀리면 기동 거부 |
+| `JWT_ACCESS_TTL` | 미설정이면 `15m`. `JWT_REFRESH_TTL`과 같은 문법(`<정수><단위>` — 단위 없는 `900`은 jsonwebtoken이 밀리초로 읽어 발급 즉시 만료되므로 거부), 범위 60초~60분. 틀리면 환경과 무관하게 **기동 거부** — railway.ts가 `15m`을 넣는다 |
 | `LEGACY_ACCESS_TOKEN_CUTOFF` | 선택. 미설정이면 프로세스 시작 시각 — 그 전에 발급된 `typ` 없는 구 access 토큰만 받는다(15분 뒤 자연 소멸). ISO 8601이 아니면 기동 거부. 2026-11-30 이후 코드와 함께 제거 |
 | `DATABASE_CA_CERT` | 비어 있으면 기동하되 `warn` 1회 (TLS 인증서 미검증 — 운영 전 설정) |
 | `DB_CONNECTION_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS` | 선택, 기본 `5000`/`15000` ms (잘못된 값은 기본값). 연결 수립·풀 대기 초과 → 그 요청 `503 DATABASE_UNAVAILABLE`, 문장 초과 → Postgres 취소(500). migrate/운영 스크립트는 연결 타임아웃만 쓰고 문장 타임아웃은 걸지 않는다 (`common/database/pool-timeouts.ts`) |

@@ -31,3 +31,6 @@ export declare function auditWithRetry(
   sleep: (ms: number) => void,
   maxAttempts?: number,
 ): AttemptOutcome;
+export declare const MAX_ATTEMPTS: number;
+export declare const SPAWN_TIMEOUT_MS: number;
+export declare const BACKOFF_MS: number;

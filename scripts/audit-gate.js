@@ -52,9 +52,12 @@ function evaluate(report, allowlist, today = new Date().toISOString().slice(0, 1
 }
 
 // 네트워크 장애는 advisory가 아니므로 재시도 후에도 실패하면 별도 에러 제목으로 구분한다.
-const NETWORK_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN', 'ENOTFOUND']);
+const NETWORK_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND']);
+// npm이 레지스트리 요청 실패를 보고할 때 error.code/summary는 비어 있고 message에만 원인이 들어온다.
+const NETWORK_MESSAGE_RE = /request to \S+ failed|audit endpoint returned an error/i;
 const MAX_ATTEMPTS = 3;
-const SPAWN_TIMEOUT_MS = 90_000;
+// 최악의 경우 3 * 60s + 5s + 10s = 195s < CI step timeout 240s 이어야 network 에러 로그가 step 타임아웃보다 먼저 찍힌다.
+const SPAWN_TIMEOUT_MS = 60_000;
 const BACKOFF_MS = 5_000; // attempt n 뒤에 n * BACKOFF_MS 만큼 대기
 const AUDIT_ARGS = ['audit', '--omit=dev', '--json', '--fetch-timeout=30000', '--fetch-retries=2'];
 
@@ -78,9 +81,9 @@ function classifyAttempt(res) {
   }
   if (report && report.error) {
     const code = report.error.code;
-    const reason = `npm audit failed: ${report.error.summary || code}`;
-    const text = `${code} ${report.error.summary || ''} ${report.error.detail || ''}`;
-    const isNetwork = [...NETWORK_CODES].some((c) => text.includes(c));
+    const reason = `npm audit failed: ${report.error.summary || code || report.message || 'unknown error'}`;
+    const text = `${code} ${report.error.summary || ''} ${report.error.detail || ''} ${report.message || ''}`;
+    const isNetwork = [...NETWORK_CODES].some((c) => text.includes(c)) || NETWORK_MESSAGE_RE.test(text);
     return { kind: isNetwork ? 'network' : 'fatal', reason };
   }
   return { kind: 'ok', report };
@@ -125,6 +128,6 @@ function main() {
   console.log(`audit-gate: ok (${result.allowed.length} allowlisted high/critical advisories)`);
 }
 
-module.exports = { collectAdvisories, evaluate, classifyAttempt, auditWithRetry };
+module.exports = { collectAdvisories, evaluate, classifyAttempt, auditWithRetry, MAX_ATTEMPTS, SPAWN_TIMEOUT_MS, BACKOFF_MS };
 
 if (require.main === module) main();

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { auditWithRetry, classifyAttempt, collectAdvisories, evaluate } from '../../scripts/audit-gate';
+import { BACKOFF_MS, MAX_ATTEMPTS, SPAWN_TIMEOUT_MS, auditWithRetry, classifyAttempt, collectAdvisories, evaluate } from '../../scripts/audit-gate';
 
 const advisory = (severity: string, ghsa: string) => ({
   name: 'multer',
@@ -82,6 +82,22 @@ describe('audit-gate', () => {
       const err = (code: string, summary: string) => ({ stdout: JSON.stringify({ error: { code, summary } }), stderr: '' });
       expect(classifyAttempt(err('ENOTFOUND', 'request failed')).kind).toBe('network');
       expect(classifyAttempt(err('ENOLOCK', 'requires a lockfile')).kind).toBe('fatal');
+    });
+
+    it('treats the real npm registry-failure shape (empty code, cause only in message) as network', () => {
+      const res = {
+        stdout: JSON.stringify({
+          message: 'request to https://registry.npmjs.org/-/npm/v1/security/advisories/bulk failed, reason: connect ECONNREFUSED 127.0.0.1:9',
+          error: { summary: '', detail: '' },
+        }),
+        stderr: '',
+      };
+      expect(classifyAttempt(res).kind).toBe('network');
+    });
+
+    it('keeps worst-case retry time under the 240s CI step timeout', () => {
+      const worstMs = MAX_ATTEMPTS * SPAWN_TIMEOUT_MS + BACKOFF_MS * ((MAX_ATTEMPTS * (MAX_ATTEMPTS - 1)) / 2);
+      expect(worstMs).toBeLessThan(4 * 60_000);
     });
 
     it('treats a non-network spawn failure as fatal', () => {

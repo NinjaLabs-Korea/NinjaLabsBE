@@ -65,6 +65,40 @@ jobs:
           CI: 'true'
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
 
+  e2e-tests:
+    name: HTTP end-to-end tests (Postgres 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Boots the real AppModule through the same configureApp() as src/main.ts (ValidationPipe, filters, interceptor, CORS,
+      # trust proxy, throttlers, SchemaGuard) on a fresh database with every migration applied, and drives it over HTTP
+      # (src/test-e2e/*.e2e-spec.ts). Only external I/O is faked: Google token endpoint + id_token verifier, Injective chain client.
+      # Like db-tests, CI=true turns a missing TEST_DATABASE_URL into a failure instead of a skip.
+      - run: npm run test:e2e
+        env:
+          CI: 'true'
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
   audit:
     name: Dependency audit (report only)
     runs-on: ubuntu-latest

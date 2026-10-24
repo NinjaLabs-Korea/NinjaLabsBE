@@ -123,6 +123,14 @@ describeDb('onboarding over HTTP (e2e)', () => {
       // the owner can re-save their own nickname (profile edit)
       expect((await e2e.post('/users/me/profile', { nickname, bio: 'edited', tags: ['CONTENT'] }, { token: first.accessToken })).status).toBe(201);
     });
+
+    it('duplicate tags collapse to a set → 201 (was 409 NICKNAME_TAKEN from the user_tag primary key)', async () => {
+      const session = await e2e.login();
+      const nickname = `Tags${Date.now().toString(36)}`;
+      const res = await e2e.post('/users/me/profile', { nickname, bio: 'b', tags: ['DEV', 'DEV', 'DESIGN'] }, { token: session.accessToken });
+      expect(res.status).toBe(201);
+      expect([...(await e2e.get('/auth/me', { token: session.accessToken })).body.tags].sort()).toEqual(['DESIGN', 'DEV']);
+    });
   });
 
   describe('GET /users/check-nickname', () => {

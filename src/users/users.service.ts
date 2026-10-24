@@ -3,6 +3,9 @@ import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { isSavableNickname } from './nickname';
 
+/** 활성 유저 닉네임 유니크 인덱스 (0001_users.sql, lower(nickname) WHERE deleted_at IS NULL) */
+export const NICKNAME_UNIQUE_INDEX = 'uq_user_nickname_active';
+
 @Injectable()
 export class UsersService {
   constructor(private readonly db: DatabaseService) {}
@@ -26,8 +29,8 @@ export class UsersService {
     try {
       return await this.doCompleteProfile(userId, nickname, bio, tags);
     } catch (err: unknown) {
-      // 중복검사~저장 사이 레이스: unique 인덱스가 최종 방어선
-      if (isUniqueViolation(err)) {
+      // 중복검사~저장 사이 레이스: unique 인덱스가 최종 방어선. 닉네임 인덱스 충돌만 NICKNAME_TAKEN — 다른 유니크 충돌(user_tag PK 등)은 그대로 둔다
+      if (isUniqueViolation(err, NICKNAME_UNIQUE_INDEX)) {
         throw new ConflictException('NICKNAME_TAKEN');
       }
       throw err;
@@ -43,7 +46,7 @@ export class UsersService {
         [userId, nickname, bio],
       );
       await tx.query(`DELETE FROM user_tag WHERE user_id = $1`, [userId]);
-      for (const tag of tags) {
+      for (const tag of new Set(tags)) {
         await tx.query(`INSERT INTO user_tag (user_id, tag) VALUES ($1, $2)`, [userId, tag]);
       }
       return { ok: true };

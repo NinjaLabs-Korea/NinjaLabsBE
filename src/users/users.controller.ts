@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ArrayNotEmpty, IsArray, IsIn, IsNotEmpty, IsString, Length, Matches, MaxLength } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
@@ -39,6 +40,8 @@ export class CompleteProfileDto {
   @MaxLength(1000)
   bio!: string;
 
+  /** 집합으로 정규화한다 — `['DEV','DEV']`가 user_tag PK 충돌(23505)로 NICKNAME_TAKEN 409가 되던 것. FE(ProfileForm)는 토글이라 중복을 보내지 않는다 */
+  @Transform(({ value }: { value: unknown }) => (Array.isArray(value) ? [...new Set(value)] : value))
   @IsArray()
   @ArrayNotEmpty()
   @IsIn(['DEV', 'DESIGN', 'CONTENT', 'OTHER'], { each: true })

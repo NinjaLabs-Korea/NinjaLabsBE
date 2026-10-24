@@ -71,4 +71,10 @@ describe('isSavableNickname (GET /users/check-nickname answers "available" only 
   it.each([undefined, null, 42, ['ninja', 'other']])('rejects the non-string %p (missing or repeated query parameter)', (value) => {
     expect(isSavableNickname(value)).toBe(false);
   });
+
+  it('normalizes tags to a set (duplicates collapse instead of hitting the user_tag primary key)', async () => {
+    expect(plainToInstance(CompleteProfileDto, { ...valid, tags: ['DEV', 'DEV', 'DESIGN', 'DEV'] }).tags).toEqual(['DEV', 'DESIGN']);
+    expect(await failedFields({ ...valid, tags: ['DEV', 'DEV'] })).toEqual([]);
+    expect(await failedFields({ ...valid, tags: 'DEV' })).toEqual(['tags']);
+  });
 });

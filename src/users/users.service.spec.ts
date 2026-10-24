@@ -59,3 +59,30 @@ describe('UsersService publicProfile', () => {
     expect(query.mock.calls[0][1]).toEqual(['ghost']);
   });
 });
+
+describe('UsersService completeProfile', () => {
+  const userId = '11111111-1111-4111-8111-111111111111';
+
+  function setup(failOn?: { sql: string; error: Error }) {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+      if (failOn && sql.includes(failOn.sql)) throw failOn.error;
+      return { rowCount: 1, rows: [] };
+    });
+    const db = { tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query })) };
+    return { query, service: new UsersService(db as unknown as DatabaseService) };
+  }
+
+  it('maps only the nickname unique index to 409 NICKNAME_TAKEN', async () => {
+    const nickname = Object.assign(new Error('dup'), { code: '23505', constraint: 'uq_user_nickname_active' });
+    await expect(setup({ sql: 'UPDATE "user"', error: nickname }).service.completeProfile(userId, 'n', 'b', ['DEV']))
+      .rejects.toMatchObject({ status: 409, message: 'NICKNAME_TAKEN' });
+    const tag = Object.assign(new Error('dup'), { code: '23505', constraint: 'user_tag_pkey' });
+    await expect(setup({ sql: 'INSERT INTO user_tag', error: tag }).service.completeProfile(userId, 'n', 'b', ['DEV'])).rejects.toBe(tag);
+  });
+
+  it('inserts each tag once even if the caller repeats one', async () => {
+    const { service, query } = setup();
+    await service.completeProfile(userId, 'n', 'b', ['DEV', 'DEV', 'OTHER']);
+    expect(query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO user_tag')).map(([, params]) => params?.[1])).toEqual(['DEV', 'OTHER']);
+  });
+});

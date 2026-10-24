@@ -12,6 +12,10 @@ export declare function sslOptions(
 export declare function poolTimeoutOptions(
   env: Record<string, string | undefined>,
 ): { connectionTimeoutMillis: number; idleTimeoutMillis: number };
+/** 최상위 트랜잭션 제어문(BEGIN / START TRANSACTION / COMMIT / END / ROLLBACK) 위치 — 주석·문자열·달러 인용 본문은 무시 */
+export declare function findTransactionControl(sql: string): { line: number; keyword: string }[];
+/** 모든 마이그레이션 파일 검사 — 문제가 있으면 `file`/`line`/`problems`가 붙은 에러를 던진다 */
+export declare function assertNoTransactionControl(dir?: string): void;
 export declare function applyMigrations(
   pool: Pool,
   options?: { dir?: string; log?: (line: string) => void },

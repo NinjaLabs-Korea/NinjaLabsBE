@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Pool } from 'pg';
-import { applyMigrations, MIGRATIONS_DIR, migrationFiles, sslOptions } from '../../scripts/migrate';
+import { applyMigrations, findTransactionControl, MIGRATIONS_DIR, migrationFiles, sslOptions } from '../../scripts/migrate';
 import { describeDb } from './describe-db';
 import { TEST_DB_URL_ENV, testSslEnv, unique } from './harness';
 
@@ -99,24 +99,37 @@ describeDb('scripts/migrate.js runner', () => {
     }
   });
 
-  it('a COMMIT inside a migration file escapes the per-file transaction: the file is not recorded but its earlier DDL stays (pinned hazard)', async () => {
-    // The runner wraps each file in BEGIN … COMMIT; a COMMIT in the file ends that transaction early, so a later failure can only
-    // roll back what came after it. The file is still not recorded, so a re-run retries it — and trips over its own leftovers.
-    // Migrations must not contain transaction control; this pins today's behaviour so a change to it is a conscious one.
-    const dir = migrationsDir({ '0001_commit.sql': 'CREATE TABLE runner_commit (id int); COMMIT; SELECT * FROM no_such_table;' });
+  it('refuses a file with top-level transaction control before executing anything: nothing runs, nothing is recorded, and a bad file anywhere aborts the whole run', async () => {
+    // The runner wraps each file in BEGIN … COMMIT; a COMMIT in the file would end that transaction early and break per-file atomicity.
+    const dir = migrationsDir({
+      '0001_ok.sql': 'CREATE TABLE runner_guard_ok (id int);',
+      '0002_ok.sql': `DO $$ BEGIN RAISE NOTICE 'body BEGIN/END is fine'; END $$; -- COMMIT; in a comment is fine`,
+      '0003_commit.sql': "CREATE TABLE runner_commit (id int);\nSELECT 'COMMIT;';\nCOMMIT;\nSELECT 1;",
+    });
     const db = pool(scratchUrl);
-    await expect(applyMigrations(db, { dir })).rejects.toMatchObject({ file: '0001_commit.sql', code: '42P01' });
-    expect((await db.query('SELECT count(*)::int AS n FROM _migrations')).rows[0].n).toBe(0);
-    expect((await db.query(`SELECT to_regclass('runner_commit')::text AS t`)).rows[0].t).toBe('runner_commit');
-    await expect(applyMigrations(db, { dir })).rejects.toMatchObject({ file: '0001_commit.sql', code: '42P07' }); // duplicate_table
+    const log: string[] = [];
+    await expect(applyMigrations(db, { dir, log: (line) => log.push(line) })).rejects.toMatchObject({
+      file: '0003_commit.sql',
+      line: 3,
+      message: expect.stringContaining('0003_commit.sql:3 COMMIT'),
+    });
+    expect(log).toEqual([]);
+    // not even _migrations was created — the check runs before connecting
+    expect((await db.query(`SELECT to_regclass('_migrations')::text AS t`)).rows[0].t).toBeNull();
+    expect((await db.query(`SELECT to_regclass('runner_guard_ok')::text AS a, to_regclass('runner_commit')::text AS b`)).rows[0]).toEqual({ a: null, b: null });
+
+    // an already-applied database is refused too, and keeps exactly its rows
+    rmSync(join(dir, '0003_commit.sql'));
+    await applyMigrations(db, { dir });
+    writeFileSync(join(dir, '0004_begin.sql'), 'BEGIN;\nCREATE TABLE runner_begin (id int);\nEND;');
+    await expect(applyMigrations(db, { dir })).rejects.toMatchObject({ file: '0004_begin.sql', line: 1 });
+    expect((await db.query('SELECT name FROM _migrations ORDER BY name')).rows.map((r) => r.name)).toEqual(['0001_ok.sql', '0002_ok.sql']);
+    expect((await db.query(`SELECT to_regclass('runner_begin')::text AS t`)).rows[0].t).toBeNull();
   });
 
-  it('no shipped migration contains transaction control (it would break the per-file atomicity above)', () => {
+  it('no shipped migration contains top-level transaction control (scanner from scripts/migrate.js)', () => {
     for (const file of migrationFiles(MIGRATIONS_DIR)) {
-      const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8')
-        .replace(/--.*$/gm, '')
-        .replace(/\$([a-z_]*)\$[\s\S]*?\$\1\$/gi, ''); // dollar-quoted bodies (DO blocks, functions) may say BEGIN … END
-      expect({ file, statements: sql.match(/^\s*(BEGIN|COMMIT|ROLLBACK|START TRANSACTION|END)\s*;/gim) ?? [] }).toEqual({ file, statements: [] });
+      expect({ file, hits: findTransactionControl(readFileSync(join(MIGRATIONS_DIR, file), 'utf8')) }).toEqual({ file, hits: [] });
     }
   });
 

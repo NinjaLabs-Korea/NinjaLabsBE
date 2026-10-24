@@ -21,7 +21,7 @@ src/
     bounty-status.ts     바운티 상태 집합·전이표의 단일 출처
     admin/               운영자 바운티 관리 + 전이 차단 사유(lifecycle)
   rewards/             선입금 확인 → payout 멱등 지급 흐름 (운영자 API 포함)
-  nfts/                부모/자식 NFT + nft_job 비동기 워커 (1분 폴링)
+  nfts/                부모/자식 NFT + nft_job 비동기 워커 (1분 폴링) + 운영자 잡 콘솔(nft-jobs-admin.*: 목록/재시도)
   agents/              AI 에이전트 등록/검증/API key + Agent API 인증
   audit/               감사 로그 기록(AuditService) + 조회
   test-db/             실 Postgres 통합 테스트 (npm run test:db) — 하네스 + *.db-spec.ts

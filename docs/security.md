@@ -85,5 +85,6 @@
 - [x] rate limit이 IP 기준 — 프록시/로드밸런서 뒤에서는 `TRUST_PROXY`(홉 수) 필요. `.railway/railway.ts`가 `TRUST_PROXY=1`, `NODE_ENV=production`을 넣는다. production에서 미설정이면 `main.ts`가 1홉으로 보고 `warn`, 명시적 `0`/비정수면 기동을 거부한다 (`bootstrap-checks.ts`) — 프록시가 2홉 이상이면 반드시 명시
 - [ ] 어드민 계정 부트스트랩 — `is_admin`은 DB에서 수동 지정. 지정 절차·권한자를 운영 문서에 명시
 - [ ] 멀티시그 서명자 구성(2-of-3 제안)과 서명자 목록 — 오프체인 정책 문서화
+- [x] 운영 화면 데이터(`GET /admin/bounties/:id/operations`, `GET /admin/nft-jobs`)는 지원/심사 메모, 수령 지갑 주소, 운영자 id·닉네임, NFT 잡 `last_error`(워커가 이미 니모닉/64자리 hex를 가려 저장 — `nft-job.worker.ts sanitizeError`)를 담으므로 AdminGuard 뒤에만 있다. 공개 라우트로 옮기지 말 것. NFT 잡 재시도는 감사 `NFT_JOB_RETRIED`로 남는다
 - [ ] `npm audit` CI 통합 + 의존성 업데이트 주기 — 2026-10 기준 `@nestjs/*` 11.2.7 / `@nestjs/config` 4.0.4, `npm audit --omit=dev` high/critical 0 (axios·follow-redirects는 `@injectivelabs/sdk-ts` 경유 transitives, patch로 해결)
 - [ ] Supabase `service_role` 키는 백엔드에서만 사용, FE·레포 노출 금지

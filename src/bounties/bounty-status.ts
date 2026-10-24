@@ -51,6 +51,8 @@ const TRANSITION_STAMP_COLUMN: Readonly<Partial<Record<BountyStatus, string>>> =
 
 export const BountyStatusPolicy = {
   isInProgress: (status: string): boolean => IN_PROGRESS.includes(status),
+  /** 진행 상태 목록 — SQL `= ANY($n::text[])` 바인딩용 (복사본) */
+  inProgressStatuses: (): string[] => [...IN_PROGRESS],
   isFinished: (status: string): boolean => FINISHED.includes(status),
   enforcesFutureDeadline: (status: string): boolean => DEADLINE_ENFORCED.includes(status),
   /** 운영 화면이 버튼으로 보여 줄, 현재 상태에서 운영자가 일으킬 수 있는 전이 목록 (전이표 순서) */

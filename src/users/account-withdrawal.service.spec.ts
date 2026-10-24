@@ -6,6 +6,7 @@ import { DatabaseService } from '../common/database/database.service';
 import {
   AccountWithdrawalService,
   nicknameConfirmed,
+  PENDING_REWARD_SQL,
   TERMINAL_PAYOUT_STATUSES,
   withdrawnIdentityPrefix,
 } from './account-withdrawal.service';
@@ -14,7 +15,7 @@ import { WithdrawAccountDto } from './users.controller';
 describe('AccountWithdrawalService', () => {
   const userId = '11111111-1111-4111-8111-111111111111';
 
-  function setup(options: { user?: { nickname: string } | null; openPayouts?: number; agents?: string[] } = {}) {
+  function setup(options: { user?: { nickname: string } | null; openPayouts?: number; pendingRewards?: number; agents?: string[] } = {}) {
     const calls: Array<[string, unknown[] | undefined]> = [];
     const query = jest.fn(async (sql: string, params?: unknown[]) => {
       calls.push([sql, params]);
@@ -22,6 +23,7 @@ describe('AccountWithdrawalService', () => {
         const user = options.user === undefined ? { nickname: 'Ryan' } : options.user;
         return user ? { rowCount: 1, rows: [user] } : { rowCount: 0, rows: [] };
       }
+      if (sql === PENDING_REWARD_SQL) return { rowCount: 1, rows: [{ n: options.pendingRewards ?? 0 }] };
       if (sql.includes('FROM payout p')) return { rowCount: 1, rows: [{ n: options.openPayouts ?? 0 }] };
       if (sql.includes('UPDATE agent SET')) {
         const rows = (options.agents ?? []).map((id) => ({ id }));
@@ -80,6 +82,30 @@ describe('AccountWithdrawalService', () => {
     const check = calls.find(([sql]) => sql.includes('FROM payout p'))!;
     expect(check[1]).toEqual([userId, ['PAID', 'CANCELLED', 'FAILED']]);
     expect(calls.some(([sql]) => sql.includes(`SET status = 'WITHDRAWN'`))).toBe(false);
+  });
+
+  it('blocks with 409 WITHDRAWAL_BLOCKED_PENDING_REWARDS while an approved submission still has an unrequested, payable reward', async () => {
+    const { service, calls, record } = setup({ pendingRewards: 1 });
+    await expect(service.withdraw(userId, 'Ryan')).rejects.toMatchObject({ status: 409, message: 'WITHDRAWAL_BLOCKED_PENDING_REWARDS' });
+    const check = calls.find(([sql]) => sql === PENDING_REWARD_SQL)!;
+    expect(check[1]).toEqual([userId, ['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'], ['FUNDED', 'PARTIALLY_PAID', 'PAID']]);
+    expect(calls.some(([sql]) => sql.includes(`SET status = 'WITHDRAWN'`))).toBe(false);
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('checks open payouts first (more specific), then pending rewards', async () => {
+    const { service, calls } = setup({ openPayouts: 1, pendingRewards: 1 });
+    await expect(service.withdraw(userId, 'Ryan')).rejects.toMatchObject({ message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
+    expect(calls.some(([sql]) => sql === PENDING_REWARD_SQL)).toBe(false);
+  });
+
+  it('the pending-reward query covers my agents, requires no payout row at all and remaining capacity, and binds $n consistently', () => {
+    expect(PENDING_REWARD_SQL).toContain(`s.status = 'APPROVED'`);
+    expect(PENDING_REWARD_SQL).toContain('owner_user_id = $1');
+    expect(PENDING_REWARD_SQL).toContain('NOT EXISTS (SELECT 1 FROM payout p WHERE p.bounty_reward_id = rw.id AND p.submission_id = s.id)');
+    expect(PENDING_REWARD_SQL).toContain('LEAST(rw.amount, rw.deposited_amount) >');
+    expect(PENDING_REWARD_SQL).toContain('b.deleted_at IS NULL');
+    expect(PENDING_REWARD_SQL.match(/\$\d/g)?.sort()).toEqual(['$1', '$1', '$2', '$3']);
   });
 
   it('404 when the user is already withdrawn or suspended', async () => {

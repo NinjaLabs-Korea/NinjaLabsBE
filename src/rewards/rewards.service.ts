@@ -9,6 +9,9 @@ import { normalizeTxHash } from '../common/validation/tx-hash';
 import { NftsService } from '../nfts/nfts.service';
 import { allowsPayoutSelfApproval, PAYOUT_ALLOW_SELF_APPROVAL_ENV } from './payout-approval';
 
+/** payout을 새로 요청할 수 있는(입금 확인된) 보상 상태 — requestPayout과 회원 탈퇴의 미요청 보상 검사(account-withdrawal.service.ts)가 같이 쓴다 */
+export const PAYABLE_REWARD_STATUSES = ['FUNDED', 'PARTIALLY_PAID', 'PAID'] as const;
+
 /**
  * MVP 보상 흐름 (ERD §10)
  *   스폰서 선입금(멀티시그) → 운영자 입금 확인 → 바운티 OPEN
@@ -83,7 +86,7 @@ export class RewardsService {
         `SELECT bounty_id, status, LEAST(amount, deposited_amount)::text AS cap FROM bounty_reward WHERE id = $1 FOR UPDATE`,
         [rewardId],
       );
-      if (!reward.rowCount || !['FUNDED', 'PARTIALLY_PAID', 'PAID'].includes(reward.rows[0].status)) {
+      if (!reward.rowCount || !(PAYABLE_REWARD_STATUSES as readonly string[]).includes(reward.rows[0].status)) {
         throw new BadRequestException('REWARD_NOT_FUNDED');
       }
       // 수령자 유저 행을 FOR SHARE로 잠근다 — 회원 탈퇴(AccountWithdrawalService)는 같은 행을 FOR UPDATE로 먼저 잠그고 열린 payout을

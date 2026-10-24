@@ -160,6 +160,62 @@ describeDb('account withdrawal on a real database', () => {
     await expect(withdrawal.withdraw(owner, nickname)).rejects.toMatchObject({ message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
   });
 
+  async function approvedWinner(submissionMode = 'DIRECT') {
+    const builder = await createUser(db);
+    await createPrimaryWallet(db, builder);
+    const won = await openBounty(submissionMode);
+    const application = await applications.apply(won.bountyId, builder, 'hi');
+    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+    const submission = await submissions.submit(won.bountyId, builder, { submissionUrl: `https://x.test/${unique()}`, description: 'd' });
+    await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
+    const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [builder])).rows[0].nickname;
+    return { builder, nickname, submissionId: submission.id, ...won };
+  }
+
+  it('an approved submission with a funded reward and no payout yet blocks withdrawal (409 PENDING_REWARDS) until it is paid', async () => {
+    const { builder, nickname, submissionId, rewardId } = await approvedWinner();
+    await expect(withdrawal.withdraw(builder, nickname)).rejects.toMatchObject({ status: 409, message: 'WITHDRAWAL_BLOCKED_PENDING_REWARDS' });
+    expect((await db.query<{ status: string }>(`SELECT status FROM "user" WHERE id = $1`, [builder])).rows[0].status).toBe('ACTIVE');
+
+    const payout = await rewards.requestPayout(rewardId, submissionId, '1000', adminId);
+    await expect(withdrawal.withdraw(builder, nickname)).rejects.toMatchObject({ message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
+    await rewards.markApproved(payout.id, approverId);
+    await rewards.markPaid(payout.id, fakeTxHash(), adminId);
+    await expect(withdrawal.withdraw(builder, nickname)).resolves.toEqual({ ok: true });
+  });
+
+  it('my agent\'s approved, unrequested submission blocks too', async () => {
+    const owner = await createUser(db);
+    await createPrimaryWallet(db, owner);
+    const agentId = await activeAgentWithKey(owner);
+    const { bountyId } = await openBounty('AGENT');
+    const application = await applications.applyAsAgent(bountyId, agentId, 'hi');
+    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+    const submission = await submissions.submitAsAgent(bountyId, agentId, { submissionUrl: 'https://x.test/agent-pending', description: 'd' });
+    await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
+    const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [owner])).rows[0].nickname;
+    await expect(withdrawal.withdraw(owner, nickname)).rejects.toMatchObject({ status: 409, message: 'WITHDRAWAL_BLOCKED_PENDING_REWARDS' });
+  });
+
+  it.each([
+    ['the bounty is finished (no payout can be requested any more)', `UPDATE bounty SET status = 'COMPLETED' WHERE id = $1`],
+    ['the bounty is deleted', `UPDATE bounty SET deleted_at = now() WHERE id = $1`],
+    ['the reward is not funded', `UPDATE bounty_reward SET status = 'DEPOSIT_PENDING' WHERE bounty_id = $1`],
+    ['the reward pool is fully allocated to others', `UPDATE bounty_reward SET deposited_amount = 0 WHERE bounty_id = $1`],
+  ])('does not block when %s', async (_label, sql) => {
+    const { builder, nickname, bountyId } = await approvedWinner();
+    await db.query(sql, [bountyId]);
+    await expect(withdrawal.withdraw(builder, nickname)).resolves.toEqual({ ok: true });
+  });
+
+  it('does not block on a submission whose payout was cancelled (requestPayout cannot re-request it)', async () => {
+    const { builder, nickname, submissionId, rewardId } = await approvedWinner();
+    const payout = await rewards.requestPayout(rewardId, submissionId, '1000', adminId);
+    await db.query(`UPDATE payout SET status = 'CANCELLED' WHERE id = $1`, [payout.id]); // manual ops action — no API sets it
+    await expect(rewards.requestPayout(rewardId, submissionId, '1000', adminId)).rejects.toMatchObject({ message: 'PAYOUT_ALREADY_REQUESTED' });
+    await expect(withdrawal.withdraw(builder, nickname)).resolves.toEqual({ ok: true });
+  });
+
   it('withdraws submissions still under review (they can no longer be approved or block completion); reviewed ones stay', async () => {
     const builder = await createUser(db);
     await createPrimaryWallet(db, builder);

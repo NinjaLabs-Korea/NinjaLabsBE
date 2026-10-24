@@ -70,6 +70,7 @@
 | `node scripts/grant-admin.js grant\|revoke <email> [--dry-run] [--yes] [--force]` | `is_admin` 부여/회수 | `"user".is_admin` + `audit_log`(`ADMIN_GRANTED`/`ADMIN_REVOKED`, actor NULL, before/after `{is_admin}`) 한 트랜잭션 |
 | `node scripts/requeue-nft-jobs.js <job-id>... \| --all [--dry-run] [--yes]` | FAILED `nft_job` 수동 재시도 | 잡 → PENDING(`retry_count` 0, 즉시), nft FAILED → `MINTED`(token_id 있음)/`PENDING`, `audit_log` `NFT_JOB_REQUEUED` |
 | `node scripts/record-refund.js <reward-id> --tx <hash> [--dry-run] [--yes]` | 취소된 바운티의 환불 송금 기록 — 입금액 − PAID 잔액, `PAID` 보상 포함 (§7.7) | 보상 → `REFUNDED`, `audit_log` `REWARD_REFUNDED`(actor NULL, `{txHash, refundedAmount}`) 한 트랜잭션 |
+| `node scripts/forfeit-award.js <submission-id> --reason <text> --admin <admin-user-id> [--dry-run] [--yes]` | 지급할 수 없는 승인 수상 몰수 (§7.4) | 제출 `APPROVED` → `REJECTED`, `submission_review`(REJECT, `forfeited: <사유>`), `audit_log` `SUBMISSION_AWARD_FORFEITED`(actor = `--admin`, before/after + 사유) 한 트랜잭션 |
 | `psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql [-v …]` | 메인넷 전환 전 점검 | 없음 — READ ONLY 트랜잭션 + ROLLBACK |
 | `psql "$DATABASE_URL" -X -f scripts/find-static-ext-nicknames.sql` | 정적 파일 확장자로 끝나는 기존 ACTIVE 닉네임 목록 (아래) | 없음 — READ ONLY 트랜잭션 + ROLLBACK |
 | `npm run migrate` | 마이그레이션 적용 (아래 "트랜잭션 제어문 거부") | `_migrations` |
@@ -279,6 +280,16 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
      - `FAILED` payout은 위 취소 SQL의 `WHERE status IN (...)`에 걸리지 않는다(UPDATE 0). `FAILED`는 받을 몫이 남은 것으로 보므로 COMPLETED와 CANCELLED(그래서 §7.7 환불도)를 계속 막는다 — 닫으려면 **온체인에서 송금되지 않았음을 먼저 확인**하고(멀티시그 tx 이력), 같은 트랜잭션을 `WHERE id = '<payout id>' AND status = 'FAILED'`로 바꿔 돌린다(감사 `before_data`는 `{"status": "FAILED"}`). 실제로 송금됐다면 취소하지 말고 tx 해시를 확인해 사후 기록으로 남긴다.
      - 승인됐지만 payout이 없던 수상자가 그 사이 탈퇴했다면, 취소로 생긴 여유분이 있어도 그 수상자는 받을 몫으로 세지 않는다(requestPayout이 404라 받을 수 없다).
      - 풀린 금액이 아무에게도 배정되지 않으면 바운티 삭제는 계속 409 `BOUNTY_HAS_OPEN_FUNDS`(남은 돈)다. COMPLETED 바운티의 잔액 환불 경로(§7.7 스크립트는 CANCELLED 바운티만 받는다)와 payout 취소 API는 아직 없다 — 제품 결정 대기.
+   - **지급할 수 없는 수상**(승인됐지만 payout을 만들 수 없음 — 대표적으로 수상자가 지갑을 연결하지 않고 연락이 끊김) → `POST /admin/payouts`는 404 `APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND`인데, 지갑만 없는 수상자는 다시 연결할 수 있으므로 "받을 몫이 남은" 것으로 세져 COMPLETED와 CANCELLED가 **둘 다** 400 `UNPAID_WINNERS`로 막힌다. 먼저 연락·지갑 연결 안내를 하고(기한을 정해 기록), 그래도 안 되면 두 운영자 합의 후 수상을 몰수한다:
+     ```bash
+     railway run node scripts/forfeit-award.js <submission-id> --reason "<사유>" --admin <결정 운영자 user id> --dry-run
+     railway run node scripts/forfeit-award.js <submission-id> --reason "<사유>" --admin <결정 운영자 user id>   # 확인 프롬프트에 yes
+     ```
+     한 트랜잭션(바운티 → 제출 잠금)에서 제출을 `APPROVED` → `REJECTED`로 바꾸고, `submission_review`(reviewer = `--admin`, decision `REJECT`, comment `forfeited: <사유>`)와 감사 `SUBMISSION_AWARD_FORFEITED`(actor = `--admin`, before/after + 사유)를 남긴다. 거부 조건(아무것도 쓰지 않고 exit 1): 바운티가 삭제됨 또는 `OPEN`/`SUBMISSION_CLOSED`/`IN_REVIEW`가 아님, 제출이 `APPROVED`가 아님, 그 제출의 payout 행이 **하나라도** 있음(상태 무관 — 위의 정정/취소로 다룬다), 완료 NFT 행이 있음, `--admin`이 활성 is_admin 유저가 아님. 이미 COMPLETED/CANCELLED로 닫힌 바운티의 수상은 이 스크립트 대상이 아니다.
+     몰수가 남기는 것 — **사례별 운영자 결정**이다(되돌리는 스크립트는 없다. 되돌리려면 같은 형식의 SQL + 감사 행):
+     - `max_winners` 자리가 하나 빈다 — 다른 제출을 승인할 수 있다.
+     - 이 수상이 공개 프로필 `completedBounties`와 명예의전당 집계(둘 다 `APPROVED` 기준)에서 빠진다. 제출자의 `/submissions/me`에는 `REJECTED`와 `review_comment` `forfeited: <사유>`가 보인다 — 사유는 제출자가 읽는다고 보고 쓴다.
+     - 받을 몫이 남은 수상자로 세지 않으므로 COMPLETED·CANCELLED 차단이 풀린다. 취소한다면 §7.7로 입금액 − `PAID` 전액을 환불·기록한 뒤 삭제할 수 있다.
    - 수령 지갑이 틀림 → SQL로 `recipient_wallet_id`를 바꾸지 않는다. 수령 지갑은 요청 시점의 대표 지갑이므로 먼저 3번으로 지갑 이력을 확인한다.
    - 잘못된 주소로 **실제 송금됨** → 온체인 회수는 불가. 수령자 연락/추가 지급 여부를 결정하고, 결정과 tx를 사후 기록에 남긴다.
 3. 수령 지갑은 payout 요청 시점의 대표 지갑이다. 사용자가 지갑을 바꿨다고 주장하면 `wallet` 행의 `verified_at`과 비교한다(MVP는 지갑 교체 불허, decisions.md).

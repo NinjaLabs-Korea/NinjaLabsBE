@@ -7,6 +7,10 @@ export declare function parseArgs(
   argv: string[],
   known: string[],
 ): { flags: Record<string, true>; positional: string[] };
+export declare function extractValueOptions(
+  argv: string[],
+  names: string[],
+): { values: Record<string, string>; rest: string[] };
 export declare function promptYes(question: string): Promise<boolean>;
 export declare function runCli(run: OpsRun): Promise<void>;
 export declare class OpsError extends Error {

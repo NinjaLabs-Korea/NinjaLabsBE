@@ -2,6 +2,7 @@ import { ArgumentsHost, Catch, HttpException, Logger } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
 import { Request } from 'express';
 import { asClientError } from '../database/pg-errors';
+import { logSafe } from '../logging/log-safe';
 
 /**
  * 전역 예외 필터 — 응답 포맷은 Nest 기본(BaseExceptionFilter)을 그대로 쓰고,
@@ -32,7 +33,8 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
       const req = host.switchToHttp().getRequest<Request | undefined>();
       const name = exception instanceof Error ? exception.name : 'UnknownError';
       const message = exception instanceof Error ? exception.message : String(exception);
-      this.logger.error(`${req?.method ?? '-'} ${req?.path ?? req?.url ?? '-'} ${status} ${name}: ${message}`);
+      // 경로·메시지는 사용자 값이 섞일 수 있다(DB 오류 메시지는 요청 값을 인용) — CR/LF 이스케이프 + 200자 상한 (logging/log-safe.ts)
+      this.logger.error(`${logSafe(req?.method ?? '-', 16)} ${logSafe(req?.path ?? req?.url ?? '-')} ${status} ${logSafe(name, 100)}: ${logSafe(message)}`);
     }
     super.catch(exception, host);
   }

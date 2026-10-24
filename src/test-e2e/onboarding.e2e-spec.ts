@@ -133,6 +133,19 @@ describeDb('onboarding over HTTP (e2e)', () => {
     });
   });
 
+  it('a public-profile lookup with CR/LF and a 2000-char nickname logs one capped line per event (no forged lines)', async () => {
+    const forged = `ghost\r\n[onboarding] {"event":"forged"}${'x'.repeat(2000)}`;
+    expect((await e2e.get(`/users/${encodeURIComponent(forged)}`)).status).toBe(404);
+    const lines = e2e.linesFor('UsersController').filter((line) => line.includes('ghost'));
+    expect(lines).toHaveLength(2); // requested + failed
+    for (const line of lines) {
+      expect(line).not.toMatch(/[\r\n]/);
+      expect(line.length).toBeLessThan(400);
+    }
+    const requestLine = e2e.linesFor('HTTP').find((line) => line.includes('ghost'))!;
+    expect(requestLine.length).toBeLessThan(300);
+  });
+
   describe('GET /users/check-nickname', () => {
     it('available / taken (case-insensitive) / reserved', async () => {
       const session = await e2e.login();

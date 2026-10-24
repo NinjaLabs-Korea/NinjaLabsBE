@@ -10,6 +10,7 @@ import { Request, Response } from 'express';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { asClientError } from '../database/pg-errors';
+import { logSafe } from '../logging/log-safe';
 
 /**
  * 요청 한 줄 로그 — method path status duration(ms). `/health`(Railway 폴링)는 제외.
@@ -33,7 +34,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
 
     const startedAt = Date.now();
     const log = (status: number) =>
-      this.logger.log(`${req.method} ${path} ${status} ${Date.now() - startedAt}ms`);
+      this.logger.log(`${logSafe(req.method, 16)} ${logSafe(path)} ${status} ${Date.now() - startedAt}ms`);
     return next.handle().pipe(
       tap({
         next: () => {

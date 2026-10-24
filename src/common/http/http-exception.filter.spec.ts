@@ -80,4 +80,16 @@ describe('HttpExceptionFilter', () => {
     expect(error.mock.calls[0][0]).toBe('POST /admin/bounties 500 Error: upstream');
     expect(HttpExceptionFilter.statusOf(null)).toBe(500);
   });
+
+  it('escapes CR/LF and caps user-influenced path and message in the 5xx line', () => {
+    const forging = {
+      switchToHttp: () => ({ getRequest: () => ({ method: 'GET', path: '/users/x\r\nFAKE 200 OK' }) }),
+    } as unknown as ArgumentsHost;
+    new HttpExceptionFilter().catch(new Error(`duplicate key value (${'v'.repeat(1000)})\nsecond line`), forging);
+    const [line] = error.mock.calls[0] as [string];
+    expect(line).not.toMatch(/[\r\n]/);
+    expect(line).toContain('/users/x\\r\\nFAKE 200 OK');
+    expect(line.length).toBeLessThan(600);
+    expect(line).toMatch(/…\(\+\d+ chars\)$/);
+  });
 });

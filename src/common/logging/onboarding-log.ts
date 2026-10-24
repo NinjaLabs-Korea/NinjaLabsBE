@@ -1,10 +1,23 @@
 import { HttpException, Logger } from '@nestjs/common';
+import { capLogValue } from './log-safe';
 
 type LogDetails = Record<string, boolean | number | string | null | undefined>;
 
+/**
+ * 문자열 값은 200자로 자른다(닉네임처럼 사용자가 준 값이 섞인다). CR/LF 등 제어 문자는 JSON.stringify가 `\n`으로 이스케이프하므로 한 줄이 유지된다.
+ * U+2028/2029는 JSON이 이스케이프하지 않으므로 여기서 바꾼다.
+ */
+function safeDetails(details: LogDetails): LogDetails {
+  return Object.fromEntries(Object.entries(details).map(([key, value]) => [key, typeof value === 'string' ? safeString(value) : value]));
+}
+
+function safeString(value: string): string {
+  return capLogValue(value.replace(/[\u2028\u2029]/g, (char) => `\\u${char.charCodeAt(0).toString(16)}`));
+}
+
 /** Temporary structured onboarding diagnostics. Never pass tokens, codes, signatures, or messages. */
 export function onboardingLog(logger: Logger, event: string, details: LogDetails = {}) {
-  logger.log(`[onboarding] ${JSON.stringify({ event, ...details })}`);
+  logger.log(`[onboarding] ${JSON.stringify({ event, ...safeDetails(details) })}`);
 }
 
 export function onboardingError(
@@ -20,7 +33,7 @@ export function onboardingError(
       ? response
       : String((response as { message?: string | string[] }).message ?? error.name);
   }
-  logger.error(`[onboarding] ${JSON.stringify({ event, ...details, errorCode: code })}`);
+  logger.error(`[onboarding] ${JSON.stringify({ event, ...safeDetails(details), errorCode: safeString(code) })}`);
 }
 
 export function maskWalletAddress(address: string): string {

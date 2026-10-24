@@ -101,7 +101,7 @@ describeDb('bounty rules over HTTP (e2e)', () => {
     for (const to of ['OPEN', 'COMPLETED', 'DRAFT']) {
       expect((await transition(id, to)).body).toEqual(badRequest(`INVALID_TRANSITION:CANCELLED->${to}`));
     }
-    // still publicly visible as CANCELLED (only DRAFT/FUNDING_PENDING are hidden)
+    // still publicly visible as CANCELLED — it was opened (publicBountySql: opened_at IS NOT NULL); one cancelled before opening is 404 (public-reads e2e)
     expect((await e2e.get(`/bounties/${id}`)).body).toMatchObject({ id, status: 'CANCELLED' });
   });
 

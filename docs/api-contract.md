@@ -224,8 +224,8 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| GET | `/bounties?page=&category=&status=` | - | 목록 (DRAFT/FUNDING_PENDING 비노출) + 보상, `cover_image_url`, `submission_mode` |
-| GET | `/bounties/:id` | - | 상세 + 보상 + 첨부 — 명시적 컬럼만(`bounties.service.ts` PUBLIC_DETAIL_COLUMNS). `created_by`·`sponsor_user_id`·`deleted_at` 같은 내부 컬럼은 내보내지 않는다 |
+| GET | `/bounties?page=&category=&status=` | - | 목록 (한 번이라도 OPEN된 바운티만 — DRAFT/FUNDING_PENDING과 열리기 전에 취소된 바운티 비노출, `bounty-status.ts` publicBountySql) + 보상, `cover_image_url`, `submission_mode` |
+| GET | `/bounties/:id` | - | 상세 + 보상 + 첨부 — 노출 조건은 목록과 같다(비공개는 404 `BOUNTY_NOT_FOUND`). 명시적 컬럼만(`bounties.service.ts` PUBLIC_DETAIL_COLUMNS). `created_by`·`sponsor_user_id`·`deleted_at` 같은 내부 컬럼은 내보내지 않는다 |
 
 ## 바운티 참여 (행동 — 인증 필요)
 

@@ -62,3 +62,15 @@ export const BountyStatusPolicy = {
   stampColumnFor: (to: string): string | undefined =>
     TRANSITION_STAMP_COLUMN[to as BountyStatus],
 };
+
+/**
+ * 공개 노출 조건 (공개 목록·상세가 공유하는 단일 출처): 삭제되지 않았고 한 번이라도 OPEN된 바운티.
+ * opened_at은 → OPEN 전이에서만 `COALESCE(opened_at, now())`로 최초 1회 찍히고(TRANSITION_STAMP_COLUMN) 이후 지워지지 않는다.
+ * SUBMISSION_CLOSED·IN_REVIEW·COMPLETED는 OPEN을 거쳐야만 닿으므로 모두 opened_at이 있다.
+ * DRAFT/FUNDING_PENDING에서 바로 CANCELLED된 바운티는 opened_at이 NULL이라 계속 비공개다 — 상태 목록(`NOT IN ('DRAFT', …)`)으로
+ * 거르면 그런 바운티가 취소되는 순간 공개됐다. 열린 뒤 취소된 바운티는 계속 공개된다.
+ */
+export function publicBountySql(b = 'b'): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(b)) throw new Error('publicBountySql: alias must be an identifier');
+  return `${b}.deleted_at IS NULL AND ${b}.opened_at IS NOT NULL`;
+}

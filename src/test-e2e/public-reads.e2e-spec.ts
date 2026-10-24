@@ -53,7 +53,7 @@ describeDb('public reads over HTTP (e2e)', () => {
     const draft = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ title: 'Hidden draft' }), true), asAdmin())).body.id;
     const funding = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ title: 'Hidden funding', reward: { amount: 1, currency: 'INJ' } }), true), asAdmin())).body.id;
 
-    const visible = await e2e.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM bounty WHERE deleted_at IS NULL AND status NOT IN ('DRAFT','FUNDING_PENDING')`);
+    const visible = await e2e.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM bounty WHERE deleted_at IS NULL AND opened_at IS NOT NULL`);
     const page1 = await e2e.get('/bounties?page=1&pageSize=50');
     expect(page1.status).toBe(200);
     expect(Object.keys(page1.body).sort()).toEqual(['items', 'page', 'pageSize', 'total']);
@@ -78,14 +78,13 @@ describeDb('public reads over HTTP (e2e)', () => {
     expect((await e2e.get('/bounties')).body.pageSize).toBe(12);
   });
 
-  it('paging is stable when the sort key ties: every visible bounty appears exactly once across pages (cancelled bounties never opened → opened_at NULL)', async () => {
-    for (let i = 0; i < 40; i++) {
-      const id = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ title: `Cancelled ${i}` }), true), asAdmin())).body.id;
-      expect((await e2e.post(`/admin/bounties/${id}/transition`, { to: 'CANCELLED' }, asAdmin())).status).toBe(201);
-    }
+  it('paging is stable when the sort key ties: every visible bounty appears exactly once across pages (40 bounties opened in the same instant)', async () => {
+    const tied: string[] = [];
+    for (let i = 0; i < 40; i++) tied.push(await openBounty(bountyForm({ title: `Tied ${i}` })));
+    await e2e.db.query(`UPDATE bounty SET opened_at = '2030-01-01T00:00:00Z' WHERE id = ANY($1::uuid[])`, [tied]);
     const expected = await e2e.db.query<{ id: string }>(
-      `SELECT id FROM bounty WHERE deleted_at IS NULL AND status NOT IN ('DRAFT','FUNDING_PENDING')
-        ORDER BY opened_at DESC NULLS LAST, created_at DESC, id`);
+      `SELECT id FROM bounty WHERE deleted_at IS NULL AND opened_at IS NOT NULL
+        ORDER BY opened_at DESC, created_at DESC, id`);
     const total = (await e2e.get('/bounties?pageSize=1')).body.total;
     // the order is fully defined: opened_at DESC, then newest created first, then id — so pages can never overlap
     const walked: string[] = [];
@@ -121,6 +120,41 @@ describeDb('public reads over HTTP (e2e)', () => {
     }
     const firstPage = (await e2e.get('/notices?pageSize=12')).body.items.map((n: { id: string }) => n.id);
     expect(firstPage).toEqual([...noticeIds].reverse()); // tie → newest created first
+  });
+
+  it('a bounty cancelled before it ever opened stays private (list excludes it, detail 404); one cancelled after opening stays public', async () => {
+    const draft = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ title: 'Cancelled draft' }), true), asAdmin())).body.id;
+    const funding = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ title: 'Cancelled funding', reward: { amount: 1, currency: 'INJ' } }), true), asAdmin())).body.id;
+    for (const id of [draft, funding]) {
+      expect((await e2e.post(`/admin/bounties/${id}/transition`, { to: 'CANCELLED' }, asAdmin())).body).toEqual({ id, status: 'CANCELLED' });
+    }
+    const opened = await openBounty(bountyForm({ title: 'Cancelled after opening' }));
+    expect((await e2e.post(`/admin/bounties/${opened}/transition`, { to: 'CANCELLED' }, asAdmin())).body).toEqual({ id: opened, status: 'CANCELLED' });
+
+    const listedIds = async (query: string) => {
+      const ids: string[] = [];
+      const total = (await e2e.get(`/bounties?pageSize=1${query}`)).body.total;
+      for (let page = 1; (page - 1) * 50 < total; page++) {
+        ids.push(...(await e2e.get(`/bounties?page=${page}&pageSize=50${query}`)).body.items.map((b: { id: string }) => b.id));
+      }
+      return ids;
+    };
+    for (const query of ['', '&status=CANCELLED']) {
+      const ids = await listedIds(query);
+      expect(ids).not.toContain(draft);
+      expect(ids).not.toContain(funding);
+      expect(ids).toContain(opened);
+    }
+    for (const id of [draft, funding]) {
+      expect((await e2e.get(`/bounties/${id}`)).body).toEqual({ statusCode: 404, error: 'Not Found', message: 'BOUNTY_NOT_FOUND' });
+    }
+    const detail = await e2e.get(`/bounties/${opened}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body).toMatchObject({ id: opened, status: 'CANCELLED', title: 'Cancelled after opening' });
+    expect(detail.body.opened_at).toEqual(expect.any(String));
+    // the operator still sees all three
+    const adminIds = (await e2e.get('/admin/bounties', asAdmin())).body.map((b: { id: string }) => b.id);
+    expect(adminIds).toEqual(expect.arrayContaining([draft, funding, opened]));
   });
 
   it('GET /users/:nickname: payoutStatus NONE (no reward) / PENDING (reward, not yet paid) with postedRewards; unknown or suspended → 404', async () => {

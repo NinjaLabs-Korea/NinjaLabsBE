@@ -1,4 +1,4 @@
-import { BountyStatusPolicy } from './bounty-status';
+import { BountyStatusPolicy, publicBountySql } from './bounty-status';
 
 describe('BountyStatusPolicy', () => {
   it.each([
@@ -82,5 +82,25 @@ describe('BountyStatusPolicy transition table (every from × to pair)', () => {
 
   it('stamps nothing for CANCELLED, DRAFT or FUNDING_PENDING', () => {
     for (const s of ['CANCELLED', 'DRAFT', 'FUNDING_PENDING']) expect(BountyStatusPolicy.stampColumnFor(s)).toBeUndefined();
+  });
+});
+
+describe('publicBountySql', () => {
+  it('is "not deleted and ever opened" — opened_at, not a status list, so a bounty cancelled before it opened stays hidden', () => {
+    expect(publicBountySql()).toBe('b.deleted_at IS NULL AND b.opened_at IS NOT NULL');
+    expect(publicBountySql('bx')).toBe('bx.deleted_at IS NULL AND bx.opened_at IS NOT NULL');
+    expect(publicBountySql()).not.toMatch(/status/);
+  });
+
+  it('rejects a non-identifier alias', () => {
+    expect(() => publicBountySql('b; DROP TABLE bounty')).toThrow('publicBountySql: alias must be an identifier');
+  });
+
+  it('relies on opened_at being stamped by → OPEN, the only way into every later status', () => {
+    expect(BountyStatusPolicy.stampColumnFor('OPEN')).toBe('opened_at');
+    // every status a bounty can only reach through OPEN: nothing but OPEN leads into them from DRAFT/FUNDING_PENDING
+    for (const from of ['DRAFT', 'FUNDING_PENDING']) {
+      expect(BountyStatusPolicy.transitionsFrom(from).filter((to) => !['OPEN', 'FUNDING_PENDING', 'CANCELLED'].includes(to))).toEqual([]);
+    }
   });
 });

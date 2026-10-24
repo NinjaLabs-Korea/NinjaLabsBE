@@ -9,6 +9,8 @@ import { join, relative } from 'path';
  * 새 규칙이 필요하면 그 파일에 상수/헬퍼를 추가하고 SQL에는 sqlStatusList()/헬퍼로 렌더링한다.
  * 상태 리터럴 두 개 이상이 나란히 놓인 TS 배열(`['SUBMITTED', 'RESUBMITTED', …]`)이나 SQL IN 목록(`IN ('SUBMITTED','IN_REVIEW')`)은
  * 그 규칙의 사본이므로 실패시킨다 — 정책 helper(+ SQL은 `= ANY($n::text[])` 바인딩)를 쓰도록 고친다.
+ * 바운티 상태 집합과 공개 노출 조건은 bounties/bounty-status.ts(BountyStatusPolicy, publicBountySql)가 단일 출처다 —
+ * `status NOT IN ('DRAFT', 'FUNDING_PENDING')` 같은 공개 필터 사본은 열리기 전에 취소된 바운티를 공개했다.
  * 단일 값 비교(`status = 'APPROVED'`)는 허용한다 (정책 파일 머리 주석 참고).
  * 보상/NFT 상태처럼 값이 겹쳐도 다른 도메인 집합(예 `IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')`)은 앞 두 값이 같은 목록에 없어 걸리지 않는다.
  * 앞 두 값만 본다 — 두 값이 같은 도메인 목록에 있으면 그 도메인의 집합 사본으로 본다.
@@ -16,12 +18,14 @@ import { join, relative } from 'path';
 const SUBMISSION_STATUS = '(?:SUBMITTED|RESUBMITTED|IN_REVIEW|REVISION_REQUESTED|APPROVED|REJECTED|WITHDRAWN|PENDING)';
 /** payout.status 전체 (rewards/payout-status.ts PAYOUT_ROW_STATUSES — 그 파일의 스펙이 마이그레이션 CHECK와 대조한다) */
 const PAYOUT_STATUS = '(?:REQUESTED|AWAITING_MULTISIG_APPROVAL|APPROVED|BROADCASTING|PAID|FAILED|CANCELLED)';
+/** bounty.status 전체 (bounties/bounty-status.ts BountyStatus) */
+const BOUNTY_STATUS = '(?:DRAFT|FUNDING_PENDING|OPEN|SUBMISSION_CLOSED|IN_REVIEW|COMPLETED|CANCELLED)';
 const setLiteral = (status: string) => new RegExp(`(?:\\[|\\bIN\\s*\\()\\s*'${status}'\\s*,\\s*'${status}'`, 'i');
-const SET_LITERALS = [setLiteral(SUBMISSION_STATUS), setLiteral(PAYOUT_STATUS)];
+const SET_LITERALS = [setLiteral(SUBMISSION_STATUS), setLiteral(PAYOUT_STATUS), setLiteral(BOUNTY_STATUS)];
 /** 배정 상한식 사본 — rewardCapSql()을 쓴다 */
 const CAP_LITERAL = /LEAST\(\s*(?:\w+\.)?amount\s*,\s*(?:\w+\.)?deposited_amount\s*\)/i;
 /** 규칙의 출처 파일 — 여기서만 리터럴 집합을 쓴다 */
-const POLICY_FILES = ['bounties/submission-status.ts', 'bounties/application-status.ts', 'rewards/payout-status.ts'];
+const POLICY_FILES = ['bounties/bounty-status.ts', 'bounties/submission-status.ts', 'bounties/application-status.ts', 'rewards/payout-status.ts'];
 
 /** src 아래 비-스펙 .ts 파일 (sql-param-casts.spec.ts와 같은 기준 — 스펙 파일을 import하면 그 테스트가 여기서도 돌아 따로 둔다) */
 function listSourceFiles(dir: string, out: string[] = []): string[] {
@@ -46,7 +50,7 @@ export function findStatusSetLiterals(source: string): number[] {
   return lines;
 }
 
-describe('submission/application/payout status sets come from the policy files (static guard)', () => {
+describe('submission/application/payout/bounty status sets come from the policy files (static guard)', () => {
   it('flags a TS array or SQL IN list of two or more status literals', () => {
     expect(findStatusSetLiterals(`if (['APPROVED', 'REJECTED'].includes(s)) {}`)).toEqual([1]);
     expect(findStatusSetLiterals(`const x = 1;\n  AND status IN ('SUBMITTED','RESUBMITTED','IN_REVIEW','REVISION_REQUESTED')`)).toEqual([2]);
@@ -60,6 +64,12 @@ describe('submission/application/payout status sets come from the policy files (
     expect(findStatusSetLiterals(`count(*) FILTER (WHERE status NOT IN ('PAID','CANCELLED'))`)).toEqual([1]);
     expect(findStatusSetLiterals(`SELECT LEAST(rw.amount, rw.deposited_amount)::text AS cap`)).toEqual([1]);
     expect(findStatusSetLiterals(`SELECT LEAST(amount, deposited_amount) FROM bounty_reward`)).toEqual([1]);
+  });
+
+  it('flags bounty status sets — e.g. the old public filter that leaked bounties cancelled before they opened (use publicBountySql)', () => {
+    expect(findStatusSetLiterals(`AND b.status NOT IN ('DRAFT', 'FUNDING_PENDING')`)).toEqual([1]);
+    expect(findStatusSetLiterals(`const conds = [\`b.deleted_at IS NULL\`, \`b.status NOT IN ('DRAFT','FUNDING_PENDING')\`];`)).toEqual([1]);
+    expect(findStatusSetLiterals(`WHERE status IN ('OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW')`)).toEqual([1]);
   });
 
   it('allows single-value comparisons, other domains\' sets and comments', () => {

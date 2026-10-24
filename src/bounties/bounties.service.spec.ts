@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { createMockDb } from '../test-support/mock-db';
 import { BountiesService, PUBLIC_DETAIL_COLUMNS } from './bounties.service';
+import { publicBountySql } from './bounty-status';
 
 function setup(answer: (sql: string) => { rowCount: number; rows: unknown[] }) {
   const query = jest.fn(async (sql: string, _params?: unknown[]) => answer(sql));
@@ -10,11 +11,13 @@ function setup(answer: (sql: string) => { rowCount: number; rows: unknown[] }) {
 describe('BountiesService.list (public)', () => {
   const listAnswer = (sql: string) => (sql.includes('count(*)') ? { rowCount: 1, rows: [{ count: '42' }] } : { rowCount: 1, rows: [{ id: 'b1' }] });
 
-  it('hides unpublished and deleted bounties and pages with LIMIT/OFFSET bound after the filters', async () => {
+  it('hides never-opened and deleted bounties (publicBountySql) and pages with LIMIT/OFFSET bound after the filters', async () => {
     const { service, query } = setup(listAnswer);
     await expect(service.list()).resolves.toEqual({ items: [{ id: 'b1' }], page: 1, pageSize: 12, total: 42 });
     const [listSql, listParams] = query.mock.calls[0];
-    expect(listSql).toContain(`WHERE b.deleted_at IS NULL AND b.status NOT IN ('DRAFT', 'FUNDING_PENDING')`);
+    expect(listSql).toContain(`WHERE b.deleted_at IS NULL AND b.opened_at IS NOT NULL`);
+    expect(listSql).not.toMatch(/status NOT IN/);
+    expect(query.mock.calls[1][0]).toContain(`WHERE ${publicBountySql('b')}`);
     expect(listSql).toContain('LIMIT $1 OFFSET $2');
     expect(listParams).toEqual([12, 0]);
     expect(query.mock.calls[1][1]).toEqual([]);
@@ -43,18 +46,19 @@ describe('BountiesService.list (public)', () => {
   it('orders deterministically so pages never overlap', async () => {
     const { service, query } = setup(listAnswer);
     await service.list();
-    expect(query.mock.calls[0][0]).toContain('ORDER BY b.opened_at DESC NULLS LAST, b.created_at DESC, b.id');
+    expect(query.mock.calls[0][0]).toContain('ORDER BY b.opened_at DESC, b.created_at DESC, b.id');
   });
 });
 
 describe('BountiesService.detail (public)', () => {
-  it('404 BOUNTY_NOT_FOUND when the bounty is unknown, deleted or unpublished', async () => {
+  it('404 BOUNTY_NOT_FOUND when the bounty is unknown, deleted or never opened — the same predicate as the list', async () => {
     const { service, query } = setup(() => ({ rowCount: 0, rows: [] }));
     const error = await service.detail('b').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NotFoundException);
     expect((error as Error).message).toBe('BOUNTY_NOT_FOUND');
-    expect(query.mock.calls[0][0]).toContain(`WHERE b.id = $1 AND b.deleted_at IS NULL`);
-    expect(query.mock.calls[0][0]).toContain(`AND b.status NOT IN ('DRAFT', 'FUNDING_PENDING')`);
+    expect(query.mock.calls[0][0]).toContain(`WHERE b.id = $1 AND b.deleted_at IS NULL AND b.opened_at IS NOT NULL`);
+    expect(query.mock.calls[0][0]).not.toMatch(/status NOT IN/);
+    expect(query.mock.calls[0][1]).toEqual(['b']);
   });
 
   it('returns the row and selects an explicit public column list (no operator ids, no deleted_at)', async () => {

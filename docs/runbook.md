@@ -91,6 +91,13 @@
 3. **자동으로 이름을 바꾸지 않는다** — SQL로 `nickname`을 고치지 말 것. 유저 동의 없는 이름 변경은 공개 프로필 링크·제출 기록의 표시 이름을 예고 없이 바꾼다.
 4. 배포 뒤에도 남은 유저가 있으면 같은 스크립트로 주기적으로 확인한다.
 
+### 공개 바운티 노출 조건 배포 전 점검 — `opened_at`
+
+공개 목록·상세는 `opened_at IS NOT NULL`(한 번이라도 OPEN된 바운티, `src/bounties/bounty-status.ts` `publicBountySql`)만 보여 준다 — 예전 필터(`status NOT IN ('DRAFT', 'FUNDING_PENDING')`)는 열리기 전에 취소된 바운티를 공개했다. 앱의 → OPEN 전이는 늘 `opened_at`을 찍지만, SQL로 직접 넣거나 상태를 바꾼 행은 빠졌을 수 있다. 이 규칙이 들어간 BE를 배포하기 **전에**:
+
+1. `railway run sh -c 'psql "$DATABASE_URL" -X -c "SELECT id, status, title, created_at FROM bounty WHERE deleted_at IS NULL AND opened_at IS NULL AND status NOT IN ('"'"'DRAFT'"'"', '"'"'FUNDING_PENDING'"'"', '"'"'CANCELLED'"'"')"'` (읽기 전용).
+2. 0행이면 끝. 행이 있으면 배포 뒤 공개 화면에서 사라진다 — 실제로 열렸던 바운티면 `opened_at`을 운영자 판단으로 채운다(예 `created_at`). CANCELLED이고 `opened_at`이 없는 행은 열리기 전에 취소된 것이므로 숨겨지는 게 맞다.
+
 ## 3. 어드민 부트스트랩
 
 어드민 권한은 API로 줄 수 없다(권한 상승 경로를 만들지 않기 위해). 권한자는 **DB 접속 권한이 있는 사람**(Railway 프로젝트 멤버 또는 Supabase 프로젝트 owner)이며, 부여/회수는 이 스크립트로만 한다 — 직접 `UPDATE`하면 감사 행이 남지 않는다.

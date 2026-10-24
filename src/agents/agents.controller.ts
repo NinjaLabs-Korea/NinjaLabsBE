@@ -30,13 +30,18 @@ export class RegisterAgentDto {
   description?: string;
 
   @IsOptional()
+  @IsString()
   publicKey?: string;
 
+  // IsString: 숫자/배열이면 서비스의 walletAddress.trim()이 TypeError(500). MaxChars: inj1 주소는 정규화 없이 저장되므로 VARCHAR(255) 상한
+  @IsString()
   @IsNotEmpty()
+  @MaxChars(255)
   walletAddress!: string;
 }
 
 class VerifyAgentDto {
+  @IsString()
   @IsNotEmpty()
   signature!: string;
 }

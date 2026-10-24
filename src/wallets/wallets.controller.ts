@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Logger, Post, Req, UseGuards } from '@nestjs/common';
-import { IsNotEmpty, IsOptional } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { SessionUser } from '../auth/auth.service';
@@ -11,19 +11,24 @@ import {
 } from '../common/logging/onboarding-log';
 import { WalletsService } from './wallets.service';
 
+// 모든 필드 IsString — 숫자/배열이 오면 서비스의 address.trim()이 TypeError를 던져 500이 됐다
 class ChallengeDto {
+  @IsString()
   @IsNotEmpty()
   address!: string;
 }
 
 class VerifyDto {
+  @IsString()
   @IsNotEmpty()
   address!: string;
 
+  @IsString()
   @IsNotEmpty()
   signature!: string;
 
   @IsOptional()
+  @IsString()
   @IsNotEmpty()
   publicKey?: string;
 }

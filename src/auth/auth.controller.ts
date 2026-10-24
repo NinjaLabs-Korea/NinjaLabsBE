@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
-import { IsNotEmpty, Matches } from 'class-validator';
+import { IsNotEmpty, IsString, Matches } from 'class-validator';
 import { Request, Response } from 'express';
 import {
   onboardingError,
@@ -25,6 +25,8 @@ import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
 
 class RefreshDto {
+  // IsString: 숫자/객체가 오면 createHash().update()가 TypeError를 던져 500이 됐다 (인증 없이 호출되는 경로)
+  @IsString()
   @IsNotEmpty()
   refreshToken!: string;
 }

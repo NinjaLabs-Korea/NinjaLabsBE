@@ -166,6 +166,25 @@ describeDb('validation over HTTP (e2e)', () => {
         .toEqual(badRequest(['name must be shorter than or equal to 100 characters']));
     });
 
+    it('non-string values in auth/wallet/agent bodies → 400 (were TypeError 500s, /auth/refresh and /auth/logout without login)', async () => {
+      const U = { token: user.accessToken };
+      for (const [path, json, token] of [
+        ['/auth/refresh', { refreshToken: 123 }, undefined],
+        ['/auth/refresh', { refreshToken: { a: 1 } }, undefined],
+        ['/auth/logout', { refreshToken: ['x'] }, undefined],
+        ['/wallets/challenge', { address: 123 }, U.token],
+        ['/wallets/verify', { address: ['0x0000000000000000000000000000000000000001'], signature: '0x00' }, U.token],
+        ['/agents', { name: 'n', walletAddress: 123 }, U.token],
+        ['/agents', { name: 'n', walletAddress: ['0x0000000000000000000000000000000000000001'] }, U.token],
+        ['/agents', { name: 'n', walletAddress: `inj1${'q'.repeat(300)}`, publicKey: 'k' }, U.token],
+        ['/agents', { name: 'n', walletAddress: 'inj1abc', publicKey: { k: 1 } }, U.token],
+        [`/agents/${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}/verify`, { signature: 1 }, U.token],
+      ] as const) {
+        const res = await e2e.post(path, json, { token });
+        expect([path, JSON.stringify(json), res.status]).toEqual([path, JSON.stringify(json), 400]);
+      }
+    });
+
     it('non-UUID :id → 400 "Validation failed (uuid is expected)" on public, user and admin routes', async () => {
       // bodies are valid so only the :id pipe can fail
       for (const [method, path, token, json] of [

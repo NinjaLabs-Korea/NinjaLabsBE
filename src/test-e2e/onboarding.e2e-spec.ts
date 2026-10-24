@@ -137,7 +137,7 @@ describeDb('onboarding over HTTP (e2e)', () => {
       expect((await check('Admin')).body).toEqual({ available: false });
     });
 
-    it.failing('answers what POST /users/me/profile would accept: surrounding spaces are trimmed like the save, and names the save rejects are never "available"', async () => {
+    it('answers what POST /users/me/profile would accept: surrounding spaces are trimmed like the save, and names the save rejects are never "available"', async () => {
       const session = await e2e.login();
       const nickname = `Trim${Date.now().toString(36)}`;
       await e2e.post('/users/me/profile', { nickname, bio: 'b', tags: ['DEV'] }, { token: session.accessToken });

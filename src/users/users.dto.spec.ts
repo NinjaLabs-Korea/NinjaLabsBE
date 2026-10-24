@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { isReservedNickname, NICKNAME } from './nickname';
+import { isReservedNickname, isSavableNickname, NICKNAME } from './nickname';
 import { CompleteProfileDto } from './users.controller';
 
 // 컨트롤러가 서비스 → wallet-signature → @injectivelabs/sdk-ts(ESM)를 끌어오므로 서명 검증 모듈만 껍데기로 대체한다
@@ -54,5 +54,21 @@ describe('CompleteProfileDto', () => {
     expect(await failedFields({ ...valid, bio: 'b'.repeat(1000) })).toEqual([]);
     expect(await failedFields({ ...valid, bio: 'b'.repeat(1001) })).toEqual(['bio']);
     expect(await failedFields({ ...valid, bio: '' })).toEqual(['bio']);
+  });
+});
+
+describe('isSavableNickname (GET /users/check-nickname answers "available" only for these)', () => {
+  it.each(['ninja', ' ninja ', 'ab', 'n'.repeat(50), '닌자_빌더', 'a.b-c_d'])('accepts %p, exactly what CompleteProfileDto accepts', async (nickname) => {
+    expect(isSavableNickname(nickname)).toBe(true);
+    expect(await failedFields({ ...valid, nickname })).toEqual([]);
+  });
+
+  it.each(['', ' ', 'a', 'n'.repeat(51), '.ninja', 'ninja-', 'has space', 'Admin', ' me '])('rejects %p, exactly what CompleteProfileDto rejects', async (nickname) => {
+    expect(isSavableNickname(nickname)).toBe(false);
+    expect(await failedFields({ ...valid, nickname })).toEqual(['nickname']);
+  });
+
+  it.each([undefined, null, 42, ['ninja', 'other']])('rejects the non-string %p (missing or repeated query parameter)', (value) => {
+    expect(isSavableNickname(value)).toBe(false);
   });
 });

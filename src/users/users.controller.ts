@@ -20,7 +20,7 @@ import {
   requestTraceId,
 } from '../common/logging/onboarding-log';
 import { Trim } from '../common/validation/trim';
-import { IsNotReservedNickname, NICKNAME } from './nickname';
+import { IsNotReservedNickname, NICKNAME, NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH } from './nickname';
 import { UsersService } from './users.service';
 
 export { NICKNAME } from './nickname';
@@ -29,7 +29,7 @@ export class CompleteProfileDto {
   /** 규칙은 users/nickname.ts — 문자/숫자로 시작·끝, `_ . -` 허용, 예약어(me/check-nickname/admin/new/edit) 거부 */
   @Trim()
   @IsString()
-  @Length(2, 50)
+  @Length(NICKNAME_MIN_LENGTH, NICKNAME_MAX_LENGTH)
   @Matches(NICKNAME)
   @IsNotReservedNickname()
   nickname!: string;
@@ -54,8 +54,9 @@ export class UsersController {
   /** GET /users/check-nickname?nickname=... — 닉네임 중복 검사 (공개) */
   @Get('check-nickname')
   @Throttle({ default: { ttl: 60_000, limit: 30 } }) // 닉네임 열거 방지
-  async checkNickname(@Query('nickname') nickname: string) {
-    return { available: await this.users.nicknameAvailable(nickname ?? '') };
+  async checkNickname(@Query('nickname') nickname: unknown) {
+    // 반복 파라미터(`?nickname=a&nickname=b`)는 배열로 온다 — 서비스가 문자열이 아니면 사용 불가로 답한다
+    return { available: await this.users.nicknameAvailable(nickname) };
   }
 
   /** POST /users/me/profile — 온보딩 3단계 프로필 저장 (로그인 필요) */

@@ -15,6 +15,21 @@ export function isReservedNickname(value: unknown): boolean {
   return typeof value === 'string' && RESERVED_NICKNAMES.includes(value.trim().toLowerCase());
 }
 
+/** CompleteProfileDto의 길이 규칙 (@Length(2, 50) — class-validator는 코드 포인트 단위로 센다) */
+export const NICKNAME_MIN_LENGTH = 2;
+export const NICKNAME_MAX_LENGTH = 50;
+
+/**
+ * POST /users/me/profile 이 받아 줄 닉네임인가 — 같은 trim 뒤 길이·문자 규칙·예약어를 본다 (중복 여부는 DB가 판단).
+ * check-nickname은 이걸 통과해야만 "available"이라고 답한다: 저장이 거부할 값을 사용 가능하다고 말하지 않는다.
+ */
+export function isSavableNickname(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const nickname = value.trim();
+  const length = [...nickname].length;
+  return length >= NICKNAME_MIN_LENGTH && length <= NICKNAME_MAX_LENGTH && NICKNAME.test(nickname) && !isReservedNickname(nickname);
+}
+
 /** DTO 데코레이터 — 예약어면 거부 (대소문자 무관) */
 export const IsNotReservedNickname = (options?: ValidationOptions) =>
   ValidateBy(

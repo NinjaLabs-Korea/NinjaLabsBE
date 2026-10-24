@@ -1,18 +1,22 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
-import { isReservedNickname } from './nickname';
+import { isSavableNickname } from './nickname';
 
 @Injectable()
 export class UsersService {
   constructor(private readonly db: DatabaseService) {}
 
-  /** 닉네임 사용 가능 여부 (활성 유저 기준, 대소문자 무시). 라우트 예약어는 저장도 막히므로 사용 불가로 답한다 */
-  async nicknameAvailable(nickname: string): Promise<boolean> {
-    if (isReservedNickname(nickname)) return false;
+  /**
+   * 닉네임 사용 가능 여부 (활성 유저 기준, 대소문자 무시) — "available"은 "지금 저장하면 받아 준다"는 뜻이다.
+   * 그래서 프로필 저장과 같은 trim을 한 값으로 찾고, 저장이 거부할 값(길이·문자 규칙·예약어, 문자열이 아닌 반복 쿼리 파라미터)은
+   * 조회 없이 사용 불가로 답한다 (예전에는 `" taken "`·`""`·`".ninja"`를 available로 답해 저장에서 409/400이 났다).
+   */
+  async nicknameAvailable(nickname: unknown): Promise<boolean> {
+    if (!isSavableNickname(nickname)) return false;
     const r = await this.db.query(
       `SELECT 1 FROM "user" WHERE lower(nickname) = lower($1) AND deleted_at IS NULL`,
-      [nickname],
+      [nickname.trim()],
     );
     return r.rowCount === 0;
   }

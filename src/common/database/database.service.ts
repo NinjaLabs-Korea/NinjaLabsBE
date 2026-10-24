@@ -9,6 +9,11 @@ export type QueryRunner = {
 };
 
 type ErrorLogger = Pick<Logger, 'error'>;
+/** 체크아웃된 클라이언트의 'error' 이벤트 구독 (PoolClient는 EventEmitter) — 스펙의 최소 대역은 생략할 수 있다 */
+type ErrorEvents = {
+  on?(event: 'error', listener: (err: Error) => void): unknown;
+  removeListener?(event: 'error', listener: (err: Error) => void): unknown;
+};
 
 /**
  * 유휴 연결이 끊기면(Postgres/Supabase 재시작, idle timeout, 네트워크 단절) pg Pool이 'error'를 emit한다.
@@ -24,13 +29,23 @@ export function attachPoolErrorHandler(pool: Pick<Pool, 'on'>, logger: ErrorLogg
 /**
  * BEGIN → fn → COMMIT, 실패 시 ROLLBACK. 연결이 트랜잭션 도중 끊기면 ROLLBACK도 실패하는데,
  * 그 에러로 원래 에러를 덮지 않고, 깨진 클라이언트는 release(err)로 풀에서 폐기한다.
+ *
+ * pg-pool은 체크아웃된 클라이언트에서 idle 'error' 리스너를 떼어낸다(attachPoolErrorHandler는 유휴 연결만 지킨다).
+ * 그래서 트랜잭션 도중 소켓이 끊기면(DB 재시작·장애조치·네트워크 단절) 클라이언트가 리스너 없는 'error'를 emit해
+ * **프로세스가 죽었다** (uncaught 'error' 이벤트). 체크아웃 동안 리스너를 달아 두고, 받은 에러는 클라이언트 폐기 사유로 쓴다.
+ * 폐기되는 클라이언트에는 리스너를 남겨 늦게 도착하는 'error'도 삼킨다.
  */
 export async function runInTransaction<T>(
-  client: Pick<PoolClient, 'query' | 'release'>,
+  client: Pick<PoolClient, 'query' | 'release'> & ErrorEvents,
   fn: (client: PoolClient) => Promise<T>,
   logger: ErrorLogger,
 ): Promise<T> {
   let broken: Error | undefined;
+  const onClientError = (err: Error) => {
+    broken ??= err;
+    logger.error(`database client error during transaction (client discarded): ${err.message}`);
+  };
+  client.on?.('error', onClientError);
   try {
     await client.query('BEGIN');
     const result = await fn(client as PoolClient);
@@ -40,11 +55,12 @@ export async function runInTransaction<T>(
     try {
       await client.query('ROLLBACK');
     } catch (rollbackErr) {
-      broken = rollbackErr as Error;
-      logger.error(`ROLLBACK failed, discarding client: ${broken.message}`);
+      broken ??= rollbackErr as Error;
+      logger.error(`ROLLBACK failed, discarding client: ${(rollbackErr as Error).message}`);
     }
     throw err;
   } finally {
+    if (!broken) client.removeListener?.('error', onClientError);
     client.release(broken);
   }
 }

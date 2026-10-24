@@ -124,3 +124,37 @@ describe('DatabaseService', () => {
     await db.onModuleDestroy();
   });
 });
+
+describe('runInTransaction — socket errors on the checked-out client', () => {
+  /** pg-pool detaches its idle 'error' listener while a client is checked out — an unhandled 'error' event kills the process */
+  function emitterClient() {
+    return Object.assign(new EventEmitter(), { query: jest.fn().mockResolvedValue({}), release: jest.fn() });
+  }
+
+  it('handles an error event emitted mid-transaction (no throw), discards the client with that error', async () => {
+    const client = emitterClient();
+    const log = { error: jest.fn() };
+    const dropped = new Error('Connection terminated unexpectedly');
+    const failure = new Error('terminating connection due to administrator command');
+    await expect(runInTransaction(client, async () => {
+      expect(() => client.emit('error', dropped)).not.toThrow();
+      throw failure;
+    }, log)).rejects.toBe(failure);
+    expect(client.release).toHaveBeenCalledWith(dropped);
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining('database client error during transaction'));
+  });
+
+  it('keeps swallowing late error events on the discarded client after release', async () => {
+    const client = emitterClient();
+    await runInTransaction(client, async () => { client.emit('error', new Error('drop')); }, { error: jest.fn() });
+    expect(client.release).toHaveBeenCalledWith(expect.objectContaining({ message: 'drop' }));
+    expect(() => client.emit('error', new Error('late'))).not.toThrow();
+  });
+
+  it('removes its listener before handing a healthy client back (the pool re-attaches its own idle listener)', async () => {
+    const client = emitterClient();
+    await runInTransaction(client, async () => 'ok', { error: jest.fn() });
+    expect(client.listenerCount('error')).toBe(0);
+    expect(client.release).toHaveBeenCalledWith(undefined);
+  });
+});

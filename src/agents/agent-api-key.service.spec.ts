@@ -125,4 +125,42 @@ describe('AgentApiKeyService', () => {
     });
     expect(txQuery).not.toHaveBeenCalled();
   });
+  it('looks candidates up by the first 11 characters of the presented key only (nj_ + 8), never by the full key or its hash', async () => {
+    const { service, txQuery } = createService([row()]);
+    await service.authenticate(rawKey);
+    expect(txQuery.mock.calls[0][1]).toEqual(['nj_12345678']);
+    expect(JSON.stringify(txQuery.mock.calls)).not.toContain(rawKey);
+  });
+
+  it.each([
+    ['a key without the nj_ marker', 'sk_1234567890abcdefghijklmnop'],
+    ['an nj_ key shorter than 16 characters', 'nj_123456789012'],
+    ['the marker in the wrong case', 'NJ_1234567890abcdefghijklmnop'],
+  ])('rejects %s with 401 INVALID_AGENT_API_KEY without a lookup', async (_label, key) => {
+    const { service, txQuery } = createService([row()]);
+    await expect(service.authenticate(key)).rejects.toMatchObject({ status: 401, message: 'INVALID_AGENT_API_KEY' });
+    expect(txQuery).not.toHaveBeenCalled();
+  });
+
+  it('skips a candidate whose stored hash is not 64 hex characters (corrupt row) instead of throwing, and still matches the valid one', async () => {
+    const { service } = createService([
+      row({ api_key_id: 'corrupt', key_hash: 'zz'.repeat(32) }),
+      row({ api_key_id: 'short', key_hash: 'abcd' }),
+      row(),
+    ]);
+    await expect(service.authenticate(rawKey)).resolves.toMatchObject({ apiKeyId: '11111111-1111-4111-8111-111111111111' });
+  });
+
+  it('rejects an unparseable expires_at as expired', async () => {
+    const { service, txQuery } = createService([row({ expires_at: 'not-a-date' })]);
+    await expect(service.authenticate(rawKey)).rejects.toMatchObject({ message: 'INVALID_AGENT_API_KEY' });
+    expect(txQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a key expiring one minute from now and rejects one that expired a second ago (expiry boundary)', async () => {
+    const soon = createService([row({ expires_at: new Date(Date.now() + 60_000) })]);
+    await expect(soon.service.authenticate(rawKey)).resolves.toMatchObject({ agentId: '22222222-2222-4222-8222-222222222222' });
+    const past = createService([row({ expires_at: new Date(Date.now() - 1_000) })]);
+    await expect(past.service.authenticate(rawKey)).rejects.toMatchObject({ message: 'INVALID_AGENT_API_KEY' });
+  });
 });

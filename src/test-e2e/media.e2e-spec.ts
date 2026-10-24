@@ -73,4 +73,46 @@ describeDb('media over HTTP (e2e)', () => {
     expect(missing.status).toBe(404);
     expect(missing.body).toEqual({ statusCode: 404, error: 'Not Found', message: 'MEDIA_NOT_FOUND' });
   });
+  it('serves each asset with its own stored mime type (webp → image/webp) and a byte-exact Content-Length', async () => {
+    const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.from([4, 0, 0, 0]), Buffer.from('WEBPVP8 '), Buffer.alloc(20, 7)]);
+    const created = await upload(webp, 'image/webp', 'a.webp');
+    const served = await e2e.get(created.body.url);
+    expect(served.status).toBe(200);
+    expect(served.headers['content-type']).toBe('image/webp');
+    expect(served.headers['content-length']).toBe(String(webp.length));
+    expect(Buffer.compare(served.body as Buffer, webp)).toBe(0);
+    expect(served.headers.etag).toBe(`"${createHash('sha256').update(webp).digest('hex')}"`);
+  });
+
+  it('the same bytes uploaded twice get two ids but the same ETag (content hash), and a 300-char file name is stored truncated to 255', async () => {
+    const longName = `${'n'.repeat(300)}.png`;
+    const a = await upload(PNG_1x1, 'image/png', longName);
+    const b = await upload(PNG_1x1, 'image/png');
+    expect(a.status).toBe(201);
+    expect(a.body.id).not.toBe(b.body.id);
+    const [ea, eb] = await Promise.all([e2e.get(a.body.url), e2e.get(b.body.url)]);
+    expect(ea.headers.etag).toBe(eb.headers.etag);
+    const row = await e2e.db.query<{ file_name: string; created_by: string }>(`SELECT file_name, created_by FROM media_asset WHERE id = $1`, [a.body.id]);
+    expect(row.rows[0].file_name).toBe('n'.repeat(255));
+    expect(row.rows[0].created_by).toBe(admin.userId);
+  });
+
+  it('a request with two file parts is refused with 400 (multer files: 1) and stores nothing', async () => {
+    const before = (await e2e.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM media_asset`)).rows[0].n;
+    const form = multipart([
+      { name: 'file', value: PNG_1x1, filename: 'a.png', contentType: 'image/png' },
+      { name: 'file', value: PNG_1x1, filename: 'b.png', contentType: 'image/png' },
+    ]);
+    const res = await e2e.request('POST', '/admin/media', { body: form.body, headers: { 'content-type': form.contentType }, token: admin.accessToken });
+    expect(res.status).toBe(400);
+    expect(res.body.statusCode).toBe(400);
+    expect((await e2e.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM media_asset`)).rows[0].n).toBe(before);
+  });
+
+  it('GET /media/:id with a non-UUID id is 400 (ParseUUIDPipe), and an unauthenticated upload is 401', async () => {
+    expect((await e2e.get('/media/not-a-uuid')).status).toBe(400);
+    const form = multipart([{ name: 'file', value: PNG_1x1, filename: 'a.png', contentType: 'image/png' }]);
+    const anon = await e2e.request('POST', '/admin/media', { body: form.body, headers: { 'content-type': form.contentType } });
+    expect(anon.status).toBe(401);
+  });
 });

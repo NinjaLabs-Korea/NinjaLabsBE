@@ -85,3 +85,35 @@ describe('InjectiveNftClient tokenExists', () => {
     await expect(client().tokenExists('token-1')).rejects.toBe(failure);
   });
 });
+
+describe('InjectiveNftClient configuration and mint', () => {
+  it.each([
+    [{ MASTER_WALLET_MNEMONIC: 'm', NFT_CONTRACT_ADDRESS: 'inj1c' }, true],
+    [{ MASTER_WALLET_MNEMONIC: 'm' }, false],
+    [{ NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
+    [{ MASTER_WALLET_MNEMONIC: '', NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
+  ])('isConfigured(%j) is %s — the worker defers jobs unless both the mnemonic and the contract are set', (values, expected) => {
+    expect(new InjectiveNftClient(config(values)).isConfigured()).toBe(expected);
+  });
+
+  it('contractAddress() is empty (never a placeholder) when NFT_CONTRACT_ADDRESS is unset', () => {
+    expect(new InjectiveNftClient(config({})).contractAddress()).toBe('');
+  });
+
+  it('mint executes cw721 `mint` from the master wallet with token_uri null when none is given and returns the tx hash', async () => {
+    const { MsgExecuteContract } = jest.requireMock('@injectivelabs/sdk-ts') as { MsgExecuteContract: { fromJSON: jest.Mock } };
+    const client = new InjectiveNftClient(config({ INJECTIVE_NETWORK: 'testnet', NFT_CONTRACT_ADDRESS: 'inj1contract', MASTER_WALLET_MNEMONIC: 'm' }));
+
+    await expect(client.mint('token-9', 'inj1owner')).resolves.toBe('tx');
+    expect(MsgExecuteContract.fromJSON).toHaveBeenLastCalledWith({
+      sender: 'inj1master',
+      contractAddress: 'inj1contract',
+      msg: { mint: { token_id: 'token-9', owner: 'inj1owner', token_uri: null, extension: null } },
+    });
+    await client.mint('token-10', 'inj1owner', 'ipfs://meta');
+    expect(MsgExecuteContract.fromJSON.mock.calls.at(-1)![0].msg.mint.token_uri).toBe('ipfs://meta');
+    // the broadcaster (and the private key derivation) is built once per client
+    expect(broadcasterCtor).toHaveBeenCalledTimes(1);
+    expect(broadcasterCtor).toHaveBeenCalledWith(expect.objectContaining({ network: 'testnet', simulateTx: true }));
+  });
+});

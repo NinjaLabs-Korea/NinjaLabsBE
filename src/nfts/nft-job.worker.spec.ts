@@ -461,4 +461,97 @@ describe('NftJobWorker', () => {
     expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'ATTACHED'`))).toBe(false);
     expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(true);
   });
+  describe('job routing edge cases', () => {
+    const retryOf = (query: jest.Mock) => query.mock.calls.find(([sql]) => sql.includes('retry_count = retry_count + 1'));
+
+    it('an unconfigured chain defers the job by 1 hour with an explanatory last_error, burning no retry and calling no chain method', async () => {
+      const { worker, query, chain } = setup({ configured: false, retryCount: 4 });
+      await worker.poll();
+      const defer = query.mock.calls.find(([sql]) => sql.includes('not configured'))!;
+      expect(defer[0]).toContain(`SET status = 'PENDING', scheduled_at = now() + interval '1 hour'`);
+      expect(defer[0]).toContain(`WHERE id = $1 AND status = 'PROCESSING'`);
+      expect(defer[0]).toContain(`last_error = 'NFT_CONTRACT_ADDRESS / MASTER_WALLET_MNEMONIC not configured'`);
+      expect(defer[1]).toEqual(['job']);
+      expect(retryOf(query)).toBeUndefined();
+      expect(chain.tokenExists).not.toHaveBeenCalled();
+      expect(chain.mint).not.toHaveBeenCalled();
+      // even on what would be the last attempt, the nft is not failed
+      expect(query.mock.calls.some(([sql]) => sql.includes(`UPDATE nft SET status = 'FAILED'`))).toBe(false);
+    });
+
+    it('a job of an unknown type is retried with last_error naming the type (no chain call)', async () => {
+      const { worker, query, chain } = setup({ jobType: 'BURN' });
+      await worker.poll();
+      expect(retryOf(query)![1]).toEqual(['job', 'PENDING', 'unknown job_type: BURN']);
+      expect(chain.mint).not.toHaveBeenCalled();
+    });
+
+    it('a job whose nft row is gone is retried with "not found" (the wallet join found nothing)', async () => {
+      const { worker, query } = setup();
+      const base = query.getMockImplementation()!;
+      query.mockImplementation(async (sql: string, params?: unknown[]) =>
+        sql.includes('FROM nft n JOIN wallet w') ? { rowCount: 0, rows: [] } : base(sql, params));
+      await worker.poll();
+      expect(retryOf(query)![1]).toEqual(['job', 'PENDING', `nft ${nftId} not found`]);
+    });
+
+    it('RETRY_MINT (operator retry of a FAILED nft) mints like MINT_CHILD: MINTING → mint → MINTED', async () => {
+      const { worker, query, chain } = setup({ jobType: 'RETRY_MINT', nft: { status: 'FAILED' } });
+      await worker.poll();
+      const sqls = query.mock.calls.map(([sql]) => sql as string);
+      const minting = sqls.findIndex((sql) => sql.includes(`UPDATE nft SET status = 'MINTING' WHERE id = $1`));
+      const minted = sqls.findIndex((sql) => sql.includes(`SET status = 'MINTED', token_id = $2, mint_tx_hash = $3`));
+      expect(minting).toBeGreaterThan(-1);
+      expect(chain.mint.mock.invocationCallOrder[0]).toBeGreaterThan(query.mock.invocationCallOrder[minting]);
+      expect(minted).toBeGreaterThan(minting);
+      expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(true);
+    });
+
+    it('a mint broadcast failure is recorded as a retry with the (sanitized) chain error and leaves the nft MINTING for the next attempt', async () => {
+      const { worker, query, chain } = setup();
+      chain.mint.mockRejectedValueOnce(new Error('account sequence mismatch'));
+      await worker.poll();
+      expect(retryOf(query)![1]).toEqual(['job', 'PENDING', 'account sequence mismatch']);
+      expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'MINTED'`))).toBe(false);
+      expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(false);
+    });
+
+    it('RETRY_ATTACH attaches through the same parent-ready join as ATTACH_CHILD', async () => {
+      const { worker, query } = setup({ jobType: 'RETRY_ATTACH', nft: { status: 'ATTACHING' } });
+      await worker.poll();
+      expect(query.mock.calls.find(([sql]) => sql.includes(`SET status = 'ATTACHED'`))![1]).toEqual([nftId]);
+      expect(query.mock.calls.some(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`))).toBe(true);
+    });
+
+    it.each(['PENDING', 'MINTING', 'FAILED'])('an ATTACH_CHILD for a child that is %s (not minted) fails as a retry instead of deferring or succeeding', async (status) => {
+      const { worker, query } = setup({ jobType: 'ATTACH_CHILD', nft: { status }, parentStatus: 'PENDING' });
+      await worker.poll();
+      expect(retryOf(query)![1]).toEqual(['job', 'PENDING', `nft ${nftId} cannot be attached in status ${status}`]);
+      expect(query.mock.calls.some(([sql]) => sql.includes('attach deferred'))).toBe(false);
+    });
+
+    it('a poll that starts while another is still running does nothing (re-entrancy guard), and the flag is released afterwards', async () => {
+      const { worker, query } = setup({ configured: false });
+      const base = query.getMockImplementation()!;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      query.mockImplementationOnce(async (sql: string, params?: unknown[]) => { await gate; return base(sql, params); });
+
+      const first = worker.poll();
+      await worker.poll(); // overlapping cron tick
+      expect(query).toHaveBeenCalledTimes(1);
+      release();
+      await first;
+      const callsAfterFirst = query.mock.calls.length;
+      await worker.poll();
+      expect(query.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+    });
+
+    it('releases the running flag even when the stale sweep itself throws', async () => {
+      const { worker, query } = setup();
+      query.mockRejectedValueOnce(new Error('db down'));
+      await expect(worker.poll()).rejects.toThrow('db down');
+      expect(worker['running']).toBe(false);
+    });
+  });
 });

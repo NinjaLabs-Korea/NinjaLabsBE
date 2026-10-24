@@ -23,10 +23,25 @@
 |---|---|---|---|
 | GET | `/auth/google` | - | `codeChallenge`(S256, 필수), `returnTo`, `trace` → 구글 동의 화면 |
 | GET | `/auth/google/callback` | - | Google code 교환 → FE `/auth/callback#loginCode=...` |
-| POST | `/auth/exchange` | - | `{code, codeVerifier}` → `{accessToken, refreshToken}`; `Cache-Control: no-store, private` |
-| POST | `/auth/refresh` | - | `{refreshToken}` → `{accessToken, refreshToken}` (회전). **재사용 유예 30초**: 방금 회전된 구 토큰이 30초 안에 다시 오면(멀티탭 레이스) 401 대신 이긴 쪽과 **같은 `refreshToken`**(+ 새로 서명한 `accessToken`)을 돌려주고 다시 회전하지 않는다 — 두 탭 모두 그 토큰을 쓰면 된다. 30초가 지났거나 그 후속 토큰이 이미 회전/폐기됐으면 재사용 감지로 보고 `401 INVALID_REFRESH_TOKEN` + 그 토큰에서 파생된 세션 사슬 전체 폐기(재로그인 필요). 정지/삭제된 유저는 항상 401 |
-| POST | `/auth/logout` | - | `{refreshToken}` → 204 |
+| POST | `/auth/exchange` | - | `{code, codeVerifier}` → `{accessToken, refreshToken}`; `Cache-Control: no-store, private`. **쿠키 모드**(`X-Ninja-Session: cookie`): `Set-Cookie: ninja_rt=…` + 본문 `{accessToken}` (아래 "refresh 쿠키 모드") |
+| POST | `/auth/refresh` | - | **쿠키 모드**: 본문 `{}`(또는 없음) + `ninja_rt` 쿠키 → `{accessToken}` + 새 `Set-Cookie`. **본문 모드(deprecated)**: `{refreshToken}` → `{accessToken, refreshToken}` (회전). `Cache-Control: no-store, private`. **재사용 유예 30초**: 방금 회전된 구 토큰이 30초 안에 다시 오면(멀티탭 레이스) 401 대신 이긴 쪽과 **같은 `refreshToken`**(+ 새로 서명한 `accessToken`)을 돌려주고 다시 회전하지 않는다 — 두 탭 모두 그 토큰을 쓰면 된다. 30초가 지났거나 그 후속 토큰이 이미 회전/폐기됐으면 재사용 감지로 보고 `401 INVALID_REFRESH_TOKEN` + 그 토큰에서 파생된 세션 사슬 전체 폐기(재로그인 필요). 정지/삭제된 유저는 항상 401 |
+| POST | `/auth/logout` | - | **쿠키 모드**: 쿠키의 세션 폐기 + 쿠키 삭제(`Max-Age=0`) → 204. **본문 모드(deprecated)**: `{refreshToken}` → 204 |
 | GET | `/auth/me` | ✅ | 현재 유저 프로필 + 온보딩/지갑 상태 |
+
+### refresh 쿠키 모드 (2026-10-24 결정 — FE는 이 계약으로 구현)
+
+FE는 `/api/auth/*`를 Next.js rewrite로 BE `/auth/*`에 프록시한다 — 브라우저가 보는 것은 FE 호스트의 `/api/auth/...`이므로 쿠키는 FE 호스트의 first-party 쿠키다.
+
+- **요청별 옵트인**: 헤더 `X-Ninja-Session: cookie`(값은 대소문자·앞뒤 공백 무시). 이 헤더가 없으면 쿠키는 **무시**되고 본문 모드다(그대로 동작 — 옛 탭/스크립트 호환, **deprecated**).
+- **쿠키**: `Set-Cookie: ninja_rt=<refresh>; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=<JWT_REFRESH_TTL 초, 기본 1209600>` — `Domain` 없음. 값은 base64url 64자.
+- `POST /auth/exchange`: 쿠키를 심고 본문은 `{accessToken}` (`refreshToken` 없음 — 그 밖의 필드가 생기면 그대로 둔다).
+- `POST /auth/refresh`: 본문 `{}`(또는 본문 없음) — `ninja_rt`를 읽어 회전하고 새 토큰으로 쿠키를 다시 심는다 → `{accessToken}`. 30초 재사용 유예도 같다(유예 응답은 이긴 쪽과 같은 토큰을 쿠키로). 
+  - **레거시 이전(1회)**: 헤더와 함께 본문 `refreshToken`이 오면(localStorage에 남은 토큰) 본문 토큰을 쓰고 결과를 쿠키로 심는다. 이후 FE는 localStorage 토큰을 지운다.
+  - 쿠키가 없으면 `401 INVALID_REFRESH_TOKEN`(쿠키 변경 없음). **쿠키에서 읽은** 토큰이 401이면 쿠키를 지운다(`Max-Age=0`).
+- `POST /auth/logout`: 쿠키(와 본문에 함께 온 레거시 토큰)의 세션을 폐기하고 `Set-Cookie: ninja_rt=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0` → 204. 토큰이 없어도 204.
+- **CSRF**: 쿠키를 쓰는 요청은 커스텀 헤더가 **필수** — 교차 사이트 폼은 헤더를 붙일 수 없고, 교차 출처 JS는 CORS preflight(`CORS_ORIGINS` 허용 목록)에서 막힌다. `SameSite=Strict`는 이중 방어 (docs/security.md).
+- **본문 모드에서** `refreshToken`이 빠지면 예전과 같은 `400 ["refreshToken should not be empty", "refreshToken must be a string"]`.
+- **한도**: `/auth/refresh`는 제시된 refresh 토큰(쿠키 또는 본문)의 **해시별 10/min**, `/auth/exchange`는 로그인 코드 해시별 10/min (초과 시 429 + `Retry-After-auth-token`). Vercel 프록시 뒤 사용자들이 공유 egress IP 하나에 묶여 서로의 refresh를 막지 않게 한 것이다. IP 기준 거친 한도는 전역 IP당 120/min이 그대로 걸린다(초과 시 `Retry-After`).
 
 로그인 시 FE는 탭의 `sessionStorage`에 랜덤 verifier를 저장하고 SHA-256/base64url
 challenge만 `/auth/google`에 보낸다. BE는 challenge를 서명된 OAuth state에 연결한다.

@@ -191,6 +191,164 @@ describeDb('auth over HTTP (e2e)', () => {
     expect((await e2e.post('/auth/logout', { refreshToken: 'unknown' })).status).toBe(204);
   });
 
+  describe('refresh token in an HttpOnly cookie (X-Ninja-Session: cookie)', () => {
+    const COOKIE_MODE = { 'x-ninja-session': 'cookie' };
+    const TTL_SECONDS = 14 * 86_400; // JWT_REFRESH_TTL=14d in the e2e env
+    const COOKIE_RE = /^ninja_rt=([A-Za-z0-9_-]{64}); HttpOnly; Secure; SameSite=Strict; Path=\/api\/auth; Max-Age=(\d+)$/;
+    const CLEARED = 'ninja_rt=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0';
+
+    function setCookies(res: { headers: Record<string, unknown> }): string[] {
+      const raw = res.headers['set-cookie'];
+      return Array.isArray(raw) ? raw : raw ? [String(raw)] : [];
+    }
+    /** the single ninja_rt Set-Cookie, checked attribute-for-attribute; returns the token */
+    function issuedCookie(res: { headers: Record<string, unknown> }): string {
+      const cookies = setCookies(res);
+      expect(cookies).toHaveLength(1);
+      const match = COOKIE_RE.exec(cookies[0]);
+      expect(match).not.toBeNull();
+      expect(Number(match![2])).toBe(TTL_SECONDS);
+      expect(cookies[0]).not.toMatch(/Domain=/i);
+      e2e.secrets.add(match![1]);
+      return match![1];
+    }
+    const withCookie = (token: string, ip?: string) => ({ ip, headers: { ...COOKIE_MODE, cookie: `theme=dark; ninja_rt=${token}` } });
+
+    /** Google → login code → POST /auth/exchange in cookie mode */
+    async function cookieLogin(ip = randomIp()) {
+      const sub = `g-cookie-${Math.random().toString(36).slice(2)}`;
+      const { verifier, challenge } = E2eApp.pkce();
+      const { location } = await e2e.oauthCallback({ sub, email: `${sub}@example.test` }, { challenge, ip });
+      const code = new URLSearchParams(new URL(location).hash.slice(1)).get('loginCode')!;
+      e2e.secrets.add(code); e2e.secrets.add(verifier);
+      const res = await e2e.post('/auth/exchange', { code, codeVerifier: verifier }, { ip, headers: COOKIE_MODE });
+      e2e.trackTokens(res.body);
+      return { res, ip };
+    }
+    const openSessions = async (hash: string) =>
+      (await e2e.db.query<{ revoked: boolean }>(`SELECT revoked_at IS NOT NULL AS revoked FROM auth_session WHERE refresh_token_hash = $1`, [hash])).rows;
+
+    it('exchange sets ninja_rt with the exact attributes (HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=<refresh TTL>, no Domain) and the body has no refreshToken', async () => {
+      const { res } = await cookieLogin();
+      expect(res.status).toBe(200);
+      expect(res.headers['cache-control']).toBe('no-store, private');
+      expect(Object.keys(res.body)).toEqual(['accessToken']);
+      expect(claims(res.body.accessToken)).toMatchObject({ typ: 'access' });
+      const token = issuedCookie(res);
+      expect(await openSessions(sha256(token))).toEqual([{ revoked: false }]);
+      expect((await e2e.get('/auth/me', { token: res.body.accessToken })).status).toBe(200);
+    });
+
+    it('refresh reads the cookie (body {} or no body at all), rotates, re-sets the cookie and returns only the access token', async () => {
+      const { res, ip } = await cookieLogin();
+      const first = issuedCookie(res);
+      const rotated = await e2e.post('/auth/refresh', {}, withCookie(first, ip));
+      expect(rotated.status).toBe(200);
+      expect(rotated.headers['cache-control']).toBe('no-store, private');
+      expect(Object.keys(rotated.body)).toEqual(['accessToken']);
+      e2e.trackTokens(rotated.body);
+      const second = issuedCookie(rotated);
+      expect(second).not.toBe(first);
+      expect(await openSessions(sha256(first))).toEqual([{ revoked: true }]);
+      expect(await openSessions(sha256(second))).toEqual([{ revoked: false }]);
+
+      const noBody = await e2e.request('POST', '/auth/refresh', withCookie(second, ip));
+      expect(noBody.status).toBe(200);
+      e2e.trackTokens(noBody.body);
+      expect(issuedCookie(noBody)).not.toBe(second);
+    });
+
+    it('grace reuse works in cookie mode: the old cookie within 30 s gets the winner\'s cookie (no second rotation)', async () => {
+      const { res, ip } = await cookieLogin();
+      const old = issuedCookie(res);
+      const winner = await e2e.post('/auth/refresh', {}, withCookie(old, ip));
+      e2e.trackTokens(winner.body);
+      const successor = issuedCookie(winner);
+      const graced = await e2e.post('/auth/refresh', {}, withCookie(old, ip)); // a second tab still holding the old cookie
+      expect(graced.status).toBe(200);
+      e2e.trackTokens(graced.body);
+      expect(Object.keys(graced.body)).toEqual(['accessToken']);
+      expect(issuedCookie(graced)).toBe(successor);
+      const open = await e2e.db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM auth_session WHERE user_id = (SELECT user_id FROM auth_session WHERE refresh_token_hash = $1) AND revoked_at IS NULL`, [sha256(successor)]);
+      expect(open.rows[0].n).toBe(1);
+    });
+
+    it('without the header the cookie is ignored (CSRF): body mode as before — 400 for an empty body, a body token answers in the body with no Set-Cookie', async () => {
+      const { res, ip } = await cookieLogin();
+      const token = issuedCookie(res);
+      const noHeader = await e2e.post('/auth/refresh', {}, { ip, headers: { cookie: `ninja_rt=${token}` } });
+      expect(noHeader.status).toBe(400);
+      expect(noHeader.body).toEqual({ statusCode: 400, error: 'Bad Request', message: ['refreshToken should not be empty', 'refreshToken must be a string'] });
+      expect(setCookies(noHeader)).toEqual([]);
+      const otherValue = await e2e.post('/auth/refresh', {}, { ip, headers: { 'x-ninja-session': 'body', cookie: `ninja_rt=${token}` } });
+      expect(otherValue.status).toBe(400);
+      expect(await openSessions(sha256(token))).toEqual([{ revoked: false }]); // the cookie was never used
+
+      const legacy = await e2e.login();
+      const bodyMode = await e2e.post('/auth/refresh', { refreshToken: legacy.refreshToken }, { headers: { cookie: `ninja_rt=${token}` } });
+      expect(bodyMode.status).toBe(200);
+      e2e.trackTokens(bodyMode.body);
+      expect(Object.keys(bodyMode.body).sort()).toEqual(['accessToken', 'refreshToken']);
+      expect(setCookies(bodyMode)).toEqual([]);
+      // logout without the header still needs the body token and leaves the cookie alone
+      expect((await e2e.post('/auth/logout', {}, { headers: { cookie: `ninja_rt=${token}` } })).status).toBe(400);
+      expect(await openSessions(sha256(token))).toEqual([{ revoked: false }]);
+    });
+
+    it('logout revokes the cookie\'s session and clears it (Max-Age=0, same Path/attributes); 204', async () => {
+      const { res, ip } = await cookieLogin();
+      const token = issuedCookie(res);
+      const out = await e2e.post('/auth/logout', {}, withCookie(token, ip));
+      expect(out.status).toBe(204);
+      expect(out.text).toBe('');
+      expect(setCookies(out)).toEqual([CLEARED]);
+      expect(await openSessions(sha256(token))).toEqual([{ revoked: true }]);
+      // no cookie at all: still 204 and cleared
+      const bare = await e2e.post('/auth/logout', {}, { headers: COOKIE_MODE });
+      expect(bare.status).toBe(204);
+      expect(setCookies(bare)).toEqual([CLEARED]);
+    });
+
+    it('legacy localStorage token migration: header + body refreshToken uses the body token and sets the cookie', async () => {
+      const legacy = await e2e.login(); // body-mode session as an old tab has it
+      const migrated = await e2e.post('/auth/refresh', { refreshToken: legacy.refreshToken }, { headers: { ...COOKIE_MODE, cookie: 'ninja_rt=stale-cookie-value' } });
+      expect(migrated.status).toBe(200);
+      expect(Object.keys(migrated.body)).toEqual(['accessToken']);
+      e2e.trackTokens(migrated.body);
+      const cookie = issuedCookie(migrated);
+      expect(await openSessions(sha256(legacy.refreshToken))).toEqual([{ revoked: true }]);
+      // from now on the cookie alone refreshes
+      const next = await e2e.post('/auth/refresh', {}, withCookie(cookie));
+      expect(next.status).toBe(200);
+      e2e.trackTokens(next.body);
+      issuedCookie(next);
+    });
+
+    it('CSRF: a cross-origin page cannot send X-Ninja-Session — the preflight from a non-allowlisted origin gets no ACAO (the FE origin does)', async () => {
+      const preflight = (origin: string) => e2e.request('OPTIONS', '/auth/refresh', {
+        headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type,x-ninja-session' },
+      });
+      const evil = await preflight('https://evil.example');
+      expect(evil.headers['access-control-allow-origin']).toBeUndefined();
+      const fe = await preflight(FE_ORIGIN);
+      expect(fe.headers['access-control-allow-origin']).toBe(FE_ORIGIN);
+      expect(String(fe.headers['access-control-allow-headers'])).toMatch(/x-ninja-session/i);
+    });
+
+    it('cookie mode without a cookie is 401 INVALID_REFRESH_TOKEN (nothing set); a dead cookie is 401 and gets cleared', async () => {
+      const none = await e2e.post('/auth/refresh', {}, { headers: COOKIE_MODE });
+      expect(none.status).toBe(401);
+      expect(none.body).toEqual(unauthorized('INVALID_REFRESH_TOKEN'));
+      expect(setCookies(none)).toEqual([]);
+
+      const dead = await e2e.post('/auth/refresh', {}, withCookie('never-issued-token'));
+      expect(dead.status).toBe(401);
+      expect(dead.body).toEqual(unauthorized('INVALID_REFRESH_TOKEN'));
+      expect(setCookies(dead)).toEqual([CLEARED]);
+    });
+  });
+
   describe('bearer tokens', () => {
     it('an OAuth state JWT (same secret, p:"gstate") is not an access token → 401', async () => {
       const start = await e2e.get(`/auth/google?codeChallenge=${E2eApp.pkce().challenge}`);

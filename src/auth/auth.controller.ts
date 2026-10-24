@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -9,11 +10,12 @@ import {
   Query,
   Req,
   Res,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
-import { IsNotEmpty, IsString, Matches } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
 import { Request, Response } from 'express';
 import {
   onboardingError,
@@ -21,15 +23,25 @@ import {
   requestTraceId,
 } from '../common/logging/onboarding-log';
 import { OriginAllowlist } from '../common/origin-allowlist';
+import { AuthTokenThrottlerGuard } from './auth-throttler.guard';
 import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
+import { clearRefreshCookie, isCookieMode, readRefreshCookie, setRefreshCookie } from './session-cookie';
 
+/**
+ * `/auth/refresh`·`/auth/logout` 본문. 쿠키 모드(`X-Ninja-Session: cookie`)에서는 비어 있어도 되므로 선택 필드이고,
+ * 본문 모드에서 빠지면 컨트롤러가 예전 ValidationPipe와 **같은 400 본문**을 낸다 (REFRESH_TOKEN_REQUIRED).
+ */
 class RefreshDto {
   // IsString: 숫자/객체가 오면 createHash().update()가 TypeError를 던져 500이 됐다 (인증 없이 호출되는 경로)
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  refreshToken!: string;
+  refreshToken?: string;
 }
+
+/** 본문 모드에서 refreshToken이 빠졌을 때 — 필수 필드였던 시절 ValidationPipe가 내던 메시지와 동일 (FE/스크립트 호환) */
+const REFRESH_TOKEN_REQUIRED = ['refreshToken should not be empty', 'refreshToken must be a string'];
 
 class LoginCodeDto {
   @Matches(/^[A-Za-z0-9_-]{43}$/)
@@ -143,12 +155,18 @@ export class AuthController {
     return url.toString();
   }
 
+  /**
+   * POST /auth/exchange — 로그인 코드 + PKCE verifier → 세션.
+   * 쿠키 모드(`X-Ninja-Session: cookie`): refresh는 `Set-Cookie: ninja_rt=…`로만 주고 본문에서 뺀다 (session-cookie.ts).
+   * 한도: 로그인 코드 해시별 10/min (AuthTokenThrottlerGuard) + 전역 IP 120/min.
+   */
   @Post('exchange')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store, private')
-  @Throttle({ default: { ttl: 60_000, limit: 10 } })
-  exchange(@Body() dto: LoginCodeDto, @Req() req: Request) {
-    return this.auth.exchangeLoginCode(dto.code, dto.codeVerifier, req.ip, req.headers['user-agent']);
+  @UseGuards(AuthTokenThrottlerGuard)
+  async exchange(@Body() dto: LoginCodeDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const session = await this.auth.exchangeLoginCode(dto.code, dto.codeVerifier, req.ip, req.headers['user-agent']);
+    return isCookieMode(req) ? this.toCookieSession(session, res) : session;
   }
 
   private safeOrigin(value: string): string | null {
@@ -159,28 +177,62 @@ export class AuthController {
     }
   }
 
-  /** POST /auth/refresh — 토큰 재발급 (refresh token 회전: 응답의 새 refreshToken으로 교체 필수) */
+  /**
+   * POST /auth/refresh — 토큰 재발급 (refresh token 회전).
+   *   - 본문 모드(deprecated): `{refreshToken}` → `{accessToken, refreshToken}` — 응답의 새 refreshToken으로 교체 필수. 쿠키는 무시.
+   *   - 쿠키 모드(`X-Ninja-Session: cookie`): `ninja_rt` 쿠키를 읽어 회전하고 새 토큰을 다시 쿠키로 → 본문 `{accessToken}`.
+   *     본문에 `refreshToken`이 함께 오면(localStorage 레거시 토큰의 1회 이전) 본문 토큰을 쓰고 결과를 쿠키로 심는다.
+   *     쿠키에서 읽은 토큰이 401이면 쿠키도 지운다 (죽은 세션).
+   * 한도: 제시된 refresh 토큰 해시별 10/min (AuthTokenThrottlerGuard — Vercel 프록시의 공유 IP로 버킷이 섞이지 않게) + 전역 IP 120/min.
+   */
   @Post('refresh')
-  @Throttle({ default: { ttl: 60_000, limit: 10 } }) // 무차별 대입 방어
   @HttpCode(200)
-  async refresh(@Body() dto: RefreshDto, @Req() req: Request) {
+  @Header('Cache-Control', 'no-store, private')
+  @UseGuards(AuthTokenThrottlerGuard)
+  async refresh(@Body() dto: RefreshDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const traceId = requestTraceId(req.headers);
-    onboardingLog(this.logger, 'session.refresh.requested', { traceId });
+    const cookieMode = isCookieMode(req);
+    const fromCookie = cookieMode && !dto.refreshToken ? readRefreshCookie(req) : undefined;
+    const refreshToken = dto.refreshToken ?? fromCookie;
+    if (!refreshToken) {
+      if (!cookieMode) throw new BadRequestException(REFRESH_TOKEN_REQUIRED);
+      onboardingLog(this.logger, 'session.refresh.rejected', { traceId, reason: 'NO_REFRESH_COOKIE' });
+      throw new UnauthorizedException('INVALID_REFRESH_TOKEN');
+    }
+    onboardingLog(this.logger, 'session.refresh.requested', { traceId, mode: cookieMode ? (fromCookie ? 'cookie' : 'cookie-migrate') : 'body' });
     try {
-      const session = await this.auth.refresh(dto.refreshToken, req.ip, req.headers['user-agent']);
+      const session = await this.auth.refresh(refreshToken, req.ip, req.headers['user-agent']);
       onboardingLog(this.logger, 'session.refresh.succeeded', { traceId });
-      return session;
+      return cookieMode ? this.toCookieSession(session, res) : session;
     } catch (caught) {
       onboardingError(this.logger, 'session.refresh.failed', caught, { traceId });
+      if (fromCookie && caught instanceof UnauthorizedException) clearRefreshCookie(res);
       throw caught;
     }
   }
 
-  /** POST /auth/logout — refresh 세션 폐기 */
+  /**
+   * POST /auth/logout — refresh 세션 폐기, 204.
+   * 쿠키 모드: 쿠키(와 본문에 함께 온 레거시 토큰)의 세션을 폐기하고 쿠키를 지운다(`Max-Age=0`, 같은 Path/속성). 토큰이 없어도 204.
+   */
   @Post('logout')
   @HttpCode(204)
-  async logout(@Body() dto: RefreshDto) {
-    await this.auth.revoke(dto.refreshToken);
+  async logout(@Body() dto: RefreshDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    if (!isCookieMode(req)) {
+      if (!dto.refreshToken) throw new BadRequestException(REFRESH_TOKEN_REQUIRED);
+      await this.auth.revoke(dto.refreshToken);
+      return;
+    }
+    const tokens = new Set([dto.refreshToken, readRefreshCookie(req)].filter((token): token is string => Boolean(token)));
+    for (const token of tokens) await this.auth.revoke(token);
+    clearRefreshCookie(res);
+  }
+
+  /** 쿠키 모드 응답 — refresh는 HttpOnly 쿠키로만, 본문에서는 뺀다 (그 밖의 필드는 그대로) */
+  private toCookieSession<T extends { refreshToken: string }>(session: T, res: Response): Omit<T, 'refreshToken'> {
+    const { refreshToken, ...rest } = session;
+    setRefreshCookie(res, refreshToken, this.auth.refreshTtlSeconds);
+    return rest;
   }
 
   /** GET /auth/me — 현재 세션 유저 프로필 + 온보딩/지갑/NFT 상태 */

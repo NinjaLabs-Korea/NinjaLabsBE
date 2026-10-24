@@ -67,6 +67,14 @@ export function normalizeRefreshTtl(raw: string | undefined): string {
   return `${amount} ${unit}`;
 }
 
+/** normalizeRefreshTtl의 결과(`'14 days'`) → 초. refresh 쿠키의 Max-Age (auth/session-cookie.ts) */
+export function refreshTtlSeconds(normalized: string): number {
+  const [amount, unit] = normalized.split(' ');
+  const perUnit = REFRESH_TTL_SECONDS[unit];
+  if (!perUnit || !/^\d+$/.test(amount)) throw new Error(`not a normalized refresh TTL: "${normalized}"`);
+  return Number(amount) * perUnit;
+}
+
 /**
  * AuthGuard의 유저 상태 캐시 — access JWT는 발급 시점 스냅샷이라, 정지(SUSPENDED/WITHDRAWN)·삭제된 유저도 만료(15분)까지 통과하던 것을 막는다.
  * 요청마다 DB를 치지 않도록 인스턴스(프로세스)별로 유저당 결과를 30초 보관한다 — 따라서 정지/삭제는 **최대 30초 늦게** 반영된다
@@ -117,6 +125,8 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   /** JWT_REFRESH_TTL을 정규화한 Postgres interval 문자열 — 생성 시 검증해 잘못된 값이면 부팅이 실패한다 (JWT_SECRET과 동일) */
   private readonly refreshTtl: string;
+  /** refreshTtl을 초로 — refresh 쿠키 Max-Age */
+  readonly refreshTtlSeconds: number;
   /** typ 없는 레거시 access 토큰은 iat가 이 시각(ms) 이전일 때만 받는다 — legacyAccessTokenCutoff */
   private readonly legacyCutoffMs: number;
   /** userId → (ACTIVE이고 삭제되지 않았는지, 확인 시각 ms). USER_STATUS_CACHE_TTL_MS 참고 */
@@ -134,6 +144,7 @@ export class AuthService {
     @Optional() private readonly googleVerifier: GoogleIdTokenVerifier = new GoogleIdTokenVerifier(),
   ) {
     this.refreshTtl = normalizeRefreshTtl(this.config.get<string>('JWT_REFRESH_TTL'));
+    this.refreshTtlSeconds = refreshTtlSeconds(this.refreshTtl);
     this.legacyCutoffMs = legacyAccessTokenCutoff(this.config.get<string>('LEGACY_ACCESS_TOKEN_CUTOFF'));
   }
 

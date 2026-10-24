@@ -1,0 +1,35 @@
+import { ExecutionContext, Injectable } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
+import { createHash } from 'crypto';
+import { Request } from 'express';
+import { presentedRefreshToken } from './session-cookie';
+
+/**
+ * `/auth/exchange`·`/auth/refresh` 전용 한도 — **제시된 자격 증명의 해시** 기준 10/min (auth.module.ts의 ThrottlerModule.forRoot에 같은 이름).
+ *
+ * FE가 `/api/auth/*`를 Vercel(Next.js rewrite)로 프록시하면 이 서버가 보는 클라이언트 IP는 Vercel의 공유 egress IP다 — IP 기준
+ * 10/min이면 서로 다른 사용자들이 한 버킷을 나눠 쓰다 정당한 refresh가 429가 된다. 그래서 refresh는 refresh 토큰(쿠키 또는 본문)의
+ * sha256, exchange는 로그인 코드의 sha256으로 버킷을 나눈다. 자격 증명이 없으면 IP로 떨어진다.
+ * IP 기준의 거친 한도는 전역 throttler(app.module.ts, IP당 120/min)가 이 라우트에도 그대로 건다 — 토큰을 바꿔 가며 두드리는 것은
+ * 그쪽이 막는다(refresh 토큰 384비트·로그인 코드 256비트+PKCE라 추측 자체가 비현실적).
+ * 원문 토큰은 키에 남기지 않는다(해시만 — 저장소 덤프/로그에서 쓸 수 없게).
+ */
+export const AUTH_TOKEN_THROTTLER = { name: 'auth-token', ttl: 60_000, limit: 10 } as const;
+
+const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+
+@Injectable()
+export class AuthTokenThrottlerGuard extends ThrottlerGuard {
+  protected async getTracker(req: Record<string, unknown>, context?: ExecutionContext): Promise<string> {
+    const request = req as unknown as Request;
+    const handler = context?.getHandler().name;
+    if (handler === 'exchange') {
+      const code = (request.body as { code?: unknown } | undefined)?.code;
+      if (typeof code === 'string' && code) return `code:${sha256(code)}`;
+    } else {
+      const token = presentedRefreshToken(request);
+      if (token) return `refresh:${sha256(token)}`;
+    }
+    return `ip:${request.ip}`;
+  }
+}

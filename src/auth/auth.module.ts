@@ -1,6 +1,8 @@
 import { Module, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { AUTH_TOKEN_THROTTLER, AuthTokenThrottlerGuard } from './auth-throttler.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
@@ -20,6 +22,9 @@ import { requireGoogleClientSecret } from '../common/bootstrap-checks';
 @Module({
   imports: [
     JwtSecretModule,
+    // /auth/exchange·/auth/refresh의 자격 증명(코드/refresh 토큰) 해시별 한도 — 전역 IP 한도(app.module.ts)와 독립된 저장소 (auth-throttler.guard.ts)
+    // TODO(scale): 인스턴스별 in-memory — 레플리카 2대 이상 전에 공유 저장소(Redis/pg)로 (docs/security.md)
+    ThrottlerModule.forRoot([AUTH_TOKEN_THROTTLER]),
     JwtModule.registerAsync({
       imports: [JwtSecretModule],
       inject: [JWT_SECRET, ConfigService],
@@ -30,7 +35,7 @@ import { requireGoogleClientSecret } from '../common/bootstrap-checks';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, GoogleIdTokenVerifier, AuthGuard, AdminGuard],
+  providers: [AuthService, GoogleIdTokenVerifier, AuthGuard, AdminGuard, AuthTokenThrottlerGuard],
   exports: [AuthService, AuthGuard, AdminGuard, JwtModule],
 })
 export class AuthModule implements OnModuleInit {

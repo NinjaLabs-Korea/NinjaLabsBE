@@ -16,21 +16,57 @@ describeDb('throttling over HTTP (e2e)', () => {
     return statuses;
   }
 
-  it('/auth/refresh: the 11th call in a minute from one client IP is 429; another IP has its own bucket', async () => {
-    const statuses = await burst(10, () => e2e.post('/auth/refresh', { refreshToken: 'unknown' }, { ip: '203.0.113.10' }));
+  const unknownToken = (label: string) => `unknown-${label}-${Math.random().toString(36).slice(2)}`;
+  const code43 = (c: string) => c.repeat(43);
+  const verifier = 'v'.repeat(43);
+
+  it('/auth/refresh: the 11th call in a minute with the same refresh token is 429 (Retry-After-auth-token) even from changing IPs', async () => {
+    const token = unknownToken('same');
+    const statuses = await burst(10, (i) => e2e.post('/auth/refresh', { refreshToken: token }, { ip: `203.0.113.${10 + i}` }));
     expect(statuses).toEqual(Array(10).fill(401));
-    const eleventh = await e2e.post('/auth/refresh', { refreshToken: 'unknown' }, { ip: '203.0.113.10' });
+    const eleventh = await e2e.post('/auth/refresh', { refreshToken: token }, { ip: '203.0.113.99' });
     expect(eleventh.status).toBe(429);
     expect(eleventh.body).toEqual(TOO_MANY);
-    expect(Number(eleventh.headers['retry-after'])).toBeGreaterThan(0);
-
-    expect((await e2e.post('/auth/refresh', { refreshToken: 'unknown' }, { ip: '203.0.113.11' })).status).toBe(401);
+    expect(Number(eleventh.headers['retry-after-auth-token'])).toBeGreaterThan(0);
+    expect(eleventh.headers['retry-after']).toBeUndefined(); // the IP bucket is not what tripped
   });
 
-  it('spoofing extra X-Forwarded-For entries in front of the proxy-appended hop does not open a new bucket', async () => {
-    const statuses = await burst(11, (i) => e2e.post('/auth/refresh', { refreshToken: 'unknown' }, { ip: `198.51.100.${i}, 203.0.113.20` }));
-    expect(statuses.slice(0, 10)).toEqual(Array(10).fill(401));
-    expect(statuses[10]).toBe(429);
+  it('/auth/refresh: two tokens from the same IP (users behind the Vercel proxy egress) are not limited together', async () => {
+    const ip = '203.0.113.40';
+    const [a, b] = [unknownToken('a'), unknownToken('b')];
+    expect(await burst(10, () => e2e.post('/auth/refresh', { refreshToken: a }, { ip }))).toEqual(Array(10).fill(401));
+    expect(await burst(10, () => e2e.post('/auth/refresh', { refreshToken: b }, { ip }))).toEqual(Array(10).fill(401));
+    expect((await e2e.post('/auth/refresh', { refreshToken: a }, { ip })).status).toBe(429);
+    const third = await e2e.post('/auth/refresh', { refreshToken: unknownToken('c') }, { ip });
+    expect(third.status).toBe(401);
+    expect(third.headers['x-ratelimit-limit-auth-token']).toBe('10');
+  });
+
+  it('/auth/refresh in cookie mode: the ninja_rt cookie keys the bucket (body {} — no token in the body)', async () => {
+    const ip = '203.0.113.41';
+    const cookie = (t: string) => ({ ip, headers: { 'x-ninja-session': 'cookie', cookie: `ninja_rt=${t}` } });
+    const [a, b] = [unknownToken('ca'), unknownToken('cb')];
+    expect(await burst(10, () => e2e.post('/auth/refresh', {}, cookie(a)))).toEqual(Array(10).fill(401));
+    expect((await e2e.post('/auth/refresh', {}, cookie(a))).status).toBe(429);
+    expect((await e2e.post('/auth/refresh', {}, cookie(b))).status).toBe(401);
+  });
+
+  it('/auth/exchange is keyed by the login-code hash: the 11th try of one code is 429, another code from the same IP is not', async () => {
+    const ip = '203.0.113.42';
+    expect(await burst(10, () => e2e.post('/auth/exchange', { code: code43('a'), codeVerifier: verifier }, { ip }))).toEqual(Array(10).fill(401));
+    const eleventh = await e2e.post('/auth/exchange', { code: code43('a'), codeVerifier: verifier }, { ip });
+    expect(eleventh.status).toBe(429);
+    expect(Number(eleventh.headers['retry-after-auth-token'])).toBeGreaterThan(0);
+    expect((await e2e.post('/auth/exchange', { code: code43('b'), codeVerifier: verifier }, { ip })).status).toBe(401);
+  });
+
+  it('/auth/refresh keeps the coarse per-IP limit (global 120/min): fresh tokens every call still hit 429 on the 121st; spoofed X-Forwarded-For prefixes do not open a new bucket', async () => {
+    const statuses = await burst(120, (i) => e2e.post('/auth/refresh', { refreshToken: unknownToken(`ip${i}`) }, { ip: `198.51.100.${i % 250}, 203.0.113.50` }));
+    expect(statuses.every((s) => s === 401)).toBe(true);
+    const over = await e2e.post('/auth/refresh', { refreshToken: unknownToken('over') }, { ip: '198.51.100.251, 203.0.113.50' });
+    expect(over.status).toBe(429);
+    expect(Number(over.headers['retry-after'])).toBeGreaterThan(0);
+    expect((await e2e.post('/auth/refresh', { refreshToken: unknownToken('other-ip') }, { ip: '203.0.113.51' })).status).toBe(401);
   });
 
   it('the global limit is 120/min per IP (unsuffixed Retry-After), separate per IP', async () => {

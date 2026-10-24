@@ -26,7 +26,7 @@ export interface MockDb {
  * 유닛 스펙용 `DatabaseService` stand-in. pool(`db.query`)과 트랜잭션(`db.tx` 콜백의 `tx.query`) 두 경로 모두
  * `withParamsCheck`로 감싸 SQL `$n` ↔ 바인딩 개수 드리프트를 어느 경로에서도 잡는다.
  * `db.query`/`db.tx`는 둘 다 `jest.fn`이라 `expect(db.query).not.toHaveBeenCalled()`(트랜잭션 밖 실행 금지)나
- * `toHaveBeenCalledTimes`/ `toHaveBeenCalledTimes`/`mockRejectedValueOnce` 등을 그대로 쓸 수 있고,
+ * `toHaveBeenCalledTimes`/`mockRejectedValueOnce` 등을 그대로 쓸 수 있고,
  * 콜백이 던지면 그대로 reject(롤백 시뮬레이션은 호출 측 mock 몫).
  */
 export function createMockDb(options: MockDbOptions = {}): MockDb {

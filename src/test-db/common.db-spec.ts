@@ -17,7 +17,7 @@ import { sslOptions } from '../../scripts/migrate';
 describeDb('common plumbing on a real database', () => {
   let db: DatabaseService;
   beforeAll(() => { db = createDb(); });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   const pgCode = (err: unknown) => (err as { code?: string }).code;
 
@@ -104,7 +104,7 @@ describeDb('common plumbing on a real database', () => {
       await expect(victim.query<{ ok: number }>('SELECT 1 AS ok')).resolves.toMatchObject({ rows: [{ ok: 1 }] });
     } finally {
       error.mockRestore();
-      await victim.onModuleDestroy();
+      await victim.onApplicationShutdown();
     }
   });
 

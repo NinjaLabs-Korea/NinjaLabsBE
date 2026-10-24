@@ -17,7 +17,7 @@ describeDb('notices publish/update on a real database', () => {
     notices = new NoticesService(db);
     adminId = await createUser(db, { isAdmin: true });
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   async function row(id: string) {
     const r = await db.query<{ status: string; published_at: Date | null; title: string; deleted_at: Date | null }>(

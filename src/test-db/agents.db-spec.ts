@@ -20,7 +20,7 @@ describeDb('agent lifecycle on a real database', () => {
     agents = new AgentsService(db, new AuditService(db));
     keys = new AgentApiKeyService(db);
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   async function agentRow(id: string) {
     const r = await db.query<{ status: string; deleted_at: Date | null; public_key: string | null; wallet_address: string; verified_at: Date | null }>(

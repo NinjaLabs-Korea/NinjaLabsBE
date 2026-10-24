@@ -25,7 +25,7 @@ class PingController {
 describeDb('Postgres throttler storage shared across instances', () => {
   let db: DatabaseService;
   beforeAll(() => { db = createDb(); });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   async function bootInstance(limit: number, tracker: string): Promise<{ app: INestApplication; url: string }> {
     const own = createDb(); // 인스턴스마다 자기 풀 — 레플리카와 같다
@@ -68,7 +68,7 @@ describeDb('Postgres throttler storage shared across instances', () => {
       const remaining = (await fetch(a.url)).headers.get('x-ratelimit-remaining');
       expect(remaining).toBeNull(); // still blocked — 429 has no X-RateLimit-* headers
     } finally {
-      await a.app.close(); // closes each instance's pool too (DatabaseService.onModuleDestroy)
+      await a.app.close(); // closes each instance's pool too (DatabaseService.onApplicationShutdown)
       await b.app.close();
       if (saved !== undefined) process.env.THROTTLER_STORAGE = saved;
     }
@@ -89,7 +89,7 @@ describeDb('Postgres throttler storage shared across instances', () => {
       const row = await db.query<{ hits: number }>(`SELECT hits FROM throttler_storage WHERE key = $1`, [`default:${key}`]);
       expect(row.rows[0].hits).toBe(11); // the 11th hit set the block; blocked hits are not counted
     } finally {
-      await other.onModuleDestroy();
+      await other.onApplicationShutdown();
     }
   });
 

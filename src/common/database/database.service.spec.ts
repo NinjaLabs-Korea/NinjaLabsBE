@@ -110,7 +110,7 @@ describe('DatabaseService', () => {
     [{ NODE_ENV: 'development', PGSSLMODE: undefined, DATABASE_CA_CERT: undefined }, false],
   ])('warns about unverified TLS only in production without a CA: %p → %p', async (env, warned) => {
     const db = new DatabaseService(config({ DATABASE_URL: 'postgresql://u@127.0.0.1:1/x', ...env }));
-    await db.onModuleDestroy();
+    await db.onApplicationShutdown();
     const tlsWarnings = warn.mock.calls.filter(([message]) => String(message).includes('DATABASE_CA_CERT is empty in production'));
     expect(tlsWarnings).toHaveLength(warned ? 1 : 0);
   });
@@ -121,7 +121,18 @@ describe('DatabaseService', () => {
     const pool = (db as unknown as { pool: EventEmitter }).pool;
     expect(() => pool.emit('error', new Error('server closed the connection unexpectedly'))).not.toThrow();
     expect(error).toHaveBeenCalledWith(expect.stringContaining('server closed the connection unexpectedly'));
-    await db.onModuleDestroy();
+    await db.onApplicationShutdown();
+  });
+
+  it('closes its pool in onApplicationShutdown (after HTTP drain), never in the earlier onModuleDestroy/beforeApplicationShutdown hooks', async () => {
+    const db = new DatabaseService(config({ DATABASE_URL: 'postgresql://u@127.0.0.1:1/x', PGSSLMODE: 'disable' }));
+    // Nest calls hooks by method name — an earlier hook here would end the pool while workers drain and requests finish
+    expect('onModuleDestroy' in db).toBe(false);
+    expect('beforeApplicationShutdown' in db).toBe(false);
+    const pool = (db as unknown as { pool: { ended: boolean } }).pool;
+    expect(pool.ended).toBe(false);
+    await db.onApplicationShutdown();
+    expect(pool.ended).toBe(true);
   });
 });
 

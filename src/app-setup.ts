@@ -27,7 +27,7 @@ export function configureApp(app: NestExpressApplication): void {
   });
   if (trustProxy > 0) app.set('trust proxy', trustProxy);
 
-  // SIGTERM/SIGINT 시 onModuleDestroy(pg Pool 종료)까지 실행 — 컨테이너 재배포 중 연결 누수 방지
+  // SIGTERM/SIGINT 시 종료 훅 실행 — 크론/워커 드레인 → HTTP 종료 → pg Pool 종료(DatabaseService.onApplicationShutdown). 재배포 중 연결 누수·요청 실패 방지
   app.enableShutdownHooks();
 
   // 요청 ID — 요청 로그/5xx 로그를 묶는 상관 키. 가장 먼저 등록해 helmet·CORS·가드 거절 응답에도 헤더가 붙는다

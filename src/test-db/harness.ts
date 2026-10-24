@@ -60,7 +60,7 @@ export function testConfig(overrides: Record<string, string | undefined> = {}): 
   return { get: <T = string>(key: string): T | undefined => values[key] as T | undefined } as unknown as ConfigService;
 }
 
-/** 진짜 DatabaseService (pg Pool) — afterAll에서 `onModuleDestroy()`로 닫는다 */
+/** 진짜 DatabaseService (pg Pool) — afterAll에서 `onApplicationShutdown()`로 닫는다 */
 export function createDb(overrides?: Record<string, string | undefined>): DatabaseService {
   return new DatabaseService(testConfig(overrides));
 }

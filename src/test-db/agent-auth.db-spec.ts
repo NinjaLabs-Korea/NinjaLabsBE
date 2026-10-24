@@ -24,7 +24,7 @@ describeDb('agent API key authentication on a real database', () => {
     agents = new AgentsService(db, new AuditService(db));
     keys = new AgentApiKeyService(db);
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   async function activeAgent() {
     const ownerId = await createUser(db);

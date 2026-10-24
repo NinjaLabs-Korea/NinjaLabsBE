@@ -22,7 +22,7 @@ describeDb('wallet challenge/verify on a real database', () => {
     db = createDb();
     wallets = new WalletsService(db, new NftsService(db, testConfig()));
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   async function openChallenges(userId: string) {
     const r = await db.query<{ n: number }>(

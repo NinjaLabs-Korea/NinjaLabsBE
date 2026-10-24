@@ -50,7 +50,7 @@ describe('DatabaseService pool timeouts', () => {
     const db = new DatabaseService({ get: (key: string) => values[key] } as unknown as ConfigService);
     const options = (db as unknown as { pool: { options: Record<string, unknown> } }).pool.options;
     expect(options).toMatchObject({ connectionTimeoutMillis: 1234, idleTimeoutMillis: 30000, statement_timeout: 4321, query_timeout: 4321 + QUERY_TIMEOUT_MARGIN_MS });
-    await db.onModuleDestroy();
+    await db.onApplicationShutdown();
   });
 });
 

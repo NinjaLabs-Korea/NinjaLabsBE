@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { databaseSslOptions } from './database-ssl';
@@ -67,7 +67,7 @@ export async function runInTransaction<T>(
 }
 
 @Injectable()
-export class DatabaseService implements OnModuleDestroy {
+export class DatabaseService implements OnApplicationShutdown {
   private static readonly logger = new Logger(DatabaseService.name);
   private readonly pool: Pool;
 
@@ -110,7 +110,13 @@ export class DatabaseService implements OnModuleDestroy {
     return runInTransaction(await this.pool.connect(), fn, DatabaseService.logger);
   }
 
-  async onModuleDestroy() {
+  /**
+   * 풀은 종료 순서의 **마지막**에 닫는다. Nest의 close()는 onModuleDestroy → beforeApplicationShutdown(크론 정지·워커 드레인)
+   * → HTTP 서버 종료(진행 중 요청을 끝까지 처리) → onApplicationShutdown 순서다. 예전처럼 onModuleDestroy에서 닫으면 드레인 중인
+   * 워커와 아직 처리 중인 HTTP 요청이 "Cannot use a pool after calling end on the pool"로 실패했다 (docs/runbook.md "배포 중 종료 순서").
+   * 테스트는 Nest 앱 없이 이 메서드를 직접 불러 풀을 닫는다.
+   */
+  async onApplicationShutdown() {
     await this.pool.end();
   }
 }

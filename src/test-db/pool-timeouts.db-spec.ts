@@ -18,7 +18,7 @@ describeDb('database pool timeouts (real Postgres)', () => {
     return db;
   };
   afterAll(async () => {
-    await Promise.all(opened.map((db) => db.onModuleDestroy()));
+    await Promise.all(opened.map((db) => db.onApplicationShutdown()));
   });
 
   it('sets statement_timeout on every pooled session, and pg_sleep beyond it is cancelled by the server (57014)', async () => {

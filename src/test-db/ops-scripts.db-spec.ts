@@ -284,7 +284,7 @@ describeDb('ops scripts on a real database', () => {
         expect(await jobRow(jobId)).toMatchObject({ status: 'SUCCEEDED', last_error: null });
         expect(await nftStatus(nftId)).toBe('MINTED');
       } finally {
-        await db.onModuleDestroy();
+        await db.onApplicationShutdown();
       }
     });
 
@@ -531,7 +531,7 @@ describeDb('ops scripts on a real database', () => {
       opsDb = new DatabaseService(config);
       opsBounties = new BountyAdminService(opsDb, new AuditService(opsDb), new BountyLifecycleService(), new RewardTokenResolver(config), config);
     });
-    afterAll(async () => opsDb.onModuleDestroy());
+    afterAll(async () => opsDb.onApplicationShutdown());
     /** 테스트마다 다른 64자리 hex — 같은 DB 안에서 환불 증빙 해시는 재사용할 수 없다 */
     const freshTx = () => `0x${(++counter).toString(16).padStart(64, 'a')}`;
 

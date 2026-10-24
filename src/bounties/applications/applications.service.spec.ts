@@ -120,3 +120,100 @@ describe('ApplicationsService owner visibility of agent applications', () => {
     expect(sql).toContain('OR agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $2 AND deleted_at IS NULL))');
   });
 });
+
+describe('ApplicationsService apply rules', () => {
+  const FUTURE = '2999-01-01T00:00:00.000Z';
+  const bountyRow = (overrides: Record<string, unknown> = {}) => ({
+    rowCount: 1,
+    rows: [{ application_required: true, submission_mode: 'DIRECT', status: 'OPEN', submission_deadline: FUTURE, application_deadline: null, ...overrides }],
+  });
+
+  it('locks the bounty row first and refuses an unknown/deleted bounty with 404 BOUNTY_NOT_FOUND', async () => {
+    const query = jest.fn().mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const error = await serviceWith(query).apply('bounty', 'user', 'hi').catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ status: 404, message: 'BOUNTY_NOT_FOUND' });
+    expect(query.mock.calls[0][0]).toContain('WHERE id = $1 AND deleted_at IS NULL FOR UPDATE');
+    expect(query.mock.calls[0][1]).toEqual(['bounty']);
+  });
+
+  it('a submission-type bounty (application_required = false) is 400 SUBMISSION_TYPE_BOUNTY — submit directly instead', async () => {
+    const query = jest.fn().mockResolvedValueOnce(bountyRow({ application_required: false }));
+    await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ status: 400, message: 'SUBMISSION_TYPE_BOUNTY' });
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['DRAFT', 'FUNDING_PENDING', 'SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED', 'CANCELLED'])('a %s bounty is 400 BOUNTY_NOT_OPEN', async (status) => {
+    const query = jest.fn().mockResolvedValueOnce(bountyRow({ status }));
+    await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ message: 'BOUNTY_NOT_OPEN' });
+  });
+
+  it('a DIRECT bounty refuses an agent (400 DIRECT_SUBMISSION_REQUIRED), an AGENT bounty refuses a person (400 AGENT_SUBMISSION_REQUIRED)', async () => {
+    await expect(serviceWith(jest.fn().mockResolvedValueOnce(bountyRow({ submission_mode: 'DIRECT' }))).applyAsAgent('bounty', 'agent', 'hi'))
+      .rejects.toMatchObject({ message: 'DIRECT_SUBMISSION_REQUIRED' });
+    await expect(serviceWith(jest.fn().mockResolvedValueOnce(bountyRow({ submission_mode: 'AGENT' }))).apply('bounty', 'user', 'hi'))
+      .rejects.toMatchObject({ message: 'AGENT_SUBMISSION_REQUIRED' });
+    for (const [mode, call] of [
+      ['DIRECT', (s: ApplicationsService) => s.apply('bounty', 'user', 'hi')],
+      ['AGENT', (s: ApplicationsService) => s.applyAsAgent('bounty', 'agent', 'hi')],
+    ] as const) {
+      const query = jest.fn()
+        .mockResolvedValueOnce(bountyRow({ submission_mode: mode }))
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
+      await expect(call(serviceWith(query))).resolves.toEqual({ id: 'new', status: 'PENDING' });
+    }
+  });
+
+  it('inserts a first application for a user with the user column set and the agent column NULL, portfolio defaulting to NULL', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce(bountyRow())
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
+    const audit = { record: jest.fn() };
+    await serviceWith(query, audit).apply('bounty', 'user', 'hello');
+    expect(query.mock.calls[1][0]).toContain('applicant_user_id = $2 FOR UPDATE');
+    expect(query.mock.calls[2][1]).toEqual(['bounty', 'user', null, 'hello', null]);
+    expect(audit.record).not.toHaveBeenCalled(); // first applications are not audited, only re-applications
+  });
+
+  it('maps a unique violation on INSERT (a concurrent first application) to 409 ALREADY_APPLIED', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce(bountyRow())
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_application_user' }));
+    await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ status: 409, message: 'ALREADY_APPLIED' });
+  });
+
+  it('rethrows any other database error unchanged', async () => {
+    const boom = Object.assign(new Error('fk'), { code: '23503' });
+    const query = jest.fn()
+      .mockResolvedValueOnce(bountyRow())
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockRejectedValueOnce(boom);
+    await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toBe(boom);
+  });
+
+  it.each([
+    ['submission_deadline', 'application_deadline'],
+    ['application_deadline', 'submission_deadline'],
+  ])('%s exactly now closes applications (<=) even when %s is far away', async (field, other) => {
+    jest.useFakeTimers({ now: new Date('2032-02-02T02:02:02.000Z') });
+    try {
+      const query = jest.fn().mockResolvedValueOnce(bountyRow({ [field]: '2032-02-02T02:02:02.000Z', [other]: FUTURE }));
+      await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ message: 'APPLICATION_DEADLINE_PASSED' });
+      const later = jest.fn()
+        .mockResolvedValueOnce(bountyRow({ [field]: '2032-02-02T02:02:03.000Z', [other]: FUTURE }))
+        .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
+      await expect(serviceWith(later).apply('bounty', 'user', 'hi')).resolves.toEqual({ id: 'new', status: 'PENDING' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('withdraw of a non-pending, foreign or unknown application is 404 APPLICATION_NOT_FOUND_OR_NOT_PENDING', async () => {
+    const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
+    const service = new ApplicationsService({ query: withParamsCheck(query), tx: jest.fn() } as unknown as DatabaseService, { record: jest.fn() } as unknown as AuditService);
+    await expect(service.withdraw('app', 'someone-else')).rejects.toMatchObject({ status: 404, message: 'APPLICATION_NOT_FOUND_OR_NOT_PENDING' });
+  });
+});

@@ -42,7 +42,7 @@ describeDb('maintenance sweep on a real database', () => {
     const service = new MaintenanceService(db);
     const log = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     await service.sweep();
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^maintenance sweep: challenges=\d+ sessions=\d+ login_codes=\d+$/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^maintenance sweep: challenges=\d+ sessions=\d+ login_codes=\d+ throttles=\d+$/));
     // the hourly sweep leaves grace copies to the 5-minute cron
     expect((await db.query(`SELECT grace_refresh_token FROM auth_session WHERE id = $1`, [staleGrace])).rows[0].grace_refresh_token).toBe('enc');
     await service.clearGraceCopies();

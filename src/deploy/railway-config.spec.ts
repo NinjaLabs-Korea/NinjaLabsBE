@@ -20,4 +20,8 @@ describe('.railway/railway.ts production origins', () => {
       for (const origin of (envValue(key) ?? '').split(',').filter(Boolean)) expect([key, origin]).toEqual([key, expect.stringMatching(/^https:\/\/(?!localhost|127\.)/)]);
     }
   });
+
+  it('THROTTLER_STORAGE is postgres so rate limits are shared across replicas (docs/security.md)', () => {
+    expect(envValue('THROTTLER_STORAGE')).toBe('postgres');
+  });
 });

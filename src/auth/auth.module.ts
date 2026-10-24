@@ -1,7 +1,6 @@
 import { Module, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
-import { ThrottlerModule } from '@nestjs/throttler';
 import { AUTH_TOKEN_THROTTLER, AuthTokenThrottlerGuard } from './auth-throttler.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -10,6 +9,7 @@ import { AdminGuard } from './admin.guard';
 import { GoogleIdTokenVerifier } from './google-id-token.verifier';
 import { JWT_SECRET, JwtSecretModule } from './jwt-secret';
 import { requireGoogleClientSecret } from '../common/bootstrap-checks';
+import { throttlerModule } from '../common/throttler/throttler-options';
 
 /**
  * production 기동 조건 — JWT_SECRET(미설정/기본값 금지; 32바이트 미만은 기동하되 error 로그) / GOOGLE_CLIENT_SECRET 없이는 기동 거부.
@@ -23,8 +23,8 @@ import { requireGoogleClientSecret } from '../common/bootstrap-checks';
   imports: [
     JwtSecretModule,
     // /auth/exchange·/auth/refresh의 자격 증명(코드/refresh 토큰) 해시별 한도 — 전역 IP 한도(app.module.ts)와 독립된 저장소 (auth-throttler.guard.ts)
-    // TODO(scale): 인스턴스별 in-memory — 레플리카 2대 이상 전에 공유 저장소(Redis/pg)로 (docs/security.md)
-    ThrottlerModule.forRoot([AUTH_TOKEN_THROTTLER]),
+    // 저장소는 THROTTLER_STORAGE를 따른다 (production 기본 postgres — 레플리카 간 공유, common/throttler/throttler-options.ts)
+    throttlerModule([AUTH_TOKEN_THROTTLER]),
     JwtModule.registerAsync({
       imports: [JwtSecretModule],
       inject: [JWT_SECRET, ConfigService],

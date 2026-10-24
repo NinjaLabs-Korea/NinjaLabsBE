@@ -5,7 +5,7 @@ import { DatabaseService } from '../database/database.service';
 import { MaintenanceService } from './maintenance.service';
 
 describe('MaintenanceService crons', () => {
-  function setup(counts = [3, 2, 5]) {
+  function setup(counts = [3, 2, 5, 7]) {
     let call = 0;
     const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: counts[call++] ?? 0, rows: [] }));
     // The sweep statements take no bind parameters — any `$n` creeping in without params is caught here.
@@ -15,18 +15,20 @@ describe('MaintenanceService crons', () => {
     return { service, query, log, error };
   }
 
-  it('deletes stale challenges, prunes old sessions and expired login codes, logging counts (grace copies have their own 5-minute cron)', async () => {
+  it('deletes stale challenges, prunes old sessions, expired login codes and lapsed throttler counters, logging counts (grace copies have their own 5-minute cron)', async () => {
     const { service, query, log } = setup();
     await service.sweep();
     const sqls = query.mock.calls.map(([sql]) => sql as string);
-    expect(sqls).toHaveLength(3);
+    expect(sqls).toHaveLength(4);
     expect(sqls[0]).toContain(`DELETE FROM wallet_verification_challenge WHERE expires_at < now() - interval '1 day'`);
     expect(sqls[1]).toContain('DELETE FROM auth_session');
     expect(sqls[1]).toContain(`(revoked_at IS NOT NULL AND revoked_at < now() - interval '30 days')`);
     expect(sqls[1]).toContain(`OR expires_at < now() - interval '30 days'`);
     expect(sqls[2]).toContain('DELETE FROM oauth_login_code WHERE expires_at <= now()');
+    expect(sqls[3]).toContain('DELETE FROM throttler_storage');
+    expect(sqls[3]).toContain('expires_at <= now() AND (blocked_until IS NULL OR blocked_until <= now())');
     expect(sqls.some((sql) => sql.includes('grace_refresh_token'))).toBe(false);
-    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=3 sessions=2 login_codes=5');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=3 sessions=2 login_codes=5 throttles=7');
   });
 
   it('clearGraceCopies runs every 5 minutes and nulls grace copies past the 30 s window, logging only when it cleared some', async () => {

@@ -30,9 +30,9 @@ Authorization: Bearer nj_<secret>
   - 초과(`429 Too Many Requests`, 본문 `{ "statusCode": 429, "message": "ThrottlerException: Too Many Requests" }`): **`Retry-After-agent-api`(초)만** 온다 — 429에는 `X-RateLimit-*` 헤더가 없다.
   전역 IP 한도(120/min)에 걸리면 접미사 없는 `Retry-After` / `X-RateLimit-*`다.
 - 한도는 `/agent-api/v1/*` 전체에 한 버킷이다 (엔드포인트별이 아님). 인증 실패(401) 요청은 집계하지 않는다.
-- **인스턴스별 한도**: 키별 60/min과 전역 IP 120/min 모두 `@nestjs/throttler` 기본 **in-memory 저장소**에 집계된다. 백엔드를 레플리카 2대 이상으로
-  늘리면 한도가 레플리카 수만큼 곱해지므로, 그 전에 공유 저장소(`@nestjs/throttler-storage-redis` 또는 pg 테이블)로 옮겨야 한다
-  (`TODO(scale)` — `app.module.ts`, `agents/agents.module.ts`).
+- **레플리카 간 공유**: 운영(`THROTTLER_STORAGE=postgres`, production 기본)에서는 키별 60/min과 전역 IP 120/min 모두 Postgres `throttler_storage`
+  테이블에 집계되므로 백엔드 레플리카 수와 무관하게 한도가 그대로다. 창은 **고정 창**이다 — 첫 요청부터 60초, `X-RateLimit-Reset-agent-api`는 그 창이 끝날 때까지의 초.
+  로컬/테스트 기본(`memory`)은 인스턴스별 in-memory다 (`common/throttler/throttler-options.ts`, docs/security.md).
 
 ## Key rotation / agent revocation (owner, user JWT)
 

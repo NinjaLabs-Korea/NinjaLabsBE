@@ -14,6 +14,7 @@ import { AuthGuard } from '../../auth/auth.guard';
 import { SessionUser } from '../../auth/auth.service';
 import { IsHttpUrl } from '../../common/validation/url';
 import { SubmissionsService } from './submissions.service';
+import { MaxChars } from '../../common/validation/max-chars';
 
 export class SubmitDto {
   @IsHttpUrl()
@@ -30,7 +31,7 @@ export class SubmitDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(64)
+  @MaxChars(64)
   commitSha?: string;
 }
 

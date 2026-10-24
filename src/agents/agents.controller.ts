@@ -8,18 +8,20 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsNotEmpty, IsOptional, IsString, Length, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { SessionUser } from '../auth/auth.service';
 import { Trim } from '../common/validation/trim';
 import { AgentsService } from './agents.service';
+import { MaxChars } from '../common/validation/max-chars';
 
 export class RegisterAgentDto {
   /** FE AgentRegisterForm의 maxLength=100과 일치 (docs/agent-api.md "Field limits") */
   @Trim()
   @IsString()
-  @Length(1, 100)
+  @IsNotEmpty()
+  @MaxChars(100) // VARCHAR(100)
   name!: string;
 
   @IsOptional()

@@ -26,9 +26,10 @@ describe('highlight admin DTOs', () => {
     expect(await failedFields(UpdateHighlightDto, {})).toEqual([]);
   });
 
-  it('update uses 2x bounds (title 400, description 4000) and accepts legacy site-relative and scheme-less images but not a protocol-relative link', async () => {
-    expect(await failedFields(UpdateHighlightDto, { title: 't'.repeat(400), description: 'd'.repeat(4000) })).toEqual([]);
-    expect(await failedFields(UpdateHighlightDto, { title: 't'.repeat(401), description: 'd'.repeat(4001) })).toEqual(['description', 'title']);
+  it('update caps title at the VARCHAR(200) column (code points), uses 2x for description (4000) and accepts legacy site-relative and scheme-less images but not a protocol-relative link', async () => {
+    expect(await failedFields(UpdateHighlightDto, { title: '😀'.repeat(200), description: 'd'.repeat(4000) })).toEqual([]);
+    expect(await failedFields(UpdateHighlightDto, { title: 't'.repeat(201), description: 'd'.repeat(4001) })).toEqual(['description', 'title']);
+    expect(await failedFields(UpdateHighlightDto, { title: '❤️'.repeat(101) })).toEqual(['title']);
     const legacyRow = { ...valid, imageUrl: '/images/legacy.png', linkUrl: '/bounties/../x' };
     expect(await failedFields(CreateHighlightDto, legacyRow)).toEqual(['imageUrl', 'linkUrl']);
     expect(await failedFields(UpdateHighlightDto, legacyRow)).toEqual([]);

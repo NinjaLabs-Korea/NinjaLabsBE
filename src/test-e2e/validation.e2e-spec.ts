@@ -144,6 +144,28 @@ describeDb('validation over HTTP (e2e)', () => {
       expect(huge.status).toBe(413);
     });
 
+    it('UPDATE DTOs never exceed the VARCHAR column: title 201-400 / sponsorName 101-200 → 400 (was 500), counted in code points like Postgres', async () => {
+      const tooLong = 'x'.repeat(201);
+      const vs = '❤️'.repeat(101); // 202 code points; class-validator's MaxLength would count 101
+      const bounty = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm(), true), asAdmin())).body.id;
+      const notice = (await e2e.post('/admin/notices', saveAdminPostBody({ slug: '', title: 'n', bodyMarkdown: 'b', category: 'OTHER', status: 'draft', thumbnail: null, externalUrl: null }, true), asAdmin())).body.id;
+      const highlight = (await e2e.post('/admin/highlights', saveAdminHighlightBody({ id: '', type: 'MILESTONE', title: 'h', order: 1, image: null, published: false }, true), asAdmin())).body.id;
+      for (const path of [`/admin/bounties/${bounty}`, `/admin/notices/${notice}`, `/admin/highlights/${highlight}`]) {
+        for (const title of [tooLong, 'x'.repeat(400), vs]) {
+          const res = await e2e.patch(path, { title }, asAdmin());
+          expect([path, res.body]).toEqual([path, badRequest(['title must be shorter than or equal to 200 characters'])]);
+        }
+        // 200 astral characters (400 UTF-16 units) fit VARCHAR(200) — legacy emoji titles still save
+        expect((await e2e.patch(path, { title: '😀'.repeat(200) }, asAdmin())).status).toBe(200);
+      }
+      expect((await e2e.patch(`/admin/bounties/${bounty}`, { sponsorName: 's'.repeat(101) }, asAdmin())).body)
+        .toEqual(badRequest(['sponsorName must be shorter than or equal to 100 characters']));
+      // create had the same variation-selector gap
+      expect((await e2e.post('/admin/notices', { title: vs, body: 'b', category: 'OTHER' }, asAdmin())).status).toBe(400);
+      expect((await e2e.post('/agents', { name: '❤️'.repeat(51), walletAddress: '0x0000000000000000000000000000000000000001' }, { token: user.accessToken })).body)
+        .toEqual(badRequest(['name must be shorter than or equal to 100 characters']));
+    });
+
     it('non-UUID :id → 400 "Validation failed (uuid is expected)" on public, user and admin routes', async () => {
       // bodies are valid so only the :id pipe can fail
       for (const [method, path, token, json] of [

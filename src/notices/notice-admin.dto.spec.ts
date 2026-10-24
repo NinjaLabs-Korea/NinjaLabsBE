@@ -27,9 +27,10 @@ describe('notice admin DTOs', () => {
     expect(await failedFields(CreateNoticeDto, { ...valid, thumbnailUrl: '/media/not-a-uuid' })).toEqual(['thumbnailUrl']);
   });
 
-  it('lets updates omit fields, keeps blank-title protection and uses 2x bounds (title 400, summary 1000, body 100000)', async () => {
+  it('lets updates omit fields, keeps blank-title protection and caps title at VARCHAR(200), uses 2x bounds for TEXT (summary 1000, body 100000)', async () => {
     expect(await failedFields(UpdateNoticeDto, {})).toEqual([]);
-    expect(await failedFields(UpdateNoticeDto, { title: 'a'.repeat(400), summary: 's'.repeat(1000), body: 'b'.repeat(100_000) })).toEqual([]);
+    expect(await failedFields(UpdateNoticeDto, { title: 'a'.repeat(200), summary: 's'.repeat(1000), body: 'b'.repeat(100_000) })).toEqual([]);
+    expect(await failedFields(UpdateNoticeDto, { title: 'a'.repeat(201) })).toEqual(['title']);
     expect(await failedFields(UpdateNoticeDto, { title: '', body: 'b'.repeat(100_001), summary: 's'.repeat(1001) })).toEqual(['body', 'summary', 'title']);
   });
 

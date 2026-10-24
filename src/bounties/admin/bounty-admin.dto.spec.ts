@@ -51,13 +51,13 @@ describe('bounty admin DTOs', () => {
     })).toEqual(['description', 'evaluationCriteria', 'requirements', 'sponsorName', 'summary', 'title']);
   });
 
-  it('update bounds are 2x the create bounds so legacy rows re-sent unchanged by the FE still pass', async () => {
+  it('update bounds are 2x the create bounds for TEXT columns; VARCHAR columns stay at the column limit (code points)', async () => {
     expect(await failedFields(UpdateBountyDto, {
-      title: 't'.repeat(400), sponsorName: 's'.repeat(200), summary: 'u'.repeat(1000),
+      title: '😀'.repeat(200), sponsorName: 's'.repeat(100), summary: 'u'.repeat(1000),
       description: 'd'.repeat(100_000), requirements: 'r'.repeat(40_000), evaluationCriteria: 'e'.repeat(40_000),
     })).toEqual([]);
     expect(await failedFields(UpdateBountyDto, {
-      title: 't'.repeat(401), sponsorName: 's'.repeat(201), summary: 'u'.repeat(1001),
+      title: 't'.repeat(201), sponsorName: '❤️'.repeat(51), summary: 'u'.repeat(1001),
       description: 'd'.repeat(100_001), requirements: 'r'.repeat(40_001), evaluationCriteria: 'e'.repeat(40_001),
     })).toEqual(['description', 'evaluationCriteria', 'requirements', 'sponsorName', 'summary', 'title']);
   });

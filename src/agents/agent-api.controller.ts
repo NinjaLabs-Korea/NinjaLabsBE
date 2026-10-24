@@ -5,6 +5,7 @@ import { SubmitInput, SubmissionsService } from '../bounties/submissions/submiss
 import { IsHttpUrl } from '../common/validation/url';
 import { AgentApiThrottlerGuard } from './agent-api-throttler.guard';
 import { AgentApiGuard, AgentApiRequest } from './agent-api.guard';
+import { MaxChars } from '../common/validation/max-chars';
 
 export class AgentApplyDto {
   @IsString() @IsNotEmpty() @MaxLength(4000) message!: string;
@@ -15,7 +16,7 @@ export class AgentSubmitDto implements SubmitInput {
   @IsHttpUrl() submissionUrl!: string;
   @IsString() @IsNotEmpty() @MaxLength(8000) description!: string;
   @IsOptional() @IsHttpUrl() repositoryUrl?: string;
-  @IsOptional() @IsString() @MaxLength(64) commitSha?: string;
+  @IsOptional() @IsString() @MaxChars(64) commitSha?: string;
 }
 
 @Controller('agent-api/v1')

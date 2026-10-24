@@ -94,7 +94,7 @@ POST 본문으로 교환한다. 검증에 성공한 코드는 세션 발급과 �
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
 | GET | `/bounties?page=&category=&status=` | - | 목록 (DRAFT/FUNDING_PENDING 비노출) + 보상, `cover_image_url`, `submission_mode` |
-| GET | `/bounties/:id` | - | 상세 + 보상 + 첨부 |
+| GET | `/bounties/:id` | - | 상세 + 보상 + 첨부 — 명시적 컬럼만(`bounties.service.ts` PUBLIC_DETAIL_COLUMNS). `created_by`·`sponsor_user_id`·`deleted_at` 같은 내부 컬럼은 내보내지 않는다 |
 
 ## 바운티 참여 (행동 — 인증 필요)
 

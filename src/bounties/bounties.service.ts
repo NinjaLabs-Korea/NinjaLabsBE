@@ -1,6 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
 
+/** 공개 상세 응답의 bounty 컬럼 — 목록(list)의 컬럼 + 본문·심사 텍스트·진행 시각 */
+export const PUBLIC_DETAIL_COLUMNS = [
+  'id', 'title', 'summary', 'description', 'requirements', 'evaluation_criteria', 'sponsor_name', 'category', 'status',
+  'application_required', 'submission_mode', 'cover_image_url', 'max_winners',
+  'application_deadline', 'submission_deadline', 'opened_at', 'review_started_at', 'completed_at', 'created_at', 'updated_at',
+].map((column) => `b.${column}`).join(', ');
+
 @Injectable()
 export class BountiesService {
   constructor(private readonly db: DatabaseService) {}
@@ -49,10 +56,13 @@ export class BountiesService {
     return { items: items.rows, page, pageSize, total: Number(total.rows[0].count) };
   }
 
-  /** 바운티 상세 (공개) */
+  /**
+   * 바운티 상세 (공개) — 명시적 컬럼 목록. `b.*`는 내부 컬럼(created_by·sponsor_user_id = 운영자/유저 id, deleted_at)까지 공개 응답에 실었다.
+   * FE(NinjaLabsFE src/lib/bounties.ts BountyDetailRow)가 읽는 필드는 전부 남아 있다. 새 컬럼은 공개해도 되는지 확인한 뒤 여기 추가한다.
+   */
   async detail(id: string) {
     const r = await this.db.query(
-      `SELECT b.*,
+      `SELECT ${PUBLIC_DETAIL_COLUMNS},
               COALESCE(json_agg(DISTINCT jsonb_build_object(
                 'symbol', rw.display_symbol, 'amount', rw.amount::text,
                 'tokenType', rw.token_type, 'tokenContractAddress', rw.token_contract_address,

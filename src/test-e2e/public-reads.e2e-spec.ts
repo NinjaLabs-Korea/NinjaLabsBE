@@ -27,6 +27,27 @@ describeDb('public reads over HTTP (e2e)', () => {
     return id;
   }
 
+  it('GET /bounties/:id and GET /bounties expose an explicit column list — no created_by / sponsor_user_id / deleted_at; every field the FE BountyDetailRow reads is present', async () => {
+    const id = await openBounty(bountyForm({ title: 'Column list' }));
+    const detail = await e2e.get(`/bounties/${id}`);
+    expect(detail.status).toBe(200);
+    expect(Object.keys(detail.body).sort()).toEqual([
+      'application_deadline', 'application_required', 'attachments', 'category', 'completed_at', 'cover_image_url', 'created_at', 'description',
+      'evaluation_criteria', 'id', 'max_winners', 'opened_at', 'requirements', 'review_started_at', 'rewards', 'sponsor_name', 'status',
+      'submission_deadline', 'submission_mode', 'summary', 'title', 'updated_at',
+    ]);
+    // NinjaLabsFE src/lib/bounties.ts BountyListRow + BountyDetailRow
+    for (const field of ['id', 'title', 'summary', 'sponsor_name', 'category', 'status', 'application_required', 'submission_mode', 'cover_image_url',
+      'application_deadline', 'submission_deadline', 'rewards', 'description', 'requirements', 'evaluation_criteria']) {
+      expect(detail.body).toHaveProperty(field);
+    }
+    const listed = (await e2e.get('/bounties?pageSize=50')).body.items.find((b: { id: string }) => b.id === id);
+    for (const internal of ['created_by', 'sponsor_user_id', 'deleted_at']) {
+      expect(detail.body).not.toHaveProperty(internal);
+      expect(listed).not.toHaveProperty(internal);
+    }
+  });
+
   it('GET /bounties pages with pageSize=50 like fetchAllPublicPages: {items,page,pageSize,total}, disjoint pages, drafts hidden', async () => {
     for (let i = 0; i < 52; i++) await openBounty(bountyForm({ title: `Paged ${i}` }));
     const draft = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ title: 'Hidden draft' }), true), asAdmin())).body.id;

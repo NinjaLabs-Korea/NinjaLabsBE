@@ -16,7 +16,7 @@ export class NoticesService {
     const items = await this.db.query(
       `SELECT id, title, summary, category, thumbnail_url, external_url, published_at
          FROM notice WHERE ${where}
-        ORDER BY published_at DESC
+        ORDER BY published_at DESC, created_at DESC, id -- 동률에서도 페이지가 겹치지 않게 (bounties.service.ts와 같은 이유)
         LIMIT $1 OFFSET $2`,
       listParams,
     );

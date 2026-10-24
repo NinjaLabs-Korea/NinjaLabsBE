@@ -57,7 +57,7 @@ describeDb('public reads over HTTP (e2e)', () => {
     expect((await e2e.get('/bounties')).body.pageSize).toBe(12);
   });
 
-  it.failing('paging is stable when the sort key ties: every visible bounty appears exactly once across pages (cancelled bounties never opened → opened_at NULL)', async () => {
+  it('paging is stable when the sort key ties: every visible bounty appears exactly once across pages (cancelled bounties never opened → opened_at NULL)', async () => {
     for (let i = 0; i < 40; i++) {
       const id = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ title: `Cancelled ${i}` }), true), asAdmin())).body.id;
       expect((await e2e.post(`/admin/bounties/${id}/transition`, { to: 'CANCELLED' }, asAdmin())).status).toBe(201);

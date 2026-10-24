@@ -44,7 +44,7 @@ export class AuditService {
       this.db.query(
         `SELECT id, actor_user_id, actor_agent_id, action, entity_type, entity_id, created_at
            FROM audit_log ${where}
-          ORDER BY created_at DESC
+          ORDER BY created_at DESC, id -- 한 트랜잭션의 감사 행은 created_at(now())이 같다 — 페이지 경계가 흔들리지 않게
           LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, pageSize, offset],
       ),

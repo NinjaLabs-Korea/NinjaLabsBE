@@ -27,7 +27,7 @@ export class MemberAdminService {
          LEFT JOIN wallet w ON w.user_id = u.id AND w.is_primary = true AND w.disconnected_at IS NULL
         WHERE u.deleted_at IS NULL
           AND (u.email ILIKE $1 ESCAPE '\\' OR u.nickname ILIKE $1 ESCAPE '\\')
-        ORDER BY u.created_at DESC
+        ORDER BY u.created_at DESC, u.id
         LIMIT $2 OFFSET $3`,
       [MemberAdminService.likePattern(q), pageSize, (page - 1) * pageSize],
     );

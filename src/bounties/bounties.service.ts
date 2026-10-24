@@ -35,7 +35,8 @@ export class BountiesService {
          LEFT JOIN bounty_reward r ON r.bounty_id = b.id
         WHERE ${where}
         GROUP BY b.id
-        ORDER BY b.opened_at DESC NULLS LAST
+        -- created_at, id: 동률(같은 opened_at, 한 번도 열리지 않은 CANCELLED의 NULL)에서도 순서가 정해져야 LIMIT/OFFSET 페이지가 겹치거나 빠지지 않는다
+        ORDER BY b.opened_at DESC NULLS LAST, b.created_at DESC, b.id
         LIMIT $${n + 1} OFFSET $${n + 2}`,
       [...filterParams, pageSize, offset],
     );

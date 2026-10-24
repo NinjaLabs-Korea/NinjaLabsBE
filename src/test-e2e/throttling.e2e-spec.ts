@@ -2,6 +2,8 @@ import { Wallet } from 'ethers';
 import { describeDb } from '../test-db/describe-db';
 import { E2eApp, Session, startApp } from './support/harness';
 
+/** 공개 읽기(600/min)가 아닌 라우트 — 전역 120/min을 검증할 때 쓴다 (인증 없이 401) */
+const NON_PUBLIC_ROUTE = '/wallets/me';
 const TOO_MANY = { statusCode: 429, message: 'ThrottlerException: Too Many Requests' };
 
 // c. throttling — in-memory throttler storage per app instance; trust proxy 1 → the last X-Forwarded-For hop is the client
@@ -83,20 +85,48 @@ describeDb('throttling over HTTP (e2e)', () => {
   it('other routes keep 120/min per IP even after the auth routes were used from that IP', async () => {
     const ip = '203.0.113.53';
     expect((await e2e.post('/auth/refresh', { refreshToken: unknownToken('pre') }, { ip })).headers['x-ratelimit-limit']).toBe('600');
-    const first = await e2e.get('/bounties?pageSize=1', { ip });
+    const first = await e2e.get(NON_PUBLIC_ROUTE, { ip });
     expect(first.headers['x-ratelimit-limit']).toBe('120');
-    const statuses = await burst(119, () => e2e.get('/bounties?pageSize=1', { ip }));
-    expect(statuses.every((s) => s === 200)).toBe(true);
-    expect((await e2e.get('/bounties?pageSize=1', { ip })).status).toBe(429);
+    const statuses = await burst(119, () => e2e.get(NON_PUBLIC_ROUTE, { ip }));
+    expect(statuses.every((s) => s === 401)).toBe(true);
+    expect((await e2e.get(NON_PUBLIC_ROUTE, { ip })).status).toBe(429);
   });
 
   it('the global limit is 120/min per IP (unsuffixed Retry-After), separate per IP', async () => {
-    const statuses = await burst(120, () => e2e.get('/bounties?pageSize=1', { ip: '203.0.113.30' }));
-    expect(statuses.every((s) => s === 200)).toBe(true);
-    const over = await e2e.get('/bounties?pageSize=1', { ip: '203.0.113.30' });
+    const statuses = await burst(120, () => e2e.get(NON_PUBLIC_ROUTE, { ip: '203.0.113.30' }));
+    expect(statuses.every((s) => s === 401)).toBe(true);
+    const over = await e2e.get(NON_PUBLIC_ROUTE, { ip: '203.0.113.30' });
     expect(over.status).toBe(429);
     expect(over.headers['retry-after']).toBeDefined();
-    expect((await e2e.get('/bounties?pageSize=1', { ip: '203.0.113.31' })).status).toBe(200);
+    expect((await e2e.get(NON_PUBLIC_ROUTE, { ip: '203.0.113.31' })).status).toBe(401);
+  });
+
+  it('write routes keep 120/min: the 121st POST /wallets/challenge from one IP is 429', async () => {
+    const ip = '203.0.113.60';
+    const statuses = await burst(120, () => e2e.post('/wallets/challenge', {}, { ip }));
+    expect(statuses.every((s) => s !== 429)).toBe(true);
+    expect((await e2e.post('/wallets/challenge', {}, { ip })).status).toBe(429);
+  });
+
+  describe('public reads: 600/min per IP (Vercel SSR egress carries many users)', () => {
+    const MEDIA_ID = '00000000-0000-4000-8000-000000000000';
+
+    it('/bounties: request 121 is not 429, request 601 is; a spoofed X-Forwarded-For prefix does not open a new bucket', async () => {
+      const real = '203.0.113.61';
+      const statuses = await burst(600, (i) => e2e.get('/bounties?pageSize=1', { ip: `198.51.100.${i % 250}, ${real}` }));
+      expect(statuses.every((s) => s === 200)).toBe(true);
+      const over = await e2e.get('/bounties?pageSize=1', { ip: `198.51.100.251, ${real}` });
+      expect(over.status).toBe(429);
+      expect(Number(over.headers['retry-after'])).toBeGreaterThan(0);
+      expect((await e2e.get('/bounties?pageSize=1', { ip: '203.0.113.62' })).status).toBe(200);
+    });
+
+    it('/media/:id: request 121 is not 429, request 601 is', async () => {
+      const ip = '203.0.113.63';
+      const statuses = await burst(600, () => e2e.get(`/media/${MEDIA_ID}`, { ip }));
+      expect(statuses.every((s) => s === 404)).toBe(true);
+      expect((await e2e.get(`/media/${MEDIA_ID}`, { ip })).status).toBe(429);
+    });
   });
 
   describe('Agent API', () => {

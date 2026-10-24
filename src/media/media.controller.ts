@@ -12,6 +12,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
+import { PUBLIC_READ_IP_THROTTLE } from '../common/throttler/public-read-throttle';
 import { Request, Response } from 'express';
 import { AdminGuard } from '../auth/admin.guard';
 import { SessionUser } from '../auth/auth.service';
@@ -36,6 +38,7 @@ export class MediaController {
     return this.media.create(req.user.userId, file);
   }
 
+  @Throttle(PUBLIC_READ_IP_THROTTLE)
   @Get('media/:id')
   async get(
     @Param('id', ParseUUIDPipe) id: string,

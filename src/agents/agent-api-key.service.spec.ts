@@ -1,6 +1,5 @@
 import { createHash } from 'crypto';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { AgentApiKeyService } from './agent-api-key.service';
 
 describe('AgentApiKeyService', () => {
@@ -31,9 +30,9 @@ describe('AgentApiKeyService', () => {
         rows: touchRowCount ? [{ id: 'key-id' }] : [],
       });
     // Both statements (prefix lookup, conditional last_used_at UPDATE) are checked for $n/params drift on every call.
-    const db = { query: withParamsCheck(txQuery), tx: jest.fn() };
+    const { database, db } = createMockDb({ query: txQuery });
     return {
-      service: new AgentApiKeyService(db as unknown as DatabaseService),
+      service: new AgentApiKeyService(database),
       db,
       txQuery,
     };

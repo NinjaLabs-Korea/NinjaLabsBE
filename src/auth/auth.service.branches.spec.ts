@@ -1,7 +1,6 @@
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { DatabaseService } from '../common/database/database.service';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { AuthService } from './auth.service';
 import { GoogleIdTokenVerifier } from './google-id-token.verifier';
 
@@ -22,14 +21,11 @@ function createService(options: {
 } = {}) {
   const query = options.query ?? jest.fn(async () => ({ rowCount: 1, rows: [] }));
   const txQuery = options.txQuery ?? jest.fn(async () => ({ rowCount: 0, rows: [] }));
-  const db = {
-    query: withParamsCheck(query),
-    tx: jest.fn(async (run: (tx: { query: jest.Mock }) => Promise<unknown>) => run({ query: withParamsCheck(txQuery) as jest.Mock })),
-  };
+  const { database, db } = createMockDb({ query, txQuery });
   const jwt = { signAsync: jest.fn(async () => 'signed-access'), verifyAsync: jest.fn(), ...options.jwt };
   const config = options.config ?? {};
   const service = new AuthService(
-    db as unknown as DatabaseService,
+    database,
     jwt as never,
     { get: (key: string) => config[key] } as never,
     DEV_SECRET,

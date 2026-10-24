@@ -1,9 +1,9 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { DatabaseService } from '../common/database/database.service';
 import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
 import { USER_STATUS_CACHE_MAX } from './user-status-cache';
+import { createMockDb } from '../test-support/mock-db';
 
 /**
  * 실제 JwtService로 서명한 토큰을 AuthGuard에 넣어 본다 — OAuth state JWT는 같은 시크릿으로 서명되지만
@@ -14,7 +14,7 @@ describe('AuthGuard token type binding', () => {
   const jwt = new JwtService({ secret: 'test-secret-test-secret-test-secret!', signOptions: { expiresIn: '5m' } });
   // 유저 상태 확인(assertActiveUser)은 활성 유저로 답한다 — 비활성/캐시는 아래 별도 describe
   const service = new AuthService(
-    { query: jest.fn().mockResolvedValue({ rowCount: 1, rows: [{}] }), tx: jest.fn() } as unknown as DatabaseService,
+    createMockDb({ query: jest.fn().mockResolvedValue({ rowCount: 1, rows: [{}] }) }).database,
     jwt,
     { get: jest.fn() } as never,
     'test-secret-test-secret-test-secret!',
@@ -78,7 +78,7 @@ describe('AuthGuard user status (suspended / deleted users)', () => {
   function setup(activeRows: number[]) {
     const query = jest.fn();
     for (const rowCount of activeRows) query.mockResolvedValueOnce({ rowCount, rows: rowCount ? [{}] : [] });
-    const service = new AuthService({ query, tx: jest.fn() } as unknown as DatabaseService, jwt, { get: jest.fn() } as never, secret);
+    const service = new AuthService(createMockDb({ query }).database, jwt, { get: jest.fn() } as never, secret);
     const request: { headers: Record<string, string>; user?: SessionUser } = { headers: {} };
     const context = { switchToHttp: () => ({ getRequest: () => request }) } as unknown as ExecutionContext;
     return { service, guard: new AuthGuard(service), query, request, context };

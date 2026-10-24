@@ -1,6 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb } from '../test-support/mock-db';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
@@ -12,9 +12,9 @@ const challenge = createHash('sha256').update(verifier).digest('base64url');
 /** `dbQuery` serves issueLoginCode (autocommit); `query` is the transaction client of exchangeLoginCode — both checked for $n/params drift */
 function setup(query = jest.fn()) {
   const dbQuery = jest.fn();
-  const db = { query: withParamsCheck(dbQuery), tx: jest.fn(async (run) => run({ query: withParamsCheck(query) })) };
+  const { database, db } = createMockDb({ query: dbQuery, txQuery: query });
   const jwt = { signAsync: jest.fn(async () => 'access-token'), verifyAsync: jest.fn() };
-  const service = new AuthService(db as never, jwt as never, { get: jest.fn() } as never, 'dev-only-secret');
+  const service = new AuthService(database, jwt as never, { get: jest.fn() } as never, 'dev-only-secret');
   return { service, db, dbQuery, jwt };
 }
 

@@ -160,7 +160,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
       .toEqual(['BOUNTY_COMPLETED', 'BOUNTY_CREATED', 'BOUNTY_IN_REVIEW', 'BOUNTY_OPEN', 'BOUNTY_SUBMISSION_CLOSED']);
   });
 
-  it.failing('a deposit tx hash is never accepted as a payout tx hash (and vice versa) → 409 TX_HASH_ALREADY_USED', async () => {
+  it('a deposit tx hash is never accepted as a payout tx hash (and vice versa) → 409 TX_HASH_ALREADY_USED', async () => {
     const builder = await e2e.login();
     await e2e.onboard(builder);
     const id = await createBounty(bountyForm({ intakeEnabled: false, reward: { amount: 1, currency: 'INJ' } }));

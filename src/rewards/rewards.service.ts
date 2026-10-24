@@ -29,11 +29,16 @@ export class RewardsService {
    * 운영자: 선입금 확인 처리 → 보상 FUNDED, 바운티 OPEN 전환은 admin 쪽에서.
    * tx 해시는 32바이트 hex만 받아 `0x`+소문자로 정규화한다 (400 INVALID_TX_HASH). 같은 해시를 두 보상에 쓰면
    * uq_bounty_reward_deposit_tx(0014)가 막고 409 TX_HASH_ALREADY_USED — 한 입금을 두 번 인정하지 않는다.
+   * 이미 payout 송금으로 기록된 해시도 409 TX_HASH_ALREADY_USED (반대 방향 tx를 입금으로 인정하지 않는다).
    */
   async confirmDeposit(rewardId: string, txHash: string, depositedAmount: string, adminId: string) {
     this.validateAmount(depositedAmount);
     const hash = normalizeTxHash(txHash);
     return this.rejectReusedTxHash(() => this.db.tx(async (tx) => {
+      // 같은 해시의 markPaid와 직렬화 (같은 advisory lock 키) — 입금 tx와 송금 tx는 방향이 반대라 같은 해시일 수 없다
+      await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [hash]);
+      const asPayout = await tx.query(`SELECT 1 FROM payout WHERE payout_tx_hash = $1 LIMIT 1`, [hash]);
+      if (asPayout.rowCount) throw new ConflictException('TX_HASH_ALREADY_USED');
       const r = await tx.query(
         `UPDATE bounty_reward
             SET status = 'FUNDED', deposit_tx_hash = $2, deposited_amount = $3::numeric, deposited_at = now()
@@ -120,6 +125,7 @@ export class RewardsService {
    * 운영자: 송금 완료 기록 (tx hash — confirmDeposit과 같은 정규화).
    * 멀티시그 tx 하나가 여러 수상자에게 한 번에 보낼 수 있으므로 **같은 바운티 안에서는** 같은 해시를 여러 payout에 기록할 수 있다(info 로그).
    * **다른 바운티**의 payout에 이미 PAID로 기록된 해시는 409 TX_HASH_ALREADY_USED — 한 송금을 두 바운티의 지급으로 인정하지 않는다.
+   * 어느 보상의 입금 해시(deposit_tx_hash)로 기록된 값도 409 TX_HASH_ALREADY_USED.
    * payout_tx_hash에는 유니크 인덱스가 없으므로(0014는 정규화만) 이 검사는 UPDATE 전에 조회로 하고, 같은 해시의 동시 기록은
    * 해시별 advisory lock으로 직렬화한다.
    */
@@ -140,6 +146,9 @@ export class RewardsService {
         [payoutId, hash, target.rows[0].bounty_id],
       );
       if (reuse.rows[0].other_bounty > 0) throw new ConflictException('TX_HASH_ALREADY_USED');
+      // 스폰서 입금(→ 멀티시그)으로 이미 기록된 해시는 수상자 송금(멀티시그 →)의 증빙이 될 수 없다 — 운영자가 입금 해시를 잘못 붙여 넣는 실수를 막는다
+      const asDeposit = await tx.query(`SELECT 1 FROM bounty_reward WHERE deposit_tx_hash = $1 LIMIT 1`, [hash]);
+      if (asDeposit.rowCount) throw new ConflictException('TX_HASH_ALREADY_USED');
       if (reuse.rows[0].same_bounty > 0) {
         this.logger.log(`payout ${payoutId}: tx ${hash} is already recorded on ${reuse.rows[0].same_bounty} PAID payout(s) of the same bounty — multi-recipient send`);
       }

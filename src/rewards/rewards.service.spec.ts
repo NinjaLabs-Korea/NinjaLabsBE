@@ -17,7 +17,7 @@ describe('RewardsService markPaid', () => {
    *     predicates the statement actually carries — swap the two FILTERs or drop `p.status = 'PAID'` / `p.id <> $1` and the counts move;
    *   - the PAID UPDATE applies its own `status IN (...)` list to the target payout — drop the list and a REQUESTED payout is "paid".
    */
-  function setup(options: { payout?: Partial<PayoutRow>; others?: PayoutRow[]; found?: boolean } = {}) {
+  function setup(options: { payout?: Partial<PayoutRow>; others?: PayoutRow[]; found?: boolean; deposits?: string[] } = {}) {
     const target: PayoutRow = { id: 'payout', bounty_id: 'bounty', payout_tx_hash: null, status: 'APPROVED', ...options.payout };
     const table = [target, ...(options.others ?? [])];
     const query = jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
@@ -51,6 +51,10 @@ describe('RewardsService markPaid', () => {
         };
       }
       if (sql.includes('FROM bounty_submission s')) return { rowCount: 1, rows: [{ owner_user_id: 'user', bounty_id: target.bounty_id }] };
+      if (sql.includes('FROM bounty_reward WHERE deposit_tx_hash = $1')) {
+        const hit = (options.deposits ?? []).includes(params![0] as string);
+        return { rowCount: hit ? 1 : 0, rows: hit ? [{}] : [] };
+      }
       return { rowCount: 1, rows: [] };
     }));
     const tx = { query };
@@ -70,6 +74,13 @@ describe('RewardsService markPaid', () => {
   }
 
   const paidElsewhere = (id: string, bounty_id: string, hash = txHash): PayoutRow => ({ id, bounty_id, payout_tx_hash: hash, status: 'PAID' });
+
+  it('refuses a hash already recorded as a reward deposit (sponsor → multisig is never the winner payout) → 409 TX_HASH_ALREADY_USED before the UPDATE', async () => {
+    const { service, query, nfts } = setup({ deposits: [txHash] });
+    await expect(service.markPaid('payout', txHash.toUpperCase().replace('0X', '0x'), 'admin')).rejects.toMatchObject({ message: 'TX_HASH_ALREADY_USED' });
+    expect(query.mock.calls.some(([sql]) => (sql as string).includes(`UPDATE payout SET status = 'PAID'`))).toBe(false);
+    expect(nfts.enqueueChildMintInTransaction).not.toHaveBeenCalled();
+  });
 
   it('enqueues a completion NFT in the same transaction when a payout is paid', async () => {
     const { service, tx, db, nfts } = setup();
@@ -93,15 +104,17 @@ describe('RewardsService markPaid', () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  it('serializes on the hash, resolves the bounty of the payout, then looks for PAID payouts with the same hash — all before the UPDATE', async () => {
+  it('serializes on the hash, resolves the bounty of the payout, then looks for PAID payouts and deposits with the same hash — all before the UPDATE', async () => {
     const { service, query } = setup();
     await service.markPaid('payout', txHash, 'admin');
     const sqls = query.mock.calls.map(([sql]) => sql as string);
     const lock = sqls.findIndex((sql) => sql.includes('pg_advisory_xact_lock(hashtext($1))'));
     const bounty = sqls.findIndex((sql) => sql.includes('SELECT rw.bounty_id FROM payout p'));
     const reuse = sqls.findIndex((sql) => sql.includes('count(*) FILTER'));
+    const deposit = sqls.findIndex((sql) => sql.includes('FROM bounty_reward WHERE deposit_tx_hash = $1'));
     const update = sqls.findIndex((sql) => sql.includes(`UPDATE payout SET status = 'PAID'`));
-    expect([lock, bounty, reuse, update]).toEqual([0, 1, 2, 3]);
+    expect([lock, bounty, reuse, deposit, update]).toEqual([0, 1, 2, 3, 4]);
+    expect(query.mock.calls[deposit][1]).toEqual([txHash]);
     expect(query.mock.calls[lock][1]).toEqual([txHash]);
     expect(sqls[bounty]).toContain('FOR UPDATE OF p');
     expect(sqls[reuse]).toContain(`WHERE p.payout_tx_hash = $2 AND p.status = 'PAID' AND p.id <> $1`);
@@ -188,28 +201,50 @@ describe('RewardsService markPaid', () => {
 });
 
 describe('RewardsService confirmDeposit', () => {
-  function setup(rowCount = 1) {
-    const query = jest.fn().mockResolvedValue({ rowCount, rows: rowCount ? [{ id: 'reward', bounty_id: 'bounty', status: 'FUNDED' }] : [] });
-    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) })) };
+  /** SQL 모양으로 답한다 — 해시 잠금, payout 해시 조회(options.payoutHashes), 조건부 UPDATE(rowCount), 감사 INSERT */
+  function setup(rowCount = 1, options: { payoutHashes?: string[] } = {}) {
+    const query = jest.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [{}] };
+      if (sql.includes('FROM payout WHERE payout_tx_hash = $1')) {
+        const hit = (options.payoutHashes ?? []).includes(params![0] as string);
+        return { rowCount: hit ? 1 : 0, rows: hit ? [{}] : [] };
+      }
+      if (sql.includes("SET status = 'FUNDED'")) return { rowCount, rows: rowCount ? [{ id: 'reward', bounty_id: 'bounty', status: 'FUNDED' }] : [] };
+      return { rowCount: 1, rows: [] };
+    });
+    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) as unknown as jest.Mock })) };
     const service = new RewardsService(db as never, {} as never, new AuditService(db as never));
     return { service, query, db };
   }
+  const sqlIndex = (query: jest.Mock, fragment: string) => query.mock.calls.findIndex(([sql]) => (sql as string).includes(fragment));
 
   it('confirms the deposit with the normalized tx hash and writes the audit row in the same transaction', async () => {
     const { service, query, db } = setup();
     await expect(service.confirmDeposit('reward', 'AB'.repeat(32), '1000000', 'admin')).resolves.toMatchObject({ status: 'FUNDED' });
     expect(db.tx).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
-    expect(query.mock.calls[0][0]).toContain("SET status = 'FUNDED'");
-    expect(query.mock.calls[0][1]).toEqual(['reward', txHash, '1000000']);
-    expect(query.mock.calls[1][0]).toContain('INSERT INTO audit_log');
-    expect(query.mock.calls[1][1]).toEqual(['admin', 'REWARD_DEPOSIT_CONFIRMED', 'bounty_reward', 'reward']);
+    const lock = sqlIndex(query, 'pg_advisory_xact_lock');
+    const payoutCheck = sqlIndex(query, 'FROM payout WHERE payout_tx_hash = $1');
+    const update = sqlIndex(query, "SET status = 'FUNDED'");
+    const audit = sqlIndex(query, 'INSERT INTO audit_log');
+    expect([lock, payoutCheck, update, audit]).toEqual([0, 1, 2, 3]);
+    expect(query.mock.calls[lock][1]).toEqual([txHash]);
+    expect(query.mock.calls[payoutCheck][1]).toEqual([txHash]);
+    expect(query.mock.calls[update][1]).toEqual(['reward', txHash, '1000000']);
+    expect(query.mock.calls[audit][1]).toEqual(['admin', 'REWARD_DEPOSIT_CONFIRMED', 'bounty_reward', 'reward']);
+  });
+
+  it('refuses a hash already recorded as a payout → 409 TX_HASH_ALREADY_USED, no UPDATE, no audit', async () => {
+    const { service, query } = setup(1, { payoutHashes: [txHash] });
+    await expect(service.confirmDeposit('reward', txHash, '1000000', 'admin')).rejects.toMatchObject({ message: 'TX_HASH_ALREADY_USED' });
+    expect(sqlIndex(query, "SET status = 'FUNDED'")).toBe(-1);
+    expect(sqlIndex(query, 'INSERT INTO audit_log')).toBe(-1);
   });
 
   it('does not audit when the reward is not pending', async () => {
     const { service, query } = setup(0);
     await expect(service.confirmDeposit('reward', txHash, '1000000', 'admin')).rejects.toThrow('REWARD_NOT_FOUND_OR_NOT_PENDING');
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(sqlIndex(query, 'INSERT INTO audit_log')).toBe(-1);
   });
 
   it.each(['0xdeposit', 'ab'.repeat(31), `0x${'ab'.repeat(32)}0`, ''])('rejects tx hash %p with 400 INVALID_TX_HASH without touching the database', async (hash) => {
@@ -220,7 +255,11 @@ describe('RewardsService confirmDeposit', () => {
 
   it('maps the uq_bounty_reward_deposit_tx unique violation to 409 TX_HASH_ALREADY_USED', async () => {
     const { service, query } = setup();
-    query.mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505' }));
+    const answer = query.getMockImplementation()!;
+    query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes("SET status = 'FUNDED'")) throw Object.assign(new Error('duplicate key'), { code: '23505' });
+      return answer(sql, params);
+    });
     const error = await service.confirmDeposit('reward', txHash, '1000000', 'admin').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as ConflictException).message).toBe('TX_HASH_ALREADY_USED');

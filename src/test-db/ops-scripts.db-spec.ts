@@ -582,6 +582,22 @@ describeDb('ops scripts on a real database', () => {
       await expect(opsBounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
     });
 
+    it('accepts a PAID reward with deposit left (deposited − PAID > 0): refunds the remainder, then the delete guard lets the bounty go', async () => {
+      const { bountyId, rewardId, adminId } = await seedRefund({ reward: 'PAID', deposited: 1500, payouts: ['PAID', 'CANCELLED'] });
+      await expect(opsBounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      const TX = freshTx();
+      const dry = await invoke(recordRefund, [rewardId, '--tx', TX, '--dry-run']);
+      expect(dry.out).toContain('plan     reward PAID -> REFUNDED, refundedAmount=1200');
+      const res = await invoke(recordRefund, [rewardId, '--tx', TX, '--yes']);
+      expect(res.code).toBe(0);
+      expect(await rewardStatus(rewardId)).toBe('REFUNDED');
+      expect(await auditRows('bounty_reward', rewardId)).toEqual([{
+        action: 'REWARD_REFUNDED', actor_user_id: null, before_data: { status: 'PAID' },
+        after_data: { txHash: TX, refundedAmount: '1200', source: 'scripts/record-refund.js' },
+      }]);
+      await expect(opsBounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
+    });
+
     it('accepts a REFUND_PENDING reward', async () => {
       const { rewardId } = await seedRefund({ reward: 'REFUND_PENDING' });
       const res = await invoke(recordRefund, [rewardId, '--tx', `0x${'cd'.repeat(32)}`, '--yes']);
@@ -606,7 +622,9 @@ describeDb('ops scripts on a real database', () => {
     it.each([
       ['an OPEN bounty', { bounty: 'OPEN' }, 'not CANCELLED'],
       ['a COMPLETED bounty', { bounty: 'COMPLETED' }, 'not CANCELLED'],
-      ['a PAID reward', { reward: 'PAID' }, 'expected one of'],
+      ['a fully paid PAID reward (deposit = PAID sum)', { reward: 'PAID', deposited: 300, payouts: ['PAID'] }, 'nothing to refund'],
+      ['a PAID reward with an open payout', { reward: 'PAID', payouts: ['PAID', 'APPROVED'] }, 'still open'],
+      ['a PAID reward on a COMPLETED bounty', { bounty: 'COMPLETED', reward: 'PAID', payouts: ['PAID'] }, 'not CANCELLED'],
       ['a DEPOSIT_PENDING reward', { reward: 'DEPOSIT_PENDING' }, 'expected one of'],
       ['an already REFUNDED reward', { reward: 'REFUNDED' }, 'expected one of'],
       ['an open payout (REQUESTED)', { payouts: ['PAID', 'REQUESTED'] }, 'still open'],

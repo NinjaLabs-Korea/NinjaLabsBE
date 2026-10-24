@@ -10,3 +10,5 @@ export declare function inspectReward(
   rewardId: string,
   lock?: boolean,
 ): Promise<{ reward: Record<string, any> | null; refundedAmount: string | null }>;
+export declare const TERMINAL_PAYOUT_STATUSES: string[];
+export declare const REFUNDABLE: string[];

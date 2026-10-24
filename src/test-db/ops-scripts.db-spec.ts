@@ -7,6 +7,11 @@ import { run as grantAdmin } from '../../scripts/grant-admin';
 import { applyMigrations, sslOptions } from '../../scripts/migrate';
 import { run as recordRefund } from '../../scripts/record-refund';
 import { run as requeueNftJobs } from '../../scripts/requeue-nft-jobs';
+import { AuditService } from '../audit/audit.service';
+import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
+import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.service';
+import { RewardTokenResolver } from '../bounties/admin/reward-token.resolver';
+import { DatabaseService } from '../common/database/database.service';
 import { AlertService } from '../common/alerts/alert.service';
 import { InjectiveNftClient } from '../nfts/injective-nft.client';
 import { STATIC_FILE_EXTENSIONS } from '../users/nickname';
@@ -518,6 +523,15 @@ describeDb('ops scripts on a real database', () => {
 
   describe('scripts/record-refund.js', () => {
     let counter = 0;
+    let opsDb: DatabaseService;
+    let opsBounties: BountyAdminService;
+    beforeAll(() => {
+      // the real BountyAdminService on this file's private database (url is set by the outer beforeAll)
+      const config = testConfig({ DATABASE_URL: url });
+      opsDb = new DatabaseService(config);
+      opsBounties = new BountyAdminService(opsDb, new AuditService(opsDb), new BountyLifecycleService(), new RewardTokenResolver(config), config);
+    });
+    afterAll(async () => opsDb.onModuleDestroy());
     /** 테스트마다 다른 64자리 hex — 같은 DB 안에서 환불 증빙 해시는 재사용할 수 없다 */
     const freshTx = () => `0x${(++counter).toString(16).padStart(64, 'a')}`;
 
@@ -552,6 +566,7 @@ describeDb('ops scripts on a real database', () => {
     it('records the refund: REFUNDED + REWARD_REFUNDED audit (actor NULL, deposited minus PAID), then bounty delete is allowed', async () => {
       const TX = freshTx();
       const { bountyId, rewardId, adminId } = await seedRefund({ reward: 'PARTIALLY_PAID', payouts: ['PAID', 'CANCELLED', 'FAILED'] });
+      await expect(opsBounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
       const res = await invoke(recordRefund, [rewardId, '--tx', TX.slice(2).toUpperCase()], async () => true);
       expect(res.code).toBe(0);
       expect(res.prompts).toHaveLength(1);
@@ -562,14 +577,8 @@ describeDb('ops scripts on a real database', () => {
         before_data: { status: 'PARTIALLY_PAID' },
         after_data: { txHash: TX, refundedAmount: '700', source: 'scripts/record-refund.js' },
       }]);
-      // the delete guard (BountyAdminService.remove) no longer sees open funds
-      const open = await pool.query(
-        `SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = $1
-            AND (rw.status = 'REFUND_PENDING' OR (rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')
-                 AND LEAST(rw.amount, rw.deposited_amount) > (SELECT COALESCE(SUM(p.amount), 0) FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status = 'PAID')))`,
-        [bountyId]);
-      expect(open.rowCount).toBe(0);
-      expect(adminId).toBeTruthy();
+      // the real delete guard: refused before the script, allowed after
+      await expect(opsBounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
     });
 
     it('accepts a REFUND_PENDING reward', async () => {
@@ -631,6 +640,24 @@ describeDb('ops scripts on a real database', () => {
       expect(res.code).toBe(1);
       expect(res.out).toContain('already recorded as a deposit');
       expect(await rewardStatus(rewardId)).toBe('FUNDED');
+    });
+
+    it('refuses a tx hash already recorded as a payout or as an earlier refund', async () => {
+      const paid = await seedRefund({ reward: 'PARTIALLY_PAID', payouts: ['PAID'] });
+      const payoutHash = freshTx();
+      await pool.query(`UPDATE payout SET payout_tx_hash = $2 WHERE bounty_reward_id = $1`, [paid.rewardId, payoutHash]);
+      const a = await seedRefund();
+      const asPayout = await invoke(recordRefund, [a.rewardId, '--tx', payoutHash, '--yes']);
+      expect(asPayout.code).toBe(1);
+      expect(asPayout.out).toContain('already recorded as a payout');
+
+      const refundHash = freshTx();
+      const first = await seedRefund();
+      expect((await invoke(recordRefund, [first.rewardId, '--tx', refundHash, '--yes'])).code).toBe(0);
+      const second = await invoke(recordRefund, [a.rewardId, '--tx', refundHash, '--yes']);
+      expect(second.code).toBe(1);
+      expect(second.out).toContain('already recorded as a refund');
+      expect(await rewardStatus(a.rewardId)).toBe('FUNDED');
     });
 
     it('rolls the reward update back when the audit insert fails (same transaction)', async () => {

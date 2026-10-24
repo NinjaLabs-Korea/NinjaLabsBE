@@ -71,3 +71,60 @@ describe('MaintenanceService crons', () => {
     await first;
   });
 });
+
+describe('MaintenanceService — robustness', () => {
+  function setup(query: jest.Mock) {
+    const service = new MaintenanceService({ query } as unknown as DatabaseService);
+    const log = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
+    const error = jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
+    return { service, log, error };
+  }
+
+  it('reports 0 when the driver gives rowCount null', async () => {
+    const { service, log } = setup(jest.fn().mockResolvedValue({ rowCount: null, rows: [] }));
+    await service.sweep();
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=0 sessions=0 login_codes=0');
+  });
+
+  it('stops at the first failing statement (no later deletes) and logs a non-Error rejection as text', async () => {
+    const query = jest.fn().mockResolvedValueOnce({ rowCount: 1 }).mockRejectedValueOnce('lock timeout');
+    const { service, log, error } = setup(query);
+    await service.sweep();
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(log).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith('maintenance sweep failed: lock timeout');
+  });
+
+  it('runs again on the next tick after a failure (the in-progress flag is reset)', async () => {
+    const query = jest.fn().mockRejectedValueOnce(new Error('down')).mockResolvedValue({ rowCount: 2 });
+    const { service, log } = setup(query);
+    await service.sweep();
+    await service.sweep();
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=2 sessions=2 login_codes=2');
+  });
+
+  it('clearGraceCopies runs at most once at a time and independently of a running sweep', async () => {
+    let releaseGrace!: () => void;
+    let releaseSweep!: () => void;
+    const query = jest.fn((sql: string) => new Promise((resolve) => {
+      if (sql.includes('grace_refresh_token')) releaseGrace = () => resolve({ rowCount: 1 });
+      else releaseSweep = () => resolve({ rowCount: 0 });
+    }));
+    const { service, error } = setup(query);
+    const sweep = service.sweep(); // first sweep statement in flight
+    const grace = service.clearGraceCopies();
+    await service.clearGraceCopies(); // overlapping tick → skipped
+    expect(query.mock.calls.filter(([sql]) => sql.includes('grace_refresh_token'))).toHaveLength(1);
+    releaseGrace();
+    await grace;
+    for (let i = 0; i < 3; i++) { releaseSweep(); await new Promise((resolve) => setImmediate(resolve)); }
+    await sweep;
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('clearGraceCopies logs a non-Error rejection as text', async () => {
+    const { service, error } = setup(jest.fn().mockRejectedValue(42));
+    await service.clearGraceCopies();
+    expect(error).toHaveBeenCalledWith('grace copy cleanup failed: 42');
+  });
+});

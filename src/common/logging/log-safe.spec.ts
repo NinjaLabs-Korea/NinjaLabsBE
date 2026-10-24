@@ -45,3 +45,34 @@ describe('onboarding log lines', () => {
     expect(parsed.traceId.length).toBeLessThanOrEqual(LOG_VALUE_MAX + 20);
   });
 });
+
+describe('logSafe — every input yields one bounded line', () => {
+  it('escapes all 33 C0/DEL characters and U+2028/2029 to visible text', () => {
+    const controls = [...Array(32).keys(), 0x7f, 0x2028, 0x2029].map((code) => String.fromCharCode(code)).join('');
+    const out = logSafe(controls, 10_000);
+    // eslint-disable-next-line no-control-regex -- looking for raw control characters is the point
+    expect(out).not.toMatch(/[\u0000-\u001f\u007f\u2028\u2029]/);
+    expect(out.startsWith('\\u0000\\u0001')).toBe(true);
+    expect(out).toContain('\\n');
+    expect(out).toContain('\\r');
+    expect(out.endsWith('\\u007f\\u2028\\u2029')).toBe(true);
+  });
+
+  it('never emits a raw line break and never exceeds max + the truncation note (seeded generator)', () => {
+    let state = 99;
+    const random = () => { state = (state * 1103515245 + 12345) % 2 ** 31; return state / 2 ** 31; };
+    const alphabet = ['a', '\n', '\r', '\u2028', '\u0000', '\u001b[31m', '😀', '\\', 'é', ' '];
+    for (let i = 0; i < 2000; i++) {
+      let value = '';
+      const parts = Math.floor(random() * 120);
+      for (let j = 0; j < parts; j++) value += alphabet[Math.floor(random() * alphabet.length)];
+      const out = logSafe(value, 50);
+      expect(LINE_BREAK.test(out)).toBe(false);
+      expect(out.length).toBeLessThanOrEqual(50 + '…(+99999 chars)'.length);
+    }
+  });
+
+  it.each([[null, 'null'], [undefined, 'undefined'], [42, '42'], [{ toString: () => 'x\ny' }, 'x\\ny']])('stringifies %p', (value, expected) => {
+    expect(logSafe(value)).toBe(expected);
+  });
+});

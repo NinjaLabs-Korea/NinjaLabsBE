@@ -35,7 +35,7 @@
 | 항목 | MVP 디폴트 | 근거 / 비고 |
 |---|---|---|
 | 부모 NFT 없는 유저에게 완료 NFT 발급? | **발급하되 attach 보류** — parent_nft_id NULL 허용. 부모가 있지만 아직 PENDING/MINTING이면 자식은 MINTED로 대기하고, 부모 민팅(MINT_PARENT)이 끝날 때 그 부모에 연결된 MINTED 자식 전부에 ATTACH_CHILD를 멱등 키로 넣는다. 부모 미준비 상태에서 집힌 ATTACH_CHILD는 실패시키지 않고 1시간 뒤로 미룬다 (`nft-job.worker.ts`, test-db `nft-worker.db-spec`) | 보상은 받았는데 증명이 없는 상황 방지 |
-| 부모 민팅 실패 자동 재시도 | **총 5회 시도 (첫 시도 + 재시도 4회)**, 10분 간격. 5번째 실패에서 FAILED + 운영자 수동 재시도 (2026-10-24: `POST /admin/nft-jobs/:id/retry` — 같은 잡 행을 PENDING/retry_count 0으로 되살린다. 새 잡을 만들지 않는 이유: 멱등 키가 이미 그 행을 가리킨다. 이미 민팅된 nft(`minted_at` 있음)는 MINTED로 되돌려 attach만 다시 돈다. FE `/admin/nft-jobs`) | `nft-job.worker.ts` MAX_RETRY=5 (`retry_count + 1 >= MAX_RETRY`) — test-db `nft-worker.db-spec`가 4번째/5번째 경계를 검증 |
+| 부모 민팅 실패 자동 재시도 | **총 5회 시도 (첫 시도 + 재시도 4회)**, 10분 간격. 5번째 실패에서 FAILED + 운영자 수동 재시도 — 두 경로, 원인을 고친 뒤 실행: (1) 운영 콘솔 `POST /admin/nft-jobs/:id/retry` (2026-10-24, FE `/admin/nft-jobs`, 감사 `NFT_JOB_RETRIED`) — 같은 잡 행을 PENDING/retry_count 0으로 되살린다. 새 잡을 만들지 않는 이유: 멱등 키가 이미 그 행을 가리킨다. 이미 민팅된 nft(`minted_at` 있음)는 MINTED로 되돌려 attach만 다시 돈다. (2) DB 접속 권한자용 `scripts/requeue-nft-jobs.js <id>…` 또는 `--all`(FAILED → PENDING, `retry_count` 0으로 새 5회, nft FAILED → token_id 있으면 MINTED 없으면 PENDING, 감사 `NFT_JOB_REQUEUED`, [runbook.md](runbook.md) §7.3) | `nft-job.worker.ts` MAX_RETRY=5 (`retry_count + 1 >= MAX_RETRY`) — test-db `nft-worker.db-spec`가 4번째/5번째 경계를 검증 |
 | 완료 NFT 메타데이터 공개 범위 | 바운티명/완료일/스폰서명 공개, **보상액은 비공개** | 연봉 공개와 같은 민감성. 팀 논의 필요 표시 |
 | attach 실패 시 표시 상태 | `MINTED` (민팅됨, 연결 대기중) — FE에 "포트폴리오 연결 중" 표기 권장 | status 체계에 이미 반영 |
 

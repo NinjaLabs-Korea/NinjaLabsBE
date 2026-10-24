@@ -1,0 +1,472 @@
+import { execFile } from 'child_process';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { Pool } from 'pg';
+import { promisify } from 'util';
+import { run as grantAdmin } from '../../scripts/grant-admin';
+import { applyMigrations, sslOptions } from '../../scripts/migrate';
+import { run as requeueNftJobs } from '../../scripts/requeue-nft-jobs';
+import { InjectiveNftClient } from '../nfts/injective-nft.client';
+import { NftJobWorker } from '../nfts/nft-job.worker';
+import { describeDb } from './describe-db';
+import { createDb, testConfig, testSslEnv, unique } from './harness';
+
+// 실제 클라이언트는 @injectivelabs/sdk-ts(ESM)를 끌어오므로 DI 메타데이터용 껍데기로 대체한다 (nft-worker 스펙과 동일)
+jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
+
+const SCRIPTS = join(__dirname, '..', '..', 'scripts');
+const exec = promisify(execFile);
+
+/**
+ * 운영 스크립트(scripts/grant-admin.js, scripts/requeue-nft-jobs.js, scripts/mainnet-preflight.sql) — docs/runbook.md.
+ * "마지막 운영자"와 `--all`은 데이터베이스 전체를 보므로 공유 테스트 DB가 아니라 이 파일 전용 데이터베이스를 새로 만든다 (migrate-lock 스펙과 같은 방식).
+ */
+describeDb('ops scripts on a real database', () => {
+  const adminUrl = process.env.TEST_DATABASE_URL!;
+  const ssl = sslOptions(testSslEnv());
+  const name = `ninjalabs_test_ops_${Date.now().toString(36)}_${unique().slice(0, 6)}`;
+  let url: string;
+  let pool: Pool;
+
+  beforeAll(async () => {
+    const admin = new Pool({ connectionString: adminUrl, ssl, max: 1 });
+    try { await admin.query(`CREATE DATABASE "${name}"`); } finally { await admin.end(); }
+    const parsed = new URL(adminUrl);
+    parsed.pathname = `/${name}`;
+    url = parsed.toString();
+    pool = new Pool({ connectionString: url, ssl, max: 2 });
+    await applyMigrations(pool);
+  });
+
+  afterAll(async () => {
+    await pool?.end();
+    const admin = new Pool({ connectionString: adminUrl, ssl, max: 1 });
+    try { await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`); } finally { await admin.end(); }
+  });
+
+  /** run()을 로그 수집과 함께 — prompt 기본값은 "no" (확인 없이 쓰지 않음을 검증) */
+  async function invoke(
+    script: typeof grantAdmin,
+    argv: string[],
+    prompt: (q: string) => Promise<boolean> = async () => false,
+  ): Promise<{ code: number; out: string; prompts: string[] }> {
+    const lines: string[] = [];
+    const prompts: string[] = [];
+    const code = await script(argv, {
+      pool,
+      log: (line) => lines.push(line),
+      prompt: async (q) => { prompts.push(q); return prompt(q); },
+    });
+    return { code, out: lines.join('\n'), prompts };
+  }
+
+  async function createUser(options: { email?: string; isAdmin?: boolean; status?: string } = {}) {
+    const id = unique();
+    const email = options.email ?? `${id}@example.test`;
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO "user" (google_id, email, nickname, onboarding_step, is_admin, status)
+       VALUES ($1, $2, $3, 2, $4, $5) RETURNING id`,
+      [`google-${id}`, email, `ops_${id.slice(0, 8)}`, options.isAdmin ?? false, options.status ?? 'ACTIVE'],
+    );
+    return { id: r.rows[0].id, email };
+  }
+
+  const isAdmin = async (userId: string) =>
+    (await pool.query<{ is_admin: boolean }>(`SELECT is_admin FROM "user" WHERE id = $1`, [userId])).rows[0].is_admin;
+
+  const auditRows = async (entityType: string, entityId: string) =>
+    (await pool.query<{ action: string; actor_user_id: string | null; before_data: unknown; after_data: unknown }>(
+      `SELECT action, actor_user_id, before_data, after_data FROM audit_log WHERE entity_type = $1 AND entity_id = $2 ORDER BY created_at`,
+      [entityType, entityId],
+    )).rows;
+
+  describe('scripts/grant-admin.js', () => {
+    it('--dry-run prints the plan and writes nothing', async () => {
+      const user = await createUser();
+      const res = await invoke(grantAdmin, ['grant', user.email, '--dry-run']);
+      expect(res.code).toBe(0);
+      expect(res.out).toContain('is_admin false -> true');
+      expect(res.out).toContain('dry-run  nothing written');
+      expect(res.prompts).toEqual([]);
+      expect(await isAdmin(user.id)).toBe(false);
+      expect(await auditRows('user', user.id)).toEqual([]);
+    });
+
+    it('asks for confirmation and writes nothing when the answer is not "yes"', async () => {
+      const user = await createUser();
+      const res = await invoke(grantAdmin, ['grant', user.email]);
+      expect(res.code).toBe(1);
+      expect(res.prompts).toEqual([`Grant admin for ${user.email}?`]);
+      expect(await isAdmin(user.id)).toBe(false);
+      expect(await auditRows('user', user.id)).toEqual([]);
+    });
+
+    it('grants after confirmation (email matched case-insensitively) with an ADMIN_GRANTED audit row whose actor is NULL', async () => {
+      const user = await createUser({ email: `${unique('Ops.')}@Example.test` });
+      const res = await invoke(grantAdmin, ['grant', user.email.toUpperCase()], async () => true);
+      expect(res.code).toBe(0);
+      expect(await isAdmin(user.id)).toBe(true);
+      expect(await auditRows('user', user.id)).toEqual([{
+        action: 'ADMIN_GRANTED',
+        actor_user_id: null,
+        before_data: { is_admin: false },
+        after_data: { is_admin: true, source: 'scripts/grant-admin.js' },
+      }]);
+    });
+
+    it('is a no-op (no audit row) when the user already has the requested state', async () => {
+      const user = await createUser({ isAdmin: true });
+      const res = await invoke(grantAdmin, ['grant', user.email, '--yes']);
+      expect(res.code).toBe(0);
+      expect(res.out).toContain('no change');
+      expect(await auditRows('user', user.id)).toEqual([]);
+    });
+
+    it('revokes with --yes and records ADMIN_REVOKED', async () => {
+      await createUser({ isAdmin: true }); // someone else stays admin
+      const user = await createUser({ isAdmin: true });
+      const res = await invoke(grantAdmin, ['revoke', user.email, '--yes']);
+      expect(res.code).toBe(0);
+      expect(res.prompts).toEqual([]);
+      expect(await isAdmin(user.id)).toBe(false);
+      expect((await auditRows('user', user.id)).map((row) => row.action)).toEqual(['ADMIN_REVOKED']);
+    });
+
+    it('refuses to revoke the last active admin unless --force', async () => {
+      await pool.query(`UPDATE "user" SET is_admin = false`);
+      const user = await createUser({ isAdmin: true });
+      await createUser({ isAdmin: true, status: 'SUSPENDED' }); // a suspended admin does not count
+
+      // the preview already reports it, and an interactive run refuses before asking
+      const preview = await invoke(grantAdmin, ['revoke', user.email, '--dry-run']);
+      expect(preview.code).toBe(1);
+      expect(preview.out).toContain('LAST_ADMIN');
+      expect(preview.out).not.toContain('dry-run  nothing written');
+      const interactive = await invoke(grantAdmin, ['revoke', user.email], async () => true);
+      expect(interactive.code).toBe(1);
+      expect(interactive.prompts).toEqual([]);
+
+      const refused = await invoke(grantAdmin, ['revoke', user.email, '--yes']);
+      expect(refused.code).toBe(1);
+      expect(refused.out).toContain('LAST_ADMIN');
+      expect(await isAdmin(user.id)).toBe(true);
+      expect(await auditRows('user', user.id)).toEqual([]);
+
+      const forced = await invoke(grantAdmin, ['revoke', user.email, '--yes', '--force']);
+      expect(forced.code).toBe(0);
+      expect(await isAdmin(user.id)).toBe(false);
+    });
+
+    it('rejects unknown emails, withdrawn users, typoed flags and bad usage without writing', async () => {
+      expect((await invoke(grantAdmin, ['grant', 'nobody@example.test', '--yes'])).out).toContain('USER_NOT_FOUND');
+      const withdrawn = await createUser();
+      await pool.query(`UPDATE "user" SET deleted_at = now(), status = 'WITHDRAWN' WHERE id = $1`, [withdrawn.id]);
+      const gone = await invoke(grantAdmin, ['grant', withdrawn.email, '--yes']);
+      expect(gone.code).toBe(1);
+      expect(gone.out).toContain('USER_NOT_FOUND');
+      expect(await isAdmin(withdrawn.id)).toBe(false);
+
+      const user = await createUser();
+      expect((await invoke(grantAdmin, ['grant', user.email, '--dry-rn'])).code).toBe(2);
+      expect((await invoke(grantAdmin, ['promote', user.email])).code).toBe(2);
+      expect((await invoke(grantAdmin, ['grant'])).code).toBe(2);
+      expect(await isAdmin(user.id)).toBe(false);
+    });
+
+    it('runs as a real CLI with the migrate.js connection settings (DATABASE_URL + PGSSLMODE) and refuses without a TTY unless --yes', async () => {
+      const user = await createUser();
+      const env = { ...process.env, DATABASE_URL: url, PGSSLMODE: testSslEnv().PGSSLMODE, DATABASE_CA_CERT: testSslEnv().DATABASE_CA_CERT ?? '' };
+      const script = join(SCRIPTS, 'grant-admin.js');
+
+      const noTty = await exec('node', [script, 'grant', user.email], { env }).catch((err) => err);
+      expect(noTty.code).toBe(1);
+      expect(noTty.stdout).toContain('aborted');
+      expect(await isAdmin(user.id)).toBe(false);
+
+      const ok = await exec('node', [script, 'grant', user.email, '--yes'], { env });
+      expect(ok.stdout).toContain(`done     ${user.email} is_admin=true`);
+      expect(await isAdmin(user.id)).toBe(true);
+    });
+  });
+
+  describe('scripts/requeue-nft-jobs.js', () => {
+    /** 5회 실패해 FAILED로 고정된 잡 — mintedTokenId가 있으면 민팅은 끝나고 attach가 실패한 자식 */
+    async function failedJob(jobType = 'MINT_PARENT', mintedTokenId?: string) {
+      const user = await createUser();
+      const wallet = await pool.query<{ id: string }>(
+        `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`,
+        [user.id, `inj1${unique()}`],
+      );
+      const nft = await pool.query<{ id: string }>(
+        `INSERT INTO nft (owner_user_id, owner_wallet_id, nft_type, contract_address, status, token_id)
+         VALUES ($1, $2, 'NINJA_PARENT', 'inj1testcontract', 'FAILED', $3) RETURNING id`,
+        [user.id, wallet.rows[0].id, mintedTokenId ?? null],
+      );
+      const job = await pool.query<{ id: string }>(
+        `INSERT INTO nft_job (nft_id, job_type, idempotency_key, status, retry_count, last_error, processed_at)
+         VALUES ($1, $2, $3, 'FAILED', 5, 'rpc timeout', now()) RETURNING id`,
+        [nft.rows[0].id, jobType, unique('ops-')],
+      );
+      return { nftId: nft.rows[0].id, jobId: job.rows[0].id };
+    }
+
+    const jobRow = async (id: string) => (await pool.query<{
+      status: string; retry_count: number; last_error: string | null; processed_at: Date | null; due: boolean;
+    }>(`SELECT status, retry_count, last_error, processed_at, scheduled_at <= now() AS due FROM nft_job WHERE id = $1`, [id])).rows[0];
+    const nftStatus = async (id: string) =>
+      (await pool.query<{ status: string }>(`SELECT status FROM nft WHERE id = $1`, [id])).rows[0].status;
+
+    it('--dry-run lists the FAILED job and writes nothing', async () => {
+      const { jobId, nftId } = await failedJob();
+      const res = await invoke(requeueNftJobs, [jobId, '--dry-run']);
+      expect(res.code).toBe(0);
+      expect(res.out).toContain(`job      ${jobId}  MINT_PARENT`);
+      expect(res.out).toContain('last_error=rpc timeout');
+      expect((await jobRow(jobId)).status).toBe('FAILED');
+      expect(await nftStatus(nftId)).toBe('FAILED');
+    });
+
+    it('requeues one job by id after confirmation: PENDING, fresh retry budget, nft back to PENDING, NFT_JOB_REQUEUED audit', async () => {
+      const { jobId, nftId } = await failedJob();
+      const other = await failedJob();
+      const res = await invoke(requeueNftJobs, [jobId.toUpperCase()], async () => true);
+      expect(res.code).toBe(0);
+      expect(res.prompts).toEqual(['Requeue 1 nft_job(s)?']);
+      expect(await jobRow(jobId)).toMatchObject({ status: 'PENDING', retry_count: 0, last_error: 'rpc timeout', processed_at: null, due: true });
+      expect(await nftStatus(nftId)).toBe('PENDING');
+      expect(await auditRows('nft_job', jobId)).toEqual([{
+        action: 'NFT_JOB_REQUEUED', actor_user_id: null, before_data: null, after_data: { source: 'scripts/requeue-nft-jobs.js' },
+      }]);
+      expect((await jobRow(other.jobId)).status).toBe('FAILED'); // untouched
+    });
+
+    it('puts an already-minted NFT (failed attach) back to MINTED so the attach branch can run again', async () => {
+      const { jobId, nftId } = await failedJob('ATTACH_CHILD', 'token-1');
+      expect((await invoke(requeueNftJobs, [jobId, '--yes'])).code).toBe(0);
+      expect(await nftStatus(nftId)).toBe('MINTED');
+    });
+
+    it('--all requeues every FAILED job and skips non-FAILED ids by name', async () => {
+      const a = await failedJob();
+      const b = await failedJob();
+      const res = await invoke(requeueNftJobs, ['--all', '--yes']);
+      expect(res.code).toBe(0);
+      expect((await jobRow(a.jobId)).status).toBe('PENDING');
+      expect((await jobRow(b.jobId)).status).toBe('PENDING');
+      expect((await pool.query(`SELECT 1 FROM nft_job WHERE status = 'FAILED'`)).rowCount).toBe(0);
+
+      const again = await invoke(requeueNftJobs, [a.jobId, '--yes']);
+      expect(again.code).toBe(1);
+      expect(again.out).toContain(`skip     ${a.jobId} — not found or not FAILED`);
+      expect((await invoke(requeueNftJobs, ['--all', '--yes'])).out).toContain('nothing to requeue');
+    });
+
+    it('a requeued job is picked up and finished by the real NftJobWorker (the reset retry budget is what lets it run)', async () => {
+      await pool.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE status IN ('PENDING', 'PROCESSING')`);
+      const { jobId, nftId } = await failedJob();
+      expect((await invoke(requeueNftJobs, [jobId, '--yes'])).code).toBe(0);
+
+      const db = createDb({ DATABASE_URL: url });
+      try {
+        const chain = { isConfigured: () => true, contractAddress: () => 'inj1testcontract', tokenExists: jest.fn(async () => false), mint: jest.fn(async () => '0xabc') };
+        const worker = new NftJobWorker(db, chain as unknown as InjectiveNftClient, testConfig({ DATABASE_URL: url }));
+        await worker.poll();
+        expect(chain.mint).toHaveBeenCalledWith(nftId, expect.any(String), null);
+        expect(await jobRow(jobId)).toMatchObject({ status: 'SUCCEEDED', last_error: null });
+        expect(await nftStatus(nftId)).toBe('MINTED');
+      } finally {
+        await db.onModuleDestroy();
+      }
+    });
+
+    it('rejects bad usage: no target, ids together with --all, non-UUID ids, unknown flags', async () => {
+      const { jobId } = await failedJob();
+      expect((await invoke(requeueNftJobs, [])).code).toBe(2);
+      expect((await invoke(requeueNftJobs, ['--all', jobId])).code).toBe(2);
+      expect((await invoke(requeueNftJobs, ['not-a-uuid'])).code).toBe(2);
+      expect((await invoke(requeueNftJobs, [jobId, '--force'])).code).toBe(2);
+      expect((await invoke(requeueNftJobs, [jobId])).code).toBe(1); // prompt answered "no"
+      expect((await jobRow(jobId)).status).toBe('FAILED');
+    });
+  });
+
+  describe('scripts/mainnet-preflight.sql', () => {
+    const file = readFileSync(join(SCRIPTS, 'mainnet-preflight.sql'), 'utf8');
+
+    /** psql 메타 줄(`\...`)을 빼고 psql 변수를 리터럴로 바꾼 뒤, `;`로 끝나는 줄 단위로 문장을 나눈다 (파일 머리 주석의 규칙) */
+    function statements(vars: Record<string, string>): string[] {
+      const body = file
+        .split('\n')
+        .filter((line) => !line.startsWith('\\') && !line.trimStart().startsWith('--'))
+        .join('\n')
+        .replace(/:'(\w+)'/g, (_m, key: string) => `'${(vars[key] ?? '').replace(/'/g, "''")}'`);
+      return body.split(/;\s*\n/).map((s) => s.trim()).filter(Boolean);
+    }
+
+    async function runPreflight(vars: Record<string, string> = {}) {
+      const client = await pool.connect();
+      const results: Record<string, unknown>[][] = [];
+      try {
+        for (const sql of statements(vars)) results.push((await client.query(sql)).rows);
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+      return results.flat().reduce<Record<string, Record<string, unknown>[]>>((acc, row) => {
+        const check = String(row.check);
+        (acc[check] ??= []).push(row);
+        return acc;
+      }, {});
+    }
+
+    it('wraps everything in a READ ONLY transaction that ends in ROLLBACK, and contains no write statements', () => {
+      const list = statements({});
+      expect(list[0]).toBe('BEGIN TRANSACTION READ ONLY');
+      expect(list[list.length - 1]).toBe('ROLLBACK');
+      for (const sql of list.slice(1, -1)) expect(sql).toMatch(/^SELECT\b/);
+    });
+
+    it('flags the PENDING_MULTISIG_SETUP placeholder, a custody address that differs from the expected one and testnet ERC-20 without writing', async () => {
+      const user = await createUser();
+      const bounty = await pool.query<{ id: string }>(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline)
+         VALUES ($1, 's', 'preflight', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days') RETURNING id`, [user.id]);
+      const expected = `inj1${'q'.repeat(38)}`;
+      const insertReward = async (custody: string, extra = `'NATIVE', 'inj', NULL, NULL`) => (await pool.query<{ id: string }>(
+        `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, token_contract_address, evm_chain_id, display_symbol, amount, custody_address)
+         VALUES ($1, ${extra}, 'X', 1, $2) RETURNING id`, [bounty.rows[0].id, custody])).rows[0].id;
+      const placeholder = await insertReward('PENDING_MULTISIG_SETUP');
+      const otherMultisig = await insertReward(`inj1${'p'.repeat(38)}`);
+      const fine = await insertReward(expected);
+      const testnetUsdc = await insertReward(expected, `'ERC20', 'erc20:x', '0x${'a'.repeat(40)}', 1439`);
+
+      const before = await pool.query(`SELECT count(*)::int AS n FROM audit_log`);
+      const checks = await runPreflight({ expected_custody: expected });
+      const flagged = (checks.custody_placeholder ?? []).map((row) => row.reward_id);
+      expect(flagged).toEqual(expect.arrayContaining([placeholder, otherMultisig]));
+      expect(flagged).not.toContain(fine);
+      expect((checks.erc20_testnet_chain ?? []).map((row) => row.reward_id)).toEqual([testnetUsdc]);
+      expect(checks.last_migration).toHaveLength(1);
+      expect(checks.platform_settings.length).toBeGreaterThan(0);
+
+      // without an expected address only the placeholder / malformed shapes are flagged
+      const loose = (await runPreflight()).custody_placeholder.map((row) => row.reward_id);
+      expect(loose).toContain(placeholder);
+      expect(loose).not.toContain(otherMultisig);
+      expect((await pool.query(`SELECT count(*)::int AS n FROM audit_log`)).rows[0].n).toBe(before.rows[0].n);
+    });
+
+    it('accepts an EVM (0x) multisig custody address, compares it case-insensitively and still flags malformed ones', async () => {
+      await pool.query(`UPDATE bounty_reward SET status = 'CANCELLED'`);
+      const user = await createUser();
+      const bounty = await pool.query<{ id: string }>(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline)
+         VALUES ($1, 's', 'preflight-evm', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days') RETURNING id`, [user.id]);
+      const safe = `0x${'Ab'.repeat(20)}`;
+      const insertReward = async (custody: string) => (await pool.query<{ id: string }>(
+        `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, custody_address)
+         VALUES ($1, 'NATIVE', 'inj', 'X', 1, $2) RETURNING id`, [bounty.rows[0].id, custody])).rows[0].id;
+      const evm = await insertReward(safe);
+      const malformed = await insertReward('inj1tooshort');
+
+      expect((await runPreflight()).custody_placeholder.map((row) => row.reward_id)).toEqual([malformed]);
+      expect((await runPreflight({ expected_custody: safe.toLowerCase() })).custody_placeholder.map((row) => row.reward_id))
+        .toEqual([malformed]);
+      expect((await runPreflight({ expected_custody: `inj1${'q'.repeat(38)}` })).custody_placeholder.map((row) => row.reward_id))
+        .toEqual(expect.arrayContaining([evm, malformed]));
+    });
+  });
+
+  /**
+   * docs/runbook.md §7.4의 수동 payout SQL 템플릿을 문서에서 그대로 꺼내 실 스키마에 돌린다 — 컬럼/상태 값/재계산이 코드와 어긋나면 여기서 깨진다.
+   * (`POST /admin/payouts`는 같은 보상·제출물의 payout이 있으면 상태와 무관하게 409라 "취소 후 재요청"이 불가능하다는 것이 템플릿의 전제)
+   */
+  describe('docs/runbook.md manual payout SQL', () => {
+    const runbook = readFileSync(join(__dirname, '..', '..', 'docs', 'runbook.md'), 'utf8');
+    const sqlBlock = (marker: string) => {
+      const block = [...runbook.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1]).find((body) => body.includes(marker));
+      if (!block) throw new Error(`no sql block containing ${marker} in docs/runbook.md`);
+      return block;
+    };
+    /** 자리표시값 치환 → `;`로 끝나는 줄 단위 문장 (주석 줄 제거) */
+    const statements = (block: string, payoutId: string, newAmount = '1') => block
+      .split('\n').map((line) => line.replace(/^\s+/, '')).filter((line) => line && !line.startsWith('--')).join('\n')
+      .replace(/<payout id>/g, payoutId)
+      .replace(/<정정 금액>(?=,)/, newAmount) // UPDATE의 숫자 자리 (JSON 안의 것은 아래에서 문자열로)
+      .replace(/<[^>]+>/g, 'x')
+      .split(/;\s*\n/).map((sql) => sql.trim().replace(/;$/, '')).filter(Boolean);
+
+    async function seedPayouts(maxWinners: number, statuses: string[]) {
+      const admin = await createUser({ isAdmin: true });
+      const bounty = await pool.query<{ id: string }>(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, max_winners)
+         VALUES ($1, 's', 'payout-sql', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', $2) RETURNING id`, [admin.id, maxWinners]);
+      const reward = await pool.query<{ id: string }>(
+        `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, deposited_amount, custody_address, status)
+         VALUES ($1, 'NATIVE', 'inj', 'INJ', 1000, 1000, $2, 'PARTIALLY_PAID') RETURNING id`, [bounty.rows[0].id, `inj1${'q'.repeat(38)}`]);
+      const payouts: string[] = [];
+      for (const status of statuses) {
+        const winner = await createUser();
+        const wallet = await pool.query<{ id: string }>(
+          `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`,
+          [winner.id, `inj1${unique()}`]);
+        const submission = await pool.query<{ id: string }>(
+          `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
+           VALUES ($1, $2, 'https://example.test/s', 'd', 'APPROVED') RETURNING id`, [bounty.rows[0].id, winner.id]);
+        const payout = await pool.query<{ id: string }>(
+          `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by, approved_by, approved_at)
+           VALUES ($1, $2, $3, 400, $4, $5, $6, $7, $8) RETURNING id`,
+          [reward.rows[0].id, submission.rows[0].id, wallet.rows[0].id, status, unique('payout-'), admin.id,
+           status === 'APPROVED' ? admin.id : null, status === 'APPROVED' ? new Date() : null]);
+        payouts.push(payout.rows[0].id);
+      }
+      return { rewardId: reward.rows[0].id, payouts };
+    }
+
+    async function runTemplate(marker: string, payoutId: string, newAmount?: string) {
+      const client = await pool.connect();
+      const results: { rowCount: number | null; rows: Record<string, unknown>[] }[] = [];
+      try {
+        for (const sql of statements(sqlBlock(marker), payoutId, newAmount)) results.push(await client.query(sql));
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
+      return results;
+    }
+
+    it('PAYOUT_CORRECTED_MANUAL corrects the amount in place, resets approval and records the audit row in one transaction', async () => {
+      const { payouts: [payoutId] } = await seedPayouts(2, ['APPROVED', 'PAID']);
+      const results = await runTemplate('PAYOUT_CORRECTED_MANUAL', payoutId, '350');
+      // BEGIN, cap check, UPDATE, INSERT, COMMIT
+      expect(results[1].rows[0]).toMatchObject({ status: 'APPROVED', current_amount: '400', cap: '1000', others: '400' });
+      expect(results[2].rowCount).toBe(1);
+      const row = (await pool.query(`SELECT amount::text, status, approved_by, approved_at FROM payout WHERE id = $1`, [payoutId])).rows[0];
+      expect(row).toEqual({ amount: '350', status: 'REQUESTED', approved_by: null, approved_at: null });
+      expect((await auditRows('payout', payoutId)).map((r) => [r.action, r.actor_user_id])).toEqual([['PAYOUT_CORRECTED_MANUAL', null]]);
+    });
+
+    it('PAYOUT_CORRECTED_MANUAL does not touch a payout that is already PAID', async () => {
+      const { payouts: [payoutId] } = await seedPayouts(1, ['PAID']);
+      const results = await runTemplate('PAYOUT_CORRECTED_MANUAL', payoutId, '350');
+      expect(results[2].rowCount).toBe(0); // the runbook says: UPDATE 0 → ROLLBACK
+      expect((await pool.query(`SELECT amount::text FROM payout WHERE id = $1`, [payoutId])).rows[0].amount).toBe('400');
+    });
+
+    it('PAYOUT_CANCELLED_MANUAL cancels, audits and recomputes the reward to PAID when the remaining winners are paid', async () => {
+      const { rewardId, payouts: [open] } = await seedPayouts(2, ['REQUESTED', 'PAID', 'PAID']);
+      await runTemplate('PAYOUT_CANCELLED_MANUAL', open);
+      expect((await pool.query(`SELECT status FROM payout WHERE id = $1`, [open])).rows[0].status).toBe('CANCELLED');
+      expect((await pool.query(`SELECT status FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0].status).toBe('PAID');
+      expect((await auditRows('payout', open)).map((r) => r.action)).toEqual(['PAYOUT_CANCELLED_MANUAL']);
+    });
+
+    it('PAYOUT_CANCELLED_MANUAL leaves the reward PARTIALLY_PAID while winners remain', async () => {
+      const { rewardId, payouts: [open] } = await seedPayouts(3, ['AWAITING_MULTISIG_APPROVAL', 'PAID']);
+      await runTemplate('PAYOUT_CANCELLED_MANUAL', open);
+      expect((await pool.query(`SELECT status FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0].status).toBe('PARTIALLY_PAID');
+    });
+  });
+});

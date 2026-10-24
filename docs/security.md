@@ -37,7 +37,7 @@
 | `nft_job.last_error` — 500자 절단 + `MASTER_WALLET_MNEMONIC` 출현 시 `[redacted]` | `nfts/nft-job.worker.ts` |
 | 업로드 multipart 한도 — 파일 1개·5 MiB·fields 5·parts 10·fieldNameSize 100 | `media/media.controller.ts` |
 | Google `id_token` **서명 검증** (Google JWKS, `google-auth-library` `verifyIdToken` + iss/aud/sub/email_verified 클레임 재확인) | `auth/google-id-token.verifier.ts`, `auth.service.ts` |
-| 감사 로그는 변경과 **같은 트랜잭션**에 기록 (공지·하이라이트·멤버 지정·입금 확인·바운티 수정·에이전트 키 회전/폐기) | 각 `*-admin.service.ts`, `rewards.service.ts`, `agents.service.ts` |
+| 감사 로그는 변경과 **같은 트랜잭션**에 기록 (공지·하이라이트·멤버 지정·입금 확인·바운티 수정·에이전트 키 회전/폐기). 운영 스크립트도 같은 규칙 — `scripts/grant-admin.js`(`ADMIN_GRANTED`/`ADMIN_REVOKED`), `scripts/requeue-nft-jobs.js`(`NFT_JOB_REQUEUED`), actor는 NULL(사람 실행자는 runbook 기록) | 각 `*-admin.service.ts`, `rewards.service.ts`, `agents.service.ts`, `scripts/*.js`, test-db `ops-scripts.db-spec` |
 | Agent API key 회전/에이전트 폐기 — 행 잠금 tx, 기존 ACTIVE 키 전부 폐기, 폐기된 키·에이전트는 즉시 401 | `agents.service.ts`, `agent-api-key.service.ts` |
 | 어드민 바운티 수정 가드 — 접수 중(DRAFT/FUNDING_PENDING/OPEN)인 바운티의 마감을 과거로 **옮기는** 것 거부(저장값과 1분 미만 차이는 FE datetime-local 반올림으로 보고 "변경 없음" 처리, 접수가 끝난 상태에서는 제목/설명 수정이 지난 마감에 막히지 않도록 검사 생략), `maxWinners` < 승인 수 거부 (바운티 행 잠금) | `bounties/admin/bounty-admin.service.ts`, `bounties/bounty-status.ts` |
 | nft_job 고아 정리 — 15분 넘게 PROCESSING인 잡을 PENDING으로 재큐잉, MINTING nft 복구 (워커 크래시 내성) | `nfts/nft-job.worker.ts` |
@@ -87,8 +87,9 @@
 - [x] Vercel preview 오리진은 `CORS_ORIGINS` / `AUTH_ALLOWED_REDIRECT_ORIGINS`에 **브랜치 고정 별칭을 정확한 항목**으로 넣는다 (`https://ninjalabsfe-git-develop-<team>.vercel.app`) — 또는 커스텀 preview 도메인을 쓴다. 공용 호스팅 접미사(vercel.app, netlify.app, pages.dev, github.io, railway.app, herokuapp.com, onrender.com, fly.dev, web.app, firebaseapp.com) 위의 와일드카드는 `*`의 **위치와 무관하게 안전하지 않다** — `https://ninjalabsfe-*-<team>.vercel.app`도 공격자가 `ninjalabsfe-evil-<team>`이라는 프로젝트를 만들면 통과해 `returnTo`로 로그인 코드를 받아갈 수 있다. `OriginAllowlist`는 등록 가능 도메인(마지막 두 레이블, 대소문자·끝의 점·포트 무시)이 그 접미사인 와일드카드 항목을 **전부 거부**한다 — 기동 시 `error` 로그 후 목록에서 제외되어 어떤 오리진도 허용하지 않는다 (`origin-allowlist.spec.ts`)
 - [x] rate limit이 IP 기준 — 프록시/로드밸런서 뒤에서는 `TRUST_PROXY`(홉 수) 필요. `.railway/railway.ts`가 `TRUST_PROXY=1`, `NODE_ENV=production`을 넣는다. production에서 미설정이면 `main.ts`가 1홉으로 보고 `warn`, 명시적 `0`/비정수면 기동을 거부한다 (`bootstrap-checks.ts`) — 프록시가 2홉 이상이면 반드시 명시
 - [ ] **운영 알림 웹훅 연결** — 코드는 준비됨: Railway 변수 `OPS_ALERT_WEBHOOK_URL`(railway.ts `preserve()`)에 운영 채널 webhook을 넣는다. 비어 있으면 알림이 로그로만 남아 아무도 보지 못한다. 쿨다운·5xx 카운터는 인스턴스별 in-memory — 레플리카 N대면 알림도 최대 N배 (`TODO(scale)`과 같은 시점에 재검토)
-- [ ] 어드민 계정 부트스트랩 — `is_admin`은 DB에서 수동 지정. 지정 절차·권한자를 운영 문서에 명시
-- [ ] 멀티시그 서명자 구성(2-of-3 제안)과 서명자 목록 — 오프체인 정책 문서화
+- [x] 어드민 계정 부트스트랩 — `is_admin`은 API로 줄 수 없고 `scripts/grant-admin.js`(이메일, `--dry-run`, 확인 프롬프트, 마지막 활성 운영자 회수 차단)로만 바꾼다. 변경과 감사 행(`ADMIN_GRANTED`/`ADMIN_REVOKED`, actor NULL)이 한 트랜잭션. 권한자 = DB 접속 권한자(Railway/Supabase). 절차: [runbook.md](runbook.md) §3
+- [ ] 멀티시그 서명자 구성(2-of-3 제안)과 서명자 목록 — 오프체인 정책 문서화. 템플릿은 [runbook.md](runbook.md) §9 — 채운 문서는 레포 밖(운영자 전용)에 둔다
 - [x] 운영 화면 데이터(`GET /admin/bounties/:id/operations`, `GET /admin/nft-jobs`)는 지원/심사 메모, 수령 지갑 주소, 운영자 id·닉네임, NFT 잡 `last_error`(워커가 이미 니모닉/64자리 hex를 가려 저장 — `nft-job.worker.ts sanitizeError`)를 담으므로 AdminGuard 뒤에만 있다. 공개 라우트로 옮기지 말 것. NFT 잡 재시도는 감사 `NFT_JOB_RETRIED`로 남는다
+- [ ] 운영 준비 — 업타임 모니터(`GET /health`, DB 다운 시 503), 자체 `pg_dump` 백업 + 분기별 복구 리허설, `JWT_SECRET`/니모닉 유출 대응, 메인넷 전환 점검(`scripts/mainnet-preflight.sql`): [runbook.md](runbook.md) §5~§8
 - [ ] `npm audit` CI 통합 + 의존성 업데이트 주기 — 2026-10 기준 `@nestjs/*` 11.2.7 / `@nestjs/config` 4.0.4, `npm audit --omit=dev` high/critical 0 (axios·follow-redirects는 `@injectivelabs/sdk-ts` 경유 transitives, patch로 해결)
 - [ ] Supabase `service_role` 키는 백엔드에서만 사용, FE·레포 노출 금지

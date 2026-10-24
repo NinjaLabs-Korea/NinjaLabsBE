@@ -110,7 +110,7 @@ describeDb('validation over HTTP (e2e)', () => {
       expect((await e2e.post('/auth/refresh', { refreshToken: 'x', userId: 'y' })).body).toEqual(badRequest(['property userId should not exist']));
     });
 
-    it.failing('POST /admin/bounties/:id/transition validates its body like every other write route (unknown field / unknown status → 400)', async () => {
+    it('POST /admin/bounties/:id/transition validates its body like every other write route (unknown field / unknown status → 400)', async () => {
       const id = (await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ reward: { amount: 0, currency: 'INJ' } }), true), asAdmin())).body.id;
       expect((await e2e.post(`/admin/bounties/${id}/transition`, { to: 'OPEN', force: true }, asAdmin())).body).toEqual(badRequest(['property force should not exist']));
       expect((await e2e.post(`/admin/bounties/${id}/transition`, {}, asAdmin())).body.message).toEqual(expect.arrayContaining([expect.stringMatching(/^to must be one of the following values: /)]));

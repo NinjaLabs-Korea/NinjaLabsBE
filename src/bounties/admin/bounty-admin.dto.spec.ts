@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { CreateBountyDto, UpdateBountyDto } from './bounty-admin.dto';
+import { CreateBountyDto, TransitionBountyDto, UpdateBountyDto } from './bounty-admin.dto';
 
 const failedFields = async (cls: new () => object, body: object) =>
   (await validate(plainToInstance(cls, body))).map((error) => error.property).sort();
@@ -104,5 +104,15 @@ describe('bounty admin DTOs', () => {
     expect(await failedFields(UpdateBountyDto, { applicationDeadline: null })).toEqual([]);
     expect(await failedFields(UpdateBountyDto, { applicationDeadline: '2026-07-01T00:00:00.000Z' })).toEqual([]);
     expect(await failedFields(UpdateBountyDto, { applicationDeadline: 'soon' })).toEqual(['applicationDeadline']);
+  });
+});
+
+describe('TransitionBountyDto', () => {
+  it.each(['DRAFT', 'FUNDING_PENDING', 'OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED', 'CANCELLED'])('accepts the bounty status %p', async (to) => {
+    expect(await failedFields(TransitionBountyDto, { to })).toEqual([]);
+  });
+
+  it.each([undefined, '', 'open', 'ARCHIVED', 42, ['OPEN']])('rejects %p', async (to) => {
+    expect(await failedFields(TransitionBountyDto, { to })).toEqual(['to']);
   });
 });

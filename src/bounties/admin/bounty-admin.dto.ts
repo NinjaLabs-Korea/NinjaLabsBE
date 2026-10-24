@@ -5,6 +5,7 @@ import {
 import { TOKEN_AMOUNT } from '../../common/validation/token-amount';
 import { Trim } from '../../common/validation/trim';
 import { IsHttpUrlOrMediaPath, IsSafeUrl } from '../../common/validation/url';
+import { BountyStatus } from '../bounty-status';
 import { RewardInput } from './reward-token.resolver';
 
 const CATEGORIES = ['DEV', 'DESIGN', 'CONTENT', 'OTHER'];
@@ -58,4 +59,12 @@ export class UpdateBountyDto {
   @IsOptional() @IsDateString() applicationDeadline?: string | null;
   // null이면 커버 이미지 제거 (IsOptional은 null도 통과시킨다). 레거시 `/uploads/x.png` 같은 값도 통과 (IsSafeUrl)
   @IsOptional() @IsSafeUrl() coverImageUrl?: string | null;
+}
+
+/**
+ * POST /admin/bounties/:id/transition — 대상 상태만 받는다 (모르는 필드는 전역 ValidationPipe가 400).
+ * 값 집합은 bounty-status.ts의 상태 전부 — 지금 상태에서 갈 수 있는지(전이표·차단 사유)는 서비스가 INVALID_TRANSITION / 사유 배열로 답한다.
+ */
+export class TransitionBountyDto {
+  @IsIn(Object.values(BountyStatus)) to!: string;
 }

@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { AdminGuard } from '../../auth/admin.guard';
 import { AuthedRequest } from '../../auth/authed-request';
-import { CreateBountyDto, UpdateBountyDto } from './bounty-admin.dto';
+import { CreateBountyDto, TransitionBountyDto, UpdateBountyDto } from './bounty-admin.dto';
 import { BountyAdminService } from './bounty-admin.service';
 
 @Controller('admin/bounties')
@@ -42,8 +42,8 @@ export class BountyAdminController {
   transition(
     @Param('id', ParseUUIDPipe) bountyId: string,
     @Req() req: AuthedRequest,
-    @Body('to') to: string,
+    @Body() dto: TransitionBountyDto,
   ) {
-    return this.bounties.transition(bountyId, to, req.user.userId);
+    return this.bounties.transition(bountyId, dto.to, req.user.userId);
   }
 }

@@ -3,12 +3,12 @@ import { validateSync } from 'class-validator';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { DatabaseService } from '../common/database/database.service';
+import { TERMINAL_PAYOUT_STATUSES } from '../rewards/payout-status';
 import { withParamsCheck } from '../test-support/expect-params-match';
 import {
   AccountWithdrawalService,
   nicknameConfirmed,
   PENDING_REWARD_SQL,
-  TERMINAL_PAYOUT_STATUSES,
   withdrawnIdentityPrefix,
 } from './account-withdrawal.service';
 import { WithdrawAccountDto } from './users.controller';

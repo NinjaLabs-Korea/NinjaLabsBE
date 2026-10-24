@@ -22,6 +22,12 @@ const { OpsError, UUID_RE, parseArgs, promptYes, runCli } = require('./ops-cli')
 const USAGE = 'usage: node scripts/record-refund.js <reward-id> --tx <hash> [--dry-run] [--yes]';
 const TX_HASH = /^(0x)?[0-9a-fA-F]{64}$/;
 const REFUNDABLE = ['FUNDED', 'PARTIALLY_PAID', 'REFUND_PENDING'];
+/**
+ * payout 종료 상태 — 이 밖의 payout(진행 중)이 하나라도 있으면 거부한다.
+ * src/rewards/payout-status.ts TERMINAL_PAYOUT_STATUSES의 **사본**이다 (scripts는 src를 import하지 않는 독립 JS).
+ * 규칙을 바꾸면 그 파일과 여기를 같이 고친다 — src/rewards/payout-status.spec.ts가 둘이 어긋나면 실패한다.
+ */
+const TERMINAL_PAYOUT_STATUSES = ['PAID', 'CANCELLED', 'FAILED'];
 const SOURCE = 'scripts/record-refund.js';
 
 /** src/common/validation/tx-hash.ts normalizeTxHash와 같은 규칙 — 틀리면 null */
@@ -42,7 +48,8 @@ async function inspectReward(runner, rewardId, lock = false) {
     `SELECT rw.id, rw.bounty_id, rw.status AS reward_status, rw.amount::text AS amount, rw.deposited_amount::text AS deposited_amount,
             b.status AS bounty_status,
             (SELECT COALESCE(SUM(p.amount), 0)::text FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status = 'PAID') AS paid_total,
-            (SELECT count(*)::int FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status NOT IN ('PAID', 'CANCELLED', 'FAILED')) AS open_payouts,
+            (SELECT count(*)::int FROM payout p WHERE p.bounty_reward_id = rw.id
+              AND p.status NOT IN (${TERMINAL_PAYOUT_STATUSES.map((status) => `'${status}'`).join(', ')})) AS open_payouts,
             (SELECT (rw.deposited_amount - COALESCE(SUM(p.amount), 0))::text FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status = 'PAID') AS refunded_amount
        FROM bounty_reward rw JOIN bounty b ON b.id = rw.bounty_id
       WHERE rw.id = $1 ${lock ? 'FOR UPDATE OF rw' : ''}`,
@@ -57,7 +64,7 @@ function refusalReason(reward, refundedAmount) {
   if (!reward) return 'reward not found';
   if (reward.bounty_status !== 'CANCELLED') return `bounty is ${reward.bounty_status}, not CANCELLED`;
   if (!REFUNDABLE.includes(reward.reward_status)) return `reward is ${reward.reward_status}, expected one of ${REFUNDABLE.join('/')}`;
-  if (reward.open_payouts > 0) return `${reward.open_payouts} payout(s) are still open (not PAID/CANCELLED/FAILED) — cancel or finish them first`;
+  if (reward.open_payouts > 0) return `${reward.open_payouts} payout(s) are still open (not ${TERMINAL_PAYOUT_STATUSES.join('/')}) — cancel or finish them first`;
   if (reward.deposited_amount === null || refundedAmount === null || !(Number(refundedAmount) > 0)) {
     return 'nothing to refund (deposited amount minus PAID payouts is not positive)';
   }
@@ -169,6 +176,6 @@ async function run(argv, deps) {
   }
 }
 
-module.exports = { run, recordRefund, inspectReward, normalizeTxHash };
+module.exports = { run, recordRefund, inspectReward, normalizeTxHash, TERMINAL_PAYOUT_STATUSES };
 
 if (require.main === module) runCli(run);

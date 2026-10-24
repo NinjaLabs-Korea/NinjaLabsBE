@@ -272,6 +272,13 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
         AND rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID') AND p.paid_count > 0;
      COMMIT;
      ```
+     취소가 남기는 것 (규칙: `src/rewards/payout-status.ts` — 상태 목록을 바꾸면 위 SQL도 함께 고친다):
+     - 그 payout의 금액은 배정에서 풀려 멀티시그에 남는다(취소만 배정을 풀고, `FAILED`는 계속 차지한다). 여유분 안에서 **다른** 승인 제출에는 다시 payout을 요청할 수 있다.
+     - 그 수상자의 지급 상태(`/submissions/me` `payment_status`, 공개 프로필 `payoutStatus`)는 `NONE`이 된다 — "지급 대기"로 남지 않는다.
+     - 바운티 COMPLETED 전이를 막지 않는다. COMPLETED의 `UNPAID_WINNERS`는 진행 중 payout(`REQUESTED`/`AWAITING_MULTISIG_APPROVAL`/`APPROVED`/`BROADCASTING`)과, 아직 받을 몫이 남은 승인 제출(여유분이 남았는데 payout이 없거나, `FAILED` payout이 걸린 제출)만 센다. 다른 수상자가 풀을 다 가져간 승인 제출도 막지 않는다.
+     - `FAILED` payout은 위 취소 SQL의 `WHERE status IN (...)`에 걸리지 않는다(UPDATE 0). `FAILED`는 받을 몫이 남은 것으로 보므로 COMPLETED를 계속 막는다 — 닫으려면 **온체인에서 송금되지 않았음을 먼저 확인**하고(멀티시그 tx 이력), 같은 트랜잭션을 `WHERE id = '<payout id>' AND status = 'FAILED'`로 바꿔 돌린다(감사 `before_data`는 `{"status": "FAILED"}`). 실제로 송금됐다면 취소하지 말고 tx 해시를 확인해 사후 기록으로 남긴다.
+     - 승인됐지만 payout이 없던 수상자가 그 사이 탈퇴했다면, 취소로 생긴 여유분이 있어도 그 수상자는 받을 몫으로 세지 않는다(requestPayout이 404라 받을 수 없다).
+     - 풀린 금액이 아무에게도 배정되지 않으면 바운티 삭제는 계속 409 `BOUNTY_HAS_OPEN_FUNDS`(남은 돈)다. COMPLETED 바운티의 잔액 환불 경로(§7.7 스크립트는 CANCELLED 바운티만 받는다)와 payout 취소 API는 아직 없다 — 제품 결정 대기.
    - 수령 지갑이 틀림 → SQL로 `recipient_wallet_id`를 바꾸지 않는다. 수령 지갑은 요청 시점의 대표 지갑이므로 먼저 3번으로 지갑 이력을 확인한다.
    - 잘못된 주소로 **실제 송금됨** → 온체인 회수는 불가. 수령자 연락/추가 지급 여부를 결정하고, 결정과 tx를 사후 기록에 남긴다.
 3. 수령 지갑은 payout 요청 시점의 대표 지갑이다. 사용자가 지갑을 바꿨다고 주장하면 `wallet` 행의 `verified_at`과 비교한다(MVP는 지갑 교체 불허, decisions.md).

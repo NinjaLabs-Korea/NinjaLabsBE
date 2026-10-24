@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../../common/database/database.service';
 import { allowsPayoutSelfApproval, PAYOUT_ALLOW_SELF_APPROVAL_ENV } from '../../rewards/payout-approval';
+import { allocatedPayoutSumSql, rewardCapSql } from '../../rewards/payout-status';
 import { BountyStatusPolicy } from '../bounty-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 
@@ -68,9 +69,8 @@ export class BountyOperationsQuery {
       this.db.query(
         `SELECT rw.id, rw.status, rw.token_type, rw.display_symbol, rw.amount::text, rw.deposited_amount::text, rw.deposited_at,
                 rw.custody_address, rw.deposit_tx_hash, rw.token_contract_address, rw.evm_chain_id,
-                LEAST(rw.amount, rw.deposited_amount)::text AS cap,
-                (SELECT COALESCE(SUM(p.amount), 0)::text FROM payout p
-                  WHERE p.bounty_reward_id = rw.id AND p.status <> 'CANCELLED') AS allocated_amount
+                ${rewardCapSql('rw')}::text AS cap,
+                ${allocatedPayoutSumSql('rw', 'p')}::text AS allocated_amount
            FROM bounty_reward rw WHERE rw.bounty_id = $1 ORDER BY rw.created_at`, [bountyId]),
       this.db.query(
         `SELECT p.id, p.bounty_reward_id, p.submission_id, p.status, p.amount::text,

@@ -8,7 +8,10 @@ import { TOKEN_AMOUNT } from '../common/validation/token-amount';
 import { normalizeTxHash } from '../common/validation/tx-hash';
 import { NftsService } from '../nfts/nfts.service';
 import { allowsPayoutSelfApproval, PAYOUT_ALLOW_SELF_APPROVAL_ENV } from './payout-approval';
-import { PAYABLE_REWARD_STATUSES } from './payout-status';
+import {
+  allocatedPayoutSumSql, AWAITING_APPROVAL_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardCapSql, SENDABLE_PAYOUT_STATUSES, sqlStatusList,
+  UNSETTLED_PAYOUT_STATUSES,
+} from './payout-status';
 
 /**
  * MVP 보상 흐름 (ERD §10)
@@ -81,7 +84,7 @@ export class RewardsService {
       if (!BountyStatusPolicy.isInProgress(parent.rows[0].status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
       // Serialize allocations against the same funded pool.
       const reward = await tx.query<{ bounty_id: string; status: string; cap: string }>(
-        `SELECT bounty_id, status, LEAST(amount, deposited_amount)::text AS cap FROM bounty_reward WHERE id = $1 FOR UPDATE`,
+        `SELECT rw.bounty_id, rw.status, ${rewardCapSql('rw')}::text AS cap FROM bounty_reward rw WHERE rw.id = $1 FOR UPDATE`,
         [rewardId],
       );
       if (!reward.rowCount || !(PAYABLE_REWARD_STATUSES as readonly string[]).includes(reward.rows[0].status)) {
@@ -105,8 +108,8 @@ export class RewardsService {
       const duplicate = await tx.query(`SELECT id FROM payout WHERE bounty_reward_id = $1 AND submission_id = $2`, [rewardId, submissionId]);
       if (duplicate.rowCount) throw new ConflictException('PAYOUT_ALREADY_REQUESTED');
       const allocated = await tx.query<{ amount: string }>(
-        `SELECT COALESCE(SUM(amount), 0)::text AS amount FROM payout
-          WHERE bounty_reward_id = $1 AND status <> 'CANCELLED'`, [rewardId],
+        // 배정 합계 = 취소 아닌 payout 합계 (payout-status.ts ALLOCATED_PAYOUT_STATUSES)
+        `SELECT ${allocatedPayoutSumSql('rw')}::text AS amount FROM bounty_reward rw WHERE rw.id = $1`, [rewardId],
       );
       if (BigInt(allocated.rows[0].amount) + BigInt(amount) > BigInt(reward.rows[0].cap)) {
         throw new BadRequestException('PAYOUT_EXCEEDS_AVAILABLE_REWARD');
@@ -135,7 +138,7 @@ export class RewardsService {
     return this.db.tx(async (tx) => {
       const current = await tx.query<{ requested_by: string }>(
         `SELECT requested_by FROM payout
-          WHERE id = $1 AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL') FOR UPDATE`,
+          WHERE id = $1 AND status IN (${sqlStatusList(AWAITING_APPROVAL_PAYOUT_STATUSES)}) FOR UPDATE`,
         [payoutId],
       );
       if (!current.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
@@ -143,7 +146,7 @@ export class RewardsService {
       if (selfApproval && !this.allowSelfApproval) throw new ForbiddenException('PAYOUT_SELF_APPROVAL');
       const r = await tx.query(
         `UPDATE payout SET status = 'APPROVED', approved_by = $2, approved_at = now()
-          WHERE id = $1 AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL')
+          WHERE id = $1 AND status IN (${sqlStatusList(AWAITING_APPROVAL_PAYOUT_STATUSES)})
           RETURNING id, status`,
         [payoutId, adminId],
       );
@@ -196,7 +199,7 @@ export class RewardsService {
         bounty_reward_id: string;
       }>(
         `UPDATE payout SET status = 'PAID', payout_tx_hash = $2, paid_at = now()
-          WHERE id = $1 AND status IN ('APPROVED', 'BROADCASTING')
+          WHERE id = $1 AND status IN (${sqlStatusList(SENDABLE_PAYOUT_STATUSES)})
           RETURNING id, status, payout_tx_hash, submission_id, recipient_wallet_id, bounty_reward_id`,
         [payoutId, hash],
       );
@@ -242,7 +245,7 @@ export class RewardsService {
 
   /**
    * payout 변동 뒤 보상 상태 재계산 (markPaid / requestPayout 트랜잭션 안에서 호출). 지급된 payout이 하나라도 있어야 움직인다.
-   *   PAID            — 열린 payout(PAID/CANCELLED 아님)이 없고, PAID 수가 max_winners에 도달했거나 PAID 합계가 배정 상한
+   *   PAID            — 미정산 payout(UNSETTLED_PAYOUT_STATUSES — 진행 중 + FAILED)이 없고, PAID 수가 max_winners에 도달했거나 PAID 합계가 배정 상한
    *                     LEAST(amount, deposited_amount)를 소진한 경우 (requestPayout과 같은 상한 — 초과 입금분은 여유분이 아니다)
    *   PARTIALLY_PAID  — 그 외: 잔액/수상자가 남았거나, 아직 지급 전인 payout이 있다 (PAID였다가 maxWinners 인상 후 payout이 추가된 경우 포함)
    *   FUNDED          — 지급된 것이 없으면 건드리지 않는다 (요청만 있는 상태는 "부분 지급"이 아니다)
@@ -254,16 +257,16 @@ export class RewardsService {
     await tx.query(
       `UPDATE bounty_reward rw
           SET status = CASE
-                WHEN p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= LEAST(rw.amount, rw.deposited_amount)) THEN 'PAID'
+                WHEN p.unsettled_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= ${rewardCapSql('rw')}) THEN 'PAID'
                 ELSE 'PARTIALLY_PAID'
               END
          FROM bounty b,
               (SELECT count(*) FILTER (WHERE status = 'PAID')::int AS paid_count,
-                      count(*) FILTER (WHERE status NOT IN ('PAID', 'CANCELLED'))::int AS open_count,
+                      count(*) FILTER (WHERE status IN (${sqlStatusList(UNSETTLED_PAYOUT_STATUSES)}))::int AS unsettled_count,
                       COALESCE(SUM(amount) FILTER (WHERE status = 'PAID'), 0) AS paid_amount
                  FROM payout WHERE bounty_reward_id = $1) p
         WHERE rw.id = $1 AND b.id = rw.bounty_id
-          AND rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')
+          AND rw.status IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})
           AND p.paid_count > 0`,
       [rewardId],
     );

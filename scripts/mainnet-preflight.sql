@@ -52,6 +52,8 @@ SELECT 'erc20_testnet_chain' AS check, r.id AS reward_id, r.bounty_id, r.status,
  ORDER BY r.created_at;
 
 -- [blocker] 3. 끝나지 않은 payout — testnet 멀티시그에서 승인/브로드캐스트 중인 지급은 전환 전에 PAID/FAILED/CANCELLED로 닫는다.
+--   아래 NOT IN 목록은 src/rewards/payout-status.ts TERMINAL_PAYOUT_STATUSES의 사본이다 (psql 스크립트라 import할 수 없다).
+--   규칙을 바꾸면 같이 고친다 — src/rewards/payout-status.spec.ts가 둘이 어긋나면 실패한다.
 SELECT 'payout_open' AS check, p.id AS payout_id, p.bounty_reward_id, p.status, p.amount::text, p.requested_at
   FROM payout p
  WHERE p.status NOT IN ('PAID', 'FAILED', 'CANCELLED')

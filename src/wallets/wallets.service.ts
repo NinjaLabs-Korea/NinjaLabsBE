@@ -111,7 +111,8 @@ export class WalletsService {
         if (!challenge.rows[0].valid) throw new BadRequestException('CHALLENGE_EXPIRED');
         const { id: challengeId, message } = challenge.rows[0];
 
-        if (!signatureSchemeFor(normalizedAddress).verify({ address: normalizedAddress, message, signature, publicKey: pubKey })) {
+        const verified = signatureSchemeFor(normalizedAddress).verify({ address: normalizedAddress, message, signature, publicKey: pubKey });
+        if (!verified) {
           throw new UnauthorizedException('INVALID_SIGNATURE');
         }
 
@@ -127,7 +128,8 @@ export class WalletsService {
           `INSERT INTO wallet (user_id, chain, address, public_key, is_primary, verified_at)
            VALUES ($1, 'INJECTIVE', $2, $3, true, now())
            RETURNING id`,
-          [userId, injectiveAddress, pubKey ?? null],
+          // 검증된 키만 저장한다 — EIP-191은 서명에서 복원한 키, ADR-36은 주소와 대조된 키. 클라이언트가 덧붙인 publicKey를 그대로 믿지 않는다
+          [userId, injectiveAddress, verified.publicKey],
         );
         await tx.query(
           `UPDATE "user" SET onboarding_step = GREATEST(onboarding_step, 3)

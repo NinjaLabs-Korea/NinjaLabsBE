@@ -141,7 +141,7 @@ export class AuthController {
     });
     if (error || !code || !state) {
       onboardingLog(this.logger, 'oauth.callback.rejected', {
-      rid,
+        rid,
         reason: error ?? 'MISSING_CODE_OR_STATE',
       });
       return res.redirect(this.loginCallbackUrl(fe, { error: 'AUTH_FAILED' }));

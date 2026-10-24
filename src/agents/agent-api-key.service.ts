@@ -38,46 +38,50 @@ export class AgentApiKeyService {
 
     const presentedHash = Buffer.from(hashAgentApiKey(rawKey), 'hex');
 
-    return this.db.tx(async (tx) => {
-      const candidates = await tx.query<AgentApiKeyRow>(
-        `SELECT k.id AS api_key_id, k.key_hash, k.status AS key_status, k.expires_at,
-                a.id AS agent_id, a.owner_user_id, a.name AS agent_name,
-                a.wallet_address, a.status AS agent_status
-           FROM agent_api_key k
-           JOIN agent a ON a.id = k.agent_id
-          WHERE k.key_prefix = $1 AND a.deleted_at IS NULL
-          FOR UPDATE OF k, a`,
-        [agentApiKeyPrefix(rawKey)],
+    // 소유자가 정지(SUSPENDED/WITHDRAWN)되거나 탈퇴(deleted_at)하면 그 에이전트의 키도 즉시 거부한다 — 소유자 본인의 refresh/exchange가
+    // 거부되는 것과 같은 기준 (auth.service.ts). 정지가 풀리면 키는 다시 통한다 (키를 폐기하지는 않는다).
+    // 잠금/트랜잭션 없음 — 인증은 읽기이고 last_used_at 갱신은 조건부 단일 UPDATE라 잠글 이유가 없다.
+    // (예전의 FOR UPDATE는 모든 Agent API 요청을 키 행에 직렬화해 rotate/revoke와 경합하는 병목이었다.)
+    const candidates = await this.db.query<AgentApiKeyRow>(
+      `SELECT k.id AS api_key_id, k.key_hash, k.status AS key_status, k.expires_at,
+              a.id AS agent_id, a.owner_user_id, a.name AS agent_name,
+              a.wallet_address, a.status AS agent_status
+         FROM agent_api_key k
+         JOIN agent a ON a.id = k.agent_id
+         JOIN "user" u ON u.id = a.owner_user_id
+        WHERE k.key_prefix = $1 AND a.deleted_at IS NULL
+          AND u.status = 'ACTIVE' AND u.deleted_at IS NULL`,
+      [agentApiKeyPrefix(rawKey)],
+    );
+
+    const matched = candidates.rows.find((candidate) => {
+      if (!/^[0-9a-f]{64}$/i.test(candidate.key_hash)) return false;
+      const storedHash = Buffer.from(candidate.key_hash, 'hex');
+      return (
+        storedHash.length === presentedHash.length &&
+        timingSafeEqual(storedHash, presentedHash)
       );
-
-      const matched = candidates.rows.find((candidate) => {
-        if (!/^[0-9a-f]{64}$/i.test(candidate.key_hash)) return false;
-        const storedHash = Buffer.from(candidate.key_hash, 'hex');
-        return (
-          storedHash.length === presentedHash.length &&
-          timingSafeEqual(storedHash, presentedHash)
-        );
-      });
-
-      if (!matched || !this.isActive(matched)) throw this.invalidKey();
-
-      const touched = await tx.query(
-        `UPDATE agent_api_key
-            SET last_used_at = now()
-          WHERE id = $1 AND status = 'ACTIVE' AND expires_at > now()
-          RETURNING id`,
-        [matched.api_key_id],
-      );
-      if (!touched.rowCount) throw this.invalidKey();
-
-      return {
-        agentId: matched.agent_id,
-        ownerUserId: matched.owner_user_id,
-        name: matched.agent_name,
-        walletAddress: matched.wallet_address,
-        apiKeyId: matched.api_key_id,
-      };
     });
+
+    if (!matched || !this.isActive(matched)) throw this.invalidKey();
+
+    // 조회와 갱신 사이에 폐기/만료됐으면 여기서 0행 → 거부 (상태 조건을 UPDATE가 다시 평가한다)
+    const touched = await this.db.query(
+      `UPDATE agent_api_key
+          SET last_used_at = now()
+        WHERE id = $1 AND status = 'ACTIVE' AND expires_at > now()
+        RETURNING id`,
+      [matched.api_key_id],
+    );
+    if (!touched.rowCount) throw this.invalidKey();
+
+    return {
+      agentId: matched.agent_id,
+      ownerUserId: matched.owner_user_id,
+      name: matched.agent_name,
+      walletAddress: matched.wallet_address,
+      apiKeyId: matched.api_key_id,
+    };
   }
 
   private isActive(row: AgentApiKeyRow): boolean {

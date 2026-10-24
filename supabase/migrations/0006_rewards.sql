@@ -59,7 +59,7 @@ CREATE TABLE payout (
   updated_at          TIMESTAMPTZ    NOT NULL DEFAULT now()
 );
 
--- 중복 지급 방지: bounty:{id}:submission:{id}:reward:{id}
+-- 중복 지급 방지: submission:{submissionId}:reward:{rewardId} (rewards.service.ts requestPayout)
 CREATE UNIQUE INDEX uq_payout_idempotency ON payout(idempotency_key);
 CREATE INDEX idx_payout_reward ON payout(bounty_reward_id);
 CREATE INDEX idx_payout_status ON payout(status);

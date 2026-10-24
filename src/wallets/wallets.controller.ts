@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Logger, Post, Req, UseGuards } from '@nestjs/common';
-import { IsNotEmpty, IsOptional } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { SessionUser } from '../auth/auth.service';
@@ -9,21 +9,27 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
+import { requestIdOf } from '../common/http/request-id';
 import { WalletsService } from './wallets.service';
 
+// 모든 필드 IsString — 숫자/배열이 오면 서비스의 address.trim()이 TypeError를 던져 500이 됐다
 class ChallengeDto {
+  @IsString()
   @IsNotEmpty()
   address!: string;
 }
 
 class VerifyDto {
+  @IsString()
   @IsNotEmpty()
   address!: string;
 
+  @IsString()
   @IsNotEmpty()
   signature!: string;
 
   @IsOptional()
+  @IsString()
   @IsNotEmpty()
   publicKey?: string;
 }
@@ -39,8 +45,10 @@ export class WalletsController {
   @Post('challenge')
   async challenge(@Req() req: Request & { user: SessionUser }, @Body() dto: ChallengeDto) {
     const traceId = requestTraceId(req.headers);
+    const rid = requestIdOf(req);
     const wallet = maskWalletAddress(dto.address);
     onboardingLog(this.logger, 'wallet.challenge.requested', {
+      rid,
       traceId,
       userId: req.user.userId,
       wallet,
@@ -48,6 +56,7 @@ export class WalletsController {
     try {
       const challenge = await this.wallets.createChallenge(req.user.userId, dto.address);
       onboardingLog(this.logger, 'wallet.challenge.created', {
+        rid,
         traceId,
         userId: req.user.userId,
         wallet,
@@ -56,6 +65,7 @@ export class WalletsController {
       return challenge;
     } catch (caught) {
       onboardingError(this.logger, 'wallet.challenge.failed', caught, {
+        rid,
         traceId,
         userId: req.user.userId,
         wallet,
@@ -68,8 +78,10 @@ export class WalletsController {
   @Post('verify')
   async verify(@Req() req: Request & { user: SessionUser }, @Body() dto: VerifyDto) {
     const traceId = requestTraceId(req.headers);
+    const rid = requestIdOf(req);
     const wallet = maskWalletAddress(dto.address);
     onboardingLog(this.logger, 'wallet.verify.requested', {
+      rid,
       traceId,
       userId: req.user.userId,
       wallet,
@@ -83,6 +95,7 @@ export class WalletsController {
         dto.publicKey,
       );
       onboardingLog(this.logger, 'wallet.verify.succeeded', {
+        rid,
         traceId,
         userId: req.user.userId,
         wallet,
@@ -90,6 +103,7 @@ export class WalletsController {
       return verified;
     } catch (caught) {
       onboardingError(this.logger, 'wallet.verify.failed', caught, {
+        rid,
         traceId,
         userId: req.user.userId,
         wallet,

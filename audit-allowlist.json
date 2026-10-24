@@ -1,0 +1,7 @@
+[
+  {
+    "id": "GHSA-q7qp-rjg7-q26m",
+    "reason": "multer DoS via pending async fileFilter after request teardown. Upgrade is on hold by decision (wiki be/media.md); the advisory is not reachable from our upload path (no async fileFilter).",
+    "expires": "2026-12-31"
+  }
+]

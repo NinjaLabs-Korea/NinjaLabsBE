@@ -7,10 +7,13 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { getAddress, isAddress } from 'ethers';
+import { AuditService } from '../audit/audit.service';
+import { injectivePublicKeyMatchesAddress } from '../common/crypto/injective-public-key';
 import { isEvmAddress, signatureSchemeFor } from '../common/crypto/wallet-signature';
-import { DatabaseService } from '../common/database/database.service';
+import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
+import { revokeActiveAgentKeys } from './agent-revocation';
 
 /**
  * AI 에이전트 등록 (ERD §12, 기획 PART 2-4)
@@ -22,7 +25,10 @@ import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
  */
 @Injectable()
 export class AgentsService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly audit: AuditService,
+  ) {}
 
   async register(
     ownerUserId: string,
@@ -39,14 +45,26 @@ export class AgentsService {
       throw new BadRequestException('AGENT_PUBLIC_KEY_REQUIRED');
     }
     const normalizedAddress = isEvm ? getAddress(walletAddress.trim()) : walletAddress.trim();
+    // 저장할 공개키 — 검증되지 않은 키는 uq_agent_public_key를 선점해 그 키 주인의 등록/verify를 막는 데 쓰일 수 있다.
+    //   - EVM(0x): 클라이언트 값은 무시하고 NULL — 키는 verify 때 EIP-191 서명에서 복원한 것만 저장한다 (docs/agent-api.md:
+    //     EVM은 publicKey를 보내지 않는다. 예전 클라이언트 호환을 위해 400 대신 무시)
+    //   - inj1: ADR-36 verify가 이 키로 검증하므로 필요하다. 대신 그 주소의 키인지 지금 확인한다 (남의 키 → 400)
+    if (!isEvm && !injectivePublicKeyMatchesAddress(normalizedAddress, publicKey!)) {
+      throw new BadRequestException('AGENT_PUBLIC_KEY_MISMATCH');
+    }
+    const storedPublicKey = isEvm ? null : publicKey!;
 
     try {
-      const r = await this.db.query<{ id: string }>(
-        `INSERT INTO agent (owner_user_id, name, description, public_key, wallet_address)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id`,
-        [ownerUserId, name, description ?? null, publicKey ?? null, normalizedAddress],
-      );
+      // 같은 지갑/키를 점유한 행 확인(남의 버려진 PENDING은 soft delete)과 INSERT를 한 트랜잭션에서 — 유니크 위반이면 전체가 롤백되고 아래 catch로 간다
+      const r = await this.db.tx(async (tx) => {
+        await this.retireReusableAgents(tx, ownerUserId, storedPublicKey, normalizedAddress);
+        return tx.query<{ id: string }>(
+          `INSERT INTO agent (owner_user_id, name, description, public_key, wallet_address)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id`,
+          [ownerUserId, name, description ?? null, storedPublicKey, normalizedAddress],
+        );
+      });
       return {
         agentId: r.rows[0].id,
         status: 'PENDING_VERIFICATION',
@@ -78,6 +96,50 @@ export class AgentsService {
   }
 
   /**
+   * 같은 지갑/공개키를 점유한 행을 확인해 재등록을 허용할지 정한다. 행을 잠근 채(FOR UPDATE) 처리해 동시 재등록·revoke·verify와
+   * 엇갈리지 않는다. uq_agent_wallet/uq_agent_public_key(0014)는 `deleted_at IS NULL AND status <> 'REVOKED'` 행만 보므로
+   * REVOKED 행은 지우지 않아도 지갑/키가 풀린다.
+   *   - 내 REVOKED 에이전트 → 그대로 둔다 (soft delete 하지 않음 — 제출/지원 이력이 /agents/me 와 프로필에 계속 보인다)
+   *   - 남의 REVOKED 에이전트 → 409
+   *   - 남의 PENDING_VERIFICATION 에이전트 → 등록 후 24시간이 지났으면 버려진 것으로 보고 soft delete.
+   *     PENDING 행은 소유를 증명하지 않는다(증명은 verify의 서명) — 누구나 남의 지갑 주소를 먼저 등록해 선점(squatting)할 수 있으므로.
+   *     24시간 이내면 서명 제출 중일 수 있어 409
+   *   - 내 PENDING 행은 건드리지 않는다 — INSERT가 유니크 위반으로 실패하고 register()가 그 행을 그대로 돌려준다
+   */
+  private async retireReusableAgents(
+    tx: QueryRunner,
+    ownerUserId: string,
+    publicKey: string | null,
+    walletAddress: string,
+  ) {
+    const occupied = (await tx.query(
+      `SELECT id, owner_user_id, status,
+              (status = 'PENDING_VERIFICATION' AND created_at < now() - interval '24 hours') AS abandoned
+         FROM agent
+        WHERE (wallet_address = $1 OR ($2::text IS NOT NULL AND public_key = $2::text))
+          AND status IN ('REVOKED', 'PENDING_VERIFICATION') AND deleted_at IS NULL
+        FOR UPDATE`,
+      [walletAddress, publicKey],
+    )) as { rows: Array<{ id: string; owner_user_id: string; status: string; abandoned: boolean }> };
+    const retire: string[] = [];
+    for (const row of occupied.rows) {
+      const mine = row.owner_user_id === ownerUserId;
+      if (row.status === 'REVOKED') {
+        if (!mine) throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
+        // 내 REVOKED 행: 유니크 인덱스가 무시하므로 건드리지 않는다
+      } else if (!mine) {
+        if (!row.abandoned) throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
+        retire.push(row.id);
+      }
+    }
+    if (!retire.length) return;
+    await tx.query(
+      `UPDATE agent SET deleted_at = now() WHERE id = ANY($1::uuid[])`,
+      [retire],
+    );
+  }
+
+  /**
    * 소유 증명 메시지 — agentId + 소유 유저에 결정론적으로 바인딩되어
    * 다른 에이전트/유저로의 서명 재사용이 불가능하다.
    */
@@ -92,55 +154,124 @@ export class AgentsService {
 
   /**
    * 에이전트 지갑 서명 검증 → ACTIVE 전환 → API key 발급
-   * 등록 시 저장한 public_key로 검증하므로 서명 주체 = 에이전트 지갑 키 소유자.
+   * inj1은 등록 시 저장한(주소와 대조된) public_key로, 0x는 서명에서 복원한 키로 검증하므로 서명 주체 = 에이전트 지갑 키 소유자.
    * 검증 성공 시에만 API key를 반환한다 (원문은 이 응답 1회뿐).
    */
   async verifyAndIssueKey(ownerUserId: string, agentId: string, signature: string) {
-    const r = await this.db.query<{
-      status: string;
-      public_key: string | null;
-      wallet_address: string;
-    }>(
-      `SELECT status, public_key, wallet_address FROM agent
-        WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL`,
-      [agentId, ownerUserId],
-    );
-    if (!r.rowCount) throw new NotFoundException('AGENT_NOT_FOUND');
-    const agent = r.rows[0];
-    if (agent.status !== 'PENDING_VERIFICATION') {
-      throw new ConflictException('AGENT_ALREADY_VERIFIED');
-    }
-
-    const message = AgentsService.verificationMessage(agentId, ownerUserId);
-    const verified = signatureSchemeFor(agent.wallet_address).verify({
-      address: agent.wallet_address,
-      message,
-      signature,
-      publicKey: agent.public_key,
-    });
-    if (!verified) {
-      throw new UnauthorizedException('INVALID_SIGNATURE');
-    }
-
     const key = this.generateApiKey();
+    // 상태 확인 → 서명 검증 → ACTIVE 전환 → key 발급을 한 트랜잭션에서, 에이전트 행을 잠근 채 수행한다.
+    // 동시 verify 두 번이면 두 번째는 잠금 해제 후 ACTIVE를 보고 AGENT_ALREADY_VERIFIED로 거부된다.
     const expires = await this.db.tx(async (tx) => {
+      const r = await tx.query<{
+        status: string;
+        public_key: string | null;
+        wallet_address: string;
+      }>(
+        `SELECT status, public_key, wallet_address FROM agent
+          WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL
+          FOR UPDATE`,
+        [agentId, ownerUserId],
+      );
+      if (!r.rowCount) throw new NotFoundException('AGENT_NOT_FOUND');
+      const agent = r.rows[0];
+      if (agent.status !== 'PENDING_VERIFICATION') {
+        throw new ConflictException('AGENT_ALREADY_VERIFIED');
+      }
+
+      const message = AgentsService.verificationMessage(agentId, ownerUserId);
+      const verified = signatureSchemeFor(agent.wallet_address).verify({
+        address: agent.wallet_address,
+        message,
+        signature,
+        publicKey: agent.public_key,
+      });
+      if (!verified) {
+        throw new UnauthorizedException('INVALID_SIGNATURE');
+      }
+
+      if (verified.publicKey && isEvmAddress(agent.wallet_address)) {
+        // 이 수정 전 등록된 EVM PENDING 행에는 클라이언트가 보낸(검증 안 된) public_key가 남아 있을 수 있다 — 남의 키를 붙여 둔 행이
+        // 아래 UPDATE를 uq_agent_public_key 위반으로 막지 않도록, 서명으로 방금 증명된 이 키를 쥔 다른 EVM PENDING 행의 키를 비운다.
+        // EVM verify는 저장된 키를 쓰지 않으므로(서명에서 복원) 그 행들의 동작은 바뀌지 않는다.
+        await tx.query(
+          `UPDATE agent SET public_key = NULL
+            WHERE public_key = $1 AND id <> $2 AND status = 'PENDING_VERIFICATION' AND deleted_at IS NULL
+              AND wallet_address ILIKE '0x%'`,
+          [verified.publicKey, agentId],
+        );
+      }
       await tx.query(
         `UPDATE agent
             SET status = 'ACTIVE', verified_at = now(), public_key = COALESCE($2, public_key)
           WHERE id = $1`,
         [agentId, verified.publicKey],
       );
-      // 만료 90일 — decisions.md MVP 디폴트
-      const k = await tx.query<{ expires_at: string }>(
-        `INSERT INTO agent_api_key (agent_id, key_prefix, key_hash, expires_at)
-         VALUES ($1, $2, $3, now() + interval '90 days')
-         RETURNING expires_at`,
-        [agentId, key.prefix, key.hash],
-      );
-      return k.rows[0].expires_at;
+      return this.insertKey(tx, agentId, key);
+    }).catch((err: unknown) => {
+      // 그래도 이 키를 쥔 다른 행(ACTIVE 등)이 있으면 500이 아니라 409 — 트랜잭션은 이미 롤백됐다
+      if (isUniqueViolation(err, 'uq_agent_public_key')) {
+        throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
+      }
+      throw err;
     });
 
     return { agentId, status: 'ACTIVE', apiKey: key.raw, expiresAt: expires };
+  }
+
+  /** API key 행 삽입 — 만료 90일 (decisions.md MVP 디폴트). verify와 rotate가 공유한다. */
+  private async insertKey(tx: QueryRunner, agentId: string, key: { prefix: string; hash: string }) {
+    const k = (await tx.query(
+      `INSERT INTO agent_api_key (agent_id, key_prefix, key_hash, expires_at)
+       VALUES ($1, $2, $3, now() + interval '90 days')
+       RETURNING expires_at`,
+      [agentId, key.prefix, key.hash],
+    )) as { rows: Array<{ expires_at: string }> };
+    return k.rows[0].expires_at;
+  }
+
+  /**
+   * API key 재발급 — ACTIVE 에이전트의 기존 ACTIVE 키를 모두 폐기하고 새 키 1개를 발급한다.
+   * 에이전트 행을 잠근 채 한 트랜잭션에서 수행하므로 동시 rotate 두 번도 유효 키는 항상 1개다.
+   * 새 키 원문은 이 응답에서만 노출된다.
+   */
+  async rotateKey(ownerUserId: string, agentId: string) {
+    const key = this.generateApiKey();
+    const expires = await this.db.tx(async (tx) => {
+      const agent = await this.lockOwnedAgent(tx, ownerUserId, agentId);
+      if (agent.status !== 'ACTIVE') throw new ConflictException('AGENT_NOT_ACTIVE');
+      await revokeActiveAgentKeys(tx, agentId);
+      const expiresAt = await this.insertKey(tx, agentId, key);
+      await this.audit.record(ownerUserId, 'AGENT_KEY_ROTATED', 'agent', agentId, tx);
+      return expiresAt;
+    });
+    return { agentId, apiKey: key.raw, expiresAt: expires };
+  }
+
+  /**
+   * 에이전트 폐기 — 에이전트 REVOKED + 모든 ACTIVE 키 REVOKED (Agent API 인증 즉시 거부).
+   * 이미 REVOKED면 아무것도 바꾸지 않고 같은 응답을 돌려준다 (멱등).
+   */
+  async revoke(ownerUserId: string, agentId: string) {
+    await this.db.tx(async (tx) => {
+      const agent = await this.lockOwnedAgent(tx, ownerUserId, agentId);
+      if (agent.status === 'REVOKED') return;
+      await tx.query(`UPDATE agent SET status = 'REVOKED' WHERE id = $1`, [agentId]);
+      await revokeActiveAgentKeys(tx, agentId);
+      await this.audit.record(ownerUserId, 'AGENT_REVOKED', 'agent', agentId, tx);
+    });
+    return { agentId, status: 'REVOKED' };
+  }
+
+  /** 내 에이전트 행 잠금 — 남의 에이전트/삭제된 에이전트는 404 (존재 여부를 노출하지 않음) */
+  private async lockOwnedAgent(tx: QueryRunner, ownerUserId: string, agentId: string) {
+    const r = (await tx.query(
+      `SELECT status FROM agent
+        WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL
+        FOR UPDATE`,
+      [agentId, ownerUserId],
+    )) as { rowCount: number | null; rows: Array<{ status: string }> };
+    if (!r.rowCount) throw new NotFoundException('AGENT_NOT_FOUND');
+    return r.rows[0];
   }
 
   /** API key 생성 헬퍼 — nj_ 프리픽스 + 랜덤, DB엔 sha256 해시만 */
@@ -153,15 +284,26 @@ export class AgentsService {
     };
   }
 
-  /** 내 에이전트 목록 */
+  /**
+   * 내 에이전트 목록 — 에이전트당 정확히 1행. 키는 최신 ACTIVE 키 1개(없으면 최신 키)만 LATERAL로 붙인다.
+   * key_status: 'ACTIVE' | 'REVOKED' | 'EXPIRED' | null — EXPIRED는 expires_at <= now()로 계산한다.
+   */
   async myAgents(ownerUserId: string) {
     const r = await this.db.query(
       `SELECT a.id, a.name, a.description, a.status, a.wallet_address, a.verified_at, a.created_at,
-              k.key_prefix, k.status AS key_status, k.expires_at AS key_expires_at,
+              k.key_prefix,
+              CASE WHEN k.id IS NULL THEN NULL
+                   WHEN k.status = 'ACTIVE' AND k.expires_at <= now() THEN 'EXPIRED'
+                   ELSE k.status END AS key_status,
+              k.expires_at AS key_expires_at,
               (SELECT count(*)::int FROM bounty_submission s
                 WHERE s.agent_id = a.id AND s.status = 'APPROVED') AS completed_bounties
          FROM agent a
-         LEFT JOIN agent_api_key k ON k.agent_id = a.id AND k.status = 'ACTIVE'
+         LEFT JOIN LATERAL (
+              SELECT id, key_prefix, status, expires_at FROM agent_api_key
+               WHERE agent_id = a.id
+               ORDER BY (status = 'ACTIVE') DESC, created_at DESC
+               LIMIT 1) k ON true
         WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL
         ORDER BY a.created_at`,
       [ownerUserId],

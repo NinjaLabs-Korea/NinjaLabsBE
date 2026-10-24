@@ -1,5 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { createMockDb } from '../test-support/mock-db';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
@@ -8,19 +9,22 @@ const code = 'c'.repeat(43);
 const verifier = 'v'.repeat(43);
 const challenge = createHash('sha256').update(verifier).digest('base64url');
 
+/** `dbQuery` serves issueLoginCode (autocommit); `query` is the transaction client of exchangeLoginCode — both checked for $n/params drift */
 function setup(query = jest.fn()) {
-  const db = { query: jest.fn(), tx: jest.fn(async (run) => run({ query })) };
+  const dbQuery = jest.fn();
+  const { database, db } = createMockDb({ query: dbQuery, txQuery: query });
   const jwt = { signAsync: jest.fn(async () => 'access-token'), verifyAsync: jest.fn() };
-  const service = new AuthService(db as never, jwt as never, {} as never);
-  return { service, db, jwt };
+  const service = new AuthService(database, jwt as never, { get: jest.fn() } as never, 'dev-only-secret');
+  return { service, db, dbQuery, jwt };
 }
 
 describe('OAuth login handoff', () => {
   it('stores only a code hash, and binds the code to the browser challenge', async () => {
-    const { service, db, jwt } = setup();
+    const { service, dbQuery, jwt } = setup();
     const issued = await service.issueLoginCode(userId, challenge);
     expect(issued).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(db.query.mock.calls[1][1]).toEqual([
+    expect(dbQuery.mock.calls[0][0]).toBe('DELETE FROM oauth_login_code WHERE expires_at <= now()');
+    expect(dbQuery.mock.calls[1][1]).toEqual([
       createHash('sha256').update(issued).digest('hex'), userId, challenge,
     ]);
     expect(jwt.signAsync).not.toHaveBeenCalled();
@@ -30,11 +34,12 @@ describe('OAuth login handoff', () => {
     const query = jest.fn()
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ user_id: userId, is_admin: false }] })
       .mockResolvedValueOnce({ rowCount: 1 });
-    const { service, db } = setup(query);
+    const { service, db, dbQuery } = setup(query);
     const tokens = await service.exchangeLoginCode(code, verifier);
     expect(tokens.accessToken).toBe('access-token');
     expect(tokens.refreshToken).toMatch(/^[A-Za-z0-9_-]{64}$/);
     expect(db.tx).toHaveBeenCalledTimes(1);
+    expect(dbQuery).not.toHaveBeenCalled(); // consume + session INSERT both live in the transaction
     expect(query.mock.calls[0][0]).toContain('DELETE FROM oauth_login_code');
     expect(query.mock.calls[0][0]).toContain('c.expires_at > now()');
     expect(query.mock.calls[0][0]).toContain("u.status = 'ACTIVE'");
@@ -89,7 +94,7 @@ describe('OAuth login handoff', () => {
       issueLoginCode: jest.fn(async () => code),
       issueSession: jest.fn(),
     };
-    const controller = new AuthController(auth as never, { get: () => 'https://app.example/' } as never);
+    const controller = new AuthController(auth as never, { get: () => 'https://app.example/' } as never, { enabled: false } as never);
     const res = { redirect: jest.fn() };
     await controller.googleCallback('google-code', 'state', undefined, { headers: {} } as never, res as never);
     expect(res.redirect).toHaveBeenCalledWith(`https://app.example/auth/callback#loginCode=${code}`);

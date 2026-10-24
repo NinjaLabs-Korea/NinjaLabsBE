@@ -8,24 +8,30 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsNotEmpty, IsOptional, IsUrl } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Request } from 'express';
 import { AuthGuard } from '../../auth/auth.guard';
 import { SessionUser } from '../../auth/auth.service';
+import { IsHttpUrl } from '../../common/validation/url';
 import { SubmissionsService } from './submissions.service';
+import { MaxChars } from '../../common/validation/max-chars';
 
-class SubmitDto {
-  @IsUrl()
+export class SubmitDto {
+  @IsHttpUrl()
   submissionUrl!: string;
 
+  @IsString()
   @IsNotEmpty()
+  @MaxLength(8000)
   description!: string;
 
   @IsOptional()
-  @IsUrl()
+  @IsHttpUrl()
   repositoryUrl?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxChars(64)
   commitSha?: string;
 }
 

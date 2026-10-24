@@ -23,17 +23,19 @@ export class NoticeAdminService {
     title: string; summary?: string; body: string; category: string;
     thumbnailUrl?: string; externalUrl?: string; publish?: boolean;
   }) {
-    const r = await this.db.query<{ id: string }>(
-      `INSERT INTO notice (created_by, title, summary, body, category, thumbnail_url, external_url, status, published_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING id`,
-      [adminId, input.title, input.summary ?? null, input.body, input.category,
-       input.thumbnailUrl ?? null, input.externalUrl ?? null,
-       input.publish ? 'PUBLISHED' : 'DRAFT',
-       input.publish ? new Date() : null],
-    );
-    await this.audit.record(adminId, input.publish ? 'NOTICE_PUBLISHED' : 'NOTICE_CREATED', 'notice', r.rows[0].id);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const r = await tx.query<{ id: string }>(
+        `INSERT INTO notice (created_by, title, summary, body, category, thumbnail_url, external_url, status, published_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
+        [adminId, input.title, input.summary ?? null, input.body, input.category,
+         input.thumbnailUrl ?? null, input.externalUrl ?? null,
+         input.publish ? 'PUBLISHED' : 'DRAFT',
+         input.publish ? new Date() : null],
+      );
+      await this.audit.record(adminId, input.publish ? 'NOTICE_PUBLISHED' : 'NOTICE_CREATED', 'notice', r.rows[0].id, tx);
+      return r.rows[0];
+    });
   }
 
   async update(noticeId: string, input: {
@@ -44,28 +46,38 @@ export class NoticeAdminService {
       ['title', input.title], ['summary', input.summary], ['body', input.body],
       ['category', input.category], ['thumbnail_url', input.thumbnailUrl], ['external_url', input.externalUrl],
     ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
+    const expressions: string[] = [];
     if (input.publish !== undefined) {
       fields.push(['status', input.publish ? 'PUBLISHED' : 'DRAFT']);
-      fields.push(['published_at', input.publish ? new Date() : null]);
+      // 최초 발행 시각은 유지 — 이미 발행된 공지를 다시 publish:true로 저장해도 published_at을 덮지 않는다
+      if (input.publish) expressions.push('published_at = COALESCE(published_at, now())');
+      else fields.push(['published_at', null]);
     }
     if (!fields.length) return { id: noticeId };
-    const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
-    const r = await this.db.query(
-      `UPDATE notice SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
-      [noticeId, ...fields.map(([, value]) => value)],
-    );
-    if (!r.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
-    await this.audit.record(adminId, 'NOTICE_UPDATED', 'notice', noticeId);
-    return r.rows[0];
+    const assignments = [
+      ...fields.map(([column], index) => `${column} = $${index + 2}`),
+      ...expressions,
+    ].join(', ');
+    return this.db.tx(async (tx) => {
+      const r = await tx.query(
+        `UPDATE notice SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
+        [noticeId, ...fields.map(([, value]) => value)],
+      );
+      if (!r.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
+      await this.audit.record(adminId, 'NOTICE_UPDATED', 'notice', noticeId, tx);
+      return r.rows[0];
+    });
   }
 
   async remove(noticeId: string, adminId: string) {
-    const r = await this.db.query(
-      `UPDATE notice SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
-      [noticeId],
-    );
-    if (!r.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
-    await this.audit.record(adminId, 'NOTICE_DELETED', 'notice', noticeId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const r = await tx.query(
+        `UPDATE notice SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+        [noticeId],
+      );
+      if (!r.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
+      await this.audit.record(adminId, 'NOTICE_DELETED', 'notice', noticeId, tx);
+      return r.rows[0];
+    });
   }
 }

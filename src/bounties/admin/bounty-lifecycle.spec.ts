@@ -1,4 +1,5 @@
 import { AuditService } from '../../audit/audit.service';
+import { createMockDb } from '../../test-support/mock-db';
 import { ApplicationReviewService } from '../applications/application-review.service';
 import { SubmissionReviewService } from '../submissions/submission-review.service';
 import { BountyAdminService } from './bounty-admin.service';
@@ -16,37 +17,80 @@ const adminServicesFor = (db: unknown) => {
 };
 import { ApplicationsService } from '../applications/applications.service';
 
+/** `db.query` (autocommit) and `tx.query` are separate mocks — transitions and reviews must never issue a statement outside the transaction */
+function dbWith(txQuery: jest.Mock) {
+  const dbQuery = jest.fn();
+  return { dbQuery, db: createMockDb({ query: dbQuery, txQuery }).database };
+}
+
 function setup(status: string, counts: Record<string, number | undefined> = {}, expired = false) {
-  const query = jest.fn(async (sql: string) => {
+  const query = jest.fn(async (sql: string, _params?: unknown[]) => {
     if (sql.includes('FOR UPDATE')) return { rowCount: 1, rows: [{ status, submission_deadline: expired ? '2020-01-01' : '2099-01-01' }] };
     if (sql.includes('AS pending')) return { rowCount: 1, rows: [counts] };
     return { rowCount: 1, rows: [{ id: 'id', status: 'APPROVED' }] };
   });
-  return { query, services: adminServicesFor({ query, tx: (fn: (tx: { query: typeof query }) => Promise<unknown>) => fn({ query }) }) };
+  const { db, dbQuery } = dbWith(query);
+  return { query, dbQuery, services: adminServicesFor(db) };
 }
+
+const statusUpdate = (query: jest.Mock) => query.mock.calls.find(([sql]) => (sql as string).startsWith('UPDATE bounty SET status = $2'));
 
 describe('Bounty lifecycle ordering', () => {
   it.each([{ pending: 1 }, { unsubmitted: 1 }])('blocks closing with unfinished intake %j', async (counts) => {
-    const { services, query } = setup('OPEN', counts);
+    const { services, query, dbQuery } = setup('OPEN', counts);
     await expect(services.bounties.transition('b', 'SUBMISSION_CLOSED', 'admin')).rejects.toMatchObject({ response: { message: [expect.any(String)] } });
     expect(query.mock.calls.some(([sql]) => sql.startsWith('UPDATE bounty'))).toBe(false);
+    // the blockers query counts the rows of THIS bounty
+    expect(query.mock.calls.find(([sql]) => sql.includes('AS pending'))![1]).toEqual(['b', expect.any(Array)]);
+    expect(dbQuery).not.toHaveBeenCalled();
   });
   it('allows closing after the submission deadline when approved participants never submitted', async () => {
-    await expect(setup('OPEN', { unsubmitted: 1 }, true).services.bounties.transition('b', 'SUBMISSION_CLOSED', 'admin')).resolves.toMatchObject({ status: 'SUBMISSION_CLOSED' });
+    const { services, query, dbQuery } = setup('OPEN', { unsubmitted: 1 }, true);
+    await expect(services.bounties.transition('b', 'SUBMISSION_CLOSED', 'admin')).resolves.toMatchObject({ status: 'SUBMISSION_CLOSED' });
+    expect(statusUpdate(query)![1]).toEqual(['b', 'SUBMISSION_CLOSED']);
+    expect(statusUpdate(query)![0]).toBe('UPDATE bounty SET status = $2 WHERE id = $1'); // no timestamp column for this transition
+    expect(query.mock.calls.at(-1)![1]).toEqual(['admin', 'BOUNTY_SUBMISSION_CLOSED', 'bounty', 'b']);
+    expect(dbQuery).not.toHaveBeenCalled();
   });
   it.each([{ unresolved: 1 }, { pending: 1 }, { unpaid: 1 }, { unawarded: 1 }])('blocks completion with outstanding work %j', async (counts) => {
-    await expect(setup('IN_REVIEW', counts).services.bounties.transition('b', 'COMPLETED', 'admin')).rejects.toMatchObject({ response: { message: [expect.any(String)] } });
+    const { services, query } = setup('IN_REVIEW', counts);
+    await expect(services.bounties.transition('b', 'COMPLETED', 'admin')).rejects.toMatchObject({ response: { message: [expect.any(String)] } });
+    expect(statusUpdate(query)).toBeUndefined();
+  });
+  it.each([{ unpaid: 1 }, { unawarded: 1 }])('blocks cancelling while an approved winner is still owed %j (same UNPAID_WINNERS sentence as COMPLETED)', async (counts) => {
+    const { services, query } = setup('OPEN', counts);
+    await expect(services.bounties.transition('b', 'CANCELLED', 'admin')).rejects.toMatchObject({
+      response: { message: ['Record completed payments for all approved winners and finish every pending payout.'] },
+    });
+    expect(statusUpdate(query)).toBeUndefined();
+  });
+  it.each(['DRAFT', 'FUNDING_PENDING', 'OPEN'])('still cancels %s when no winner is owed (other blockers do not apply to CANCELLED)', async (status) => {
+    const { services, query } = setup(status, { pending: 1, unsubmitted: 1, unresolved: 1, unfunded: 1 });
+    await expect(services.bounties.transition('b', 'CANCELLED', 'admin')).resolves.toMatchObject({ status: 'CANCELLED' });
+    expect(statusUpdate(query)![1]).toEqual(['b', 'CANCELLED']);
   });
   it('allows completion after all reviews and payments are settled', async () => {
-    await expect(setup('IN_REVIEW').services.bounties.transition('b', 'COMPLETED', 'admin')).resolves.toMatchObject({ status: 'COMPLETED' });
+    const { services, query, dbQuery } = setup('IN_REVIEW');
+    await expect(services.bounties.transition('b', 'COMPLETED', 'admin')).resolves.toMatchObject({ status: 'COMPLETED' });
+    expect(statusUpdate(query)![1]).toEqual(['b', 'COMPLETED']);
+    expect(statusUpdate(query)![0]).toBe('UPDATE bounty SET status = $2, completed_at = COALESCE(completed_at, now()) WHERE id = $1');
+    expect(dbQuery).not.toHaveBeenCalled();
   });
   it.each(['SUBMISSION_CLOSED', 'IN_REVIEW'])('reopens %s with a future deadline', async (status) => {
-    await expect(setup(status).services.bounties.transition('b', 'OPEN', 'admin')).resolves.toMatchObject({ status: 'OPEN' });
-    await expect(setup(status, {}, true).services.bounties.transition('b', 'OPEN', 'admin')).rejects.toMatchObject({ response: { message: [expect.stringContaining('deadline')] } });
+    const reopened = setup(status);
+    await expect(reopened.services.bounties.transition('b', 'OPEN', 'admin')).resolves.toMatchObject({ status: 'OPEN' });
+    expect(statusUpdate(reopened.query)![1]).toEqual(['b', 'OPEN']);
+    expect(statusUpdate(reopened.query)![0]).toContain('opened_at = COALESCE(opened_at, now())'); // first opening time survives a reopen
+    const expired = setup(status, {}, true);
+    await expect(expired.services.bounties.transition('b', 'OPEN', 'admin')).rejects.toMatchObject({ response: { message: [expect.stringContaining('deadline')] } });
+    expect(statusUpdate(expired.query)).toBeUndefined();
   });
   it.each(['SUBMISSION_CLOSED', 'IN_REVIEW'])('prevents stranded application approval in %s', async (status) => {
     await expect(setup(status).services.applicationReviews.review('a', 'APPROVED', '', 'admin')).rejects.toThrow('APPLICATION_APPROVAL_CLOSED');
-    await expect(setup(status).services.applicationReviews.review('a', 'REJECTED', 'Intake ended', 'admin')).resolves.toBeDefined();
+    const rejected = setup(status);
+    await expect(rejected.services.applicationReviews.review('a', 'REJECTED', 'Intake ended', 'admin')).resolves.toBeDefined();
+    expect(rejected.query.mock.calls.find(([sql]) => sql.startsWith('UPDATE bounty_application'))![1]).toEqual(['a', 'REJECTED', 'admin', 'Intake ended']);
+    expect(rejected.dbQuery).not.toHaveBeenCalled();
   });
   it('does not approve an application past the submission deadline', async () => {
     await expect(setup('OPEN', {}, true).services.applicationReviews.review('a', 'APPROVED', '', 'admin')).rejects.toThrow('APPLICATION_APPROVAL_CLOSED');
@@ -56,30 +100,69 @@ describe('Bounty lifecycle ordering', () => {
   });
   it.each(['submission_deadline', 'application_deadline'])('blocks new applications after %s', async (field) => {
     const query = jest.fn().mockResolvedValue({ rowCount: 1, rows: [{ application_required: true, status: 'OPEN', submission_mode: 'DIRECT', [field]: '2020-01-01' }] });
-    const service = new ApplicationsService({ tx: (fn: (tx: { query: typeof query }) => Promise<unknown>) => fn({ query }) } as never);
+    const { db, dbQuery } = dbWith(query);
+    const service = new ApplicationsService(db as never, { record: jest.fn() } as never);
     await expect(service.apply('b', 'u', 'Apply')).rejects.toThrow('APPLICATION_DEADLINE_PASSED');
     expect(query).toHaveBeenCalledTimes(1);
+    expect(dbQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('Lifecycle blocker codes (operations UI)', () => {
+  const blockersFor = async (counts: Record<string, number>, expired = false) => {
+    const query = jest.fn(async () => ({ rowCount: 1, rows: [counts] }));
+    return new BountyLifecycleService().blockers({ query } as never, 'b', { status: 'OPEN', submission_deadline: expired ? '2020-01-01' : '2099-01-01' });
+  };
+
+  it('returns the same list as stable codes with counts next to the English sentences', async () => {
+    const result = await blockersFor({ pending: 2, unsubmitted: 1, unresolved: 3, unfunded: 1, unpaid: 1 }, false);
+    expect(result.blockerDetails).toEqual({
+      OPEN: [{ code: 'REWARDS_UNFUNDED', count: 1 }],
+      SUBMISSION_CLOSED: [{ code: 'PENDING_APPLICATIONS', count: 2 }, { code: 'UNSUBMITTED_PARTICIPANTS', count: 1 }],
+      IN_REVIEW: [],
+      COMPLETED: [{ code: 'PENDING_APPLICATIONS', count: 2 }, { code: 'UNRESOLVED_SUBMISSIONS', count: 3 }, { code: 'UNPAID_WINNERS' }],
+      CANCELLED: [{ code: 'UNPAID_WINNERS' }],
+    });
+    expect(result.blockers.SUBMISSION_CLOSED).toEqual([
+      'Review 2 pending application(s) before closing submissions.',
+      '1 approved participant(s) have not submitted. Wait for their work or the submission deadline.',
+    ]);
+    for (const to of Object.keys(result.blockers)) expect(result.blockerDetails[to]).toHaveLength(result.blockers[to].length);
+  });
+
+  it('an expired deadline blocks re-opening (DEADLINE_PASSED) and no longer waits for unsubmitted participants', async () => {
+    const result = await blockersFor({ unsubmitted: 1 }, true);
+    expect(result.blockerDetails.OPEN).toEqual([{ code: 'DEADLINE_PASSED' }]);
+    expect(result.blockerDetails.SUBMISSION_CLOSED).toEqual([]);
   });
 });
 
 describe('Submission approval winner cap', () => {
   function setupReview(maxWinners: number, approved: number) {
-    const query = jest.fn(async (sql: string) => {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FROM bounty b JOIN bounty_submission')) return { rowCount: 1, rows: [{ id: 'b', status: 'IN_REVIEW', max_winners: maxWinners }] };
       if (sql.includes('SELECT id, status, current_revision_no')) return { rowCount: 1, rows: [{ id: 's', status: 'IN_REVIEW', current_revision_no: 1 }] };
       if (sql.includes("status = 'APPROVED'")) return { rowCount: 1, rows: [{ count: String(approved) }] };
       return { rowCount: 1, rows: [{ id: 'rev' }] };
     });
-    return { query, services: adminServicesFor({ query, tx: (fn: (tx: { query: typeof query }) => Promise<unknown>) => fn({ query }) }) };
+    const { db, dbQuery } = dbWith(query);
+    return { query, dbQuery, services: adminServicesFor(db) };
   }
 
-  it('refuses to approve beyond max_winners', async () => {
-    const { services, query } = setupReview(1, 1);
+  it('refuses to approve beyond max_winners, counting APPROVED submissions of the bounty inside the locked transaction', async () => {
+    const { services, query, dbQuery } = setupReview(1, 1);
     await expect(services.submissionReviews.review('s', 'APPROVE', '', 'admin', 1)).rejects.toThrow('MAX_WINNERS_REACHED');
+    const count = query.mock.calls.find(([sql]) => sql.includes("status = 'APPROVED'"))!;
+    expect(count[0]).toContain(`SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`);
+    expect(count[1]).toEqual(['b']);
     expect(query.mock.calls.some(([sql]) => sql.includes('UPDATE bounty_submission'))).toBe(false);
+    expect(dbQuery).not.toHaveBeenCalled();
   });
 
   it('approves while under max_winners', async () => {
-    await expect(setupReview(2, 1).services.submissionReviews.review('s', 'APPROVE', '', 'admin', 1)).resolves.toMatchObject({ status: 'APPROVED' });
+    const { services, query, dbQuery } = setupReview(2, 1);
+    await expect(services.submissionReviews.review('s', 'APPROVE', '', 'admin', 1)).resolves.toMatchObject({ status: 'APPROVED' });
+    expect(query.mock.calls.find(([sql]) => sql.includes('UPDATE bounty_submission'))![1]).toEqual(['s', 'APPROVED']);
+    expect(dbQuery).not.toHaveBeenCalled();
   });
 });

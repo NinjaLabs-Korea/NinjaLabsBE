@@ -1,11 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
+import { OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardHoldsFundsSql, sqlStatusList } from '../../rewards/payout-status';
 import { BountyStatusPolicy } from '../bounty-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { RewardInput, RewardTokenResolver } from './reward-token.resolver';
 
-/** 운영자용 바운티 관리 — 등록/수정/삭제/상태 전이와 운영 현황 조회.
+/** 저장된 마감과 이 차이 미만이면 "바꾸지 않은 값" — FE의 datetime-local 입력은 초/밀리초를 보존하지 못한다 */
+const DEADLINE_UNCHANGED_TOLERANCE_MS = 60_000;
+
+/** 운영자용 바운티 관리 — 등록/수정/삭제/상태 전이 (쓰기 명령). 운영 현황 조회는 BountyOperationsQuery.
  * 전이 가능 여부는 BountyStatusPolicy, 전이 차단 사유는 BountyLifecycleService가 결정한다. */
 @Injectable()
 export class BountyAdminService {
@@ -30,53 +34,6 @@ export class BountyAdminService {
         ORDER BY b.created_at DESC`,
     );
     return r.rows;
-  }
-
-  /** Admin-only operational data; never expose review notes or wallets publicly. */
-  async operations(bountyId: string) {
-    const bounty = await this.db.query(
-      `SELECT id, title, status, submission_deadline, application_deadline FROM bounty WHERE id = $1 AND deleted_at IS NULL`, [bountyId],
-    );
-    if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    const [applications, submissions, rewards, payouts] = await Promise.all([
-      this.db.query(
-        `SELECT ap.id, ap.status, ap.message, ap.portfolio_url, ap.review_note, ap.applied_at,
-                COALESCE(a.name, u.nickname) AS actor_name
-           FROM bounty_application ap
-           LEFT JOIN "user" u ON u.id = ap.applicant_user_id
-           LEFT JOIN agent a ON a.id = ap.agent_id
-          WHERE ap.bounty_id = $1 ORDER BY ap.applied_at DESC`, [bountyId]),
-      this.db.query(
-        `SELECT s.id, s.status, s.submission_url, s.description, s.repository_url, s.commit_sha,
-                s.current_revision_no, s.submitted_at, COALESCE(a.name, u.nickname) AS actor_name,
-                review.comment AS review_comment,
-                COALESCE((SELECT json_agg(json_build_object('revision_no', r.revision_no,
-                  'submission_url', r.submission_url, 'description', r.description,
-                  'repository_url', r.repository_url, 'commit_sha', r.commit_sha, 'created_at', r.created_at)
-                  ORDER BY r.revision_no DESC) FROM submission_revision r WHERE r.submission_id = s.id), '[]') AS revisions,
-                COALESCE((SELECT json_agg(json_build_object('revision_no', r.revision_no,
-                  'decision', v.decision, 'comment', v.comment, 'created_at', v.created_at)
-                  ORDER BY v.created_at DESC) FROM submission_review v LEFT JOIN submission_revision r ON r.id = v.revision_id
-                  WHERE v.submission_id = s.id), '[]') AS reviews
-           FROM bounty_submission s
-           LEFT JOIN "user" u ON u.id = s.submitter_user_id
-           LEFT JOIN agent a ON a.id = s.agent_id
-           LEFT JOIN LATERAL (SELECT comment FROM submission_review WHERE submission_id = s.id
-                              ORDER BY created_at DESC LIMIT 1) review ON true
-          WHERE s.bounty_id = $1 ORDER BY s.submitted_at DESC`, [bountyId]),
-      this.db.query(
-        `SELECT id, status, display_symbol, amount::text, deposited_amount::text,
-                custody_address, deposit_tx_hash, token_contract_address, evm_chain_id
-           FROM bounty_reward WHERE bounty_id = $1 ORDER BY created_at`, [bountyId]),
-      this.db.query(
-        `SELECT p.id, p.bounty_reward_id, p.submission_id, p.status, p.amount::text,
-                p.payout_tx_hash, w.address AS recipient_address, rw.display_symbol
-           FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
-           JOIN wallet w ON w.id = p.recipient_wallet_id
-          WHERE rw.bounty_id = $1 ORDER BY p.requested_at DESC`, [bountyId]),
-    ]);
-    return { lifecycle: await this.lifecycle.blockers(this.db, bountyId, bounty.rows[0] as { status: string; submission_deadline: string }), bounty: bounty.rows[0], applications: applications.rows, submissions: submissions.rows,
-      rewards: rewards.rows, payouts: payouts.rows };
   }
 
   /** 바운티 등록 (DRAFT). 보상 정보 포함 시 bounty_reward 동시 생성 */
@@ -143,23 +100,82 @@ export class BountyAdminService {
     if (!fields.length) return { id: bountyId };
     const values = fields.map(([, value]) => value);
     const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
-    const r = await this.db.query(
-      `UPDATE bounty SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
-      [bountyId, ...values],
-    );
-    if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    await this.audit.record(adminId, 'BOUNTY_UPDATED', 'bounty', bountyId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      // 승인 수 확인과 max_winners 변경 사이에 APPROVE가 끼어들지 않도록 바운티 행을 잠근다 (심사도 같은 행을 잠근다)
+      const cur = await tx.query<{ id: string; status: string; submission_deadline: string | Date; application_deadline: string | Date | null }>(
+        `SELECT id, status, submission_deadline, application_deadline FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [bountyId],
+      );
+      if (!cur.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      // 마감은 과거로 "옮길" 수 없다 — FE는 수정 때마다 기존 마감을 그대로 되보내므로, 저장된 값과 같은 과거 마감은 통과시킨다
+      // (null로 지우는 것도 허용). FE가 datetime-local로 왕복시키며 초/밀리초를 잃으므로 1분 미만 차이는 "같은 값"으로 본다.
+      // 접수가 끝난 상태(SUBMISSION_CLOSED/IN_REVIEW/COMPLETED/CANCELLED)에서는 마감이 더 이상 의미 없으므로 검사하지 않는다 —
+      // 지난 마감을 그대로 둔 채 제목/설명만 고칠 수 있어야 한다.
+      if (BountyStatusPolicy.enforcesFutureDeadline(cur.rows[0].status)) {
+        for (const [deadline, stored] of [
+          [input.submissionDeadline, cur.rows[0].submission_deadline],
+          [input.applicationDeadline, cur.rows[0].application_deadline],
+        ] as const) {
+          if (!deadline) continue;
+          const next = new Date(deadline).getTime();
+          const unchanged = stored !== null && Math.abs(next - new Date(stored).getTime()) < DEADLINE_UNCHANGED_TOLERANCE_MS;
+          if (!unchanged && !(next > Date.now())) throw new BadRequestException('DEADLINE_IN_PAST');
+        }
+      }
+      if (input.maxWinners !== undefined) {
+        const approved = await tx.query<{ count: string }>(
+          `SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`,
+          [bountyId],
+        );
+        if (input.maxWinners < Number(approved.rows[0].count)) {
+          throw new BadRequestException('MAX_WINNERS_BELOW_APPROVED');
+        }
+      }
+      const r = await tx.query(
+        `UPDATE bounty SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
+        [bountyId, ...values],
+      );
+      if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      await this.audit.record(adminId, 'BOUNTY_UPDATED', 'bounty', bountyId, tx);
+      return r.rows[0];
+    });
   }
 
+  /**
+   * soft delete + 감사 로그를 **같은 트랜잭션**에 — 감사 기록이 실패하면 삭제도 롤백된다 (다른 *-admin 서비스와 같은 규칙).
+   * 삭제 정책(2026-10-24 결정, 2026-10-25 개정 — docs/decisions.md): 멀티시그에 아직 묶인 돈이 있으면 409 BOUNTY_HAS_OPEN_FUNDS —
+   *   - 보상이 REFUND_PENDING이거나, FUNDED/PARTIALLY_PAID/PAID인데 입금액(deposited_amount) − PAID 합계 > 0
+   *     (배정 상한 LEAST(amount, deposited)가 아니라 입금액 전체 — 초과 입금분도 돌려줘야 할 돈이다. 정산 = REFUNDED, 또는 입금액을 전부 지급)
+   *   - 또는 종료 상태(PAID/CANCELLED/FAILED)가 아닌(= 진행 중) payout이 하나라도 있음
+   *   상태 집합·비교식은 rewards/payout-status.ts (OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardHoldsFundsSql)
+   * 허용: 보상이 DEPOSIT_PENDING/REFUNDED/CANCELLED이거나 입금액 전액이 지급된 PAID뿐인 바운티. 남은 돈은 CANCELLED → scripts/record-refund.js(REFUNDED)로
+   * 정산한다 — 환불 스크립트는 CANCELLED 바운티만 받으므로, 전액 지급됐지만 초과 입금분이 남은 COMPLETED 바운티는 삭제할 수 없다(409, runbook §7.7).
+   * 검사는 바운티 행 잠금 아래에서 하므로 같은 바운티의 requestPayout/confirmDeposit(둘 다 바운티 행을 먼저 잠근다)과 직렬화된다.
+   */
   async remove(bountyId: string, adminId: string) {
-    const r = await this.db.query(
-      `UPDATE bounty SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
-      [bountyId],
-    );
-    if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-    await this.audit.record(adminId, 'BOUNTY_DELETED', 'bounty', bountyId);
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const locked = await tx.query(`SELECT id FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [bountyId]);
+      if (!locked.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      const open = await tx.query<{ open_rewards: number; open_payouts: number }>(
+        `SELECT
+           (SELECT count(*)::int FROM bounty_reward rw
+             WHERE rw.bounty_id = $1
+               AND (rw.status = 'REFUND_PENDING'
+                    OR (rw.status IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})
+                        AND ${rewardHoldsFundsSql('rw', 'p')}))) AS open_rewards,
+           (SELECT count(*)::int FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
+             WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(OPEN_PAYOUT_STATUSES)})) AS open_payouts`,
+        [bountyId],
+      );
+      if (open.rows[0].open_rewards > 0 || open.rows[0].open_payouts > 0) throw new ConflictException('BOUNTY_HAS_OPEN_FUNDS');
+      const r = await tx.query(
+        `UPDATE bounty SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+        [bountyId],
+      );
+      if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      await this.audit.record(adminId, 'BOUNTY_DELETED', 'bounty', bountyId, tx);
+      return r.rows[0];
+    });
   }
 
   async transition(bountyId: string, to: string, adminId: string) {

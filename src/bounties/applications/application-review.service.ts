@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
-import { BountyStatusPolicy } from '../bounty-status';
+import { ApplicationReviewDecision, ApplicationStatusPolicy } from '../application-status';
+import { BountyStatus, BountyStatusPolicy } from '../bounty-status';
 
 /** 운영자의 지원서 심사 (PENDING → APPROVED / REJECTED) */
 @Injectable()
@@ -11,7 +12,7 @@ export class ApplicationReviewService {
     private readonly audit: AuditService,
   ) {}
 
-  async review(applicationId: string, decision: 'APPROVED' | 'REJECTED', note: string | undefined, adminId: string) {
+  async review(applicationId: string, decision: ApplicationReviewDecision, note: string | undefined, adminId: string) {
     return this.db.tx(async (tx) => {
       const parent = await tx.query(`SELECT b.status, b.submission_deadline FROM bounty b
         JOIN bounty_application a ON a.bounty_id = b.id
@@ -19,7 +20,7 @@ export class ApplicationReviewService {
       if (!parent.rowCount) throw new NotFoundException('APPLICATION_NOT_FOUND_OR_NOT_PENDING');
       const bounty = parent.rows[0];
       if (BountyStatusPolicy.isFinished(bounty.status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
-      if (decision === 'APPROVED' && (bounty.status !== 'OPEN' || new Date(bounty.submission_deadline).getTime() <= Date.now())) {
+      if (ApplicationStatusPolicy.needsOpenIntake(decision) && (bounty.status !== BountyStatus.OPEN || new Date(bounty.submission_deadline).getTime() <= Date.now())) {
         throw new BadRequestException('APPLICATION_APPROVAL_CLOSED');
       }
       const r = await tx.query(`UPDATE bounty_application

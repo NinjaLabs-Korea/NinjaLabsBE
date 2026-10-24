@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Logger,
   Param,
@@ -20,7 +21,9 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
+import { MaxChars } from '../common/validation/max-chars';
 import { Trim } from '../common/validation/trim';
+import { AccountWithdrawalService } from './account-withdrawal.service';
 import { IsNotReservedNickname, NICKNAME, NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH } from './nickname';
 import { UsersService } from './users.service';
 
@@ -48,11 +51,23 @@ export class CompleteProfileDto {
   tags!: string[];
 }
 
+/** DELETE /users/me 본문 — 지금 닉네임을 그대로 다시 입력해 확인한다 (비교는 앞뒤 공백·대소문자 무시) */
+export class WithdrawAccountDto {
+  @Trim()
+  @IsString()
+  @IsNotEmpty()
+  @MaxChars(NICKNAME_MAX_LENGTH)
+  confirmNickname!: string;
+}
+
 @Controller('users')
 export class UsersController {
   private readonly logger = new Logger(UsersController.name);
 
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly withdrawal: AccountWithdrawalService,
+  ) {}
 
   /** GET /users/check-nickname?nickname=... — 닉네임 중복 검사 (공개) */
   @Get('check-nickname')
@@ -120,6 +135,27 @@ export class UsersController {
         traceId,
         userId: req.user.userId,
       });
+      throw caught;
+    }
+  }
+
+  /**
+   * DELETE /users/me — 회원 탈퇴 (docs/decisions.md "사용자"). 200 `{ ok: true }`.
+   * 400 CONFIRM_NICKNAME_MISMATCH · 409 WITHDRAWAL_BLOCKED_OPEN_PAYOUTS(종료되지 않은 payout) · 404 USER_NOT_FOUND(이미 탈퇴/정지).
+   * refresh 세션은 전부 폐기된다 — 쿠키 모드 FE는 이어서 POST /auth/logout으로 쿠키를 지운다.
+   */
+  @Delete('me')
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  async withdraw(@Req() req: Request & { user: SessionUser }, @Body() dto: WithdrawAccountDto) {
+    const traceId = requestTraceId(req.headers);
+    onboardingLog(this.logger, 'account.withdraw.requested', { traceId, userId: req.user.userId });
+    try {
+      const result = await this.withdrawal.withdraw(req.user.userId, dto.confirmNickname);
+      onboardingLog(this.logger, 'account.withdraw.succeeded', { traceId, userId: req.user.userId });
+      return result;
+    } catch (caught) {
+      onboardingError(this.logger, 'account.withdraw.failed', caught, { traceId, userId: req.user.userId });
       throw caught;
     }
   }

@@ -518,6 +518,11 @@ export class AuthService {
     );
   }
 
+  /** 이 프로세스의 유저 상태 캐시에서 한 유저를 지운다 — 탈퇴처럼 본인이 상태를 바꾼 직후 다음 요청부터 바로 반영되게 (다른 레플리카는 TTL ≤ 30초) */
+  forgetUserStatus(userId: string): void {
+    this.userStatusCache.delete(userId);
+  }
+
   /**
    * access 토큰의 주인이 지금도 ACTIVE이고 삭제되지 않았는지 — 아니면 401 INVALID_ACCESS_TOKEN (FE는 refresh를 시도하고, refresh도 같은 조건으로
    * 거부되므로 세션을 비운다). 결과는 USER_STATUS_CACHE_TTL_MS 동안 캐시한다 (정지/삭제 반영 지연 ≤ 30초).

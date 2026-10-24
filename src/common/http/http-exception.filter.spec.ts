@@ -1,6 +1,7 @@
 import { ArgumentsHost, HttpException, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
-import { HttpExceptionFilter } from './http-exception.filter';
+import { AlertService } from '../alerts/alert.service';
+import { HTTP_5XX_BURST_THRESHOLD, HttpExceptionFilter } from './http-exception.filter';
 
 describe('HttpExceptionFilter', () => {
   const host = {
@@ -91,5 +92,47 @@ describe('HttpExceptionFilter', () => {
     expect(line).toContain('/users/x\\r\\nFAKE 200 OK');
     expect(line.length).toBeLessThan(600);
     expect(line).toMatch(/…\(\+\d+ chars\)$/);
+  });
+
+  describe('5xx burst ops alert', () => {
+    const routed = {
+      switchToHttp: () => ({
+        getRequest: () => ({ method: 'GET', path: '/bounties/3f0c-secret-slug', route: { path: '/bounties/:id' }, body: { email: 'a@b.co' } }),
+      }),
+    } as unknown as ArgumentsHost;
+
+    function filterWithClock() {
+      const alerts = { notify: jest.fn(async () => true) };
+      let clock = 0;
+      const filter = new HttpExceptionFilter(undefined, alerts as unknown as AlertService, () => clock);
+      return { filter, alerts, advance: (ms: number) => { clock += ms; } };
+    }
+
+    it(`alerts once the ${HTTP_5XX_BURST_THRESHOLD + 1}th 5xx lands inside 5 minutes, with the route pattern and error name only`, () => {
+      const { filter, alerts, advance } = filterWithClock();
+      for (let i = 0; i < HTTP_5XX_BURST_THRESHOLD; i++) { filter.catch(new Error(`db said ${i} a@b.co`), routed); advance(1000); }
+      expect(alerts.notify).not.toHaveBeenCalled();
+      filter.catch(new Error('db said a@b.co'), routed);
+      expect(alerts.notify).toHaveBeenCalledTimes(1);
+      const [key, message] = (alerts.notify.mock.calls as unknown as [string, string][])[0];
+      expect(key).toBe('http-5xx-burst');
+      expect(message).toBe('more than 20 5xx responses in the last 5 min — latest: GET /bounties/:id 500 Error');
+      expect(message).not.toContain('secret-slug');
+      expect(message).not.toContain('a@b.co');
+    });
+
+    it('does not count 4xx and does not alert for a slow trickle of 5xx', () => {
+      const { filter, alerts, advance } = filterWithClock();
+      for (let i = 0; i < 100; i++) filter.catch(new NotFoundException(), routed);
+      for (let i = 0; i < 50; i++) { filter.catch(new Error('x'), routed); advance(20_000); }
+      expect(alerts.notify).not.toHaveBeenCalled();
+    });
+
+    it('labels requests that matched no route without echoing the raw path', () => {
+      const { filter, alerts } = filterWithClock();
+      const unmatched = { switchToHttp: () => ({ getRequest: () => ({ method: 'POST', path: '/x/raw-user-value' }) }) } as unknown as ArgumentsHost;
+      for (let i = 0; i <= HTTP_5XX_BURST_THRESHOLD; i++) filter.catch(new Error('x'), unmatched);
+      expect((alerts.notify.mock.calls as unknown as [string, string][])[0][1]).toContain('POST (unmatched route) 500 Error');
+    });
   });
 });

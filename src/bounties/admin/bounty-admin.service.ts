@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { BountyStatusPolicy } from '../bounty-status';
@@ -189,10 +189,29 @@ export class BountyAdminService {
 
   /**
    * soft delete + 감사 로그를 **같은 트랜잭션**에 — 감사 기록이 실패하면 삭제도 롤백된다 (다른 *-admin 서비스와 같은 규칙).
-   * 삭제 허용 범위(입금된 보상·진행 중 payout이 있어도 지울 수 있는지)는 제품 결정 대기 — docs/decisions.md "바운티 삭제 정책".
+   * 삭제 정책(2026-10-24 결정, docs/decisions.md): 멀티시그에 아직 묶인 돈이 있으면 409 BOUNTY_HAS_OPEN_FUNDS —
+   *   - 보상이 REFUND_PENDING이거나, FUNDED/PARTIALLY_PAID/PAID인데 PAID 합계가 배정 상한 LEAST(amount, deposited_amount)에 못 미침
+   *   - 또는 종료 상태(PAID/CANCELLED/FAILED)가 아닌 payout이 하나라도 있음
+   * 허용: 보상이 DEPOSIT_PENDING/REFUNDED/CANCELLED이거나 전액 지급된 PAID뿐인 바운티. 검사는 바운티 행 잠금 아래에서 하므로
+   * 같은 바운티의 requestPayout/confirmDeposit(둘 다 바운티 행을 먼저 잠근다)과 직렬화된다.
    */
   async remove(bountyId: string, adminId: string) {
     return this.db.tx(async (tx) => {
+      const locked = await tx.query(`SELECT id FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [bountyId]);
+      if (!locked.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      const open = await tx.query<{ open_rewards: number; open_payouts: number }>(
+        `SELECT
+           (SELECT count(*)::int FROM bounty_reward rw
+             WHERE rw.bounty_id = $1
+               AND (rw.status = 'REFUND_PENDING'
+                    OR (rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')
+                        AND LEAST(rw.amount, rw.deposited_amount) >
+                            (SELECT COALESCE(SUM(p.amount), 0) FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status = 'PAID')))) AS open_rewards,
+           (SELECT count(*)::int FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id
+             WHERE rw.bounty_id = $1 AND p.status NOT IN ('PAID', 'CANCELLED', 'FAILED')) AS open_payouts`,
+        [bountyId],
+      );
+      if (open.rows[0].open_rewards > 0 || open.rows[0].open_payouts > 0) throw new ConflictException('BOUNTY_HAS_OPEN_FUNDS');
       const r = await tx.query(
         `UPDATE bounty SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
         [bountyId],

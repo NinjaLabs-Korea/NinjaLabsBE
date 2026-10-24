@@ -18,13 +18,17 @@ function bountyForm(overrides: Partial<AdminBountyForm> = {}): AdminBountyForm {
 describeDb('bounty lifecycle over HTTP (e2e)', () => {
   let e2e: E2eApp;
   let admin: Session;
+  /** second operator — payouts are approved by a different admin than the requester (two-person rule) */
+  let approver: Session;
   beforeAll(async () => {
     e2e = await startApp();
     admin = await e2e.loginAdmin();
+    approver = await e2e.loginAdmin();
   });
   afterAll(async () => e2e?.close());
 
   const asAdmin = { get token() { return admin.accessToken; } };
+  const asApprover = { get token() { return approver.accessToken; } };
   async function createBounty(form: AdminBountyForm): Promise<string> {
     const res = await e2e.post('/admin/bounties', saveAdminBountyBody(form, true), { token: admin.accessToken });
     expect(res.status).toBe(201);
@@ -127,7 +131,13 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await transition(bountyId, 'COMPLETED')).body)
       .toEqual(badRequest(['Record completed payments for all approved winners and finish every pending payout.']));
 
-    expect((await e2e.post(`/admin/payouts/${payoutId}/approve`, undefined, asAdmin)).body).toEqual({ id: payoutId, status: 'APPROVED' });
+    // two-person rule: the requesting admin cannot approve their own payout
+    expect((await e2e.post(`/admin/payouts/${payoutId}/approve`, undefined, asAdmin)).body)
+      .toEqual({ statusCode: 403, error: 'Forbidden', message: 'PAYOUT_SELF_APPROVAL' });
+    // a funded bounty with an open payout cannot be deleted
+    expect((await e2e.delete(`/admin/bounties/${bountyId}`, asAdmin)).body)
+      .toEqual({ statusCode: 409, error: 'Conflict', message: 'BOUNTY_HAS_OPEN_FUNDS' });
+    expect((await e2e.post(`/admin/payouts/${payoutId}/approve`, undefined, asApprover)).body).toEqual({ id: payoutId, status: 'APPROVED' });
     expect((await e2e.post(`/admin/payouts/${payoutId}/paid`, { txHash: 'not-a-hash' }, asAdmin)).body).toEqual(badRequest('INVALID_TX_HASH'));
     const payoutHash = txHash().toUpperCase().replace('0X', '0x');
     const paid = await e2e.post(`/admin/payouts/${payoutId}/paid`, { txHash: payoutHash }, asAdmin);
@@ -158,6 +168,11 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     const audit = await e2e.get(`/admin/audit-logs?entityType=bounty&entityId=${bountyId}`, asAdmin);
     expect(audit.body.items.map((i: { action: string }) => i.action).sort())
       .toEqual(['BOUNTY_COMPLETED', 'BOUNTY_CREATED', 'BOUNTY_IN_REVIEW', 'BOUNTY_OPEN', 'BOUNTY_SUBMISSION_CLOSED']);
+    const payoutAudit = await e2e.get(`/admin/audit-logs?entityType=payout&entityId=${payoutId}`, asAdmin);
+    expect(payoutAudit.body.items.map((i: { action: string; actor_user_id: string }) => [i.action, i.actor_user_id]).sort())
+      .toEqual([['PAYOUT_APPROVED', approver.userId], ['PAYOUT_PAID', admin.userId], ['PAYOUT_REQUESTED', admin.userId]]);
+    // fully paid → the delete guard lets it go
+    expect((await e2e.delete(`/admin/bounties/${bountyId}`, asAdmin)).body).toEqual({ id: bountyId });
   });
 
   it('a deposit tx hash is never accepted as a payout tx hash (and vice versa) → 409 TX_HASH_ALREADY_USED', async () => {
@@ -171,7 +186,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     const sub = await e2e.post(`/bounties/${id}/submissions`, submitBody({ submissionUrl: 'https://demo.example/h', description: 'h' }), { token: builder.accessToken });
     await e2e.post(`/admin/submissions/${sub.body.id}/review`, { decision: 'APPROVE' }, asAdmin);
     const payout = await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000000' }, asAdmin);
-    await e2e.post(`/admin/payouts/${payout.body.id}/approve`, undefined, asAdmin);
+    await e2e.post(`/admin/payouts/${payout.body.id}/approve`, undefined, asApprover);
 
     // the sponsor's deposit (sponsor → multisig) cannot also be the winner's payout (multisig → winner)
     const reused = await e2e.post(`/admin/payouts/${payout.body.id}/paid`, { txHash: depositHash.toUpperCase().replace('0X', '0x') }, asAdmin);
@@ -194,6 +209,34 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await e2e.delete(`/admin/bounties/${id}`, asAdmin)).status).toBe(404);
     const audit = await e2e.get(`/admin/audit-logs?entityType=bounty&entityId=${id}`, asAdmin);
     expect(audit.body.items.map((i: { action: string }) => i.action).filter((a: string) => a === 'BOUNTY_DELETED')).toEqual(['BOUNTY_DELETED']);
+  });
+
+  it('DELETE /admin/bounties/:id → 409 BOUNTY_HAS_OPEN_FUNDS once the deposit is confirmed (no BOUNTY_DELETED row); allowed while DEPOSIT_PENDING', async () => {
+    const funded = await createBounty(bountyForm({ reward: { amount: 1, currency: 'INJ' } }));
+    const rewardId: string = (await e2e.get(`/admin/bounties/${funded}/operations`, asAdmin)).body.rewards[0].id;
+    expect((await e2e.post(`/admin/rewards/${rewardId}/confirm-deposit`, { txHash: txHash(), depositedAmount: '1000000000000000000' }, asAdmin)).status).toBe(201);
+    const refused = await e2e.delete(`/admin/bounties/${funded}`, asAdmin);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({ statusCode: 409, error: 'Conflict', message: 'BOUNTY_HAS_OPEN_FUNDS' });
+    const audit = await e2e.get(`/admin/audit-logs?entityType=bounty&entityId=${funded}`, asAdmin);
+    expect(audit.body.items.map((i: { action: string }) => i.action)).not.toContain('BOUNTY_DELETED');
+
+    const pending = await createBounty(bountyForm({ reward: { amount: 1, currency: 'INJ' } }));
+    expect((await e2e.delete(`/admin/bounties/${pending}`, asAdmin)).body).toEqual({ id: pending });
+  });
+
+  it('payout over the posted amount is refused even when the sponsor over-deposited (400 PAYOUT_EXCEEDS_AVAILABLE_REWARD)', async () => {
+    const builder = await e2e.login();
+    await e2e.onboard(builder);
+    const id = await createBounty(bountyForm({ intakeEnabled: false, reward: { amount: 1, currency: 'INJ' } }));
+    const rewardId: string = (await e2e.get(`/admin/bounties/${id}/operations`, asAdmin)).body.rewards[0].id;
+    expect((await e2e.post(`/admin/rewards/${rewardId}/confirm-deposit`, { txHash: txHash(), depositedAmount: '2000000000000000000' }, asAdmin)).status).toBe(201);
+    expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
+    const sub = await e2e.post(`/bounties/${id}/submissions`, submitBody({ submissionUrl: 'https://demo.example/o', description: 'o' }), { token: builder.accessToken });
+    await e2e.post(`/admin/submissions/${sub.body.id}/review`, { decision: 'APPROVE' }, asAdmin);
+    const over = await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000001' }, asAdmin);
+    expect(over.body).toEqual(badRequest('PAYOUT_EXCEEDS_AVAILABLE_REWARD'));
+    expect((await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000000' }, asAdmin)).status).toBe(201);
   });
 
   it('USDC reward from the FE (ERC20 without contract) is pinned to the configured Injective EVM contract', async () => {

@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
@@ -6,6 +7,7 @@ import { isUniqueViolation } from '../common/database/pg-errors';
 import { TOKEN_AMOUNT } from '../common/validation/token-amount';
 import { normalizeTxHash } from '../common/validation/tx-hash';
 import { NftsService } from '../nfts/nfts.service';
+import { allowsPayoutSelfApproval, PAYOUT_ALLOW_SELF_APPROVAL_ENV } from './payout-approval';
 
 /**
  * MVP 보상 흐름 (ERD §10)
@@ -18,12 +20,19 @@ import { NftsService } from '../nfts/nfts.service';
 @Injectable()
 export class RewardsService {
   private readonly logger = new Logger(RewardsService.name);
+  private readonly allowSelfApproval: boolean;
 
   constructor(
     private readonly db: DatabaseService,
     private readonly nfts: NftsService,
     private readonly audit: AuditService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.allowSelfApproval = allowsPayoutSelfApproval(config.get<string>(PAYOUT_ALLOW_SELF_APPROVAL_ENV));
+    if (this.allowSelfApproval) {
+      this.logger.warn(`${PAYOUT_ALLOW_SELF_APPROVAL_ENV}=true — the requesting admin may approve their own payouts (two-person rule disabled; each self-approval is audited as PAYOUT_SELF_APPROVED)`);
+    }
+  }
 
   /**
    * 운영자: 선입금 확인 처리 → 보상 FUNDED, 바운티 OPEN 전환은 admin 쪽에서.
@@ -39,6 +48,10 @@ export class RewardsService {
       await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [hash]);
       const asPayout = await tx.query(`SELECT 1 FROM payout WHERE payout_tx_hash = $1 LIMIT 1`, [hash]);
       if (asPayout.rowCount) throw new ConflictException('TX_HASH_ALREADY_USED');
+      // 바운티 행 잠금 — 삭제(BountyAdminService.remove의 BOUNTY_HAS_OPEN_FUNDS 검사)와 직렬화하고, 삭제된 바운티의 입금은 받지 않는다
+      const parent = await tx.query(`SELECT b.id FROM bounty b JOIN bounty_reward rw ON rw.bounty_id = b.id
+        WHERE rw.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [rewardId]);
+      if (!parent.rowCount) throw new NotFoundException('REWARD_NOT_FOUND_OR_NOT_PENDING');
       const r = await tx.query(
         `UPDATE bounty_reward
             SET status = 'FUNDED', deposit_tx_hash = $2, deposited_amount = $3::numeric, deposited_at = now()
@@ -54,7 +67,8 @@ export class RewardsService {
 
   /**
    * 운영자: 승인된 제출물에 대한 지급 요청 생성 (멱등).
-   * 보상이 이미 PAID여도 여유분(deposited_amount − 취소 아닌 payout 합계)이 남아 있으면 받는다 — 첫 지급 뒤 운영자가 maxWinners를 올려
+   * 배정 상한(2026-10-24 결정): 취소 아닌 payout 합계 + amount ≤ LEAST(게시 금액 amount, 입금액 deposited_amount) — 초과 입금은 상한을 올리지 않는다.
+   * 보상이 이미 PAID여도 여유분(그 상한 − 취소 아닌 payout 합계)이 남아 있으면 받는다 — 첫 지급 뒤 운영자가 maxWinners를 올려
    * 수상자를 추가한 경우. 그때는 삽입 후 상태를 재계산해 PARTIALLY_PAID로 되돌린다 (advanceRewardStatus). 여유분이 없으면 400 PAYOUT_EXCEEDS_AVAILABLE_REWARD.
    */
   async requestPayout(rewardId: string, submissionId: string, amount: string, adminId: string) {
@@ -65,8 +79,8 @@ export class RewardsService {
       if (!parent.rowCount) throw new NotFoundException('REWARD_NOT_FOUND');
       if (!BountyStatusPolicy.isInProgress(parent.rows[0].status)) throw new BadRequestException('BOUNTY_REVIEW_CLOSED');
       // Serialize allocations against the same funded pool.
-      const reward = await tx.query<{ bounty_id: string; status: string; deposited_amount: string }>(
-        `SELECT bounty_id, status, deposited_amount::text FROM bounty_reward WHERE id = $1 FOR UPDATE`,
+      const reward = await tx.query<{ bounty_id: string; status: string; cap: string }>(
+        `SELECT bounty_id, status, LEAST(amount, deposited_amount)::text AS cap FROM bounty_reward WHERE id = $1 FOR UPDATE`,
         [rewardId],
       );
       if (!reward.rowCount || !['FUNDED', 'PARTIALLY_PAID', 'PAID'].includes(reward.rows[0].status)) {
@@ -88,7 +102,7 @@ export class RewardsService {
         `SELECT COALESCE(SUM(amount), 0)::text AS amount FROM payout
           WHERE bounty_reward_id = $1 AND status <> 'CANCELLED'`, [rewardId],
       );
-      if (BigInt(allocated.rows[0].amount) + BigInt(amount) > BigInt(reward.rows[0].deposited_amount)) {
+      if (BigInt(allocated.rows[0].amount) + BigInt(amount) > BigInt(reward.rows[0].cap)) {
         throw new BadRequestException('PAYOUT_EXCEEDS_AVAILABLE_REWARD');
       }
       const r = await tx.query(
@@ -106,9 +120,21 @@ export class RewardsService {
     });
   }
 
-  /** 운영자: 멀티시그 승인 완료 표시 — 상태 전이와 감사 로그를 같은 트랜잭션에 */
+  /**
+   * 운영자: 멀티시그 승인 완료 표시 — 상태 전이와 감사 로그를 같은 트랜잭션에.
+   * 2인 규칙: 요청한 운영자(requested_by)와 다른 운영자만 승인할 수 있다 → 같으면 403 PAYOUT_SELF_APPROVAL
+   * (PAYOUT_ALLOW_SELF_APPROVAL=true면 허용 + warn + 감사 PAYOUT_SELF_APPROVED). rewards/payout-approval.ts
+   */
   async markApproved(payoutId: string, adminId: string) {
     return this.db.tx(async (tx) => {
+      const current = await tx.query<{ requested_by: string }>(
+        `SELECT requested_by FROM payout
+          WHERE id = $1 AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL') FOR UPDATE`,
+        [payoutId],
+      );
+      if (!current.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
+      const selfApproval = current.rows[0].requested_by === adminId;
+      if (selfApproval && !this.allowSelfApproval) throw new ForbiddenException('PAYOUT_SELF_APPROVAL');
       const r = await tx.query(
         `UPDATE payout SET status = 'APPROVED', approved_by = $2, approved_at = now()
           WHERE id = $1 AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL')
@@ -116,7 +142,10 @@ export class RewardsService {
         [payoutId, adminId],
       );
       if (!r.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
-      await this.audit.record(adminId, 'PAYOUT_APPROVED', 'payout', payoutId, tx);
+      if (selfApproval) {
+        this.logger.warn(`payout ${payoutId}: approved by the admin who requested it (${PAYOUT_ALLOW_SELF_APPROVAL_ENV}=true) — audited as PAYOUT_SELF_APPROVED`);
+      }
+      await this.audit.record(adminId, selfApproval ? 'PAYOUT_SELF_APPROVED' : 'PAYOUT_APPROVED', 'payout', payoutId, tx);
       return r.rows[0];
     });
   }
@@ -207,7 +236,8 @@ export class RewardsService {
 
   /**
    * payout 변동 뒤 보상 상태 재계산 (markPaid / requestPayout 트랜잭션 안에서 호출). 지급된 payout이 하나라도 있어야 움직인다.
-   *   PAID            — 열린 payout(PAID/CANCELLED 아님)이 없고, PAID 수가 max_winners에 도달했거나 PAID 합계가 입금액을 소진한 경우
+   *   PAID            — 열린 payout(PAID/CANCELLED 아님)이 없고, PAID 수가 max_winners에 도달했거나 PAID 합계가 배정 상한
+   *                     LEAST(amount, deposited_amount)를 소진한 경우 (requestPayout과 같은 상한 — 초과 입금분은 여유분이 아니다)
    *   PARTIALLY_PAID  — 그 외: 잔액/수상자가 남았거나, 아직 지급 전인 payout이 있다 (PAID였다가 maxWinners 인상 후 payout이 추가된 경우 포함)
    *   FUNDED          — 지급된 것이 없으면 건드리지 않는다 (요청만 있는 상태는 "부분 지급"이 아니다)
    * 현재 상태에서 다시 계산하므로 몇 번 호출해도 결과가 같다.
@@ -218,7 +248,7 @@ export class RewardsService {
     await tx.query(
       `UPDATE bounty_reward rw
           SET status = CASE
-                WHEN p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= rw.deposited_amount) THEN 'PAID'
+                WHEN p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= LEAST(rw.amount, rw.deposited_amount)) THEN 'PAID'
                 ELSE 'PARTIALLY_PAID'
               END
          FROM bounty b,

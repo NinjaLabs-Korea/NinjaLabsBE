@@ -14,7 +14,7 @@
 | 관리자 vs 스폰서 최종 승인 | **관리자(운영자)가 최종 승인** | MVP는 어드민만 심사 UI 보유. 스폰서 계정 기능은 추후 |
 | **[결정 2026-10-24] 철회 후 재지원** | **허용 — 같은 행을 다시 연다.** 본인(또는 내 에이전트)의 WITHDRAWN 지원에 `POST /bounties/:id/applications`(에이전트는 `/agent-api/v1/...`)를 다시 보내면 `id`를 유지한 채 PENDING으로 되돌리고 새 `message`/`portfolio_url`, `applied_at = now()`, 심사 필드 초기화, 감사 `APPLICATION_REAPPLIED`. 새 지원과 같은 검사(바운티 OPEN, 지원/제출 마감 전, 제출 방식)를 바운티 행 잠금 아래에서 통과해야 한다. PENDING/APPROVED/REJECTED는 계속 409 `ALREADY_APPLIED` | `uq_application_user`/`uq_application_agent`(0004)는 그대로 — 행을 지우지 않으므로 지원 이력 id가 안정적이다. `applications/applications.service.ts` applyForActor |
 | 바운티 취소 조건 | DRAFT/FUNDING_PENDING/OPEN에서만, 관리자만 | `bounties/bounty-status.ts`의 전이 맵에 반영됨 |
-| **[미결] 바운티 삭제 정책** | 현재: 운영자는 상태와 무관하게 soft delete 가능 (`DELETE /admin/bounties/:id` → `deleted_at`, 감사 `BOUNTY_DELETED`는 같은 트랜잭션). 입금 확인된 보상(`bounty_reward.status` FUNDED)이나 열린 payout이 있어도 막지 않는다 | 결정 필요: 그런 바운티의 삭제를 막을지(409) / CANCELLED + 환불 경로만 허용할지 / 지금처럼 허용하고 운영 절차로 처리할지. 바꾸려면 `bounty-admin.service.ts` remove()에 사전 조건 추가 + FE `BountyManager` 오류 문구 |
+| **[결정 2026-10-24] 바운티 삭제 정책** | **돈이 묶여 있으면 409 `BOUNTY_HAS_OPEN_FUNDS`.** 막는 경우: 보상이 `REFUND_PENDING`, 또는 `FUNDED`/`PARTIALLY_PAID`/`PAID`인데 PAID 합계 < `LEAST(amount, deposited_amount)`(남은 돈), 또는 종료 상태(`PAID`/`CANCELLED`/`FAILED`)가 아닌 payout. 허용: 보상이 `DEPOSIT_PENDING`/`REFUNDED`/`CANCELLED`이거나 전액 지급된 `PAID`뿐. 돈이 남은 바운티는 CANCELLED → 환불(REFUNDED) 뒤 삭제 | 검사는 바운티 행 `FOR UPDATE` 아래 — `requestPayout`·`confirmDeposit`도 바운티 행을 먼저 잠그므로 직렬화되고, 삭제된 바운티의 입금 확인은 404 `REWARD_NOT_FOUND_OR_NOT_PENDING`. `bounty-admin.service.ts` remove(). |
 
 ## 보상
 
@@ -22,6 +22,8 @@
 |---|---|---|
 | 멀티시그 서명 인원/기준 | **2-of-3** (운영 코어 3인) | 오프체인 정책 — 코드 아님. 운영 문서에 서명자 명시 필요 |
 | 보상금 일부 지급 | 가능 — `payout.amount`가 reward 총액과 독립 | 분할 지급 = payout 여러 건 |
+| **[결정 2026-10-24] 배정 상한** | 취소 아닌 payout 합계 + 새 금액 ≤ **`LEAST(게시 금액 amount, 입금액 deposited_amount)`** — 초과 입금은 상한을 올리지 않는다 (초과분은 환불 대상). 넘으면 400 `PAYOUT_EXCEEDS_AVAILABLE_REWARD`(기존 코드 유지 — FE 호환). 보상 상태 재계산(PAID 판정의 "풀 소진")도 같은 상한을 쓴다 | `rewards.service.ts` requestPayout / advanceRewardStatus |
+| **[결정 2026-10-24] payout 승인 2인 규칙** | `POST /admin/payouts/:id/approve`는 요청한 운영자(`payout.requested_by`)와 **다른** 운영자만 — 같으면 403 `PAYOUT_SELF_APPROVAL`. 운영자 1인 배포용 탈출구: env `PAYOUT_ALLOW_SELF_APPROVAL=true`(기본 false) → 허용 + `Logger.warn` + 감사 `PAYOUT_SELF_APPROVED`(PAYOUT_APPROVED 대신) | `requested_by`/`approved_by`는 0006부터 있다(`requested_by NOT NULL`) — 새 마이그레이션 불필요. `rewards/payout-approval.ts`, `rewards.service.ts` markApproved |
 | 여러 수상자 분배 | 운영자가 payout 생성 시 금액 직접 입력 | 자동 균등분배는 추후. `bounty_reward` 1:N `payout` 구조라 유연 |
 | 취소 시 환불 | 운영자가 멀티시그에서 스폰서 주소로 수동 환불, `bounty_reward.status = REFUNDED` 기록 | REFUND_PENDING → REFUNDED 상태 이미 존재 |
 | Injective native USDC 식별 | EVM은 ERC-20 주소+chain ID, Cosmos는 `erc20:<lowercase address>` denom을 함께 저장 | MTS의 동일 자산을 두 실행 환경에서 혼동하지 않도록 서버 환경설정으로 강제 |

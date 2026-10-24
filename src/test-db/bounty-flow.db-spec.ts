@@ -23,6 +23,8 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
   let submissions: SubmissionsService;
   let submissionReview: SubmissionReviewService;
   let adminId: string;
+  /** second admin — the two-person rule forbids the requesting admin (adminId) from approving their own payout */
+  let approverId: string;
 
   beforeAll(async () => {
     db = createDb();
@@ -30,12 +32,13 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     const config = testConfig();
     nfts = new NftsService(db, config);
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-    rewards = new RewardsService(db, nfts, audit);
+    rewards = new RewardsService(db, nfts, audit, config);
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
     submissions = new SubmissionsService(db);
     submissionReview = new SubmissionReviewService(db, audit);
     adminId = await createUser(db, { isAdmin: true });
+    approverId = await createUser(db, { isAdmin: true });
   });
   afterAll(async () => db.onModuleDestroy());
 
@@ -123,7 +126,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     expect(payout.status).toBe('REQUESTED');
     await expect(rewards.requestPayout(rewardId, submitted.id, '1', adminId)).rejects.toMatchObject({ message: 'PAYOUT_ALREADY_REQUESTED' });
     await expect(rewards.markPaid(payout.id, fakeTxHash(), adminId)).rejects.toMatchObject({ message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' }); // not approved yet
-    await expect(rewards.markApproved(payout.id, adminId)).resolves.toEqual({ id: payout.id, status: 'APPROVED' });
+    await expect(rewards.markApproved(payout.id, approverId)).resolves.toEqual({ id: payout.id, status: 'APPROVED' });
 
     const payoutHash = fakeTxHash();
     const paid = await rewards.markPaid(payout.id, payoutHash, adminId);
@@ -149,7 +152,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     const sub2 = await submissions.submit(second.bountyId, builderId, { submissionUrl: 'https://x.test/2', description: 'd' });
     await submissionReview.review(sub2.id, 'APPROVE', undefined, adminId);
     const payout2 = await rewards.requestPayout(second.rewardId, sub2.id, '1000', adminId);
-    await rewards.markApproved(payout2.id, adminId);
+    await rewards.markApproved(payout2.id, approverId);
     await expect(rewards.markPaid(payout2.id, payoutHash.toLowerCase(), adminId)).rejects.toMatchObject({ message: 'TX_HASH_ALREADY_USED' });
     const payout2Row = await db.query<{ status: string }>(`SELECT status FROM payout WHERE id = $1`, [payout2.id]);
     expect(payout2Row.rows[0].status).toBe('APPROVED'); // rolled back
@@ -195,13 +198,13 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     // one multisig tx pays both winners → the same hash is recorded on both payouts of this bounty
     const multiSendHash = fakeTxHash();
     const first = await rewards.requestPayout(rewardId, winners[0].submissionId, '400', adminId);
-    await rewards.markApproved(first.id, adminId);
+    await rewards.markApproved(first.id, approverId);
     await rewards.markPaid(first.id, multiSendHash, adminId);
     expect((await rewardRow(rewardId)).status).toBe('PARTIALLY_PAID');
 
     await expect(rewards.requestPayout(rewardId, winners[1].submissionId, '601', adminId)).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' });
     const second = await rewards.requestPayout(rewardId, winners[1].submissionId, '600', adminId);
-    await rewards.markApproved(second.id, adminId);
+    await rewards.markApproved(second.id, approverId);
     await expect(rewards.markPaid(second.id, multiSendHash.toLowerCase(), adminId)).resolves.toMatchObject({ id: second.id, status: 'PAID' });
     expect((await rewardRow(rewardId)).status).toBe('PAID');
     const paidHashes = await db.query<{ payout_tx_hash: string }>(`SELECT payout_tx_hash FROM payout WHERE bounty_reward_id = $1 AND status = 'PAID'`, [rewardId]);
@@ -269,7 +272,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     const firstSubmission = await approvedWinner(bountyId, 1);
     const first = await rewards.requestPayout(rewardId, firstSubmission, '400', adminId);
     expect((await rewardRow(rewardId)).status).toBe('FUNDED'); // a request alone is not a partial payment
-    await rewards.markApproved(first.id, adminId);
+    await rewards.markApproved(first.id, approverId);
     await rewards.markPaid(first.id, fakeTxHash(), adminId);
     expect((await rewardRow(rewardId)).status).toBe('PAID'); // 1 winner paid of max_winners 1, even though 600 is left
 
@@ -282,7 +285,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     expect(second.status).toBe('REQUESTED');
     expect((await rewardRow(rewardId)).status).toBe('PARTIALLY_PAID'); // back from PAID: a payout is open again
 
-    await rewards.markApproved(second.id, adminId);
+    await rewards.markApproved(second.id, approverId);
     await rewards.markPaid(second.id, fakeTxHash(), adminId);
     expect((await rewardRow(rewardId)).status).toBe('PAID');
 
@@ -291,6 +294,94 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     const thirdSubmission = await approvedWinner(bountyId, 3);
     await expect(rewards.requestPayout(rewardId, thirdSubmission, '1', adminId)).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' });
     expect((await rewardRow(rewardId)).status).toBe('PAID');
+  });
+
+  describe('payout policy (2026-10-24): two-person approval, allocation cap, delete guard', () => {
+    async function openWithWinner(amount = '1000', deposit = amount) {
+      const { bountyId, rewardId } = await createFundedBounty({ amount });
+      await rewards.confirmDeposit(rewardId, fakeTxHash(), deposit, adminId);
+      await bounties.transition(bountyId, 'OPEN', adminId);
+      const submissionId = await approvedWinner(bountyId, 1);
+      return { bountyId, rewardId, submissionId };
+    }
+
+    it('the requesting admin cannot approve their own payout (403 PAYOUT_SELF_APPROVAL); another admin can, and approved_by is stored', async () => {
+      const { rewardId, submissionId } = await openWithWinner();
+      const payout = await rewards.requestPayout(rewardId, submissionId, '1000', adminId);
+      await expect(rewards.markApproved(payout.id, adminId)).rejects.toMatchObject({ status: 403, message: 'PAYOUT_SELF_APPROVAL' });
+      const before = await db.query(`SELECT status, requested_by, approved_by FROM payout WHERE id = $1`, [payout.id]);
+      expect(before.rows[0]).toEqual({ status: 'REQUESTED', requested_by: adminId, approved_by: null });
+      await expect(rewards.markApproved(payout.id, approverId)).resolves.toEqual({ id: payout.id, status: 'APPROVED' });
+      const after = await db.query(`SELECT status, approved_by FROM payout WHERE id = $1`, [payout.id]);
+      expect(after.rows[0]).toEqual({ status: 'APPROVED', approved_by: approverId });
+      expect(await auditActions(db, 'payout', payout.id)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED']);
+    });
+
+    it('PAYOUT_ALLOW_SELF_APPROVAL=true lets a solo operator approve their own payout, audited as PAYOUT_SELF_APPROVED', async () => {
+      const solo = new RewardsService(db, nfts, new AuditService(db), testConfig({ PAYOUT_ALLOW_SELF_APPROVAL: 'true' }));
+      const { rewardId, submissionId } = await openWithWinner();
+      const payout = await solo.requestPayout(rewardId, submissionId, '1000', adminId);
+      await expect(solo.markApproved(payout.id, adminId)).resolves.toEqual({ id: payout.id, status: 'APPROVED' });
+      expect(await auditActions(db, 'payout', payout.id)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_SELF_APPROVED']);
+    });
+
+    it('an over-deposit does not raise the allocation cap: sum + amount ≤ LEAST(amount, deposited_amount); paying the posted amount ends PAID', async () => {
+      const { rewardId, submissionId } = await openWithWinner('1000', '1500');
+      expect((await rewardRow(rewardId)).deposited_amount).toBe('1500');
+      await expect(rewards.requestPayout(rewardId, submissionId, '1001', adminId)).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' });
+      const payout = await rewards.requestPayout(rewardId, submissionId, '1000', adminId);
+      await rewards.markApproved(payout.id, approverId);
+      await rewards.markPaid(payout.id, fakeTxHash(), adminId);
+      expect((await rewardRow(rewardId)).status).toBe('PAID');
+    });
+
+    it('PAID-with-headroom uses the same cap: after maxWinners is raised, the over-deposited surplus is not allocatable', async () => {
+      const { bountyId, rewardId, submissionId } = await openWithWinner('1000', '1500');
+      const first = await rewards.requestPayout(rewardId, submissionId, '600', adminId);
+      await rewards.markApproved(first.id, approverId);
+      await rewards.markPaid(first.id, fakeTxHash(), adminId);
+      expect((await rewardRow(rewardId)).status).toBe('PAID'); // max_winners 1 reached
+      await bounties.update(bountyId, { maxWinners: 2 }, adminId);
+      const second = await approvedWinner(bountyId, 2);
+      await expect(rewards.requestPayout(rewardId, second, '401', adminId)).rejects.toMatchObject({ message: 'PAYOUT_EXCEEDS_AVAILABLE_REWARD' }); // 900 would fit the deposit
+      await expect(rewards.requestPayout(rewardId, second, '400', adminId)).resolves.toMatchObject({ status: 'REQUESTED' });
+    });
+
+    it('DELETE refuses 409 BOUNTY_HAS_OPEN_FUNDS while funds are held or a payout is open; allows DEPOSIT_PENDING, fully PAID, REFUNDED; a deleted bounty takes no deposit', async () => {
+      // DEPOSIT_PENDING only → allowed; its reward can no longer be confirmed
+      const pending = await createFundedBounty();
+      await expect(bounties.remove(pending.bountyId, adminId)).resolves.toEqual({ id: pending.bountyId });
+      await expect(rewards.confirmDeposit(pending.rewardId, fakeTxHash(), '1000', adminId)).rejects.toMatchObject({ message: 'REWARD_NOT_FOUND_OR_NOT_PENDING' });
+
+      // FUNDED → refused
+      const { bountyId, rewardId, submissionId } = await openWithWinner();
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ status: 409, message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      // REQUESTED / APPROVED payout → refused
+      const payout = await rewards.requestPayout(rewardId, submissionId, '1000', adminId);
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      await rewards.markApproved(payout.id, approverId);
+      await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      // fully PAID → allowed
+      await rewards.markPaid(payout.id, fakeTxHash(), adminId);
+      expect((await rewardRow(rewardId)).status).toBe('PAID');
+      await expect(bounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
+      expect(await auditActions(db, 'bounty', bountyId)).toContain('BOUNTY_DELETED');
+
+      // PAID with headroom (600 left in custody) → refused
+      const partial = await openWithWinner();
+      const p1 = await rewards.requestPayout(partial.rewardId, partial.submissionId, '400', adminId);
+      await rewards.markApproved(p1.id, approverId);
+      await rewards.markPaid(p1.id, fakeTxHash(), adminId);
+      expect((await rewardRow(partial.rewardId)).status).toBe('PAID');
+      await expect(bounties.remove(partial.bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      // the operator refunds the remainder → REFUND_PENDING still blocks, REFUNDED allows
+      await db.query(`UPDATE bounty_reward SET status = 'REFUND_PENDING' WHERE id = $1`, [partial.rewardId]);
+      await expect(bounties.remove(partial.bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
+      await db.query(`UPDATE bounty_reward SET status = 'REFUNDED' WHERE id = $1`, [partial.rewardId]);
+      await expect(bounties.remove(partial.bountyId, adminId)).resolves.toEqual({ id: partial.bountyId });
+      const deletedAudit = await auditActions(db, 'bounty', partial.bountyId);
+      expect(deletedAudit.filter((a) => a === 'BOUNTY_DELETED')).toEqual(['BOUNTY_DELETED']);
+    });
   });
 
   describe('two transactions racing (each call takes its own pool client, so Promise.all is two real concurrent transactions)', () => {
@@ -305,7 +396,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
 
     async function approvedPayout(rewardId: string, submissionId: string, amount: string) {
       const payout = await rewards.requestPayout(rewardId, submissionId, amount, adminId);
-      await rewards.markApproved(payout.id, adminId);
+      await rewards.markApproved(payout.id, approverId);
       return payout.id;
     }
 
@@ -364,7 +455,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
           return new AuditService(db).record(actor, action, type, id, runner as never);
         },
       } as unknown as AuditService;
-      return { service: new RewardsService(db, nfts, parkingAudit), parked: parked.promise, release: () => release.resolve() };
+      return { service: new RewardsService(db, nfts, parkingAudit, testConfig()), parked: parked.promise, release: () => release.resolve() };
     }
 
     it('markPaid with the SAME hash on payouts of two different bounties while the first is still uncommitted: the advisory lock makes the second wait and then see the PAID row → 409 TX_HASH_ALREADY_USED', async () => {

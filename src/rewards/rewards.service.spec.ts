@@ -1,4 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
@@ -6,6 +7,7 @@ import { withParamsCheck } from '../test-support/expect-params-match';
 import { RewardsService } from './rewards.service';
 
 const txHash = `0x${'ab'.repeat(32)}`;
+const config = (values: Record<string, string> = {}) => ({ get: (key: string) => values[key] }) as unknown as ConfigService;
 
 describe('RewardsService markPaid', () => {
   type PayoutRow = { id: string; bounty_id: string; payout_tx_hash: string | null; status: string };
@@ -69,6 +71,7 @@ describe('RewardsService markPaid', () => {
       db as unknown as DatabaseService,
       nfts as unknown as NftsService,
       new AuditService(db as unknown as DatabaseService),
+      config(),
     );
     return { service, query, tx, db, nfts, target };
   }
@@ -192,7 +195,8 @@ describe('RewardsService markPaid', () => {
     const sql = sqls[recompute];
     // Derived from current state (idempotent): PAID only when nothing is still open and the pool or the winner count is exhausted;
     // a PAID reward drops back to PARTIALLY_PAID once a new payout is requested; nothing moves before the first PAID payout.
-    expect(sql).toContain("p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= rw.deposited_amount) THEN 'PAID'");
+    // the pool is the allocation cap LEAST(posted amount, deposit) — an over-deposit is not headroom (same cap as requestPayout)
+    expect(sql).toContain("p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= LEAST(rw.amount, rw.deposited_amount)) THEN 'PAID'");
     expect(sql).toContain("ELSE 'PARTIALLY_PAID'");
     expect(sql).toContain("count(*) FILTER (WHERE status NOT IN ('PAID', 'CANCELLED'))::int AS open_count");
     expect(sql).toContain("rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')");
@@ -202,18 +206,19 @@ describe('RewardsService markPaid', () => {
 
 describe('RewardsService confirmDeposit', () => {
   /** SQL 모양으로 답한다 — 해시 잠금, payout 해시 조회(options.payoutHashes), 조건부 UPDATE(rowCount), 감사 INSERT */
-  function setup(rowCount = 1, options: { payoutHashes?: string[] } = {}) {
+  function setup(rowCount = 1, options: { payoutHashes?: string[]; bountyDeleted?: boolean } = {}) {
     const query = jest.fn(async (sql: string, params?: unknown[]) => {
       if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [{}] };
       if (sql.includes('FROM payout WHERE payout_tx_hash = $1')) {
         const hit = (options.payoutHashes ?? []).includes(params![0] as string);
         return { rowCount: hit ? 1 : 0, rows: hit ? [{}] : [] };
       }
+      if (sql.includes('FROM bounty b JOIN bounty_reward rw')) return options.bountyDeleted ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ id: 'bounty' }] };
       if (sql.includes("SET status = 'FUNDED'")) return { rowCount, rows: rowCount ? [{ id: 'reward', bounty_id: 'bounty', status: 'FUNDED' }] : [] };
       return { rowCount: 1, rows: [] };
     });
     const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) as unknown as jest.Mock })) };
-    const service = new RewardsService(db as never, {} as never, new AuditService(db as never));
+    const service = new RewardsService(db as never, {} as never, new AuditService(db as never), config());
     return { service, query, db };
   }
   const sqlIndex = (query: jest.Mock, fragment: string) => query.mock.calls.findIndex(([sql]) => (sql as string).includes(fragment));
@@ -225,9 +230,12 @@ describe('RewardsService confirmDeposit', () => {
     expect(db.query).not.toHaveBeenCalled();
     const lock = sqlIndex(query, 'pg_advisory_xact_lock');
     const payoutCheck = sqlIndex(query, 'FROM payout WHERE payout_tx_hash = $1');
+    const bountyLock = sqlIndex(query, 'FROM bounty b JOIN bounty_reward rw');
     const update = sqlIndex(query, "SET status = 'FUNDED'");
     const audit = sqlIndex(query, 'INSERT INTO audit_log');
-    expect([lock, payoutCheck, update, audit]).toEqual([0, 1, 2, 3]);
+    expect([lock, payoutCheck, bountyLock, update, audit]).toEqual([0, 1, 2, 3, 4]);
+    expect(query.mock.calls[bountyLock][0]).toContain('b.deleted_at IS NULL FOR UPDATE OF b');
+    expect(query.mock.calls[bountyLock][1]).toEqual(['reward']);
     expect(query.mock.calls[lock][1]).toEqual([txHash]);
     expect(query.mock.calls[payoutCheck][1]).toEqual([txHash]);
     expect(query.mock.calls[update][1]).toEqual(['reward', txHash, '1000000']);
@@ -237,6 +245,13 @@ describe('RewardsService confirmDeposit', () => {
   it('refuses a hash already recorded as a payout → 409 TX_HASH_ALREADY_USED, no UPDATE, no audit', async () => {
     const { service, query } = setup(1, { payoutHashes: [txHash] });
     await expect(service.confirmDeposit('reward', txHash, '1000000', 'admin')).rejects.toMatchObject({ message: 'TX_HASH_ALREADY_USED' });
+    expect(sqlIndex(query, "SET status = 'FUNDED'")).toBe(-1);
+    expect(sqlIndex(query, 'INSERT INTO audit_log')).toBe(-1);
+  });
+
+  it('locks the bounty row (serializes with DELETE /admin/bounties/:id) and refuses a reward of a deleted bounty → 404, no UPDATE', async () => {
+    const { service, query } = setup(1, { bountyDeleted: true });
+    await expect(service.confirmDeposit('reward', txHash, '1000000', 'admin')).rejects.toThrow('REWARD_NOT_FOUND_OR_NOT_PENDING');
     expect(sqlIndex(query, "SET status = 'FUNDED'")).toBe(-1);
     expect(sqlIndex(query, 'INSERT INTO audit_log')).toBe(-1);
   });
@@ -266,27 +281,55 @@ describe('RewardsService confirmDeposit', () => {
   });
 });
 
-describe('RewardsService markApproved', () => {
-  function setup(rowCount = 1) {
-    const query = jest.fn().mockResolvedValue({ rowCount, rows: rowCount ? [{ id: 'payout', status: 'APPROVED' }] : [] });
-    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) })) };
-    const service = new RewardsService(db as never, {} as never, new AuditService(db as never));
-    return { service, query, db };
+describe('RewardsService markApproved (two-person rule)', () => {
+  function setup(options: { found?: boolean; requestedBy?: string; allowSelf?: string } = {}) {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+      if (sql.startsWith('SELECT requested_by FROM payout')) {
+        return options.found === false ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ requested_by: options.requestedBy ?? 'requester' }] };
+      }
+      if (sql.includes("SET status = 'APPROVED'")) return { rowCount: 1, rows: [{ id: 'payout', status: 'APPROVED' }] };
+      return { rowCount: 1, rows: [] };
+    });
+    const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) as unknown as jest.Mock })) };
+    const service = new RewardsService(db as never, {} as never, new AuditService(db as never),
+      config(options.allowSelf === undefined ? {} : { PAYOUT_ALLOW_SELF_APPROVAL: options.allowSelf }));
+    const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    return { service, query, db, warn };
   }
 
-  it('approves the payout and audits inside the same transaction', async () => {
-    const { service, query, db } = setup();
-    await expect(service.markApproved('payout', 'admin')).resolves.toEqual({ id: 'payout', status: 'APPROVED' });
+  it('a different admin approves: row locked, approved_by stored, PAYOUT_APPROVED audited in the same transaction', async () => {
+    const { service, query, db, warn } = setup();
+    await expect(service.markApproved('payout', 'approver')).resolves.toEqual({ id: 'payout', status: 'APPROVED' });
     expect(db.tx).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
-    expect(query.mock.calls[0][0]).toContain("SET status = 'APPROVED'");
-    expect(query.mock.calls[0][1]).toEqual(['payout', 'admin']);
-    expect(query.mock.calls[1][0]).toContain('INSERT INTO audit_log');
-    expect(query.mock.calls[1][1]).toEqual(['admin', 'PAYOUT_APPROVED', 'payout', 'payout']);
+    expect(query.mock.calls[0][0]).toContain("status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL') FOR UPDATE");
+    expect(query.mock.calls[1][0]).toContain("SET status = 'APPROVED', approved_by = $2");
+    expect(query.mock.calls[1][1]).toEqual(['payout', 'approver']);
+    expect(query.mock.calls[2][1]).toEqual(['approver', 'PAYOUT_APPROVED', 'payout', 'payout']);
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it('does not audit when the payout is not in an approvable status', async () => {
-    const { service, query } = setup(0);
+  it('the requesting admin is refused with 403 PAYOUT_SELF_APPROVAL — no UPDATE, no audit', async () => {
+    const { service, query } = setup({ requestedBy: 'admin' });
+    await expect(service.markApproved('payout', 'admin')).rejects.toMatchObject({ status: 403, message: 'PAYOUT_SELF_APPROVAL' });
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['false', '', '1', 'yes'])('PAYOUT_ALLOW_SELF_APPROVAL=%p keeps the rule', async (allowSelf) => {
+    const { service } = setup({ requestedBy: 'admin', allowSelf });
+    await expect(service.markApproved('payout', 'admin')).rejects.toMatchObject({ message: 'PAYOUT_SELF_APPROVAL' });
+  });
+
+  it.each(['true', ' TRUE '])('PAYOUT_ALLOW_SELF_APPROVAL=%p (solo operator) allows it with a warn and audits PAYOUT_SELF_APPROVED instead of PAYOUT_APPROVED', async (allowSelf) => {
+    const { service, query, warn } = setup({ requestedBy: 'admin', allowSelf });
+    expect(warn).not.toHaveBeenCalled(); // the boot-time warn fired in the constructor, before the spy
+    await expect(service.markApproved('payout', 'admin')).resolves.toEqual({ id: 'payout', status: 'APPROVED' });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('approved by the admin who requested it'));
+    expect(query.mock.calls[2][1]).toEqual(['admin', 'PAYOUT_SELF_APPROVED', 'payout', 'payout']);
+  });
+
+  it('404 PAYOUT_NOT_FOUND_OR_WRONG_STATUS for an unknown or non-approvable payout, before the self-approval check', async () => {
+    const { service, query } = setup({ found: false, requestedBy: 'admin' });
     await expect(service.markApproved('payout', 'admin')).rejects.toThrow('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
     expect(query).toHaveBeenCalledTimes(1);
   });
@@ -296,16 +339,22 @@ describe('RewardsService payout allocation', () => {
   function setup(options: { funded?: boolean; rewardStatus?: string; wallet?: boolean; duplicate?: boolean; allocated?: string } = {}) {
     const query = jest.fn()
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'IN_REVIEW' }] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ bounty_id: 'bounty', status: options.funded === false ? 'DEPOSIT_PENDING' : options.rewardStatus ?? 'FUNDED', deposited_amount: '10000000' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ bounty_id: 'bounty', status: options.funded === false ? 'DEPOSIT_PENDING' : options.rewardStatus ?? 'FUNDED', cap: '10000000' }] })
       .mockResolvedValueOnce({ rowCount: options.wallet === false ? 0 : 1, rows: [{ wallet_id: 'wallet' }] })
       .mockResolvedValueOnce({ rowCount: options.duplicate ? 1 : 0, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ amount: options.allocated ?? '0' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'payout', status: 'REQUESTED' }] })
       .mockResolvedValue({ rowCount: 1, rows: [] });
     const db = { query: jest.fn(), tx: (callback: (tx: { query: jest.Mock }) => Promise<unknown>) => callback({ query: withParamsCheck(query) }) };
-    const service = new RewardsService(db as never, {} as never, new AuditService(db as never));
+    const service = new RewardsService(db as never, {} as never, new AuditService(db as never), config());
     return { service, query, db };
   }
+  it('caps the allocation at LEAST(posted amount, deposit): the reward is read as that cap, so an over-deposit does not raise it', async () => {
+    const { service, query } = setup({ allocated: '5000000' });
+    await expect(service.requestPayout('reward', 'sub', '5000001', 'admin')).rejects.toThrow('PAYOUT_EXCEEDS_AVAILABLE_REWARD');
+    expect(query.mock.calls[1][0]).toContain('LEAST(amount, deposited_amount)::text AS cap FROM bounty_reward WHERE id = $1 FOR UPDATE');
+    await expect(setup({ allocated: '5000000' }).service.requestPayout('reward', 'sub', '5000000', 'admin')).resolves.toMatchObject({ status: 'REQUESTED' });
+  });
   it('creates a payout against the matching bounty, recomputes the reward status and audits inside the transaction', async () => {
     const { service, query, db } = setup();
     await expect(service.requestPayout('reward', 'sub', '5000000', 'admin')).resolves.toMatchObject({ status: 'REQUESTED' });

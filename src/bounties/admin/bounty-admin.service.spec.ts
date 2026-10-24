@@ -11,11 +11,12 @@ describe('BountyAdminService update safeguards', () => {
   const future = new Date(Date.now() + 86_400_000).toISOString();
   const past = new Date(Date.now() - 60_000).toISOString();
 
-  function setup(options: { exists?: boolean; approved?: number; status?: string; stored?: { submission_deadline: string; application_deadline: string | null } } = {}) {
+  function setup(options: { exists?: boolean; approved?: number; status?: string; openFunds?: { open_rewards: number; open_payouts: number }; stored?: { submission_deadline: string; application_deadline: string | null } } = {}) {
     const stored = options.stored ?? { submission_deadline: future, application_deadline: null };
     // The dynamic UPDATE builder is the statement most likely to drift ($n vs values) — every tx statement is checked for it.
     const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FOR UPDATE')) return { rowCount: options.exists === false ? 0 : 1, rows: [{ id: bountyId, status: options.status ?? 'OPEN', ...stored }] };
+      if (sql.includes('AS open_rewards')) return { rowCount: 1, rows: [options.openFunds ?? { open_rewards: 0, open_payouts: 0 }] };
       if (sql.includes("status = 'APPROVED'")) return { rowCount: 1, rows: [{ count: String(options.approved ?? 0) }] };
       if (sql.startsWith('UPDATE bounty')) return { rowCount: 1, rows: [{ id: bountyId, status: 'OPEN' }] };
       return { rowCount: 1, rows: [] };
@@ -46,14 +47,36 @@ describe('BountyAdminService update safeguards', () => {
     expect(db.query).not.toHaveBeenCalled();
   });
 
-  it('remove soft-deletes and audits BOUNTY_DELETED on the same transaction client (nothing autocommits)', async () => {
+  it('remove locks the bounty row, checks open funds, soft-deletes and audits BOUNTY_DELETED on the same transaction client (nothing autocommits)', async () => {
     const { service, query, db } = setup();
     await expect(service.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId, status: 'OPEN' });
     expect(db.tx).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
-    expect(query.mock.calls[0][0]).toContain('UPDATE bounty SET deleted_at = now()');
-    expect(query.mock.calls[1][0]).toContain('INSERT INTO audit_log');
-    expect(query.mock.calls[1][1]).toEqual([adminId, 'BOUNTY_DELETED', 'bounty', bountyId]);
+    expect(query.mock.calls[0][0]).toContain('SELECT id FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE');
+    const check = query.mock.calls[1][0] as string;
+    expect(check).toContain("rw.status = 'REFUND_PENDING'");
+    expect(check).toContain("rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')");
+    expect(check).toContain('LEAST(rw.amount, rw.deposited_amount) >');
+    expect(check).toContain("p.status NOT IN ('PAID', 'CANCELLED', 'FAILED')");
+    expect(query.mock.calls[2][0]).toContain('UPDATE bounty SET deleted_at = now()');
+    expect(query.mock.calls[3][0]).toContain('INSERT INTO audit_log');
+    expect(query.mock.calls[3][1]).toEqual([adminId, 'BOUNTY_DELETED', 'bounty', bountyId]);
+  });
+
+  it.each([
+    ['a reward still holding funds', { open_rewards: 1, open_payouts: 0 }],
+    ['a non-terminal payout', { open_rewards: 0, open_payouts: 1 }],
+  ])('remove refuses with 409 BOUNTY_HAS_OPEN_FUNDS when there is %s — no UPDATE, no audit row', async (_label, openFunds) => {
+    const { service, query } = setup({ openFunds });
+    await expect(service.remove(bountyId, adminId)).rejects.toMatchObject({ status: 409, message: 'BOUNTY_HAS_OPEN_FUNDS' });
+    expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty'))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => (sql as string).includes('audit_log'))).toBe(false);
+  });
+
+  it('remove of a missing/deleted bounty is 404 before the funds check', async () => {
+    const { service, query } = setup({ exists: false });
+    await expect(service.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_NOT_FOUND' });
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it.each([

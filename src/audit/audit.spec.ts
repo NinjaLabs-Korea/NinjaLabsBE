@@ -3,7 +3,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { DatabaseService } from '../common/database/database.service';
 import { withParamsCheck } from '../test-support/expect-params-match';
-import { AuditLogsQueryDto } from './audit.controller';
+import { AuditController, AuditLogsQueryDto } from './audit.controller';
 import { AuditService } from './audit.service';
 
 const failedFields = async (body: object) =>
@@ -59,5 +59,48 @@ describe('AuditService.list', () => {
     expect(listSql).toContain('WHERE entity_id = $1');
     expect(listSql).toContain('LIMIT $2 OFFSET $3');
     expect(listParams).toEqual(['e', 30, 30]);
+  });
+});
+
+describe('AuditService.record', () => {
+  it('binds actor/action/entity in order and stores a missing actor (system job) as NULL', async () => {
+    const query = jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [] })));
+    const service = new AuditService({ query } as unknown as DatabaseService);
+    await service.record(undefined, 'NFT_MINTED', 'nft', 'e1');
+    await service.record('u1', 'BOUNTY_UPDATED', 'bounty', 'e2');
+    expect(query.mock.calls.map(([sql, params]) => [sql.includes('INSERT INTO audit_log'), params])).toEqual([
+      [true, [null, 'NFT_MINTED', 'nft', 'e1']],
+      [true, ['u1', 'BOUNTY_UPDATED', 'bounty', 'e2']],
+    ]);
+  });
+
+  it('writes through the given transaction runner instead of the pool, so the audit row commits or rolls back with the change', async () => {
+    const pool = jest.fn();
+    const tx = { query: jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1 }))) };
+    await new AuditService({ query: pool } as unknown as DatabaseService).record('u1', 'A', 'bounty', 'e', tx);
+    expect(pool).not.toHaveBeenCalled();
+    expect(tx.query).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a failed insert (the caller's transaction must roll back, not silently lose the audit trail)", async () => {
+    const failure = Object.assign(new Error('value too long'), { code: '22001' });
+    const service = new AuditService({ query: jest.fn().mockRejectedValue(failure) } as unknown as DatabaseService);
+    await expect(service.record('u1', 'X'.repeat(101), 'bounty', 'e')).rejects.toBe(failure);
+  });
+});
+
+describe('AuditController', () => {
+  it('defaults to page 1 and forwards the filters', async () => {
+    const list = jest.fn().mockResolvedValue('page');
+    const controller = new AuditController({ list } as unknown as AuditService);
+    await expect(controller.list({})).resolves.toBe('page');
+    await controller.list({ page: 2, entityType: 'bounty', entityId: 'e' });
+    expect(list.mock.calls).toEqual([[{ page: 1, entityType: undefined, entityId: undefined }], [{ page: 2, entityType: 'bounty', entityId: 'e' }]]);
+  });
+
+  it('rejects a page above MAX_PAGE (OFFSET overflow) and a non-integer page', async () => {
+    expect(await failedFields({ page: '100001' })).toEqual(['page']);
+    expect(await failedFields({ page: '1.5' })).toEqual(['page']);
+    expect(await failedFields({ page: '100000' })).toEqual([]);
   });
 });

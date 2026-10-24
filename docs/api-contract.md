@@ -198,7 +198,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
   같은 행에 `postedRewards[]`(바운티에 **걸린** 보상 `bounty_reward` 목록, 같은 원소 모양 — 보상이 없으면 `[]`)와
   `payoutStatus: 'PAID' | 'PARTIALLY_PAID' | 'PENDING' | 'NONE'`이 함께 온다 (2026-10-25, 다중 보상 대응). 판정 대상은 **이 제출에 지급될 보상(owed)** —
   그 바운티의 보상 중 입금 확인 상태(`FUNDED`/`PARTIALLY_PAID`/`PAID`)이면서 ① 이 제출의 취소 아닌 payout 행이 있거나 ② 이 제출의 payout 행이
-  하나도 없고 아직 여유분(`LEAST(amount, deposited_amount)` − 취소 아닌 payout 합계 > 0)이 남은 것. `paid` = owed 중 이 제출의 `PAID` payout이 있는 것.
+  하나도 없고 아직 여유분(`LEAST(amount, deposited_amount)` − 취소 아닌 payout 합계 > 0)이 남았고 수령자(제출자/에이전트 소유자)가 탈퇴하지 않은 것. `paid` = owed 중 이 제출의 `PAID` payout이 있는 것.
   `NONE` owed 없음(보상 없음·입금 전·다른 수상자가 상한을 다 가져감·수상 취소 — `CANCELLED` payout만 있는 제출은 다시 요청할 수 없다) / `PAID` paid = owed / `PARTIALLY_PAID` 일부만 지급 / `PENDING` 하나도 지급 전.
   예: 보상 2개 중 하나 지급·다른 하나 여유분 있음 → `PARTIALLY_PAID`, 다른 하나가 다른 수상자에게 소진됨 → `PAID`.
   `/submissions/me`의 `payment_status`와 **같은 SQL**(`src/rewards/payout-status.ts` `payoutStatusSql`). FE는 `PENDING`/`PARTIALLY_PAID`이면 `rewards`(지급된 것) 옆에 `postedRewards`를 "지급 대기"로 보여준다.

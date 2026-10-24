@@ -23,7 +23,9 @@ type LifecycleBlocker = { code: LifecycleBlockerCode; count?: number; message: s
  *   unawarded 아직 받을 몫이 남은 승인 제출 (owesUnpaidRewardSql — 응답의 payoutStatus가 PENDING/PARTIALLY_PAID인 것과 같은 규칙).
  *             보상 풀이 다른 수상자에게 다 배정됐거나(여유분 없음), 수상이 취소된(CANCELLED payout만 있는) 제출은 막지 않는다 —
  *             IN_REVIEW에서는 CANCELLED로 갈 수 없고 승인도 되돌릴 수 없어서, 그런 제출로 막으면 바운티가 영영 끝나지 않는다.
- *             FAILED payout이 걸린 제출은 받을 몫이 남은 것이라 막는다 (운영자가 정정/취소로 닫는다, docs/runbook.md §7.4).
+ *             FAILED payout이 걸린 제출은 받을 몫이 남은 것이라 막는다 — 운영자가 온체인 미송금을 확인한 뒤 CANCELLED로 닫는다
+ *             (docs/runbook.md §7.4 "FAILED payout" 항목. 문서의 취소 SQL WHERE는 FAILED를 받지 않으므로 그 항목대로 바꿔 돌린다).
+ *             미요청인데 수령자가 탈퇴한 제출도 막지 않는다 (requestPayout이 404 — payout-status.ts recipientActiveSql).
  */
 @Injectable()
 export class BountyLifecycleService {

@@ -96,14 +96,27 @@ export function rewardHeadroomSql(rw = 'rw', p = 'p'): string {
 }
 
 /**
+ * 제출 `<s>`의 수령자(제출자, 에이전트 제출이면 그 소유자)가 탈퇴하지 않았나 — requestPayout의 수령자 조건(u.deleted_at IS NULL)과 같다.
+ * 지갑 조건은 넣지 않는다: 지갑은 다시 연결할 수 있지만 탈퇴는 되돌릴 수 없다.
+ */
+export function recipientActiveSql(submission = 's'): string {
+  const s = alias(submission, 'recipientActiveSql');
+  return `EXISTS (SELECT 1 FROM "user" rcp WHERE rcp.deleted_at IS NULL
+                     AND rcp.id = COALESCE(${s}.submitter_user_id, (SELECT ax.owner_user_id FROM agent ax WHERE ax.id = ${s}.agent_id)))`;
+}
+
+/**
  * 승인된 제출 `<s>`(바운티 `<b>`)의 지급 상태 SQL 식.
  *   owed = 그 바운티의 보상 중 입금 확인 상태(PAYABLE_REWARD_STATUSES)이면서 이 제출이 받을 몫이 있는 것:
  *            (a) 이 제출의 배정된 payout 행(ALLOCATED — 취소 아님)이 있다, 또는
- *            (b) 이 제출의 payout 행이 **하나도** 없고 보상에 여유분이 남았다 — requestPayout이 아직 받아 줄 수 있다.
+ *            (b) 이 제출의 payout 행이 **하나도** 없고 보상에 여유분이 남았고 수령자(제출자 또는 에이전트 소유자)가 탈퇴하지 않았다
+ *                — requestPayout이 아직 받아 줄 수 있다. 탈퇴한 수령자는 requestPayout이 404라 영영 받을 수 없다
+ *                (풀이 가득 찼을 때 탈퇴한 뒤 다른 수상이 취소돼 여유분이 생기는 경우 — 이걸 빼면 COMPLETED가 영영 막힌다).
+ *                지갑만 없는 수령자는 다시 연결하면 받을 수 있으므로 계속 owed다.
  *          취소된 payout만 있는 제출은 (a)도 (b)도 아니다: 취소는 수상 취소이고, requestPayout은 (보상, 제출)에 행이 있으면
  *          상태와 무관하게 409 PAYOUT_ALREADY_REQUESTED라 다시 받을 수 없다 → NONE.
  *   paid = owed 중 이 제출의 PAID payout이 있는 것
- *   NONE           owed가 비었다 (보상 없음 / 입금 전 / 다른 수상자가 다 가져감 / 수상 취소)
+ *   NONE           owed가 비었다 (보상 없음 / 입금 전 / 다른 수상자가 다 가져감 / 수상 취소 / 미요청인데 수령자 탈퇴)
  *   PAID           paid = owed
  *   PARTIALLY_PAID 0 < paid < owed
  *   PENDING        paid = 0
@@ -124,7 +137,8 @@ export function payoutStatusSql(submission = 's', bounty = 'b'): string {
                     AND rw.status IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})
                     AND (EXISTS (SELECT 1 FROM payout px WHERE ${mine} AND px.status IN (${sqlStatusList(ALLOCATED_PAYOUT_STATUSES)}))
                          OR (NOT EXISTS (SELECT 1 FROM payout px WHERE ${mine})
-                             AND ${rewardHeadroomSql('rw', 'px')}))) owed)`;
+                             AND ${rewardHeadroomSql('rw', 'px')}
+                             AND ${recipientActiveSql(s)}))) owed)`;
 }
 
 /**

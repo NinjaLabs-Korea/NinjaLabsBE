@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   ALLOCATED_PAYOUT_STATUSES, allocatedPayoutSumSql, AWAITING_APPROVAL_PAYOUT_STATUSES, OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql,
-  PAYABLE_REWARD_STATUSES, paidPayoutSumSql, PAYOUT_ROW_STATUSES, PAYOUT_STATUSES, payoutStatusSql, rewardCapSql, rewardHeadroomSql,
+  PAYABLE_REWARD_STATUSES, paidPayoutSumSql, PAYOUT_ROW_STATUSES, PAYOUT_STATUSES, payoutStatusSql, recipientActiveSql, rewardCapSql, rewardHeadroomSql,
   SENDABLE_PAYOUT_STATUSES, sqlStatusList, TERMINAL_PAYOUT_STATUSES, UNSETTLED_PAYOUT_STATUSES,
 } from './payout-status';
 
@@ -28,12 +28,21 @@ describe('payoutStatusSql', () => {
     // (b) 행이 하나도 없고(취소된 행도 없음 — requestPayout이 409로 다시 받지 않는다) 여유분이 남음
     expect(sql).toContain('OR (NOT EXISTS (SELECT 1 FROM payout px WHERE px.bounty_reward_id = rw.id AND px.submission_id = s.id)');
     expect(sql).toContain(`AND ${rewardHeadroomSql('rw', 'px')}`);
+    // (b)는 탈퇴한 수령자를 빼낸다 — requestPayout이 404라 받을 수 없다 (bounty-flow.db-spec "withdrew their account")
+    expect(sql).toContain(`AND ${recipientActiveSql('s')}`);
     expect(sql).toMatch(/px\.submission_id = s\.id\s+AND px\.status = 'PAID'\) AS paid/);
     expect(sql).not.toMatch(/\$\d/); // no bind parameters — safe to embed in any query
   });
 
   it('owesUnpaidRewardSql is exactly "payoutStatusSql is PENDING or PARTIALLY_PAID" — the COMPLETED blocker and the response agree', () => {
     expect(owesUnpaidRewardSql('s', 'b')).toBe(`${payoutStatusSql('s', 'b')} IN ('PENDING', 'PARTIALLY_PAID')`);
+  });
+
+  it('recipientActiveSql: submitter or agent owner not withdrawn (same as requestPayout), no wallet condition', () => {
+    expect(recipientActiveSql('s')).toContain('rcp.deleted_at IS NULL');
+    expect(recipientActiveSql('s')).toContain('COALESCE(s.submitter_user_id, (SELECT ax.owner_user_id FROM agent ax WHERE ax.id = s.agent_id))');
+    expect(recipientActiveSql('s')).not.toContain('wallet');
+    expect(() => recipientActiveSql('s.id')).toThrow('alias must be an identifier');
   });
 
   it('uses the given aliases and refuses anything that is not an identifier', () => {

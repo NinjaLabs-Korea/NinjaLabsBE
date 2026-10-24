@@ -583,6 +583,23 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
         await expect(bounties.remove(bountyId, adminId)).resolves.toBeDefined(); // everything paid out → delete allowed
       });
 
+      it('a winner who withdrew their account while the pool was full does not block COMPLETED after a cancel frees headroom', async () => {
+        const { bountyId, rewardId } = await openBounty(3);
+        const a = await winner(bountyId, 1);
+        const b = await winner(bountyId, 2);
+        const gone = await winner(bountyId, 3);
+        await pay(rewardId, a.submissionId, '500');
+        const bPayout = await rewards.requestPayout(rewardId, b.submissionId, '500', adminId);
+        // withdrawal is allowed now (no headroom → PENDING_REWARD_SQL is 0); simulate its effect on the rows requestPayout reads
+        await db.query(`UPDATE "user" SET deleted_at = now(), status = 'WITHDRAWN' WHERE id = $1`, [gone.userId]);
+        await db.query(`UPDATE wallet SET disconnected_at = now(), is_primary = false WHERE user_id = $1`, [gone.userId]);
+        await runbookCancel(bPayout.id);
+        // nobody can pay the withdrawn winner (requestPayout → 404), so they must not hold the bounty open forever
+        await expect(rewards.requestPayout(rewardId, gone.submissionId, '500', adminId)).rejects.toMatchObject({ message: 'APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND' });
+        await toInReview(bountyId);
+        await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).resolves.toEqual({ id: bountyId, status: 'COMPLETED' });
+      });
+
       it('two rewards on one bounty: owed is per reward (paid on one, headroom on the other → PARTIALLY_PAID, blocks)', async () => {
         const { bountyId, rewardId } = await openBounty(2);
         const second = await db.query<{ id: string }>(

@@ -2,6 +2,8 @@
 import type { Pool } from 'pg';
 
 export declare const MIGRATIONS_DIR: string;
+/** applyMigrations()가 실행 전체에 잡는 pg_advisory_lock 키 (bigint 문자열) */
+export declare const MIGRATION_LOCK_KEY: string;
 export declare function migrationFiles(dir?: string): string[];
 export declare function sslOptions(
   env: Record<string, string | undefined>,

@@ -32,7 +32,16 @@ function migrationFiles(dir = MIGRATIONS_DIR) {
 }
 
 /**
+ * 마이그레이션 실행 전체를 감싸는 세션 수준 advisory lock 키 (임의의 고정 상수 — 다른 advisory lock 용도와 겹치지 않게 큰 값).
+ * 두 배포(예: Railway preDeploy가 겹친 경우)가 동시에 migrate하면 둘 다 `_migrations`에서 같은 파일을 "미적용"으로 보고 같은 DDL을 두 번 돌린다 —
+ * 하나는 실패하고 배포가 깨진다. 락을 잡은 쪽이 끝날 때까지 다른 쪽은 기다렸다가, 이미 적용된 파일을 skip한다.
+ */
+const MIGRATION_LOCK_KEY = '7242031118431903';
+
+/**
  * 아직 적용되지 않은 마이그레이션을 순서대로 적용한다. 파일 하나가 트랜잭션 하나.
+ * 실행 전체를 한 클라이언트(세션)에서 `pg_advisory_lock(MIGRATION_LOCK_KEY)`로 직렬화하고 finally에서 푼다 — 실패해도 락은 남지 않는다
+ * (세션 락이라 프로세스가 죽어 연결이 끊겨도 Postgres가 푼다). 한 클라이언트만 쓰므로 `max: 1` 풀에서도 동작한다.
  * 실패하면 그 파일을 롤백하고 `{ file }`을 붙인 에러를 던진다 (CLI는 exit 1, 테스트는 실패).
  * @param {import('pg').Pool} pool
  * @param {{ dir?: string, log?: (line: string) => void }} [options]
@@ -41,42 +50,56 @@ function migrationFiles(dir = MIGRATIONS_DIR) {
 async function applyMigrations(pool, options = {}) {
   const dir = options.dir || MIGRATIONS_DIR;
   const log = options.log || (() => {});
-  await pool.query(`CREATE TABLE IF NOT EXISTS _migrations (
-    name TEXT PRIMARY KEY,
-    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`);
-
-  const applied = [];
-  const skipped = [];
-  for (const file of migrationFiles(dir)) {
-    const done = await pool.query('SELECT 1 FROM _migrations WHERE name = $1', [file]);
-    if (done.rowCount) {
-      log(`skip  ${file}`);
-      skipped.push(file);
-      continue;
+  const client = await pool.connect();
+  // 마이그레이션 안의 RAISE NOTICE를 운영자가 볼 수 있게 (조건부 DO 블록이 무엇을 했는지 등). 풀 클라이언트는 재사용되므로 끝나면 떼어낸다
+  const onNotice = (n) => log(`[notice] ${n.message}`);
+  client.on('notice', onNotice);
+  let locked = false;
+  try {
+    const free = await client.query('SELECT pg_try_advisory_lock($1::bigint) AS ok', [MIGRATION_LOCK_KEY]);
+    if (!free.rows[0].ok) {
+      log('wait  another migration run holds the lock');
+      await client.query('SELECT pg_advisory_lock($1::bigint)', [MIGRATION_LOCK_KEY]);
     }
-    const sql = readFileSync(join(dir, file), 'utf8');
-    const client = await pool.connect();
-    // 마이그레이션 안의 RAISE NOTICE를 운영자가 볼 수 있게 (조건부 DO 블록이 무엇을 했는지 등). 풀 클라이언트는 재사용되므로 끝나면 떼어낸다
-    const onNotice = (n) => log(`[notice] ${n.message}`);
-    client.on('notice', onNotice);
+    locked = true;
+
+    await client.query(`CREATE TABLE IF NOT EXISTS _migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`);
+
+    const applied = [];
+    const skipped = [];
+    for (const file of migrationFiles(dir)) {
+      const done = await client.query('SELECT 1 FROM _migrations WHERE name = $1', [file]);
+      if (done.rowCount) {
+        log(`skip  ${file}`);
+        skipped.push(file);
+        continue;
+      }
+      const sql = readFileSync(join(dir, file), 'utf8');
+      try {
+        await client.query('BEGIN');
+        await client.query(sql);
+        await client.query('INSERT INTO _migrations (name) VALUES ($1)', [file]);
+        await client.query('COMMIT');
+        log(`apply ${file}`);
+        applied.push(file);
+      } catch (err) {
+        await client.query('ROLLBACK');
+        err.file = file;
+        throw err;
+      }
+    }
+    return { applied, skipped };
+  } finally {
     try {
-      await client.query('BEGIN');
-      await client.query(sql);
-      await client.query('INSERT INTO _migrations (name) VALUES ($1)', [file]);
-      await client.query('COMMIT');
-      log(`apply ${file}`);
-      applied.push(file);
-    } catch (err) {
-      await client.query('ROLLBACK');
-      err.file = file;
-      throw err;
+      if (locked) await client.query('SELECT pg_advisory_unlock($1::bigint)', [MIGRATION_LOCK_KEY]);
     } finally {
       client.off('notice', onNotice);
       client.release();
     }
   }
-  return { applied, skipped };
 }
 
 async function main() {
@@ -100,6 +123,6 @@ async function main() {
   console.log('done');
 }
 
-module.exports = { applyMigrations, migrationFiles, sslOptions, MIGRATIONS_DIR };
+module.exports = { applyMigrations, migrationFiles, sslOptions, MIGRATIONS_DIR, MIGRATION_LOCK_KEY };
 
 if (require.main === module) main();

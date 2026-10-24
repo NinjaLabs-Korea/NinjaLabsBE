@@ -22,7 +22,7 @@ describeDb('auth sessions on a real database', () => {
       TEST_JWT_SECRET,
     );
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   async function sessionRows(userId: string) {
     const r = await db.query<{

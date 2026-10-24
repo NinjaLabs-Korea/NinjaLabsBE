@@ -110,7 +110,7 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
       jest.spyOn(ok['logger'], 'log').mockImplementation(() => undefined);
       await expect(ok.onModuleInit()).resolves.toBeUndefined();
     } finally {
-      await Promise.all([stale.onModuleDestroy(), current.onModuleDestroy()]);
+      await Promise.all([stale.onApplicationShutdown(), current.onApplicationShutdown()]);
     }
   });
 
@@ -155,7 +155,7 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
       jest.spyOn(guard['logger'], 'log').mockImplementation(() => undefined);
       await expect(guard.onModuleInit()).resolves.toBeUndefined();
     } finally {
-      await stale.onModuleDestroy();
+      await stale.onApplicationShutdown();
     }
   });
 });

@@ -6,7 +6,7 @@ import { createDb, createUser, unique } from './harness';
 describeDb('maintenance sweep on a real database', () => {
   let db: DatabaseService;
   beforeAll(() => { db = createDb(); });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   it('deletes stale challenges, old sessions and expired login codes hourly, and clears grace tokens past the 30s window in the 5-minute cron', async () => {
     const userId = await createUser(db);

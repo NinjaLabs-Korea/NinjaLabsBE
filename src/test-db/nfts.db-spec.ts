@@ -27,7 +27,7 @@ describeDb('nft enqueue and worker recovery on a real database', () => {
   beforeEach(async () => {
     await db.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE status IN ('PENDING', 'PROCESSING')`);
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   function worker(chain: Partial<{ configured: boolean; exists: boolean }> = {}) {
     const stub = {

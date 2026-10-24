@@ -27,7 +27,7 @@ describeDb('nft_job worker on a real database', () => {
     // 다른 스위트가 남긴 대기 잡이 LIMIT 10 선점을 차지하지 않도록 치운다 (스위트는 직렬 실행 — 그쪽 단언은 이미 끝났다)
     await db.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE status IN ('PENDING', 'PROCESSING')`);
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   function chainStub(mint: (tokenId: string) => Promise<string>) {
     return {

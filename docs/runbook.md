@@ -46,6 +46,20 @@
 7. **어드민 부트스트랩** (§3) → 운영자 로그인 → `/admin` 접근 확인.
 8. **업타임 모니터** 등록 (§6). 첫 백업이 생성됐는지 확인 (§5).
 
+### 배포 중 종료 순서
+
+재배포 때 Railway는 새 컨테이너가 healthy가 된 뒤 옛 컨테이너에 SIGTERM을 보내고, `drainingSeconds`(30초, `.railway/railway.ts`)가 지나면 SIGKILL한다. 옛 컨테이너는 그 사이에 다음 순서로 닫힌다 (`app.enableShutdownHooks()`, Nest `close()`):
+
+1. `beforeApplicationShutdown` — 크론 정지. `NftJobWorker`·`MaintenanceService`·`PayoutWorker`는 새 실행을 건너뛰고 진행 중인 실행을 **최대 20초** 기다린다(`common/lifecycle/single-flight-task.ts`). NFT 워커는 진행 중인 잡 하나만 끝내고 배치의 나머지를 `PENDING`으로 돌려놓는다 — 로그 `shutdown: released N unstarted nft_job(s) back to PENDING`. 이 동안 HTTP는 계속 응답한다.
+2. HTTP 서버 종료 — 새 연결을 받지 않고 진행 중인 요청은 끝까지 처리한다.
+3. `onApplicationShutdown` — DB 풀 종료(`DatabaseService`). 풀은 항상 마지막이다.
+
+확인할 것:
+- 로그에 `Cannot use a pool after calling end on the pool`이 보이면 종료 순서가 깨진 것이다(풀을 먼저 닫는 훅이 생겼는지 본다 — `database.service.spec.ts`가 막는다).
+- `shutdown: nft_job batch still running after 20s` warn은 체인 호출이 20초 넘게 걸린 경우다. 그 잡은 `PROCESSING`에 남았다가 15분 뒤 고아 재큐잉되고 `nft-job-stale-requeue` 알림이 한 번 울린다 — 배포 시각과 겹치면 조치 불필요(§7.3).
+- 잡 하나의 `execute()`는 3분 기한이 있다. 넘기면 `nft_job execution timed out after 180s (chain call hung?)`로 일반 실패(10분 뒤 재시도) 처리되고, 늦게 착지한 mint는 다음 시도의 `tokenExists`가 복구한다. 반복되면 gRPC 노드를 의심한다(§7.3 "RPC/gRPC 타임아웃").
+- `drainingSeconds`를 줄일 때는 20초 드레인 + HTTP 드레인보다 크게 둔다(`src/deploy/railway-config.spec.ts`가 25초 이상을 강제한다).
+
 ## 2. 운영 스크립트
 
 모두 `scripts/migrate.js`와 같은 접속 규칙(`DATABASE_URL`, `DATABASE_CA_CERT`가 있으면 인증서 검증, 로컬은 `PGSSLMODE=disable`)을 쓴다 (`scripts/ops-cli.js`). 레포 루트 `.env`도 읽지만 셸 값이 우선한다.
@@ -202,7 +216,8 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
    - 가스 부족(`insufficient funds`) → 마스터 지갑 주소에 INJ 충전.
    - RPC/gRPC 타임아웃 → `INJECTIVE_GRPC_ENDPOINT`를 다른 노드로 바꾸고 재배포.
    - 컨트랙트 거부(권한/중복 token_id) → 마스터 지갑이 컨트랙트 minter인지 확인. 중복은 워커가 `tokenExists`로 자동 복구한다.
-   - 15분 넘게 PROCESSING → 워커가 스스로 되돌린다. 계속 반복되면 인스턴스 크래시를 의심(Railway 로그).
+   - 15분 넘게 PROCESSING → 워커가 스스로 되돌린다. 배포 직후 한 번이면 종료 드레인 20초를 넘긴 잡이다(§1 "배포 중 종료 순서"). 계속 반복되면 인스턴스 크래시를 의심(Railway 로그).
+   - `nft_job execution timed out after 180s` → 체인 호출이 멈췄다. 일반 실패로 재시도되며, 반복되면 RPC/gRPC 타임아웃과 같이 노드를 바꾼다.
 3. 원인을 고친 **뒤** FAILED 잡을 재시도(고치기 전에 돌리면 같은 이유로 5회 더 실패). 한두 건이면 운영 콘솔 FE `/admin/nft-jobs`의 재시도(`POST /admin/nft-jobs/:id/retry`, 감사 `NFT_JOB_RETRIED`)로 충분하다. 여러 건/콘솔 접근 불가 시 스크립트:
    ```bash
    railway run node scripts/requeue-nft-jobs.js --all --dry-run

@@ -14,7 +14,7 @@ describeDb('users on a real database', () => {
     db = createDb();
     users = new UsersService(db);
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   async function bounty(createdBy: string, title: string, options: { deleted?: boolean } = {}): Promise<string> {
     return (await db.query<{ id: string }>(

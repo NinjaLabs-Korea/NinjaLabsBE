@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BeforeApplicationShutdown, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '../database/database.service';
+import { SingleFlightTask } from '../lifecycle/single-flight-task';
 
 /**
  * 만료 데이터 정리 크론 — 테이블이 무한히 자라지 않게 하고, 쓸모없어진 비밀값(해시·암호화 사본)을 오래 두지 않는다.
@@ -13,19 +14,32 @@ import { DatabaseService } from '../database/database.service';
  * 5분마다 clearGraceCopies():
  *   auth_session.grace_refresh_token  30초 재사용 유예 창이 지난 암호화 후속 토큰 사본 — 평문 해시만 둔다는 원칙의 예외라 최대 ~5분만 남게 한다
  *                                     (예전엔 매시라 최대 1시간 남았다). refresh는 창 밖 사본을 어차피 쓰지 않는다
+ * 두 크론은 각자 한 번에 하나만 돌고, 종료 시 새 실행을 막고 진행 중인 실행을 기다린다 (SingleFlightTask).
  */
 @Injectable()
-export class MaintenanceService {
+export class MaintenanceService implements BeforeApplicationShutdown {
   private readonly logger = new Logger(MaintenanceService.name);
-  private running = false;
-  private clearingGrace = false;
+  private readonly sweeps = new SingleFlightTask();
+  private readonly graceClears = new SingleFlightTask();
 
   constructor(private readonly db: DatabaseService) {}
 
   @Cron(CronExpression.EVERY_HOUR)
   async sweep() {
-    if (this.running) return;
-    this.running = true;
+    await this.sweeps.run(() => this.sweepOnce());
+  }
+
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async clearGraceCopies() {
+    await this.graceClears.run(() => this.clearGraceCopiesOnce());
+  }
+
+  /** 종료 훅 — 이 훅이 끝난 뒤에야 DB 풀이 닫힌다 (DatabaseService.onApplicationShutdown) */
+  async beforeApplicationShutdown() {
+    await Promise.all([this.sweeps.stop(), this.graceClears.stop()]);
+  }
+
+  private async sweepOnce() {
     try {
       const challenges = await this.db.query(
         `DELETE FROM wallet_verification_challenge WHERE expires_at < now() - interval '1 day'`,
@@ -45,15 +59,10 @@ export class MaintenanceService {
       );
     } catch (err) {
       this.logger.error(`maintenance sweep failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      this.running = false;
     }
   }
 
-  @Cron(CronExpression.EVERY_5_MINUTES)
-  async clearGraceCopies() {
-    if (this.clearingGrace) return;
-    this.clearingGrace = true;
+  private async clearGraceCopiesOnce() {
     try {
       const graces = await this.db.query(
         `UPDATE auth_session SET grace_refresh_token = NULL
@@ -62,8 +71,6 @@ export class MaintenanceService {
       if (graces.rowCount) this.logger.log(`grace copies cleared: ${graces.rowCount}`);
     } catch (err) {
       this.logger.error(`grace copy cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      this.clearingGrace = false;
     }
   }
 }

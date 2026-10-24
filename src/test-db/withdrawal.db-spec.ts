@@ -46,7 +46,7 @@ describeDb('account withdrawal on a real database', () => {
     adminId = await createUser(db, { isAdmin: true });
     approverId = await createUser(db, { isAdmin: true });
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
 

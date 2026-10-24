@@ -3,7 +3,7 @@ import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
 import { withParamsCheck } from '../test-support/expect-params-match';
 import { InjectiveNftClient } from './injective-nft.client';
-import { NftJobWorker } from './nft-job.worker';
+import { JOB_EXECUTION_DEADLINE_MS, NftJobWorker } from './nft-job.worker';
 
 // 실제 클라이언트는 @injectivelabs/sdk-ts(ESM)를 끌어오므로 DI 메타데이터용 껍데기로 대체한다
 jest.mock('./injective-nft.client', () => ({ InjectiveNftClient: class {} }));
@@ -262,7 +262,7 @@ describe('NftJobWorker', () => {
     const succeeded = query.mock.calls.filter(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`));
     expect(succeeded).toHaveLength(1);
     expect(succeeded[0][1]).toEqual(['healthy']);
-    expect(worker['running']).toBe(false);
+    expect(worker['polling'].isRunning).toBe(false);
   });
 
   it('asks the chain whether the token exists before minting and mints only when it does not', async () => {
@@ -551,7 +551,95 @@ describe('NftJobWorker', () => {
       const { worker, query } = setup();
       query.mockRejectedValueOnce(new Error('db down'));
       await expect(worker.poll()).rejects.toThrow('db down');
-      expect(worker['running']).toBe(false);
+      expect(worker['polling'].isRunning).toBe(false);
+    });
+  });
+
+  describe('shutdown drain and per-job deadline', () => {
+    const released = (query: jest.Mock) => query.mock.calls.filter(([sql]) => sql.includes(`UPDATE nft_job SET status = 'PENDING' WHERE id = ANY($1::uuid[]) AND status = 'PROCESSING'`));
+    const succeeded = (query: jest.Mock) => query.mock.calls.filter(([sql]) => sql.includes(`SET status = 'SUCCEEDED'`)).map(([, params]) => params![0]);
+
+    it('beforeApplicationShutdown waits for the in-flight job, then releases the untouched rest of the batch to PENDING without running it', async () => {
+      const t = Date.now();
+      const { worker, query, chain } = setup({
+        claimed: [{ id: 'a', scheduled_at: new Date(t - 3000) }, { id: 'b', scheduled_at: new Date(t - 2000) }, { id: 'c', scheduled_at: new Date(t - 1000) }],
+      });
+      jest.spyOn(worker['logger'], 'log').mockImplementation(() => undefined);
+      let finishMint!: (hash: string) => void;
+      chain.mint.mockImplementationOnce(() => new Promise<string>((resolve) => { finishMint = resolve; }));
+
+      const poll = worker.poll();
+      await waitUntil(() => chain.mint.mock.calls.length === 1);
+      let drained = false;
+      const shutdown = worker.beforeApplicationShutdown().then(() => { drained = true; });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(drained).toBe(false); // still waiting on job a
+
+      finishMint('0xlate');
+      await Promise.all([poll, shutdown]);
+      expect(succeeded(query)).toEqual(['a']); // the in-flight job finished and was recorded
+      expect(chain.mint).toHaveBeenCalledTimes(1); // b and c never ran
+      const release = released(query);
+      expect(release).toHaveLength(1);
+      expect(release[0][1]).toEqual([['b', 'c']]);
+    });
+
+    it('a poll after shutdown claims nothing and touches no rows', async () => {
+      const { worker, query } = setup();
+      await worker.beforeApplicationShutdown();
+      await worker.poll();
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    it('shutdown arriving during the stale sweep skips the claim', async () => {
+      const { worker, query } = setup();
+      const base = query.getMockImplementation()!;
+      let releaseSweep!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseSweep = resolve; });
+      query.mockImplementationOnce(async (sql: string, params?: unknown[]) => { await gate; return base(sql, params); });
+      const poll = worker.poll();
+      const shutdown = worker.beforeApplicationShutdown();
+      releaseSweep();
+      await Promise.all([poll, shutdown]);
+      expect(query.mock.calls.some(([sql]) => sql.includes('FOR UPDATE SKIP LOCKED'))).toBe(false);
+    });
+
+    it('a release failure during shutdown is logged, not thrown (the 15-minute stale requeue is the fallback)', async () => {
+      const { worker, query, chain } = setup({ claimed: [{ id: 'a', scheduled_at: new Date(1) }, { id: 'b', scheduled_at: new Date(2) }] });
+      const base = query.getMockImplementation()!;
+      query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('id = ANY($1::uuid[]) AND status')) throw new Error('pool gone');
+        return base(sql, params);
+      });
+      const error = jest.spyOn(worker['logger'], 'error').mockImplementation(() => undefined);
+      let finishMint!: (hash: string) => void;
+      chain.mint.mockImplementationOnce(() => new Promise<string>((resolve) => { finishMint = resolve; }));
+      const poll = worker.poll();
+      await waitUntil(() => chain.mint.mock.calls.length === 1);
+      const shutdown = worker.beforeApplicationShutdown();
+      finishMint('0x');
+      await expect(Promise.all([poll, shutdown])).resolves.toBeDefined();
+      expect(error).toHaveBeenCalledWith('shutdown: could not release unstarted nft_job(s): pool gone');
+    });
+
+    it('a job whose chain call hangs past the deadline is recorded as an ordinary retryable failure and the batch moves on', async () => {
+      const { worker, query, chain } = setup({ claimed: [{ id: 'hung', scheduled_at: new Date(1) }, { id: 'next', scheduled_at: new Date(2) }] });
+      (worker as unknown as { executionDeadlineMs: number }).executionDeadlineMs = 20;
+      chain.mint.mockImplementationOnce(() => new Promise<string>(() => undefined)); // never settles
+      await worker.poll();
+      const retry = query.mock.calls.find(([sql]) => sql.includes('retry_count = retry_count + 1'));
+      expect(retry![1]).toEqual(['hung', 'PENDING', 'nft_job execution timed out after 0.02s (chain call hung?)']);
+      expect(succeeded(query)).toEqual(['next']);
+      expect(worker['polling'].isRunning).toBe(false);
+    });
+
+    it('the execution deadline stays well under the 15-minute stale-requeue interval', () => {
+      expect(JOB_EXECUTION_DEADLINE_MS).toBe(3 * 60_000);
     });
   });
 });
+
+async function waitUntil(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !condition(); i++) await new Promise((resolve) => setImmediate(resolve));
+  if (!condition()) throw new Error('condition not reached');
+}

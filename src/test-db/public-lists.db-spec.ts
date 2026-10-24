@@ -16,7 +16,7 @@ describeDb('public lists (members, hall of fame, notices) on a real database', (
     db = createDb();
     adminId = await createUser(db, { isAdmin: true });
   });
-  afterAll(async () => db.onModuleDestroy());
+  afterAll(async () => db.onApplicationShutdown());
 
   describe('MembersService.list', () => {
     async function member(options: { order?: number | null; status?: string; deleted?: boolean; isMember?: boolean; role?: string } = {}) {

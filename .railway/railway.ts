@@ -9,6 +9,11 @@ export default defineRailway(() => {
     preDeploy: "npm run migrate",
     healthcheck: "/health",
     healthcheckTimeout: 120,
+    deploy: {
+      // SIGTERM → SIGKILL 유예. 종료 훅이 크론/NFT 워커를 드레인(최대 20초, common/lifecycle/single-flight-task.ts)하고 진행 중 HTTP 요청을 끝낸 뒤
+      // 풀을 닫는다 — 플랫폼 기본값(0에 가깝다)이면 그 전에 SIGKILL로 잘려 잡이 PROCESSING에 남는다 (docs/runbook.md "배포 중 종료 순서")
+      drainingSeconds: 30,
+    },
     env: {
       // ── 공개 설정값 (git으로 관리) ──
       NODE_ENV: "production",

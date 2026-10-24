@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
+import { SHUTDOWN_DRAIN_TIMEOUT_MS } from '../common/lifecycle/single-flight-task';
 
 /**
  * production 배포 설정(.railway/railway.ts)의 오리진 허용 목록에 개발용 오리진이 섞이지 않았는지 — 텍스트로 검사한다
@@ -23,6 +24,11 @@ describe('.railway/railway.ts production origins', () => {
 
   it('THROTTLER_STORAGE is postgres so rate limits are shared across replicas (docs/security.md)', () => {
     expect(envValue('THROTTLER_STORAGE')).toBe('postgres');
+  });
+
+  it('drainingSeconds leaves room for the shutdown drain (SIGTERM → SIGKILL > SHUTDOWN_DRAIN_TIMEOUT_MS + HTTP drain)', () => {
+    const draining = Number(/\bdrainingSeconds:\s*(\d+)/.exec(source)?.[1]);
+    expect(draining).toBeGreaterThanOrEqual(SHUTDOWN_DRAIN_TIMEOUT_MS / 1000 + 5);
   });
 
   it('OPS_ALERT_WEBHOOK_URL is a secret: preserve()d, never a literal in git', () => {

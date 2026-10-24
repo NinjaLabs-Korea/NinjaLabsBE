@@ -21,68 +21,14 @@ import {
   GoogleIdTokenVerifier,
   GoogleVerifierUnavailableError,
 } from './google-id-token.verifier';
+import { normalizeRefreshTtl, refreshTtlSeconds } from './refresh-ttl';
+import { UserStatusCache } from './user-status-cache';
 
-/**
- * JWT_REFRESH_TTL 문법 — `<정수>[공백]<단위>`. 단위는 아래 표의 것만 받고 Postgres interval 단위로 정규화한다.
- * `m`은 항상 분(minutes)이다 (월이 아님) — Postgres가 `15m`을 분으로 해석하긴 하지만 명시적으로 고정한다.
- */
-const REFRESH_TTL = /^(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)$/;
-const REFRESH_TTL_UNITS: Record<string, string> = {
-  s: 'seconds', sec: 'seconds', secs: 'seconds', second: 'seconds', seconds: 'seconds',
-  m: 'minutes', min: 'minutes', mins: 'minutes', minute: 'minutes', minutes: 'minutes',
-  h: 'hours', hr: 'hours', hrs: 'hours', hour: 'hours', hours: 'hours',
-  d: 'days', day: 'days', days: 'days',
-  w: 'weeks', week: 'weeks', weeks: 'weeks',
-};
-
-const REFRESH_TTL_SECONDS: Record<string, number> = { seconds: 1, minutes: 60, hours: 3_600, days: 86_400, weeks: 604_800 };
-/** refresh 수명 허용 범위 — 60초 미만은 access 토큰보다 짧아 로그인이 즉시 풀리고, 90일 초과는 탈취 토큰의 수명이 너무 길다 */
-export const MIN_REFRESH_TTL_SECONDS = 60;
-export const MAX_REFRESH_TTL_SECONDS = 90 * 86_400;
 /**
  * revokeChain 이 prev_refresh_token_hash 를 따라가는 최대 홉 수. 정상 사슬은 폐기 후 30일(MaintenanceService)이 지나면 잘려 나가므로
  * 15분 회전이라도 이보다 훨씬 짧다 — 넘으면 손상된/조작된 사슬(순환 등)로 보고 그 유저의 열린 세션을 전부 폐기한다 (안전 쪽으로).
  */
 export const MAX_REVOKE_CHAIN_HOPS = 32;
-
-/**
- * `14d` → `'14 days'`, `15m` → `'15 minutes'`. 문법에 맞지 않거나 0 / 60초 미만 / 90일 초과면 throw (부팅 시 fail-fast).
- */
-export function normalizeRefreshTtl(raw: string | undefined): string {
-  const ttl = (raw ?? '14d').trim();
-  const match = REFRESH_TTL.exec(ttl);
-  if (!match) {
-    throw new Error(
-      `JWT_REFRESH_TTL must be "<integer> <unit>" with unit s/m/h/d/w or their long forms (e.g. 14d, 15m, 2 weeks), got "${ttl}"`,
-    );
-  }
-  const amount = Number(match[1]);
-  const unit = REFRESH_TTL_UNITS[match[2]];
-  const seconds = amount * REFRESH_TTL_SECONDS[unit];
-  if (seconds < MIN_REFRESH_TTL_SECONDS || seconds > MAX_REFRESH_TTL_SECONDS) {
-    throw new Error(
-      `JWT_REFRESH_TTL must be between ${MIN_REFRESH_TTL_SECONDS} seconds and 90 days (got "${ttl}" = ${seconds} seconds)`,
-    );
-  }
-  return `${amount} ${unit}`;
-}
-
-/** normalizeRefreshTtl의 결과(`'14 days'`) → 초. refresh 쿠키의 Max-Age (auth/session-cookie.ts) */
-export function refreshTtlSeconds(normalized: string): number {
-  const [amount, unit] = normalized.split(' ');
-  const perUnit = REFRESH_TTL_SECONDS[unit];
-  if (!perUnit || !/^\d+$/.test(amount)) throw new Error(`not a normalized refresh TTL: "${normalized}"`);
-  return Number(amount) * perUnit;
-}
-
-/**
- * AuthGuard의 유저 상태 캐시 — access JWT는 발급 시점 스냅샷이라, 정지(SUSPENDED/WITHDRAWN)·삭제된 유저도 만료(15분)까지 통과하던 것을 막는다.
- * 요청마다 DB를 치지 않도록 인스턴스(프로세스)별로 유저당 결과를 30초 보관한다 — 따라서 정지/삭제는 **최대 30초 늦게** 반영된다
- * (레플리카마다 독립 캐시, docs/security.md). 어드민 경로는 AdminGuard가 캐시 없이 매번 다시 확인하므로 즉시 반영된다.
- */
-export const USER_STATUS_CACHE_TTL_MS = 30_000;
-/** 캐시 상한 — 넘으면 가장 오래 넣은 항목부터 버린다 (Map 삽입 순서) */
-export const USER_STATUS_CACHE_MAX = 10_000;
 
 /**
  * `typ` 없는 레거시 access 토큰의 수용 기준 시각(ms). 이 시각 **이전에 발급된(iat)** 레거시 토큰만 받는다.
@@ -129,8 +75,8 @@ export class AuthService {
   readonly refreshTtlSeconds: number;
   /** typ 없는 레거시 access 토큰은 iat가 이 시각(ms) 이전일 때만 받는다 — legacyAccessTokenCutoff */
   private readonly legacyCutoffMs: number;
-  /** userId → (ACTIVE이고 삭제되지 않았는지, 확인 시각 ms). USER_STATUS_CACHE_TTL_MS 참고 */
-  private readonly userStatusCache = new Map<string, { active: boolean; checkedAt: number }>();
+  /** AuthGuard용 유저 상태 캐시 (프로세스별, 30초) — user-status-cache.ts */
+  private readonly userStatusCache = new UserStatusCache();
 
   /**
    * @param graceSecret grace_refresh_token 암호화 키 재료 (refresh-grace.ts). JwtModule이 서명에 쓰는 것과 **같은 provider**(JWT_SECRET,
@@ -520,7 +466,7 @@ export class AuthService {
 
   /** 이 프로세스의 유저 상태 캐시에서 한 유저를 지운다 — 탈퇴처럼 본인이 상태를 바꾼 직후 다음 요청부터 바로 반영되게 (다른 레플리카는 TTL ≤ 30초) */
   forgetUserStatus(userId: string): void {
-    this.userStatusCache.delete(userId);
+    this.userStatusCache.forget(userId);
   }
 
   /**
@@ -528,22 +474,14 @@ export class AuthService {
    * 거부되므로 세션을 비운다). 결과는 USER_STATUS_CACHE_TTL_MS 동안 캐시한다 (정지/삭제 반영 지연 ≤ 30초).
    */
   async assertActiveUser(userId: string, now = Date.now()): Promise<void> {
-    const cached = this.userStatusCache.get(userId);
-    let active: boolean;
-    if (cached && now - cached.checkedAt < USER_STATUS_CACHE_TTL_MS) {
-      active = cached.active;
-    } else {
+    let active = this.userStatusCache.get(userId, now);
+    if (active === undefined) {
       const r = await this.db.query(
         `SELECT 1 FROM "user" WHERE id = $1 AND status = 'ACTIVE' AND deleted_at IS NULL`,
         [userId],
       );
       active = r.rowCount === 1;
-      this.userStatusCache.delete(userId); // 다시 넣어 삽입 순서(=제거 순서)를 갱신
-      this.userStatusCache.set(userId, { active, checkedAt: now });
-      if (this.userStatusCache.size > USER_STATUS_CACHE_MAX) {
-        const oldest = this.userStatusCache.keys().next().value;
-        if (oldest !== undefined) this.userStatusCache.delete(oldest);
-      }
+      this.userStatusCache.set(userId, active, now);
     }
     if (!active) throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
   }

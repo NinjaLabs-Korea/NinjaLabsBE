@@ -82,6 +82,32 @@ describeDb('throttling over HTTP (e2e)', () => {
     expect(last.headers['x-ratelimit-limit']).toBe('600');
   });
 
+  it('/auth/logout: the 11th call in a minute with the same refresh token is 429 (Retry-After-auth-token) even from changing IPs; another token from the same IP is not', async () => {
+    const token = unknownToken('logout');
+    const statuses = await burst(10, (i) => e2e.post('/auth/logout', { refreshToken: token }, { ip: `203.0.113.${110 + i}` }));
+    expect(statuses).toEqual(Array(10).fill(204));
+    const eleventh = await e2e.post('/auth/logout', { refreshToken: token }, { ip: '203.0.113.120' });
+    expect(eleventh.status).toBe(429);
+    expect(eleventh.body).toEqual(TOO_MANY);
+    expect(Number(eleventh.headers['retry-after-auth-token'])).toBeGreaterThan(0);
+    expect(eleventh.headers['retry-after']).toBeUndefined(); // the IP bucket is not what tripped
+    const other = await e2e.post('/auth/logout', { refreshToken: unknownToken('logout-b') }, { ip: '203.0.113.120' });
+    expect(other.status).toBe(204);
+    expect(other.headers['x-ratelimit-limit-auth-token']).toBe('10');
+  });
+
+  it('/auth/logout: the per-IP limit is 600/min (Vercel egress IPs carry many users) — 121+ logouts from one IP are not 429; a token-less cookie-mode logout skips the token bucket', async () => {
+    const ip = '203.0.113.54';
+    const statuses = await burst(130, (i) => e2e.post('/auth/logout', { refreshToken: unknownToken(`lo${i}`) }, { ip }));
+    expect(statuses).toEqual(Array(130).fill(204));
+    // no token → nothing to revoke: not keyed by the shared IP at 10/min (that would 429 every user behind the egress IP)
+    const bare = await burst(15, () => e2e.post('/auth/logout', {}, { ip, headers: { 'x-ninja-session': 'cookie' } }));
+    expect(bare).toEqual(Array(15).fill(204));
+    const last = await e2e.post('/auth/logout', {}, { ip, headers: { 'x-ninja-session': 'cookie' } });
+    expect(last.headers['x-ratelimit-limit']).toBe('600');
+    expect(last.headers['x-ratelimit-limit-auth-token']).toBeUndefined();
+  });
+
   it('other routes keep 120/min per IP even after the auth routes were used from that IP', async () => {
     const ip = '203.0.113.53';
     expect((await e2e.post('/auth/refresh', { refreshToken: unknownToken('pre') }, { ip })).headers['x-ratelimit-limit']).toBe('600');

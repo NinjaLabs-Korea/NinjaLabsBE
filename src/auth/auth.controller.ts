@@ -240,9 +240,13 @@ export class AuthController {
   /**
    * POST /auth/logout — refresh 세션 폐기, 204.
    * 쿠키 모드: 쿠키(와 본문에 함께 온 레거시 토큰)의 세션을 폐기하고 쿠키를 지운다(`Max-Age=0`, 같은 Path/속성). 토큰이 없어도 204.
+   * 한도: refresh와 같다 — 제시된 refresh 토큰 해시별 10/min (AuthTokenThrottlerGuard, 토큰이 없으면 건너뜀) + IP당 600/min
+   * (Vercel rewrite로 오는 라우트라 전역 120/min을 올림 — AUTH_PROXIED_ROUTE_IP_THROTTLE).
    */
   @Post('logout')
   @HttpCode(204)
+  @Throttle(AUTH_PROXIED_ROUTE_IP_THROTTLE)
+  @UseGuards(AuthTokenThrottlerGuard)
   async logout(@Body() dto: RefreshDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     if (!isCookieMode(req)) {
       if (!dto.refreshToken) throw new BadRequestException(REFRESH_TOKEN_REQUIRED);

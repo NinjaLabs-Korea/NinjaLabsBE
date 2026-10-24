@@ -24,7 +24,7 @@ import { throttlerModule } from '../common/throttler/throttler-options';
 @Module({
   imports: [
     JwtSecretModule,
-    // /auth/exchange·/auth/refresh의 자격 증명(코드/refresh 토큰) 해시별 한도 — 전역 IP 한도(app.module.ts)와 독립된 저장소 (auth-throttler.guard.ts)
+    // /auth/exchange·/auth/refresh·/auth/logout의 자격 증명(코드/refresh 토큰) 해시별 한도 — 전역 IP 한도(app.module.ts)와 독립된 저장소 (auth-throttler.guard.ts)
     // 저장소는 THROTTLER_STORAGE를 따른다 (production 기본 postgres — 레플리카 간 공유, common/throttler/throttler-options.ts)
     throttlerModule([AUTH_TOKEN_THROTTLER]),
     JwtModule.registerAsync({

@@ -67,7 +67,7 @@ describe('WalletsService EVM verification', () => {
     expect(walletInsert?.[1]).toEqual([
       'user-id',
       mockCanonicalInjectiveAddress,
-      null,
+      signer.signingKey.compressedPublicKey, // recovered from the EIP-191 signature (never a client-supplied key)
     ]);
     expect(txQuery.mock.calls.some(([sql]) => sql.includes('onboarding_step'))).toBe(true);
     // 부모 NFT 민팅 잡은 지갑 INSERT와 같은 트랜잭션 클라이언트로 등록된다 (커밋 후 별도 호출 아님)

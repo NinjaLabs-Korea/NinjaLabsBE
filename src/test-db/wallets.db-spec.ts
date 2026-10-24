@@ -91,6 +91,15 @@ describeDb('wallet challenge/verify on a real database', () => {
     await expect(wallets.verifySignature(userId, signer.address, signature)).resolves.toMatchObject({ chain: 'INJECTIVE' });
   });
 
+  it('wallet.public_key is the key recovered from the EIP-191 signature, whatever publicKey the client sends', async () => {
+    const userId = await createUser(db);
+    const signer = Wallet.createRandom();
+    const challenge = await wallets.createChallenge(userId, signer.address);
+    await wallets.verifySignature(userId, signer.address, await signer.signMessage(challenge.message), `0x02${'ab'.repeat(32)}`);
+    const row = await db.query<{ public_key: string | null }>(`SELECT public_key FROM wallet WHERE user_id = $1`, [userId]);
+    expect(row.rows).toEqual([{ public_key: signer.signingKey.compressedPublicKey }]);
+  });
+
   it('the same wallet cannot be linked to a second account (409 WALLET_ALREADY_LINKED, nothing persisted)', async () => {
     const signer = Wallet.createRandom();
     const first = await createUser(db);

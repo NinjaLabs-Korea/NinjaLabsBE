@@ -6,12 +6,9 @@ import { AuthService } from '../auth/auth.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { withdrawOpenParticipationOfUser } from '../bounties/participation-withdrawal';
 import { DatabaseService } from '../common/database/database.service';
-import { PAYABLE_REWARD_STATUSES } from '../rewards/payout-status';
+import { PAYABLE_REWARD_STATUSES, rewardHeadroomSql, TERMINAL_PAYOUT_STATUSES } from '../rewards/payout-status';
 import { disconnectAllWalletsOfUser } from '../wallets/wallet-disconnection';
 import { WITHDRAWN_NICKNAME_PREFIX } from './nickname';
-
-/** payout 종료 상태 — 이 밖의 상태(REQUESTED/AWAITING_MULTISIG_APPROVAL/APPROVED/BROADCASTING)가 하나라도 있으면 탈퇴를 막는다 */
-export const TERMINAL_PAYOUT_STATUSES = ['PAID', 'CANCELLED', 'FAILED'] as const;
 
 /**
  * 승인됐지만 아직 payout이 요청되지 않은(그래서 아직 받을 수 있는) 보상 — 하나라도 있으면 탈퇴를 막는다 (409 WITHDRAWAL_BLOCKED_PENDING_REWARDS).
@@ -32,8 +29,7 @@ SELECT count(*)::int AS n
    AND (s.submitter_user_id = $1
         OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1)))
    AND NOT EXISTS (SELECT 1 FROM payout p WHERE p.bounty_reward_id = rw.id AND p.submission_id = s.id)
-   AND LEAST(rw.amount, rw.deposited_amount) >
-       (SELECT COALESCE(SUM(p.amount), 0) FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status <> 'CANCELLED')`;
+   AND ${rewardHeadroomSql('rw', 'p')}`;
 
 /** 탈퇴 행의 google_id/email 앞에 붙는 프리픽스 — `deleted:<epoch ms>:` */
 export function withdrawnIdentityPrefix(nowMs: number): string {

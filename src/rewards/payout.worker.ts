@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
 import { SingleFlightTask } from '../common/lifecycle/single-flight-task';
+import { AWAITING_APPROVAL_PAYOUT_STATUSES, sqlStatusList } from './payout-status';
 
 /**
  * payout 자동 송금 워커 (Phase 3)
@@ -36,7 +37,7 @@ export class PayoutWorker implements BeforeApplicationShutdown {
   private async monitorOnce() {
     const stale = await this.db.query<{ count: string }>(
       `SELECT count(*) FROM payout
-        WHERE status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL')
+        WHERE status IN (${sqlStatusList(AWAITING_APPROVAL_PAYOUT_STATUSES)})
           AND requested_at < now() - interval '48 hours'`,
     );
     const n = Number(stale.rows[0].count);

@@ -32,6 +32,7 @@ src/
     application-status.ts 지원서 상태·심사 결정·재지원 규칙의 단일 출처
     admin/               운영자 바운티 관리 + 전이 차단 사유(lifecycle)
   rewards/             선입금 확인 → payout 멱등 지급 흐름 (운영자 API 포함)
+    payout-status.ts     payout 상태 집합(진행 중·종료·배정·미정산)·배정 상한식·제출별 지급 상태 SQL의 단일 출처
   nfts/                부모/자식 NFT + nft_job 비동기 워커 (1분 폴링) + 운영자 잡 콘솔(nft-jobs-admin.*: 목록/재시도)
   agents/              AI 에이전트 등록/검증/API key + Agent API 인증
   audit/               감사 로그 기록(AuditService) + 조회
@@ -69,6 +70,8 @@ docs/
 - **바운티 상태 문자열 배열을 직접 만들지 않는다.** `bounties/bounty-status.ts`의 `BountyStatusPolicy`를 쓴다.
   제출물·지원서 상태도 같다 — `bounties/submission-status.ts`(`SubmissionStatusPolicy`), `bounties/application-status.ts`(`ApplicationStatusPolicy`).
   SQL의 상태 집합은 helper가 주는 배열을 `= ANY($n::text[])`로 바인딩한다. `src/test-support/status-literals.spec.ts`가 상태 리터럴 집합(`['APPROVED', 'REJECTED']`, `IN ('SUBMITTED', …)`)을 막는다.
+  payout 상태 집합과 배정 상한식 `LEAST(amount, deposited_amount)`도 같다 — `rewards/payout-status.ts`의 상수/헬퍼(`OPEN_PAYOUT_STATUSES`, `allocatedPayoutSumSql()`, `rewardCapSql()` 등)를 쓰고,
+  다른 쿼리에 끼워 넣는 조각은 `sqlStatusList()`로 렌더링한다. `scripts/record-refund.js`·`scripts/mainnet-preflight.sql`의 사본은 `payout-status.spec.ts`가 대조한다.
 - **유니크 충돌 판별은 `isUniqueViolation(err)`** (`common/database/pg-errors.ts`).
 - **에러 코드는 `common/http/error-codes.ts` 카탈로그에 등록한다** (코드 → HTTP 상태 → 한 줄 의미). 서비스에는 `throw new XxxException('NEW_CODE')` 리터럴로 던지고, 카탈로그와 `docs/api-contract.md` "에러 코드" 표에 같은 행을 추가한다 — 빠지면 `src/test-support/error-codes.spec.ts`가 실패한다.
 - **사람/에이전트 참여는 `BountyActor`로 표현한다** (`bounties/bounty-actor.ts`). `isAgent ? ... : ...` 분기를 새로 만들지 않는다.

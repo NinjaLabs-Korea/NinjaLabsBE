@@ -89,3 +89,24 @@ describe('payout status sets', () => {
     expect(() => sqlStatusList(["PAID'); DROP TABLE payout; --"])).toThrow();
   });
 });
+
+/**
+ * src 밖 사본 — scripts/는 src를 import하지 않는 독립 JS/SQL이라 집합을 복사해 둔다. 여기서 어긋나면 실패한다:
+ * payout-status.ts를 바꿨다면 아래 파일의 사본(주석으로 표시됨)도 같이 고친다.
+ */
+describe('script copies of the payout status sets match payout-status.ts', () => {
+  const sorted = (list: readonly string[]) => [...list].sort();
+
+  it('scripts/record-refund.js refuses on exactly the non-terminal payouts', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const script = require('../../scripts/record-refund') as { TERMINAL_PAYOUT_STATUSES: string[] };
+    expect(sorted(script.TERMINAL_PAYOUT_STATUSES)).toEqual(sorted(TERMINAL_PAYOUT_STATUSES));
+  });
+
+  it('scripts/mainnet-preflight.sql [blocker] 3 payout_open lists exactly the terminal statuses', () => {
+    const sql = readFileSync(join(__dirname, '../../scripts/mainnet-preflight.sql'), 'utf8');
+    const block = sql.slice(sql.indexOf("'payout_open'"));
+    const list = /p\.status NOT IN \(([^)]*)\)/.exec(block.slice(0, block.indexOf(';')))![1];
+    expect(sorted(list.split(',').map((v) => v.trim().replace(/'/g, '')))).toEqual(sorted(TERMINAL_PAYOUT_STATUSES));
+  });
+});

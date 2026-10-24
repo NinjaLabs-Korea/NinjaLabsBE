@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
 import { NftsService } from '../nfts/nfts.service';
 import { createMockDb } from '../test-support/mock-db';
+import { allocatedPayoutSumSql } from './payout-status';
 import { RewardsService } from './rewards.service';
 
 const txHash = `0x${'ab'.repeat(32)}`;
@@ -189,9 +190,10 @@ describe('RewardsService markPaid', () => {
     // Derived from current state (idempotent): PAID only when nothing is still open and the pool or the winner count is exhausted;
     // a PAID reward drops back to PARTIALLY_PAID once a new payout is requested; nothing moves before the first PAID payout.
     // the pool is the allocation cap LEAST(posted amount, deposit) — an over-deposit is not headroom (same cap as requestPayout)
-    expect(sql).toContain("p.open_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= LEAST(rw.amount, rw.deposited_amount)) THEN 'PAID'");
+    expect(sql).toContain("p.unsettled_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= LEAST(rw.amount, rw.deposited_amount)) THEN 'PAID'");
     expect(sql).toContain("ELSE 'PARTIALLY_PAID'");
-    expect(sql).toContain("count(*) FILTER (WHERE status NOT IN ('PAID', 'CANCELLED'))::int AS open_count");
+    // unsettled = 배정됐지만 지급 안 된 payout (진행 중 + FAILED) — payout-status.ts UNSETTLED_PAYOUT_STATUSES. CANCELLED·PAID는 세지 않는다
+    expect(sql).toContain("count(*) FILTER (WHERE status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING', 'FAILED'))::int AS unsettled_count");
     expect(sql).toContain("rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')");
     expect(sql).toContain('AND p.paid_count > 0');
   });
@@ -345,7 +347,7 @@ describe('RewardsService payout allocation', () => {
   it('caps the allocation at LEAST(posted amount, deposit): the reward is read as that cap, so an over-deposit does not raise it', async () => {
     const { service, query } = setup({ allocated: '5000000' });
     await expect(service.requestPayout('reward', 'sub', '5000001', 'admin')).rejects.toThrow('PAYOUT_EXCEEDS_AVAILABLE_REWARD');
-    expect(query.mock.calls[1][0]).toContain('LEAST(amount, deposited_amount)::text AS cap FROM bounty_reward WHERE id = $1 FOR UPDATE');
+    expect(query.mock.calls[1][0]).toContain('LEAST(rw.amount, rw.deposited_amount)::text AS cap FROM bounty_reward rw WHERE rw.id = $1 FOR UPDATE');
     await expect(setup({ allocated: '5000000' }).service.requestPayout('reward', 'sub', '5000000', 'admin')).resolves.toMatchObject({ status: 'REQUESTED' });
   });
   it('creates a payout against the matching bounty, recomputes the reward status and audits inside the transaction', async () => {
@@ -429,7 +431,7 @@ describe('RewardsService remaining guards', () => {
       ['AS cap FROM bounty_reward', { rowCount: 1, rows: [{ bounty_id: 'b', status: 'FUNDED', cap: '100' }] }],
       ['AS wallet_id', { rowCount: 1, rows: [{ wallet_id: 'wallet-1' }] }],
       ['SELECT id FROM payout WHERE', { rowCount: 0, rows: [] }],
-      ['COALESCE(SUM(amount), 0)::text AS amount', { rowCount: 1, rows: [{ amount: '0' }] }],
+      ['::text AS amount FROM bounty_reward rw', { rowCount: 1, rows: [{ amount: '0' }] }],
       ['INSERT INTO payout', { rowCount: 1, rows: [{ id: 'payout-1', status: 'REQUESTED' }] }],
     ]);
     await expect(service.requestPayout('reward-1', 'sub-1', '100', 'admin')).resolves.toEqual({ id: 'payout-1', status: 'REQUESTED' });
@@ -443,7 +445,9 @@ describe('RewardsService remaining guards', () => {
     const insert = query.mock.calls.find(([sql]) => (sql as string).includes('INSERT INTO payout'))!;
     expect(insert[1]).toEqual(['reward-1', 'sub-1', 'wallet-1', '100', 'submission:sub-1:reward:reward-1', 'admin']);
     // cancelled payouts free their allocation; everything else (requested, approved, paid…) holds it
-    expect(query.mock.calls.find(([sql]) => (sql as string).includes('AS amount FROM payout'))![0]).toContain("status <> 'CANCELLED'");
+    // (allocatedPayoutSumSql — payout-status.ts ALLOCATED_PAYOUT_STATUSES; the set itself is pinned in payout-status.spec.ts)
+    expect(query.mock.calls.find(([sql]) => (sql as string).includes('AS amount FROM bounty_reward rw'))![0])
+      .toBe(`SELECT ${allocatedPayoutSumSql('rw')}::text AS amount FROM bounty_reward rw WHERE rw.id = $1`);
   });
 
   it('the allocation check is exact at the cap with 78-digit amounts (BigInt, no float rounding)', async () => {
@@ -454,7 +458,7 @@ describe('RewardsService remaining guards', () => {
       ['AS cap FROM bounty_reward', { rowCount: 1, rows: [{ bounty_id: 'b', status: 'FUNDED', cap }] }],
       ['AS wallet_id', { rowCount: 1, rows: [{ wallet_id: 'w' }] }],
       ['SELECT id FROM payout WHERE', { rowCount: 0, rows: [] }],
-      ['COALESCE(SUM(amount), 0)::text AS amount', { rowCount: 1, rows: [{ amount: almost }] }],
+      ['::text AS amount FROM bounty_reward rw', { rowCount: 1, rows: [{ amount: almost }] }],
       ['INSERT INTO payout', { rowCount: 1, rows: [{ id: 'p', status: 'REQUESTED' }] }],
     ]);
     await expect(make().service.requestPayout('r', 's', '1', 'admin')).resolves.toMatchObject({ status: 'REQUESTED' });

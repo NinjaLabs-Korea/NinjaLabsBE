@@ -113,8 +113,8 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
 | `DB_CONNECTION_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS` | 선택, 기본 `5000`/`15000` ms (잘못된 값은 기본값). 연결 수립·풀 대기 초과 → 그 요청 `503 DATABASE_UNAVAILABLE`, 문장 초과 → Postgres 취소(500). migrate/운영 스크립트는 연결 타임아웃만 쓰고 문장 타임아웃은 걸지 않는다 (`common/database/pool-timeouts.ts`) |
 | `THROTTLER_STORAGE` | 선택. 미설정이면 production은 `postgres`(레플리카 간 공유 rate limit 카운터, `throttler_storage` — 0016), 그 외는 `memory`(인스턴스별). `postgres`/`memory` 외의 값은 **기동 거부**. railway.ts가 `postgres`를 명시한다 — `memory`로 바꾸면 레플리카 N대에서 한도가 N배 (`docs/security.md`) |
 | `TURNSTILE_SECRET_KEY` | 선택. 설정하면 `GET /auth/google`이 Cloudflare Turnstile 토큰(`turnstileToken`)을 요구한다 (400 `TURNSTILE_FAILED` / 503 `TURNSTILE_UNAVAILABLE`). 미설정이면 검사 생략 + production 기동 시 `warn`. **FE(`NEXT_PUBLIC_TURNSTILE_SITE_KEY`)를 먼저 배포**한 뒤 넣는다 — 순서가 바뀌면 모든 로그인이 400 |
-| `REWARD_MULTISIG_ADDRESS` | 기동은 하지만 비우면 새 보상의 `custody_address`가 자리표시값 `PENDING_MULTISIG_SETUP` — 스폰서가 입금할 주소가 없다. `railway.ts`에 자리가 없으므로 대시보드에서 추가 (`docs/runbook.md` §1, §8) |
-| `PAYOUT_ALLOW_SELF_APPROVAL` | 선택, 기본 `false` — payout 승인 2인 규칙(요청자 ≠ 승인자, 403 `PAYOUT_SELF_APPROVAL`). 운영자 1인일 때만 `true` → 자기 승인 허용 + 기동/승인 시 `warn` + 감사 `PAYOUT_SELF_APPROVED`. railway.ts에 넣지 않는다(기본값 유지) |
+| `REWARD_MULTISIG_ADDRESS` | 기동은 하지만 비우면 새 보상의 `custody_address`가 자리표시값 `PENDING_MULTISIG_SETUP` — 스폰서가 입금할 주소가 없다. `railway.ts`의 `preserve()` 자리 — 값은 대시보드/CLI로 넣는다 (`docs/runbook.md` §1, §8) |
+| `PAYOUT_ALLOW_SELF_APPROVAL` | 선택, 기본 `false` — payout 승인 2인 규칙(요청자 ≠ 승인자, 403 `PAYOUT_SELF_APPROVAL`). 운영자 1인일 때만 `true` → 자기 승인 허용 + 기동/승인 시 `warn` + 감사 `PAYOUT_SELF_APPROVED`. railway.ts에는 값 없이 `preserve()` 자리만 있다(기본값 유지 — 대시보드에서 켠 값이 apply로 지워지지 않게) |
 | `OPS_ALERT_WEBHOOK_URL` | 선택 (railway.ts `preserve()`). Discord/Slack incoming webhook(https). 없으면 알림은 `OpsAlert` warn 로그로만, https가 아니면 기동 시 `error` 로그 후 무시 (기동은 함). 대상·규칙은 `docs/security.md` "운영 알림" |
 | `CORS_ORIGINS`, `AUTH_ALLOWED_REDIRECT_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT` | 기동은 하지만 값이 틀리면 로그인/CORS가 동작하지 않는다 (railway.ts에 공개값으로 고정) |
 

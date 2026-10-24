@@ -40,6 +40,18 @@ export default defineRailway(() => {
       OPS_ALERT_WEBHOOK_URL: preserve(),
       // 선택 — 비어 있으면 로그인 봇 방지 생략 + 기동 시 warn. FE NEXT_PUBLIC_TURNSTILE_SITE_KEY 배포 후 설정 (README env 표)
       TURNSTILE_SECRET_KEY: preserve(),
+      // 멀티시그 보상 지갑 주소 — 비어 있으면 새 보상의 custody_address가 PENDING_MULTISIG_SETUP (스폰서가 입금할 곳이 없다). production 필수 (docs/runbook.md §1, §8, §9)
+      REWARD_MULTISIG_ADDRESS: preserve(),
+      // 선택 — 전용 gRPC 노드/프록시 URL (자격 증명이 섞일 수 있어 git에 두지 않는다). 비우면 INJECTIVE_NETWORK 프리셋 (docs/runbook.md §8)
+      INJECTIVE_GRPC_ENDPOINT: preserve(),
+      // ── 선택 운영 스위치 (기본값이면 비워 둔다) — 대시보드에서 넣은 값이 `railway config apply` 때 삭제 대상이 되지 않게 자리만 잡는다 ──
+      // payout 2인 규칙 탈출구 (기본 false — 운영자 1인일 때만 true, README env 표)
+      PAYOUT_ALLOW_SELF_APPROVAL: preserve(),
+      // 구 access 토큰 전환기 경계 (기본 = 프로세스 시작 시각, 2026-11-30 이후 코드와 함께 제거)
+      LEGACY_ACCESS_TOKEN_CUTOFF: preserve(),
+      // pg Pool 타임아웃 튜닝 (기본 5000 / 15000 ms — common/database/pool-timeouts.ts)
+      DB_CONNECTION_TIMEOUT_MS: preserve(),
+      DB_STATEMENT_TIMEOUT_MS: preserve(),
     },
   });
 

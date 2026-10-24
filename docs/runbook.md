@@ -23,7 +23,7 @@
 
 1. **Supabase 프로젝트** 준비 — `Project Settings → Database`에서 접속 문자열(direct 5432 또는 Supavisor session 모드)과 CA 인증서(`SSL Configuration → Download certificate`)를 받는다. Pro 플랜 이상이면 백업 설정을 바로 확인한다(§5).
 2. **Railway 서비스 설정 반영** — `.railway/railway.ts`는 적혀 있을 뿐이다. `railway config plan` → `railway config apply`로 `preDeploy: npm run migrate`, healthcheck `/health`, 공개 env를 서비스에 적용한다. 적용 전 배포는 마이그레이션이 자동으로 돌지 않아 SchemaGuard가 `MIGRATIONS_PENDING`으로 크래시 루프를 만든다.
-   **주의 — IaC는 선언형이다**: `railway.ts`에 없는 변수(아래 표의 `REWARD_MULTISIG_ADDRESS`, `PAYOUT_ALLOW_SELF_APPROVAL`, `LEGACY_ACCESS_TOKEN_CUTOFF`, §8의 `INJECTIVE_GRPC_ENDPOINT`)를 대시보드에서만 넣으면, 이후 `railway config plan`이 그 변수를 **삭제 대상**으로 보여 줄 수 있다. 매번 plan 출력에서 변수 삭제 줄을 확인하고, 보이면 apply하지 말고 그 키를 `railway.ts`에 `preserve()`로 추가하는 PR을 먼저 머지한다. 변수 삭제를 허용하는 `--confirm-destructive`는 쓰지 않는다.
+   **주의 — IaC는 선언형이다**: `railway.ts`에 없는 변수를 대시보드에서만 넣으면, 이후 `railway config plan`이 그 변수를 **삭제 대상**으로 보여 줄 수 있다. 코드가 읽는 키는 전부 `railway.ts`에 값 또는 `preserve()`로 선언돼 있다 — 비밀/주소(`DATABASE_URL`, `DATABASE_CA_CERT`, `GOOGLE_CLIENT_SECRET`, `JWT_SECRET`, `MASTER_WALLET_MNEMONIC`, `OPS_ALERT_WEBHOOK_URL`, `TURNSTILE_SECRET_KEY`, `REWARD_MULTISIG_ADDRESS`, §8의 `INJECTIVE_GRPC_ENDPOINT`)와 선택 스위치(`PAYOUT_ALLOW_SELF_APPROVAL`, `LEGACY_ACCESS_TOKEN_CUTOFF`, `DB_CONNECTION_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`)는 `preserve()`. 의도적으로 빠진 키는 `PORT`·`RAILWAY_ENVIRONMENT_NAME`(Railway 주입), `PGSSLMODE`(로컬 전용), `AUTH_ALLOWED_REDIRECT_ORIGINS`(두 번째 FE 오리진이 생기면 공개값으로 추가)뿐이고 `src/deploy/railway-config.spec.ts`가 이 대응을 검사한다. 그래도 매번 plan 출력에서 변수 삭제 줄을 확인하고, 보이면 apply하지 말고 그 키를 `railway.ts`에 `preserve()`로 추가하는 PR을 먼저 머지한다. 변수 삭제를 허용하는 `--confirm-destructive`는 쓰지 않는다.
 3. **비밀 env 입력** (Railway 대시보드 → Variables, 첫 컨테이너가 뜨기 **전에**):
 
    | env | 확인 | 빠지면 |
@@ -33,7 +33,7 @@
    | `JWT_SECRET` | `openssl rand -base64 48` | 미설정/자리표시값 → 기동 거부. 32바이트 미만 → `error` 로그 |
    | `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth 클라이언트 | 기동 거부 |
    | `MASTER_WALLET_MNEMONIC` | 민팅 전용 지갑 (§7.6) | 민팅 잡이 1시간씩 미뤄짐(`not configured`) |
-   | `REWARD_MULTISIG_ADDRESS` | 멀티시그 주소 (§9) | **새 보상의 `custody_address`가 `PENDING_MULTISIG_SETUP`** — 스폰서가 입금할 곳이 없다. `railway.ts`에 자리가 없으므로 대시보드에서 직접 추가한다 |
+   | `REWARD_MULTISIG_ADDRESS` | 멀티시그 주소 (§9) | **새 보상의 `custody_address`가 `PENDING_MULTISIG_SETUP`** — 스폰서가 입금할 곳이 없다. `railway.ts`는 `preserve()` 자리만 잡으므로 값은 대시보드/CLI로 넣는다 |
    | `PAYOUT_ALLOW_SELF_APPROVAL` | 넣지 않는다(기본 false, 2인 승인) | 운영자 1인일 때만 `true` |
    | `LEGACY_ACCESS_TOKEN_CUTOFF` | 선택 | 미설정이면 프로세스 시작 시각 |
    | `OPS_ALERT_WEBHOOK_URL` | 운영 채널 Discord/Slack incoming webhook (https, `railway.ts` `preserve()`) | 알림이 `OpsAlert` warn 로그로만 남아 아무도 못 본다 (README env 표, security.md "운영 알림") |

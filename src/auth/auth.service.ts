@@ -5,7 +5,6 @@ import {
   Logger,
   NotFoundException,
   Optional,
-  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -16,45 +15,21 @@ import { DatabaseService, QueryRunner } from '../common/database/database.servic
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { JWT_SECRET } from './jwt-secret';
 import { decryptGraceToken, encryptGraceToken, REFRESH_REUSE_GRACE } from './refresh-grace';
-import {
-  GoogleIdTokenClaims,
-  GoogleIdTokenVerifier,
-  GoogleVerifierUnavailableError,
-} from './google-id-token.verifier';
+import { GoogleIdTokenVerifier } from './google-id-token.verifier';
+import { AccessTokenVerifier, legacyAccessTokenCutoff, SessionUser } from './access-token.verifier';
+import { GoogleOAuthFlow, OAuthState } from './google-oauth.flow';
 import { normalizeRefreshTtl, refreshTtlSeconds } from './refresh-ttl';
 import { UserStatusCache } from './user-status-cache';
+
+// SessionUser는 컨트롤러·가드 등 여러 모듈이 이 경로로 import한다 — 정의는 access-token.verifier.ts 한 곳
+export type { SessionUser } from './access-token.verifier';
+export type { OAuthState } from './google-oauth.flow';
 
 /**
  * revokeChain 이 prev_refresh_token_hash 를 따라가는 최대 홉 수. 정상 사슬은 폐기 후 30일(MaintenanceService)이 지나면 잘려 나가므로
  * 15분 회전이라도 이보다 훨씬 짧다 — 넘으면 손상된/조작된 사슬(순환 등)로 보고 그 유저의 열린 세션을 전부 폐기한다 (안전 쪽으로).
  */
 export const MAX_REVOKE_CHAIN_HOPS = 32;
-
-/**
- * `typ` 없는 레거시 access 토큰의 수용 기준 시각(ms). 이 시각 **이전에 발급된(iat)** 레거시 토큰만 받는다.
- *   - `LEGACY_ACCESS_TOKEN_CUTOFF`(ISO 8601) 미설정/빈 값 → **이 프로세스의 시작 시각** (`performance.timeOrigin`). 레거시 토큰은 typ을 넣기 전의
- *     구 코드만 발급하므로, 새 코드가 처음 배포될 때 이미 떠 있던 세션만 통과하고 access TTL(15분)이 지나면 저절로 닫힌다.
- *     이후 재시작에서도 기준은 "그 프로세스 시작"이지만 그때 남은 레거시 토큰은 이미 만료됐다.
- *   - 설정 → 그 시각 (예: 첫 배포 시각으로 고정). 파싱할 수 없으면 기동 거부.
- */
-export function legacyAccessTokenCutoff(raw: string | undefined, processStart = performance.timeOrigin): number {
-  const value = raw?.trim();
-  if (!value) return Math.floor(processStart);
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) throw new Error(`LEGACY_ACCESS_TOKEN_CUTOFF must be an ISO 8601 timestamp, got "${value}"`);
-  return parsed;
-}
-
-export interface SessionUser {
-  userId: string;
-  isAdmin: boolean;
-}
-
-export interface OAuthState {
-  traceId?: string;
-  redirectUrl?: string;
-  codeChallenge: string;
-}
 
 /**
  * 인증 흐름 (Google OAuth → 자체 JWT 세션)
@@ -73,8 +48,10 @@ export class AuthService {
   private readonly refreshTtl: string;
   /** refreshTtl을 초로 — refresh 쿠키 Max-Age */
   readonly refreshTtlSeconds: number;
-  /** typ 없는 레거시 access 토큰은 iat가 이 시각(ms) 이전일 때만 받는다 — legacyAccessTokenCutoff */
-  private readonly legacyCutoffMs: number;
+  /** Google OAuth 왕복 (state, 동의 URL, code 교환) — google-oauth.flow.ts */
+  private readonly oauth: GoogleOAuthFlow;
+  /** access JWT 검증 (레거시 전환기 포함) — access-token.verifier.ts */
+  private readonly accessTokens: AccessTokenVerifier;
   /** AuthGuard용 유저 상태 캐시 (프로세스별, 30초) — user-status-cache.ts */
   private readonly userStatusCache = new UserStatusCache();
 
@@ -87,99 +64,35 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     @Inject(JWT_SECRET) private readonly graceSecret: string,
-    @Optional() private readonly googleVerifier: GoogleIdTokenVerifier = new GoogleIdTokenVerifier(),
+    @Optional() googleVerifier: GoogleIdTokenVerifier = new GoogleIdTokenVerifier(),
   ) {
     this.refreshTtl = normalizeRefreshTtl(this.config.get<string>('JWT_REFRESH_TTL'));
     this.refreshTtlSeconds = refreshTtlSeconds(this.refreshTtl);
-    this.legacyCutoffMs = legacyAccessTokenCutoff(this.config.get<string>('LEGACY_ACCESS_TOKEN_CUTOFF'));
-  }
-
-  private googleClientId(): string {
-    const id = this.config.get<string>('GOOGLE_CLIENT_ID');
-    if (!id) throw new Error('GOOGLE_CLIENT_ID is not configured');
-    return id;
-  }
-
-  /**
-   * CSRF 방어용 state — 서명된 단기 JWT라 서버 측 저장소/쿠키 없이 검증 가능.
-   * 콜백에서 서명·만료·용도(p)를 확인한다.
-   */
-  async issueOauthState(traceId: string | undefined, redirectUrl: string, codeChallenge: string): Promise<string> {
-    if (!/^[A-Za-z0-9_-]{43}$/.test(codeChallenge)) {
-      throw new UnauthorizedException('INVALID_CODE_CHALLENGE');
-    }
-    const safeTraceId = traceId && /^[a-zA-Z0-9-]{1,64}$/.test(traceId) ? traceId : undefined;
-    return this.jwt.signAsync(
-      { p: 'gstate', t: safeTraceId, r: redirectUrl, c: codeChallenge },
-      { expiresIn: '10m' },
+    this.accessTokens = new AccessTokenVerifier(
+      this.jwt,
+      legacyAccessTokenCutoff(this.config.get<string>('LEGACY_ACCESS_TOKEN_CUTOFF')),
     );
+    this.oauth = new GoogleOAuthFlow(this.jwt, this.config, googleVerifier, this.logger);
   }
 
-  async verifyOauthState(state: string): Promise<OAuthState> {
-    try {
-      const payload = await this.jwt.verifyAsync<{ p?: string; t?: string; r?: string; c?: string }>(state);
-      if (payload.p !== 'gstate' || !payload.c || !/^[A-Za-z0-9_-]{43}$/.test(payload.c)) {
-        throw new Error('invalid state');
-      }
-      return { traceId: payload.t, redirectUrl: payload.r, codeChallenge: payload.c };
-    } catch {
-      throw new UnauthorizedException('INVALID_OAUTH_STATE');
-    }
+  /** CSRF 방어용 서명 state(10분 JWT) 발급 — google-oauth.flow.ts */
+  issueOauthState(traceId: string | undefined, redirectUrl: string, codeChallenge: string): Promise<string> {
+    return this.oauth.issueOauthState(traceId, redirectUrl, codeChallenge);
   }
 
+  /** 콜백의 state 검증 → trace/redirect/PKCE challenge — google-oauth.flow.ts */
+  verifyOauthState(state: string): Promise<OAuthState> {
+    return this.oauth.verifyOauthState(state);
+  }
+
+  /** Google 동의 화면 URL — google-oauth.flow.ts */
   buildGoogleAuthUrl(state: string): string {
-    const params = new URLSearchParams({
-      client_id: this.googleClientId(),
-      redirect_uri: this.config.get<string>('GOOGLE_CALLBACK_URL') ?? '',
-      response_type: 'code',
-      scope: 'openid email',
-      state,
-      // 매 로그인마다 계정 선택 화면 노출 (공용 PC에서 자동 재로그인 방지)
-      prompt: 'select_account',
-    });
-    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+    return this.oauth.buildGoogleAuthUrl(state);
   }
 
-  /** code → 토큰 교환 후 구글 프로필(google_id, email) 반환 */
-  async exchangeGoogleCode(code: string): Promise<{ googleId: string; email: string }> {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: this.googleClientId(),
-        client_secret: this.config.get<string>('GOOGLE_CLIENT_SECRET') ?? '',
-        redirect_uri: this.config.get<string>('GOOGLE_CALLBACK_URL') ?? '',
-        grant_type: 'authorization_code',
-      }),
-    });
-    if (!res.ok) throw new UnauthorizedException('GOOGLE_CODE_EXCHANGE_FAILED');
-    const body = (await res.json()) as { id_token?: string };
-    if (!body.id_token) throw new UnauthorizedException('GOOGLE_CODE_EXCHANGE_FAILED');
-
-    // id_token 서명을 Google JWKS로 검증한다 (google-auth-library: 서명·만료·audience).
-    // 그 위에 iss/aud/sub/email/email_verified 클레임을 한 번 더 확인한다.
-    // 검증 실패(서명/만료/audience)는 401, Google JWKS를 못 받아온 것(네트워크/비2xx)은 503 — 토큰 탓이 아니다.
-    let claims: GoogleIdTokenClaims | undefined;
-    try {
-      claims = await this.googleVerifier.verify(body.id_token, this.googleClientId());
-    } catch (err) {
-      if (err instanceof GoogleVerifierUnavailableError) {
-        this.logger.warn(`Google id_token verification unavailable: ${err.message}`);
-        throw new ServiceUnavailableException('GOOGLE_UNAVAILABLE');
-      }
-      throw new UnauthorizedException('INVALID_GOOGLE_ID_TOKEN');
-    }
-    if (!claims) throw new UnauthorizedException('INVALID_GOOGLE_ID_TOKEN');
-
-    const issOk = claims.iss === 'https://accounts.google.com' || claims.iss === 'accounts.google.com';
-    if (!issOk || claims.aud !== this.googleClientId() || !claims.sub || !claims.email) {
-      throw new UnauthorizedException('INVALID_GOOGLE_ID_TOKEN');
-    }
-    if (claims.email_verified === false) {
-      throw new UnauthorizedException('GOOGLE_EMAIL_NOT_VERIFIED');
-    }
-    return { googleId: claims.sub, email: claims.email };
+  /** code → 구글 프로필(google_id, email), id_token 서명·클레임 검증 포함 — google-oauth.flow.ts */
+  exchangeGoogleCode(code: string): Promise<{ googleId: string; email: string }> {
+    return this.oauth.exchangeGoogleCode(code);
   }
 
   /** GET /auth/me — 프로필 + 온보딩/지갑/NFT 상태 (api-contract.md 응답 형태) */
@@ -486,27 +399,8 @@ export class AuthService {
     if (!active) throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
   }
 
-  /**
-   * access JWT 검증 — 서명·만료 외에 `typ === 'access'`와 문자열 `sub`를 요구한다 (state JWT 등 다른 용도 토큰 거부).
-   *
-   * 전환기 예외: 이 배포 이전에 발급된 access 토큰에는 `typ`이 없다. `typ`도 `p`(OAuth state 용도 클레임)도 없고 `sub`가 문자열이며
-   * **`iat`가 기준 시각(legacyAccessTokenCutoff — 기본은 이 프로세스 시작 시각) 이전**인 토큰만 레거시 access 토큰으로 받는다 — 배포 직후
-   * 로그인된 사용자가 전부 401을 맞지 않게 하되, 배포 뒤에 같은 시크릿으로 서명된 typ 없는 토큰은 받지 않는다. access TTL(15분)이 지나면 창은 저절로 닫힌다.
-   * state 토큰(`p: 'gstate'`, `sub` 없음)은 어느 경로로도 통과하지 못한다.
-   * TODO(remove after 2026-11-30): 레거시 분기(`legacy`)와 LEGACY_ACCESS_TOKEN_CUTOFF를 지우고 `typ === 'access'`만 남긴다.
-   */
-  async verifyAccessToken(token: string): Promise<SessionUser> {
-    let payload: { sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown; iat?: unknown };
-    try {
-      payload = await this.jwt.verifyAsync<{ sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown; iat?: unknown }>(token);
-    } catch {
-      throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
-    }
-    const legacy = payload.typ === undefined && payload.p === undefined
-      && typeof payload.iat === 'number' && payload.iat * 1000 < this.legacyCutoffMs;
-    if ((payload.typ !== 'access' && !legacy) || typeof payload.sub !== 'string' || !payload.sub) {
-      throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
-    }
-    return { userId: payload.sub, isAdmin: payload.adm === true };
+  /** access JWT → SessionUser (typ/sub 규칙과 레거시 전환기) — access-token.verifier.ts */
+  verifyAccessToken(token: string): Promise<SessionUser> {
+    return this.accessTokens.verify(token);
   }
 }

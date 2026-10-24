@@ -3,7 +3,8 @@ import { createHash } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
 import { AuthController } from './auth.controller';
 import { withParamsCheck } from '../test-support/expect-params-match';
-import { AuthService, legacyAccessTokenCutoff, MAX_REVOKE_CHAIN_HOPS } from './auth.service';
+import { legacyAccessTokenCutoff } from './access-token.verifier';
+import { AuthService, MAX_REVOKE_CHAIN_HOPS } from './auth.service';
 import { decryptGraceToken } from './refresh-grace';
 
 /** 유닛 스펙은 JWT_SECRET provider(jwt-secret.ts) 대신 고정 시크릿을 직접 주입한다 — grace 사본은 이 값으로 감싸진다 */

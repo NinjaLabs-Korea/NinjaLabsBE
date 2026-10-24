@@ -45,11 +45,16 @@ describe('AuthGuard token type binding', () => {
   });
 
   // TODO(remove after 2026-11-30): flip back to a rejection together with the legacy branch in AuthService.verifyAccessToken
-  it('still accepts a legacy access token issued before typ existed (no typ, no p, string sub) during the transition', async () => {
-    const legacy = await jwt.signAsync({ sub: userId, adm: true });
+  it('still accepts a legacy access token issued before typ existed (no typ, no p, string sub) if it predates this process', async () => {
+    const legacy = await jwt.signAsync({ sub: userId, adm: true, iat: Math.floor(performance.timeOrigin / 1000) - 60 });
     const { executionContext, request } = context(`Bearer ${legacy}`);
     await expect(guard.canActivate(executionContext)).resolves.toBe(true);
     expect(request.user).toEqual({ userId, isAdmin: true });
+  });
+
+  it('rejects a typ-less token signed after this process started (the transition only covers tokens of the previous deploy)', async () => {
+    const fresh = await jwt.signAsync({ sub: userId, adm: true });
+    await expect(guard.canActivate(context(`Bearer ${fresh}`).executionContext)).rejects.toMatchObject({ message: 'INVALID_ACCESS_TOKEN' });
   });
 
   it('rejects a validly signed token with a typ other than access', async () => {

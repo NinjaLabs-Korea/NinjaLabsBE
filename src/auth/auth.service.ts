@@ -76,6 +76,21 @@ export const USER_STATUS_CACHE_TTL_MS = 30_000;
 /** 캐시 상한 — 넘으면 가장 오래 넣은 항목부터 버린다 (Map 삽입 순서) */
 export const USER_STATUS_CACHE_MAX = 10_000;
 
+/**
+ * `typ` 없는 레거시 access 토큰의 수용 기준 시각(ms). 이 시각 **이전에 발급된(iat)** 레거시 토큰만 받는다.
+ *   - `LEGACY_ACCESS_TOKEN_CUTOFF`(ISO 8601) 미설정/빈 값 → **이 프로세스의 시작 시각** (`performance.timeOrigin`). 레거시 토큰은 typ을 넣기 전의
+ *     구 코드만 발급하므로, 새 코드가 처음 배포될 때 이미 떠 있던 세션만 통과하고 access TTL(15분)이 지나면 저절로 닫힌다.
+ *     이후 재시작에서도 기준은 "그 프로세스 시작"이지만 그때 남은 레거시 토큰은 이미 만료됐다.
+ *   - 설정 → 그 시각 (예: 첫 배포 시각으로 고정). 파싱할 수 없으면 기동 거부.
+ */
+export function legacyAccessTokenCutoff(raw: string | undefined, processStart = performance.timeOrigin): number {
+  const value = raw?.trim();
+  if (!value) return Math.floor(processStart);
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) throw new Error(`LEGACY_ACCESS_TOKEN_CUTOFF must be an ISO 8601 timestamp, got "${value}"`);
+  return parsed;
+}
+
 export interface SessionUser {
   userId: string;
   isAdmin: boolean;
@@ -102,6 +117,8 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   /** JWT_REFRESH_TTL을 정규화한 Postgres interval 문자열 — 생성 시 검증해 잘못된 값이면 부팅이 실패한다 (JWT_SECRET과 동일) */
   private readonly refreshTtl: string;
+  /** typ 없는 레거시 access 토큰은 iat가 이 시각(ms) 이전일 때만 받는다 — legacyAccessTokenCutoff */
+  private readonly legacyCutoffMs: number;
   /** userId → (ACTIVE이고 삭제되지 않았는지, 확인 시각 ms). USER_STATUS_CACHE_TTL_MS 참고 */
   private readonly userStatusCache = new Map<string, { active: boolean; checkedAt: number }>();
 
@@ -117,6 +134,7 @@ export class AuthService {
     @Optional() private readonly googleVerifier: GoogleIdTokenVerifier = new GoogleIdTokenVerifier(),
   ) {
     this.refreshTtl = normalizeRefreshTtl(this.config.get<string>('JWT_REFRESH_TTL'));
+    this.legacyCutoffMs = legacyAccessTokenCutoff(this.config.get<string>('LEGACY_ACCESS_TOKEN_CUTOFF'));
   }
 
   private googleClientId(): string {
@@ -514,19 +532,21 @@ export class AuthService {
   /**
    * access JWT 검증 — 서명·만료 외에 `typ === 'access'`와 문자열 `sub`를 요구한다 (state JWT 등 다른 용도 토큰 거부).
    *
-   * 전환기 예외: 이 배포 이전에 발급된 access 토큰에는 `typ`이 없다. `typ`도 `p`(OAuth state 용도 클레임)도 없고 `sub`가 문자열인 토큰은
-   * 레거시 access 토큰으로 보고 받는다 — 배포 직후 로그인된 사용자가 access TTL(15분) 안에 전부 401을 맞지 않도록.
+   * 전환기 예외: 이 배포 이전에 발급된 access 토큰에는 `typ`이 없다. `typ`도 `p`(OAuth state 용도 클레임)도 없고 `sub`가 문자열이며
+   * **`iat`가 기준 시각(legacyAccessTokenCutoff — 기본은 이 프로세스 시작 시각) 이전**인 토큰만 레거시 access 토큰으로 받는다 — 배포 직후
+   * 로그인된 사용자가 전부 401을 맞지 않게 하되, 배포 뒤에 같은 시크릿으로 서명된 typ 없는 토큰은 받지 않는다. access TTL(15분)이 지나면 창은 저절로 닫힌다.
    * state 토큰(`p: 'gstate'`, `sub` 없음)은 어느 경로로도 통과하지 못한다.
-   * TODO(remove after 2026-11-30): 레거시 분기(`legacy`)를 지우고 `typ === 'access'`만 남긴다 — 그때면 구 토큰은 모두 만료됐다.
+   * TODO(remove after 2026-11-30): 레거시 분기(`legacy`)와 LEGACY_ACCESS_TOKEN_CUTOFF를 지우고 `typ === 'access'`만 남긴다.
    */
   async verifyAccessToken(token: string): Promise<SessionUser> {
-    let payload: { sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown };
+    let payload: { sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown; iat?: unknown };
     try {
-      payload = await this.jwt.verifyAsync<{ sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown }>(token);
+      payload = await this.jwt.verifyAsync<{ sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown; iat?: unknown }>(token);
     } catch {
       throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
     }
-    const legacy = payload.typ === undefined && payload.p === undefined;
+    const legacy = payload.typ === undefined && payload.p === undefined
+      && typeof payload.iat === 'number' && payload.iat * 1000 < this.legacyCutoffMs;
     if ((payload.typ !== 'access' && !legacy) || typeof payload.sub !== 'string' || !payload.sub) {
       throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
     }

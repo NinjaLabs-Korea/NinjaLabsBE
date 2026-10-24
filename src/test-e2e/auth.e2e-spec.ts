@@ -201,14 +201,17 @@ describeDb('auth over HTTP (e2e)', () => {
       expect(res.body).toEqual(unauthorized('INVALID_ACCESS_TOKEN'));
     });
 
-    it('a legacy typ-less access token (issued before the typ claim) is still accepted during the transition', async () => {
+    it('a legacy typ-less access token is accepted only if issued before this process started (LEGACY_ACCESS_TOKEN_CUTOFF default)', async () => {
       const session = await e2e.login();
-      const legacy = e2e.app.get(JwtService).sign({ sub: session.userId, adm: false });
-      e2e.secrets.add(legacy);
+      const jwt = e2e.app.get(JwtService);
+      const legacy = jwt.sign({ sub: session.userId, adm: false, iat: Math.floor(performance.timeOrigin / 1000) - 60 });
+      const forgedLater = jwt.sign({ sub: session.userId, adm: true });
+      e2e.secrets.add(legacy); e2e.secrets.add(forgedLater);
       expect(claims(legacy).typ).toBeUndefined();
       const res = await e2e.get('/auth/me', { token: legacy });
       expect(res.status).toBe(200);
       expect(res.body.id).toBe(session.userId);
+      expect((await e2e.get('/auth/me', { token: forgedLater })).body).toEqual(unauthorized('INVALID_ACCESS_TOKEN'));
     });
 
     it('a still-valid access token of a suspended or deleted user → 401 INVALID_ACCESS_TOKEN once the 30 s status cache lapses (was accepted until expiry)', async () => {

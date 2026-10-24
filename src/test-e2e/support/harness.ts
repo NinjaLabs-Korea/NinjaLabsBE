@@ -53,6 +53,7 @@ export function e2eEnv(): Record<string, string> {
     JWT_SECRET: E2E_SECRETS.JWT_SECRET,
     JWT_ACCESS_TTL: '15m',
     JWT_REFRESH_TTL: '14d',
+    LEGACY_ACCESS_TOKEN_CUTOFF: '', // 기본값(프로세스 시작 시각) — auth.e2e-spec이 그 경계를 검사한다
     INJECTIVE_NETWORK: 'testnet',
     INJECTIVE_GRPC_ENDPOINT: '',
     NFT_CONTRACT_ADDRESS: 'inj1e2econtract',

@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
 import { AuthController } from './auth.controller';
 import { withParamsCheck } from '../test-support/expect-params-match';
-import { AuthService, MAX_REVOKE_CHAIN_HOPS } from './auth.service';
+import { AuthService, legacyAccessTokenCutoff, MAX_REVOKE_CHAIN_HOPS } from './auth.service';
 import { decryptGraceToken } from './refresh-grace';
 
 /** 유닛 스펙은 JWT_SECRET provider(jwt-secret.ts) 대신 고정 시크릿을 직접 주입한다 — grace 사본은 이 값으로 감싸진다 */
@@ -381,9 +381,35 @@ describe('AuthService access token type binding', () => {
   });
 
   // TODO(remove after 2026-11-30): together with the legacy branch in verifyAccessToken
-  it('accepts a legacy access token issued before typ was added (no typ, no p, string sub) during the transition', async () => {
-    const { service } = createService(jest.fn(async () => ({ sub: userId, adm: false })));
+  it('accepts a legacy access token (no typ, no p, string sub) only if it was issued before this process started', async () => {
+    const beforeStart = Math.floor(performance.timeOrigin / 1000) - 60;
+    const { service } = createService(jest.fn(async () => ({ sub: userId, adm: false, iat: beforeStart })));
     await expect(service.verifyAccessToken('t')).resolves.toEqual({ userId, isAdmin: false });
+  });
+
+  it.each([
+    ['issued after this process started', { sub: userId, iat: Math.ceil(Date.now() / 1000) + 1 }],
+    ['without an iat', { sub: userId }],
+    ['with a non-numeric iat', { sub: userId, iat: '0' }],
+  ])('rejects a typ-less token %s', async (_label, payload) => {
+    const { service } = createService(jest.fn(async () => payload));
+    await expect(service.verifyAccessToken('t')).rejects.toMatchObject({ message: 'INVALID_ACCESS_TOKEN' });
+  });
+
+  it('LEGACY_ACCESS_TOKEN_CUTOFF moves the cutoff; an unparseable value fails at boot', async () => {
+    expect(legacyAccessTokenCutoff(undefined, 1_234.9)).toBe(1_234);
+    expect(legacyAccessTokenCutoff('  ', 99)).toBe(99);
+    expect(legacyAccessTokenCutoff('2026-10-24T00:00:00Z')).toBe(Date.parse('2026-10-24T00:00:00Z'));
+    expect(() => legacyAccessTokenCutoff('yesterday')).toThrow('LEGACY_ACCESS_TOKEN_CUTOFF must be an ISO 8601 timestamp');
+
+    const iat = Math.floor(Date.parse('2026-10-23T00:00:00Z') / 1000);
+    const service = new AuthService(
+      { query: jest.fn(), tx: jest.fn() } as unknown as DatabaseService,
+      { verifyAsync: jest.fn(async () => ({ sub: userId, iat })) } as never,
+      { get: (key: string) => (key === 'LEGACY_ACCESS_TOKEN_CUTOFF' ? '2026-10-22T00:00:00Z' : undefined) } as never,
+      DEV_SECRET,
+    );
+    await expect(service.verifyAccessToken('t')).rejects.toMatchObject({ message: 'INVALID_ACCESS_TOKEN' });
   });
 
   it.each([

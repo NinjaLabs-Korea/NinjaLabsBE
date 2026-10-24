@@ -5,6 +5,7 @@ import { AlertService } from '../alerts/alert.service';
 import { ErrorBurstDetector } from '../alerts/error-burst';
 import { asHttpError } from '../database/pg-errors';
 import { logSafe } from '../logging/log-safe';
+import { ridSuffix } from './request-id';
 
 /**
  * 전역 예외 필터 — 응답 포맷은 Nest 기본(BaseExceptionFilter)을 그대로 쓰고,
@@ -50,7 +51,7 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
       const name = caught instanceof Error ? caught.name : 'UnknownError';
       const message = caught instanceof Error ? caught.message : String(caught);
       // 경로·메시지는 사용자 값이 섞일 수 있다(DB 오류 메시지는 요청 값을 인용) — CR/LF 이스케이프 + 200자 상한 (logging/log-safe.ts)
-      this.logger.error(`${logSafe(req?.method ?? '-', 16)} ${logSafe(req?.path ?? req?.url ?? '-')} ${status} ${logSafe(name, 100)}: ${logSafe(message)}`);
+      this.logger.error(`${logSafe(req?.method ?? '-', 16)} ${logSafe(req?.path ?? req?.url ?? '-')} ${status} ${logSafe(name, 100)}: ${logSafe(message)}${ridSuffix(req)}`);
       if (this.alerts && this.burst.record()) {
         const route = typeof req?.route?.path === 'string' ? req.route.path : '(unmatched route)';
         void this.alerts.notify(

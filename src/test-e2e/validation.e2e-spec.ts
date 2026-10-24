@@ -228,7 +228,7 @@ describeDb('validation over HTTP (e2e)', () => {
       expect((await e2e.get('/bounties?category=%00')).body).toEqual(nul);
       expect((await e2e.post('/users/me/profile', { nickname: 'nulprobe', bio: 'a\u0000b', tags: ['DEV'] }, { token: user.accessToken })).body).toEqual(nul);
       expect((await e2e.post('/admin/notices', { title: 'a\u0000b', body: 'b', category: 'OTHER' }, asAdmin())).body).toEqual(nul);
-      expect(e2e.linesFor('HTTP')).toEqual(expect.arrayContaining([expect.stringMatching(/^GET \/users\/a%00b 400 \d+ms$/)]));
+      expect(e2e.linesFor('HTTP')).toEqual(expect.arrayContaining([expect.stringMatching(/^GET \/users\/a%00b 400 \d+ms rid=[0-9a-f-]{36}$/)]));
       expect(e2e.linesFor('HttpException').filter((line) => line.includes('0x00'))).toEqual([]);
     });
 

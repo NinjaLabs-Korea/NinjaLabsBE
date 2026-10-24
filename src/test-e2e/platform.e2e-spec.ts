@@ -88,7 +88,7 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
     it('request log line: "<METHOD> <path> <status> <n>ms" — path only, no query string', async () => {
       await e2e.get('/notices?page=1&pageSize=5&category=EVENT');
       const line = e2e.linesFor('HTTP').find((l) => l.startsWith('GET /notices '));
-      expect(line).toMatch(/^GET \/notices 200 \d+ms$/);
+      expect(line).toMatch(/^GET \/notices 200 \d+ms rid=[0-9a-f-]{36}$/);
     });
 
     it('handlers that write the response themselves (@Res redirect) log the status actually sent, once', async () => {
@@ -98,26 +98,42 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
       await new Promise((resolve) => setImmediate(resolve));
       const lines = e2e.linesFor('HTTP').filter((l) => l.startsWith('GET /auth/google '));
       expect(lines).toHaveLength(1);
-      expect(lines[0]).toMatch(/^GET \/auth\/google 302 \d+ms$/);
+      expect(lines[0]).toMatch(/^GET \/auth\/google 302 \d+ms rid=[0-9a-f-]{36}$/);
     });
 
     it('a 5xx logs exactly one HttpException line (method, path, status, error) — no body, headers or query; the response stays Nest-shaped', async () => {
       const spy = jest.spyOn(e2e.db, 'query').mockRejectedValueOnce(new TypeError('pool exploded'));
       const before = e2e.linesFor('HttpException').length;
+      let rid = '';
       try {
         const res = await e2e.request('GET', '/members?probe=query-value', {
           headers: { authorization: 'Bearer header-value-token', cookie: 'sid=cookie-value' },
         });
         expect(res.status).toBe(500);
         expect(res.body).toEqual({ statusCode: 500, message: 'Internal server error' });
+        rid = String(res.headers['x-request-id'] ?? '');
       } finally {
         spy.mockRestore();
       }
       const lines = e2e.linesFor('HttpException').slice(before);
-      expect(lines).toEqual(['GET /members 500 TypeError: pool exploded']);
+      expect(lines).toEqual([`GET /members 500 TypeError: pool exploded rid=${rid}`]);
       const all = e2e.logs.map((l) => l.message).join('\n');
       for (const leaked of ['header-value-token', 'cookie-value', 'query-value']) expect(all).not.toContain(leaked);
-      expect(e2e.linesFor('HTTP').some((l) => /^GET \/members 500 \d+ms$/.test(l))).toBe(true);
+      expect(rid).toMatch(/^[0-9a-f-]{36}$/);
+      // 5xx 줄과 요청 로그 줄이 같은 ID를 공유하고, 요청당 요청 로그는 한 줄이다
+      expect(e2e.linesFor('HTTP').filter((l) => l.includes(`rid=${rid}`))).toHaveLength(1);
+      expect(e2e.linesFor('HTTP').some((l) => new RegExp(`^GET /members 500 \\d+ms rid=${rid}$`).test(l))).toBe(true);
+    });
+
+    it('X-Request-Id: a valid incoming id is echoed and logged; a bad one is replaced; the header is CORS-exposed', async () => {
+      const res = await e2e.request('GET', '/notices', { headers: { 'x-request-id': 'trace-abc-12345', origin: FE_ORIGIN } });
+      expect(res.headers['x-request-id']).toBe('trace-abc-12345');
+      expect(String(res.headers['access-control-expose-headers'])).toContain('X-Request-Id');
+      expect(e2e.linesFor('HTTP').filter((l) => l.endsWith(' rid=trace-abc-12345'))).toHaveLength(1);
+
+      const bad = await e2e.request('GET', '/notices', { headers: { 'x-request-id': 'bad id with spaces' } });
+      expect(String(bad.headers['x-request-id'])).toMatch(/^[0-9a-f-]{36}$/);
+      expect(String(bad.headers['x-request-id'])).not.toContain('spaces');
     });
 
     it('4xx are not logged as errors by the filter', async () => {

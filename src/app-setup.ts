@@ -8,6 +8,7 @@ import { HttpExceptionFilter } from './common/http/http-exception.filter';
 import { RequestLoggingInterceptor } from './common/http/request-logging.interceptor';
 import { trustProxyHops } from './common/bootstrap-checks';
 import { OriginAllowlist } from './common/origin-allowlist';
+import { REQUEST_ID_HEADER, requestIdMiddleware } from './common/http/request-id';
 
 /**
  * HTTP 파이프라인 설정의 단일 출처 — main.ts와 HTTP e2e 스위트(src/test-e2e)가 **같은 함수**로 앱을 구성한다.
@@ -29,6 +30,9 @@ export function configureApp(app: NestExpressApplication): void {
   // SIGTERM/SIGINT 시 onModuleDestroy(pg Pool 종료)까지 실행 — 컨테이너 재배포 중 연결 누수 방지
   app.enableShutdownHooks();
 
+  // 요청 ID — 요청 로그/5xx 로그를 묶는 상관 키. 가장 먼저 등록해 helmet·CORS·가드 거절 응답에도 헤더가 붙는다
+  app.use(requestIdMiddleware);
+
   // 보안 헤더 (CSP는 API 서버라 기본값으로 충분)
   app.use(helmet());
 
@@ -37,6 +41,7 @@ export function configureApp(app: NestExpressApplication): void {
   app.enableCors({
     origin: (origin, callback) => callback(null, corsOrigins.allows(origin)),
     credentials: true,
+    exposedHeaders: [REQUEST_ID_HEADER],
   });
 
   // DTO 검증: 정의되지 않은 필드는 400 거절 (FE 페이로드와 DTO가 1:1로 맞춰져 있음) + 타입 자동 변환

@@ -125,7 +125,7 @@ describe('ApplicationsService apply rules', () => {
   const FUTURE = '2999-01-01T00:00:00.000Z';
   const bountyRow = (overrides: Record<string, unknown> = {}) => ({
     rowCount: 1,
-    rows: [{ application_required: true, submission_mode: 'BOTH', status: 'OPEN', submission_deadline: FUTURE, application_deadline: null, ...overrides }],
+    rows: [{ application_required: true, submission_mode: 'DIRECT', status: 'OPEN', submission_deadline: FUTURE, application_deadline: null, ...overrides }],
   });
 
   it('locks the bounty row first and refuses an unknown/deleted bounty with 404 BOUNTY_NOT_FOUND', async () => {
@@ -147,12 +147,17 @@ describe('ApplicationsService apply rules', () => {
     await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ message: 'BOUNTY_NOT_OPEN' });
   });
 
-  it('a DIRECT bounty refuses an agent with 400 DIRECT_SUBMISSION_REQUIRED; BOTH accepts users and agents', async () => {
+  it('a DIRECT bounty refuses an agent (400 DIRECT_SUBMISSION_REQUIRED), an AGENT bounty refuses a person (400 AGENT_SUBMISSION_REQUIRED)', async () => {
     await expect(serviceWith(jest.fn().mockResolvedValueOnce(bountyRow({ submission_mode: 'DIRECT' }))).applyAsAgent('bounty', 'agent', 'hi'))
       .rejects.toMatchObject({ message: 'DIRECT_SUBMISSION_REQUIRED' });
-    for (const call of [(s: ApplicationsService) => s.apply('bounty', 'user', 'hi'), (s: ApplicationsService) => s.applyAsAgent('bounty', 'agent', 'hi')]) {
+    await expect(serviceWith(jest.fn().mockResolvedValueOnce(bountyRow({ submission_mode: 'AGENT' }))).apply('bounty', 'user', 'hi'))
+      .rejects.toMatchObject({ message: 'AGENT_SUBMISSION_REQUIRED' });
+    for (const [mode, call] of [
+      ['DIRECT', (s: ApplicationsService) => s.apply('bounty', 'user', 'hi')],
+      ['AGENT', (s: ApplicationsService) => s.applyAsAgent('bounty', 'agent', 'hi')],
+    ] as const) {
       const query = jest.fn()
-        .mockResolvedValueOnce(bountyRow())
+        .mockResolvedValueOnce(bountyRow({ submission_mode: mode }))
         .mockResolvedValueOnce({ rowCount: 0, rows: [] })
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
       await expect(call(serviceWith(query))).resolves.toEqual({ id: 'new', status: 'PENDING' });

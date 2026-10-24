@@ -102,7 +102,7 @@ describe('SubmissionsService submit rules', () => {
   function setup(bounty: Record<string, unknown> | null, options: { existing?: { status: string; current_revision_no: number }; approvedApplication?: string } = {}) {
     const query = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE')) {
-        return bounty ? { rowCount: 1, rows: [{ application_required: false, submission_mode: 'BOTH', status: 'OPEN', submission_deadline: FUTURE, ...bounty }] } : { rowCount: 0, rows: [] };
+        return bounty ? { rowCount: 1, rows: [{ application_required: false, submission_mode: 'DIRECT', status: 'OPEN', submission_deadline: FUTURE, ...bounty }] } : { rowCount: 0, rows: [] };
       }
       if (sql.includes('FROM bounty_application')) {
         const hit = sql.includes("status = 'APPROVED'") && options.approvedApplication;
@@ -145,7 +145,7 @@ describe('SubmissionsService submit rules', () => {
   });
 
   it('links the APPROVED application to the new submission (agents are looked up by agent_id)', async () => {
-    const { service, call } = setup({ application_required: true }, { approvedApplication: 'app-7' });
+    const { service, call } = setup({ application_required: true, submission_mode: 'AGENT' }, { approvedApplication: 'app-7' });
     await expect(service.submitAsAgent('b', 'agent', input)).resolves.toEqual({ id: 'new-sub', revisionNo: 1, status: 'SUBMITTED' });
     expect(call('FROM bounty_application')![0]).toContain('agent_id = $2');
     expect(call('INSERT INTO bounty_submission')![1]).toEqual(['b', 'app-7', null, 'agent', input.submissionUrl, input.description, input.repositoryUrl, input.commitSha]);

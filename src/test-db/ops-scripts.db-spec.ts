@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import { promisify } from 'util';
 import { run as grantAdmin } from '../../scripts/grant-admin';
 import { applyMigrations, sslOptions } from '../../scripts/migrate';
+import { run as recordRefund } from '../../scripts/record-refund';
 import { run as requeueNftJobs } from '../../scripts/requeue-nft-jobs';
 import { AlertService } from '../common/alerts/alert.service';
 import { InjectiveNftClient } from '../nfts/injective-nft.client';
@@ -512,6 +513,137 @@ describeDb('ops scripts on a real database', () => {
       const { rewardId, payouts: [open] } = await seedPayouts(3, ['AWAITING_MULTISIG_APPROVAL', 'PAID']);
       await runTemplate('PAYOUT_CANCELLED_MANUAL', open);
       expect((await pool.query(`SELECT status FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0].status).toBe('PARTIALLY_PAID');
+    });
+  });
+
+  describe('scripts/record-refund.js', () => {
+    let counter = 0;
+    /** 테스트마다 다른 64자리 hex — 같은 DB 안에서 환불 증빙 해시는 재사용할 수 없다 */
+    const freshTx = () => `0x${(++counter).toString(16).padStart(64, 'a')}`;
+
+    async function seedRefund(options: { bounty?: string; reward?: string; payouts?: string[]; deposited?: number } = {}) {
+      const admin = await createUser({ isAdmin: true });
+      const bounty = await pool.query<{ id: string }>(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, max_winners, status)
+         VALUES ($1, 's', 'refund', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', 3, $2) RETURNING id`, [admin.id, options.bounty ?? 'CANCELLED']);
+      const reward = await pool.query<{ id: string }>(
+        `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, deposited_amount, custody_address, status)
+         VALUES ($1, 'NATIVE', 'inj', 'INJ', 1000, $2, $3, $4) RETURNING id`,
+        [bounty.rows[0].id, options.deposited ?? 1000, `inj1${'q'.repeat(38)}`, options.reward ?? 'FUNDED']);
+      for (const status of options.payouts ?? []) {
+        const winner = await createUser();
+        const wallet = await pool.query<{ id: string }>(
+          `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`,
+          [winner.id, `inj1${unique()}`]);
+        const submission = await pool.query<{ id: string }>(
+          `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
+           VALUES ($1, $2, 'https://example.test/s', 'd', 'APPROVED') RETURNING id`, [bounty.rows[0].id, winner.id]);
+        await pool.query(
+          `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by)
+           VALUES ($1, $2, $3, 300, $4, $5, $6)`,
+          [reward.rows[0].id, submission.rows[0].id, wallet.rows[0].id, status, unique('refund-'), admin.id]);
+      }
+      return { bountyId: bounty.rows[0].id, rewardId: reward.rows[0].id, adminId: admin.id };
+    }
+
+    const rewardStatus = async (id: string) =>
+      (await pool.query<{ status: string }>(`SELECT status FROM bounty_reward WHERE id = $1`, [id])).rows[0].status;
+
+    it('records the refund: REFUNDED + REWARD_REFUNDED audit (actor NULL, deposited minus PAID), then bounty delete is allowed', async () => {
+      const TX = freshTx();
+      const { bountyId, rewardId, adminId } = await seedRefund({ reward: 'PARTIALLY_PAID', payouts: ['PAID', 'CANCELLED', 'FAILED'] });
+      const res = await invoke(recordRefund, [rewardId, '--tx', TX.slice(2).toUpperCase()], async () => true);
+      expect(res.code).toBe(0);
+      expect(res.prompts).toHaveLength(1);
+      expect(await rewardStatus(rewardId)).toBe('REFUNDED');
+      expect(await auditRows('bounty_reward', rewardId)).toEqual([{
+        action: 'REWARD_REFUNDED',
+        actor_user_id: null,
+        before_data: { status: 'PARTIALLY_PAID' },
+        after_data: { txHash: TX, refundedAmount: '700', source: 'scripts/record-refund.js' },
+      }]);
+      // the delete guard (BountyAdminService.remove) no longer sees open funds
+      const open = await pool.query(
+        `SELECT 1 FROM bounty_reward rw WHERE rw.bounty_id = $1
+            AND (rw.status = 'REFUND_PENDING' OR (rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')
+                 AND LEAST(rw.amount, rw.deposited_amount) > (SELECT COALESCE(SUM(p.amount), 0) FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status = 'PAID')))`,
+        [bountyId]);
+      expect(open.rowCount).toBe(0);
+      expect(adminId).toBeTruthy();
+    });
+
+    it('accepts a REFUND_PENDING reward', async () => {
+      const { rewardId } = await seedRefund({ reward: 'REFUND_PENDING' });
+      const res = await invoke(recordRefund, [rewardId, '--tx', `0x${'cd'.repeat(32)}`, '--yes']);
+      expect(res.code).toBe(0);
+      expect(await rewardStatus(rewardId)).toBe('REFUNDED');
+    });
+
+    it('--dry-run and a declined prompt change nothing', async () => {
+      const TX = freshTx();
+      const { rewardId } = await seedRefund();
+      const dry = await invoke(recordRefund, [rewardId, '--tx', TX, '--dry-run']);
+      expect(dry.code).toBe(0);
+      expect(dry.out).toContain('refundedAmount=1000');
+      expect(dry.out).toContain('dry-run  nothing written');
+      expect(dry.prompts).toEqual([]);
+      const declined = await invoke(recordRefund, [rewardId, '--tx', TX]);
+      expect(declined.code).toBe(1);
+      expect(await rewardStatus(rewardId)).toBe('FUNDED');
+      expect(await auditRows('bounty_reward', rewardId)).toEqual([]);
+    });
+
+    it.each([
+      ['an OPEN bounty', { bounty: 'OPEN' }, 'not CANCELLED'],
+      ['a COMPLETED bounty', { bounty: 'COMPLETED' }, 'not CANCELLED'],
+      ['a PAID reward', { reward: 'PAID' }, 'expected one of'],
+      ['a DEPOSIT_PENDING reward', { reward: 'DEPOSIT_PENDING' }, 'expected one of'],
+      ['an already REFUNDED reward', { reward: 'REFUNDED' }, 'expected one of'],
+      ['an open payout (REQUESTED)', { payouts: ['PAID', 'REQUESTED'] }, 'still open'],
+      ['an open payout (BROADCASTING)', { payouts: ['BROADCASTING'] }, 'still open'],
+      ['everything already paid out', { reward: 'PARTIALLY_PAID', deposited: 300, payouts: ['PAID'] }, 'nothing to refund'],
+    ])('refuses %s and writes nothing', async (_label, options, message) => {
+      const TX = freshTx();
+      const { rewardId } = await seedRefund(options);
+      const before = await rewardStatus(rewardId);
+      const res = await invoke(recordRefund, [rewardId, '--tx', TX, '--yes']);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain(message);
+      expect(await rewardStatus(rewardId)).toBe(before);
+      expect(await auditRows('bounty_reward', rewardId)).toEqual([]);
+    });
+
+    it('refuses a missing reward, bad arguments and a tx hash already used as a deposit or payout', async () => {
+      const TX = freshTx();
+      expect((await invoke(recordRefund, [unique('x'), '--tx', TX])).code).toBe(2);
+      expect((await invoke(recordRefund, ['00000000-0000-4000-8000-000000000000', '--tx', 'nope'])).code).toBe(2);
+      expect((await invoke(recordRefund, ['00000000-0000-4000-8000-000000000000'])).code).toBe(2);
+      expect((await invoke(recordRefund, ['00000000-0000-4000-8000-000000000000', '--tx', TX, '--nope'])).code).toBe(2);
+      const missing = await invoke(recordRefund, ['00000000-0000-4000-8000-000000000000', '--tx', TX, '--yes']);
+      expect(missing.code).toBe(1);
+      expect(missing.out).toContain('reward not found');
+
+      const other = await seedRefund();
+      const depositHash = `0x${'ee'.repeat(32)}`;
+      await pool.query(`UPDATE bounty_reward SET deposit_tx_hash = $2 WHERE id = $1`, [other.rewardId, depositHash]);
+      const { rewardId } = await seedRefund();
+      const res = await invoke(recordRefund, [rewardId, '--tx', depositHash, '--yes']);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain('already recorded as a deposit');
+      expect(await rewardStatus(rewardId)).toBe('FUNDED');
+    });
+
+    it('rolls the reward update back when the audit insert fails (same transaction)', async () => {
+      const TX = freshTx();
+      const { rewardId } = await seedRefund();
+      await pool.query(`ALTER TABLE audit_log ADD CONSTRAINT tmp_refund_block CHECK (action <> 'REWARD_REFUNDED') NOT VALID`);
+      try {
+        await expect(invoke(recordRefund, [rewardId, '--tx', TX, '--yes'])).rejects.toThrow();
+      } finally {
+        await pool.query(`ALTER TABLE audit_log DROP CONSTRAINT tmp_refund_block`);
+      }
+      expect(await rewardStatus(rewardId)).toBe('FUNDED');
+      expect(await auditRows('bounty_reward', rewardId)).toEqual([]);
     });
   });
 });

@@ -55,6 +55,7 @@
 |---|---|---|
 | `node scripts/grant-admin.js grant\|revoke <email> [--dry-run] [--yes] [--force]` | `is_admin` 부여/회수 | `"user".is_admin` + `audit_log`(`ADMIN_GRANTED`/`ADMIN_REVOKED`, actor NULL, before/after `{is_admin}`) 한 트랜잭션 |
 | `node scripts/requeue-nft-jobs.js <job-id>... \| --all [--dry-run] [--yes]` | FAILED `nft_job` 수동 재시도 | 잡 → PENDING(`retry_count` 0, 즉시), nft FAILED → `MINTED`(token_id 있음)/`PENDING`, `audit_log` `NFT_JOB_REQUEUED` |
+| `node scripts/record-refund.js <reward-id> --tx <hash> [--dry-run] [--yes]` | 취소된 바운티의 환불 송금 기록 (§7.7) | 보상 → `REFUNDED`, `audit_log` `REWARD_REFUNDED`(actor NULL, `{txHash, refundedAmount}`) 한 트랜잭션 |
 | `psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql [-v …]` | 메인넷 전환 전 점검 | 없음 — READ ONLY 트랜잭션 + ROLLBACK |
 | `psql "$DATABASE_URL" -X -f scripts/find-static-ext-nicknames.sql` | 정적 파일 확장자로 끝나는 기존 ACTIVE 닉네임 목록 (아래) | 없음 — READ ONLY 트랜잭션 + ROLLBACK |
 | `npm run migrate` | 마이그레이션 적용 (아래 "트랜잭션 제어문 거부") | `_migrations` |
@@ -286,6 +287,18 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 5. **무단 민팅 확인**: 유출 시점 이후 마스터 주소의 tx를 익스플로러에서 보고, 컨트랙트의 토큰 중 `nft.id`(token_id = nft UUID)와 맞지 않는 것을 목록화한다.
 6. 새 니모닉을 `MASTER_WALLET_MNEMONIC`에 넣고 재배포 → 미뤄진 잡이 돈다. FAILED가 있으면 §7.3의 재시도.
 7. 운영 전 과제: 니모닉을 env 대신 KMS/Vault로(security.md "운영 전").
+
+### 7.7 환불 기록 — 취소된 바운티의 입금을 스폰서에게 돌려준 뒤
+`CANCELLED` 바운티의 보상이 입금된 채(`FUNDED`/`PARTIALLY_PAID`/`REFUND_PENDING`) 남아 있으면 바운티 삭제가 409 `BOUNTY_HAS_OPEN_FUNDS`로 막힌다. API에는 환불 기록 엔드포인트가 없으므로 이 스크립트가 유일한 경로다 — 손으로 쓴 SQL을 운영 DB에 직접 실행하지 않는다 (감사 행이 남지 않는다).
+1. 열린 payout을 정리한다 (`GET /admin/bounties/:id/operations`). `PAID`/`CANCELLED`/`FAILED` 밖의 payout이 있으면 스크립트가 거부한다 — 취소하거나 §7.4로 마무리한다.
+2. 멀티시그에서 스폰서 주소로 **환불 송금**을 서명·전송한다. 금액 = 입금액 − `PAID` payout 합계 (스크립트가 `--dry-run`에서 `refundedAmount`로 보여 준다). 송금 tx 해시를 받아 둔다.
+3. 점검 후 기록:
+   ```bash
+   railway run node scripts/record-refund.js <reward-id> --tx <hash> --dry-run
+   railway run node scripts/record-refund.js <reward-id> --tx <hash>          # 확인 프롬프트에 yes
+   ```
+   거부 조건(아무것도 쓰지 않고 exit 1): 바운티가 `CANCELLED`가 아님, 보상이 위 세 상태가 아님, 열린 payout 있음, 환불할 금액이 0 이하, 해시가 이미 입금/지급/환불 증빙으로 기록됨. 보상이 여러 개면 보상마다 한 번씩 실행한다.
+4. 확인: `GET /admin/audit-logs?entityType=bounty_reward&entityId=<reward-id>`에 `REWARD_REFUNDED`. 모든 보상이 `REFUNDED`가 되면 바운티를 삭제할 수 있다.
 
 ## 8. testnet → mainnet 전환
 

@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'crypto';
 import { describeDb } from '../test-db/describe-db';
 import { getEthereumAddress, getInjectiveAddress } from './support/injective-sdk.stub';
 import { E2eApp, FE_ORIGIN, PREVIEW_ORIGIN, startApp } from './support/harness';
@@ -88,6 +89,16 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
       await e2e.get('/notices?page=1&pageSize=5&category=EVENT');
       const line = e2e.linesFor('HTTP').find((l) => l.startsWith('GET /notices '));
       expect(line).toMatch(/^GET \/notices 200 \d+ms$/);
+    });
+
+    it('handlers that write the response themselves (@Res redirect) log the status actually sent, once', async () => {
+      const challenge = createHash('sha256').update(randomBytes(32).toString('base64url')).digest('base64url');
+      const res = await e2e.get(`/auth/google?codeChallenge=${challenge}`);
+      expect(res.status).toBe(302);
+      await new Promise((resolve) => setImmediate(resolve));
+      const lines = e2e.linesFor('HTTP').filter((l) => l.startsWith('GET /auth/google '));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^GET \/auth\/google 302 \d+ms$/);
     });
 
     it('a 5xx logs exactly one HttpException line (method, path, status, error) — no body, headers or query; the response stays Nest-shaped', async () => {

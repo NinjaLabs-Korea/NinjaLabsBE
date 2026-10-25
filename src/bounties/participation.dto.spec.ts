@@ -21,6 +21,16 @@ describe('bounty participation DTOs (user and agent surfaces share the same rule
     expect(await failedFields(cls, { message: '', portfolioUrl: 'javascript:alert(1)' })).toEqual(['message', 'portfolioUrl']);
   });
 
+  it.each([ApplyDto, AgentApplyDto])('%p: a whitespace-only message is empty, and the stored message is trimmed', async (cls) => {
+    expect(await failedFields(cls, { message: '   \n ' })).toEqual(['message']);
+    expect(plainToInstance(cls, { message: '  hello  ' }).message).toBe('hello');
+  });
+
+  it.each([SubmitDto, AgentSubmitDto])('%p: a whitespace-only description is empty, and the stored description is trimmed', async (cls) => {
+    expect(await failedFields(cls, { submissionUrl: 'https://demo.app', description: ' \t ' })).toEqual(['description']);
+    expect(plainToInstance(cls, { submissionUrl: 'https://demo.app', description: ' done ' }).description).toBe('done');
+  });
+
   it.each([SubmitDto, AgentSubmitDto])('%p: submissionUrl/repositoryUrl http(s), description ≤ 8000, commitSha ≤ 64', async (cls) => {
     expect(await failedFields(cls, { submissionUrl: 'https://demo.app', description: 'done', repositoryUrl: 'https://github.com/o/r', commitSha: 'a'.repeat(40) })).toEqual([]);
     expect(await failedFields(cls, { submissionUrl: 'https://demo.app', description: 'd'.repeat(8000) })).toEqual([]);

@@ -94,5 +94,5 @@
 - [ ] 멀티시그 서명자 구성(2-of-3 제안)과 서명자 목록 — 오프체인 정책 문서화. 템플릿은 [runbook.md](runbook.md) §9 — 채운 문서는 레포 밖(운영자 전용)에 둔다
 - [x] 운영 화면 데이터(`GET /admin/bounties/:id/operations`, `GET /admin/nft-jobs`)는 지원/심사 메모, 수령 지갑 주소, 운영자 id·닉네임, NFT 잡 `last_error`(워커가 이미 니모닉/64자리 hex를 가려 저장 — `nft-job.worker.ts sanitizeError`)를 담으므로 AdminGuard 뒤에만 있다. 공개 라우트로 옮기지 말 것. NFT 잡 재시도는 감사 `NFT_JOB_RETRIED`로 남는다
 - [ ] 운영 준비 — 업타임 모니터(`GET /health`, DB 다운 시 503), 자체 `pg_dump` 백업 + 분기별 복구 리허설, `JWT_SECRET`/니모닉 유출 대응, 메인넷 전환 점검(`scripts/mainnet-preflight.sql`): [runbook.md](runbook.md) §5~§8
-- [ ] `npm audit` CI 통합 + 의존성 업데이트 주기 — 2026-10 기준 `@nestjs/*` 11.2.7 / `@nestjs/config` 4.0.4, `npm audit --omit=dev` high/critical 0 (axios·follow-redirects는 `@injectivelabs/sdk-ts` 경유 transitives, patch로 해결)
+- [x] `npm audit` CI 게이트 — CI `audit` 잡이 `scripts/audit-gate.js`로 production 의존성의 high/critical advisory를 **차단**한다 (`audit-allowlist.json` 항목은 사유와 만료일 필수, 만료되면 잡이 실패; 네트워크 장애는 재시도 후 별도 에러). 남은 일: 의존성 업데이트 주기 — 2026-10 기준 `@nestjs/*` 11.2.7 / `@nestjs/config` 4.0.4, `npm audit --omit=dev` high/critical 0 (axios·follow-redirects는 `@injectivelabs/sdk-ts` 경유 transitives, patch로 해결; multer 2.4.0의 GHSA-q7qp-rjg7-q26m만 allowlist)
 - [ ] Supabase `service_role` 키는 백엔드에서만 사용, FE·레포 노출 금지

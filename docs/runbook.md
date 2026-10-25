@@ -198,14 +198,15 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 ### 7.1 DB 다운 (`/health` 503)
 1. Supabase status 페이지와 `Dashboard → Reports/Logs`로 원인 분류: 플랫폼 장애 / 프로젝트 일시정지(무료 플랜 비활성) / 접속 수 초과 / 디스크 가득 / 인증서·비밀번호 변경.
-2. Railway 로그에서 `timeout exceeded when trying to connect`(풀 고갈 — 느린 쿼리/커넥션 누수, API는 `503 DATABASE_UNAVAILABLE`), `Connection terminated due to connection timeout`(DB 무응답 — 연결 수립 `DB_CONNECTION_TIMEOUT_MS` 초과), `canceling statement due to statement timeout`(`DB_STATEMENT_TIMEOUT_MS` 초과 쿼리 — 500), `ECONNREFUSED`, `too many connections`, `self-signed certificate`(→ `DATABASE_CA_CERT` 불일치), `password authentication failed`(→ `DATABASE_URL` 회전) 중 무엇인지 본다.
+2. Railway 로그에서 `timeout exceeded when trying to connect`(풀 고갈 — 느린 쿼리/커넥션 누수, API는 `503 DATABASE_UNAVAILABLE`), `Connection terminated unexpectedly`·`ECONNREFUSED`·SQLSTATE `57P01`/`57P03`/`53300`(DB 재시작·기동 중·연결 수 초과 — 이것도 API는 `503 DATABASE_UNAVAILABLE`), `Connection terminated due to connection timeout`(DB 무응답 — 연결 수립 `DB_CONNECTION_TIMEOUT_MS` 초과), `canceling statement due to statement timeout`(`DB_STATEMENT_TIMEOUT_MS` 초과 쿼리 — 500), `self-signed certificate`(→ `DATABASE_CA_CERT` 불일치), `password authentication failed`(→ `DATABASE_URL` 회전) 중 무엇인지 본다.
 3. 원인별: 플랫폼 장애는 대기(재배포 금지 — healthcheck가 실패해 롤아웃이 멈춘다). 접속 수 초과는 Supavisor session 모드 URL로 교체 또는 인스턴스 수 축소. 자격 증명/인증서 문제는 Railway 변수 수정 → 재배포.
 4. 복구 후: `/health` 200, `nft_job`의 PROCESSING 잡은 워커가 15분 뒤 스스로 PENDING으로 되돌린다(조치 불필요). 장애 중 실패한 사용자 요청은 재시도 안내.
 
 ### 7.2 Google 장애 → `GOOGLE_UNAVAILABLE`
 - 증상: 사용자는 Google 동의 뒤 FE `/auth/callback#error=AUTH_FAILED`로 돌아온다 — 콜백(`GET /auth/google/callback`)은 모든 실패를 같은 리다이렉트로 감추므로(api-contract.md) **HTTP 503/401은 브라우저나 업타임 모니터에 보이지 않는다**. 원인은 Railway 로그로만 구분한다:
   - `Google id_token verification unavailable: …` (warn) 뒤 `[onboarding] {"event":"oauth.callback.failed",…,"errorCode":"GOOGLE_UNAVAILABLE"}` — Google JWKS를 못 받아 id_token 서명을 검증할 수 없음(내부적으로 503).
-  - `"errorCode":"GOOGLE_CODE_EXCHANGE_FAILED"` — 토큰 엔드포인트가 비-2xx 응답(내부적으로 401). `"errorCode":"TypeError"` 등은 토큰 엔드포인트에 연결 자체가 안 된 경우.
+  - `Google token endpoint unavailable: <TimeoutError|TypeError|…>` (warn) 뒤 같은 `"errorCode":"GOOGLE_UNAVAILABLE"` — 토큰 엔드포인트에 연결 자체가 안 되거나 10초 안에 응답이 없음(내부적으로 503). 위 줄과는 앞선 warn으로 구분한다.
+  - `"errorCode":"GOOGLE_CODE_EXCHANGE_FAILED"` — 토큰 엔드포인트가 비-2xx 응답(내부적으로 401).
   - `"errorCode":"INVALID_OAUTH_STATE"` — Google 문제가 아니다(state 만료·`JWT_SECRET` 교체 직후, §7.5).
 - 영향: **새 로그인만** 막힌다. 이미 로그인한 사용자는 refresh 토큰(우리 DB)으로 계속 쓴다. 에이전트 API(API 키)는 무관.
 - 조치: Google Cloud status 확인 → 대기. 우리 쪽에서 우회하지 않는다(서명 검증을 끄지 않는다). 공지 채널에 "로그인 일시 장애, 기존 세션은 정상" 안내.

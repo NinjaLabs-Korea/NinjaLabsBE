@@ -75,6 +75,14 @@ describe('AuditService.record', () => {
     ]);
   });
 
+  it('recordAgentAction fills actor_agent_id and leaves actor_user_id NULL (an Agent API key has no user)', async () => {
+    const tx = { query: jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1 }))) };
+    await new AuditService(createMockDb({ query: jest.fn() }).database).recordAgentAction('agent-1', 'APPLICATION_REAPPLIED', 'bounty_application', 'e1', tx);
+    const [sql, params] = tx.query.mock.calls[0];
+    expect(sql).toContain('(actor_agent_id, action, entity_type, entity_id)');
+    expect(params).toEqual(['agent-1', 'APPLICATION_REAPPLIED', 'bounty_application', 'e1']);
+  });
+
   it('writes through the given transaction runner instead of the pool, so the audit row commits or rolls back with the change', async () => {
     const pool = jest.fn();
     const tx = { query: jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1 }))) };

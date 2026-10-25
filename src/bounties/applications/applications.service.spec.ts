@@ -46,14 +46,14 @@ describe('ApplicationsService re-application after withdrawal', () => {
   const openBounty = { rowCount: 1, rows: [{ application_required: true, submission_mode: 'BOTH', status: 'OPEN', submission_deadline: '2999-01-01' }] };
 
   it.each([
-    ['user', 'applicant_user_id', (s: ApplicationsService) => s.apply('bounty', 'user', 'again', 'https://p.example'), 'user'],
-    ['agent', 'agent_id', (s: ApplicationsService) => s.applyAsAgent('bounty', 'agent', 'again', 'https://p.example'), undefined],
-  ] as const)('reopens the %s\'s own WITHDRAWN row: PENDING, new message/portfolio, review fields cleared, id kept, APPLICATION_REAPPLIED in the tx', async (_kind, column, call, auditActor) => {
+    ['user', 'applicant_user_id', (s: ApplicationsService) => s.apply('bounty', 'user', 'again', 'https://p.example'), 'record'],
+    ['agent', 'agent_id', (s: ApplicationsService) => s.applyAsAgent('bounty', 'agent', 'again', 'https://p.example'), 'recordAgentAction'],
+  ] as const)('reopens the %s\'s own WITHDRAWN row: PENDING, new message/portfolio, review fields cleared, id kept, APPLICATION_REAPPLIED in the tx', async (kind, column, call, auditMethod) => {
     const query = jest.fn()
       .mockResolvedValueOnce(openBounty)
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'app-1', status: 'WITHDRAWN' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'app-1', status: 'PENDING', applied_at: 'now' }] });
-    const audit = { record: jest.fn() };
+    const audit = { record: jest.fn(), recordAgentAction: jest.fn() };
     const service = serviceWith(query, audit);
 
     await expect(call(service)).resolves.toEqual({ id: 'app-1', status: 'PENDING', applied_at: 'now' });
@@ -64,7 +64,10 @@ describe('ApplicationsService re-application after withdrawal', () => {
     expect(sql).toContain("WHERE id = $1 AND status = 'WITHDRAWN'");
     expect(params).toEqual(['app-1', 'again', 'https://p.example']);
     expect(query).toHaveBeenCalledTimes(3); // no INSERT
-    expect(audit.record).toHaveBeenCalledWith(auditActor, 'APPLICATION_REAPPLIED', 'bounty_application', 'app-1', expect.anything());
+    // the agent path has no user id: the row must carry actor_agent_id (recordAgentAction), not an anonymous record()
+    const other = auditMethod === 'record' ? 'recordAgentAction' : 'record';
+    expect(audit[auditMethod]).toHaveBeenCalledWith(kind, 'APPLICATION_REAPPLIED', 'bounty_application', 'app-1', expect.anything());
+    expect(audit[other]).not.toHaveBeenCalled();
   });
 
   it.each(['PENDING', 'APPROVED', 'REJECTED'])('keeps 409 ALREADY_APPLIED for an existing %s application', async (status) => {

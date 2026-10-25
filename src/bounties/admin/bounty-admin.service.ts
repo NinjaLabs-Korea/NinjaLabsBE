@@ -45,6 +45,10 @@ export class BountyAdminService {
     coverImageUrl?: string;
     reward?: RewardInput;
   }) {
+    // 수정(update)과 같은 규칙: 새 바운티의 마감은 미래여야 한다 — 과거 마감으로 만들면 DRAFT에서 열 수도(DEADLINE_PASSED) 접수할 수도 없는 행이 생긴다
+    for (const deadline of [input.submissionDeadline, input.applicationDeadline]) {
+      if (deadline && !(new Date(deadline).getTime() > Date.now())) throw new BadRequestException('DEADLINE_IN_PAST');
+    }
     const reward = this.rewardTokens.resolve(input.reward);
     return this.db.tx(async (tx) => {
       const b = await tx.query<{ id: string }>(

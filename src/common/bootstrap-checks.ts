@@ -163,11 +163,11 @@ export function warnIgnoredAuthRedirectOrigins(env: BootstrapEnv): void {
 
 /** production에서 반드시 있어야 하는 로그인 플로우 값 — 없으면 Google 동의 화면/콜백/완료 리다이렉트 중 하나가 깨진다 */
 const PRODUCTION_AUTH_KEYS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CALLBACK_URL', 'AUTH_SUCCESS_REDIRECT'] as const;
-/** 이 중 URL인 값 — http(s) URL이어야 하고 루프백이면 안 된다 */
+/** 이 중 URL인 값 — https URL이어야 하고 루프백이면 안 된다 */
 const PRODUCTION_AUTH_URL_KEYS = ['GOOGLE_CALLBACK_URL', 'AUTH_SUCCESS_REDIRECT'] as const;
 
 /**
- * GOOGLE_CLIENT_ID / GOOGLE_CALLBACK_URL / AUTH_SUCCESS_REDIRECT — production에서 미설정·빈 값·URL 아님·루프백이면 기동 거부.
+ * GOOGLE_CLIENT_ID / GOOGLE_CALLBACK_URL / AUTH_SUCCESS_REDIRECT — production에서 미설정·빈 값·https URL 아님·루프백이면 기동 거부.
  * 예전엔 AUTH_SUCCESS_REDIRECT가 조용히 `http://localhost:3000/`으로 폴백해 로그인 완료 후 사용자를 **자기 기계의 localhost로**
  * 로그인 코드와 함께 보냈고, GOOGLE_CLIENT_ID가 비면 첫 로그인 요청에서야 500이 났다. railway.ts가 네 값(CORS 포함)을 공개값으로 넣는다.
  * 개발에서는 아무것도 하지 않는다 (fe-origins.ts가 로컬 FE로 폴백, google-oauth.flow.ts는 요청 시점에 GOOGLE_CLIENT_ID를 요구).
@@ -180,9 +180,10 @@ export function requireProductionAuthUrls(env: BootstrapEnv): void {
   }
   for (const key of PRODUCTION_AUTH_URL_KEYS) {
     const value = env[key]!.trim();
-    const isHttpUrl = URL.canParse(value) && ['http:', 'https:'].includes(new URL(value).protocol);
-    if (!isHttpUrl || isLoopbackUrl(value)) {
-      throw new Error(`FATAL: ${key}=${JSON.stringify(env[key])} — must be a public http(s) URL in production (not localhost/127.x)`);
+    // https만 — AUTH_SUCCESS_REDIRECT는 일회용 로그인 코드를 URL 프래그먼트로 받는 주소라 평문 http면 경로 위 누구나 코드를 볼 수 있고, Google은 localhost 밖의 http 콜백을 거부한다
+    const isHttpsUrl = URL.canParse(value) && new URL(value).protocol === 'https:';
+    if (!isHttpsUrl || isLoopbackUrl(value)) {
+      throw new Error(`FATAL: ${key}=${JSON.stringify(env[key])} — must be a public https URL in production (not http, not localhost/127.x)`);
     }
   }
 }

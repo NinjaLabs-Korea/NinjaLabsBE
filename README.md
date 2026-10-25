@@ -127,7 +127,7 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
 | env | 결과 |
 |---|---|
 | `DATABASE_URL` | 없으면 `preDeploy`의 `npm run migrate`가 실패해 배포 중단 (구 버전 유지) |
-| `JWT_SECRET` | 미설정 또는 `.env.example` 자리표시값이면 **기동 거부**. 32바이트 미만이면 기동은 하되 `error` 로그 — 즉시 교체(`openssl rand -base64 48`) |
+| `JWT_SECRET` | 미설정 또는 `.env.example` 자리표시값이면 **기동 거부**. 32바이트 미만이면 기동은 하되 최소 32바이트를 밝히는 `error` 로그: 즉시 교체(`openssl rand -base64 48`), 이후 기동 거부로 바뀔 수 있다. 서명/검증 알고리즘은 HS256으로 고정(`auth/jwt-algorithm.ts`) |
 | `GOOGLE_CLIENT_SECRET` | 없으면 **기동 거부** (로그인이 어차피 전부 실패) |
 | `TRUST_PROXY` | 미설정/빈 값이면 **1로 보고 `warn`** (Railway는 항상 프록시 1홉 뒤). 명시적 `0`/비정수는 **기동 거부** — railway.ts가 `1`을 넣는다 |
 | `JWT_REFRESH_TTL` | 미설정이면 `14d`. 형식/범위(60초~90일)가 틀리면 기동 거부 |

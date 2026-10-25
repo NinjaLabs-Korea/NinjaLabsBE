@@ -78,7 +78,7 @@ describe('OAuth login handoff', () => {
     await expect(service.issueOauthState(undefined, 'https://app.example', '')).rejects.toBeInstanceOf(UnauthorizedException);
     await service.issueOauthState('trace', 'https://app.example', challenge);
     expect(jwt.signAsync).toHaveBeenCalledWith(
-      { p: 'gstate', t: 'trace', r: 'https://app.example', c: challenge }, { expiresIn: '10m' },
+      { p: 'gstate', t: 'trace', r: 'https://app.example', c: challenge }, { expiresIn: '10m', algorithm: 'HS256' },
     );
     jwt.verifyAsync.mockResolvedValue({ p: 'gstate', c: challenge });
     expect((await service.verifyOauthState('state')).codeChallenge).toBe(challenge);

@@ -1,6 +1,7 @@
 import { HttpException, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { JWT_SIGN_OPTIONS, JWT_VERIFY_OPTIONS } from './jwt-algorithm';
 import { logSafe } from '../common/logging/log-safe';
 import {
   GoogleIdTokenClaims,
@@ -74,13 +75,13 @@ export class GoogleOAuthFlow {
     const safeTraceId = typeof traceId === 'string' && /^[a-zA-Z0-9-]{1,64}$/.test(traceId) ? traceId : undefined;
     return this.jwt.signAsync(
       { p: 'gstate', t: safeTraceId, r: redirectUrl, c: codeChallenge },
-      { expiresIn: '10m' },
+      { expiresIn: '10m', ...JWT_SIGN_OPTIONS },
     );
   }
 
   async verifyOauthState(state: string): Promise<OAuthState> {
     try {
-      const payload = await this.jwt.verifyAsync<{ p?: string; t?: string; r?: string; c?: string }>(state);
+      const payload = await this.jwt.verifyAsync<{ p?: string; t?: string; r?: string; c?: string }>(state, JWT_VERIFY_OPTIONS);
       if (payload.p !== 'gstate' || typeof payload.c !== 'string' || !CODE_CHALLENGE.test(payload.c)) {
         throw new Error('invalid state');
       }

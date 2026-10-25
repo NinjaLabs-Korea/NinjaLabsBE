@@ -30,7 +30,7 @@
    |---|---|---|
    | `DATABASE_URL` | Supabase 접속 문자열 — **`?sslmode=…` 등 `ssl*` 쿼리 파라미터를 붙이지 않는다**: pg는 접속 문자열의 값이 코드가 넘긴 `ssl` 옵션을 덮어써서(`pg/lib/connection-parameters.js`) `sslmode=require`면 `DATABASE_CA_CERT`가 무시돼 Supabase 인증서 검증이 실패하고, `sslmode=disable`/`no-verify`는 조용히 평문/무검증이 된다. TLS는 `DATABASE_CA_CERT`/`PGSSLMODE`로만 정한다 | preDeploy migrate 실패 → 배포 중단(구 버전 유지) |
    | `DATABASE_CA_CERT` | Supabase CA PEM(`\n` 이스케이프 가능) | 기동 + **`error` 로그 1회 + 운영 알림(`db-tls-unverified`)**, TLS 서버 인증서 미검증: **`DATABASE_CA_CERT`를 설정해야 인증서 검증이 켜진다. 운영 전 필수로 넣는다.** 비어 있어도 지금은 기동을 막지 않지만, 이후 변경에서 이 error를 기동 거부로 바꿀 수 있다. `npm run migrate`(preDeploy)도 같은 error를 찍는다 |
-   | `JWT_SECRET` | `openssl rand -base64 48` | 미설정/자리표시값 → 기동 거부. 32바이트 미만 → `error` 로그 |
+   | `JWT_SECRET` | `openssl rand -base64 48` | 미설정/자리표시값 → 기동 거부. 32바이트 미만 → 최소 32바이트를 밝히는 `error` 로그(기동은 한다, 이후 기동 거부로 바뀔 수 있으니 **Railway 값이 32바이트 이상인지 확인**) |
    | `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth 클라이언트 | 기동 거부 |
    | `MASTER_WALLET_MNEMONIC` | 민팅 전용 지갑 (§7.6) | 민팅 잡이 1시간씩 미뤄짐(`not configured`) |
    | `REWARD_MULTISIG_ADDRESS` | 멀티시그 주소 (§9) | 기동은 한다. **새 보상의 `custody_address`가 `PENDING_MULTISIG_SETUP`** — 스폰서가 입금할 곳이 없다. 미설정·빈 값·모양 불일치(`inj1` bech32 체크섬 / EVM `0x`)면 기동 로그에 `REWARD_MULTISIG_ADDRESS … required in production` **`error`** — 4번에서 이 줄이 보이면 바로 넣고 재배포. `railway.ts`는 `preserve()` 자리만 잡으므로 값은 대시보드/CLI로 넣는다 |

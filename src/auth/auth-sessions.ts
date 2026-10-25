@@ -1,5 +1,6 @@
 import { Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { JWT_SIGN_OPTIONS } from './jwt-algorithm';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { isIP } from 'net';
 import { QueryResult } from 'pg';
@@ -192,7 +193,7 @@ export class AuthSessions {
    * typ: 'access' — 같은 JWT_SECRET으로 서명되는 OAuth state(p: 'gstate')가 Bearer로 쓰이지 않도록 용도를 바인딩한다
    */
   private signAccessToken(userId: string, isAdmin: boolean): Promise<string> {
-    return this.jwt.signAsync({ sub: userId, adm: isAdmin, typ: 'access' });
+    return this.jwt.signAsync({ sub: userId, adm: isAdmin, typ: 'access' }, JWT_SIGN_OPTIONS);
   }
 
   private async createSessionTokens(userId: string, isAdmin: boolean) {

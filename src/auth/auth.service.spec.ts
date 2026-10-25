@@ -63,7 +63,7 @@ describe('AuthService refresh rotation', () => {
     expect(result.refreshToken).toMatch(/^[A-Za-z0-9_-]{64}$/);
     expect(db.tx).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
-    expect(jwt.signAsync).toHaveBeenCalledWith({ sub: userId, adm: true, typ: 'access' });
+    expect(jwt.signAsync).toHaveBeenCalledWith({ sub: userId, adm: true, typ: 'access' }, { algorithm: 'HS256' });
 
     const oldHash = createHash('sha256').update('old-refresh-token').digest('hex');
     const consumeCall = txQuery.mock.calls[0];
@@ -252,7 +252,7 @@ describe('AuthService refresh rotation', () => {
     expect(txQuery.mock.calls.filter(([sql]) => sql.includes('INSERT INTO auth_session'))).toHaveLength(1);
     expect(txQuery.mock.calls.some(([sql]) => sql.includes('id = ANY($1::uuid[])'))).toBe(false);
     expect(jwt.signAsync).toHaveBeenCalledTimes(2);
-    expect(jwt.signAsync).toHaveBeenLastCalledWith({ sub: userId, adm: false, typ: 'access' });
+    expect(jwt.signAsync).toHaveBeenLastCalledWith({ sub: userId, adm: false, typ: 'access' }, { algorithm: 'HS256' });
     const grace = txQuery.mock.calls.find(([sql]) => sql.includes('s.prev_refresh_token_hash = $1'))!;
     expect(grace[0]).toContain("s.prev_rotated_at > now() - interval '30 seconds'");
     expect(grace[0]).toContain('s.grace_refresh_token IS NOT NULL');

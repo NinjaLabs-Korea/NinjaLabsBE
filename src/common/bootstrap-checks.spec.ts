@@ -71,7 +71,7 @@ describe('bootstrap environment checks', () => {
       const weak = 's'.repeat(31);
       expect(requireJwtSecret({ NODE_ENV: 'production', JWT_SECRET: weak })).toBe(weak);
       expect(error).toHaveBeenCalledTimes(1);
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('JWT_SECRET is only 31 bytes — production requires at least 32 random bytes'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('JWT_SECRET is only 31 bytes, below the required minimum of 32 bytes'));
     });
   });
 

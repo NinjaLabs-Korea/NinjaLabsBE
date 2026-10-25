@@ -5,6 +5,7 @@ import {
   Get,
   Header,
   HttpCode,
+  HttpException,
   Logger,
   Post,
   Query,
@@ -45,6 +46,9 @@ class RefreshDto {
 
 /** 본문 모드에서 refreshToken이 빠졌을 때 — 필수 필드였던 시절 ValidationPipe가 내던 메시지와 동일 (FE/스크립트 호환) */
 const REFRESH_TOKEN_REQUIRED = ['refreshToken should not be empty', 'refreshToken must be a string'];
+
+/** `GET /auth/google`가 FE 콜백 `#error=`로 그대로 전달하는 코드 — FE `ERROR_COPY.loginCallback.codes`에 전용 문구가 있는 것 (그 밖은 `AUTH_FAILED`) */
+const START_FAILURE_CODES: ReadonlySet<string> = new Set(['TURNSTILE_FAILED', 'TURNSTILE_UNAVAILABLE']);
 
 class LoginCodeDto {
   @Matches(/^[A-Za-z0-9_-]{43}$/)
@@ -99,25 +103,31 @@ export class AuthController {
     @Res() res: Response,
   ) {
     const rid = requestIdOf(req);
+    const redirectUrl = this.authSuccessRedirect(returnTo);
     if (this.turnstile.enabled) {
       try {
         await this.turnstile.verify(typeof turnstileToken === 'string' ? turnstileToken : undefined, req.ip);
       } catch (caught) {
         onboardingError(this.logger, 'oauth.turnstile.rejected', caught, { rid, traceId });
-        throw caught;
+        return this.redirectStartFailure(res, redirectUrl, caught);
       }
       onboardingLog(this.logger, 'oauth.turnstile.verified', { rid, traceId });
     }
-    const redirectUrl = this.authSuccessRedirect(returnTo);
     onboardingLog(this.logger, 'oauth.redirect.requested', {
       rid,
       traceId,
       requestedReturnOrigin: returnTo ? this.safeOrigin(returnTo) : null,
       selectedReturnOrigin: this.safeOrigin(redirectUrl),
     });
-    const state = await this.auth.issueOauthState(traceId, redirectUrl, codeChallenge ?? '');
+    let state: string;
+    try {
+      state = await this.auth.issueOauthState(traceId, redirectUrl, codeChallenge ?? '');
+    } catch (caught) {
+      onboardingError(this.logger, 'oauth.state.rejected', caught, { rid, traceId });
+      return this.redirectStartFailure(res, redirectUrl, caught);
+    }
     onboardingLog(this.logger, 'oauth.redirect.ready', { rid, traceId });
-    res.redirect(this.auth.buildGoogleAuthUrl(state));
+    return res.redirect(this.auth.buildGoogleAuthUrl(state));
   }
 
   /**
@@ -173,6 +183,19 @@ export class AuthController {
       // 실패 사유를 FE에 상세 노출하지 않는다 (code/state 탈취 시도 힌트 방지)
       return res.redirect(this.loginCallbackUrl(fe, { error: 'AUTH_FAILED' }));
     }
+  }
+
+  /**
+   * `GET /auth/google`는 브라우저가 최상위 이동으로 여는 라우트라 JSON 4xx/503을 내면 사용자는 날것의 JSON 페이지에 갇힌다
+   * (Turnstile 토큰 만료·재사용, Cloudflare 불통). 콜백과 같은 방식으로 FE `/auth/callback#error=<코드>`로 돌려보낸다 —
+   * FE는 `TURNSTILE_FAILED`/`TURNSTILE_UNAVAILABLE`의 전용 문구를 갖고 있고 그 밖은 일반 `AUTH_FAILED` 문구다.
+   * 예기치 못한 예외(5xx)와 FE URL을 만들 수 없는 설정은 그대로 던진다 (500 응답 + error 로그).
+   */
+  private redirectStartFailure(res: Response, fe: string, caught: unknown) {
+    if (!(caught instanceof HttpException) || !URL.canParse(fe)) throw caught;
+    const code = START_FAILURE_CODES.has(caught.message) ? caught.message : 'AUTH_FAILED';
+    if (code === 'AUTH_FAILED' && caught.getStatus() >= 500) throw caught;
+    return res.redirect(this.loginCallbackUrl(fe, { error: code }));
   }
 
   private loginCallbackUrl(fe: string, params: Record<string, string>): string {

@@ -8,7 +8,17 @@ type LogDetails = Record<string, boolean | number | string | null | undefined>;
  * U+2028/2029는 JSON이 이스케이프하지 않으므로 여기서 바꾼다.
  */
 function safeDetails(details: LogDetails): LogDetails {
-  return Object.fromEntries(Object.entries(details).map(([key, value]) => [key, typeof value === 'string' ? safeString(value) : value]));
+  return Object.fromEntries(Object.entries(details).map(([key, value]) => [key, safeValue(value)]));
+}
+
+/**
+ * 타입은 문자열|숫자|불리언|null이지만 쿼리 파라미터가 그대로 넘어오는 호출처(`?trace[a]=…`, `?error=a&error=b`)에서는 Express가 배열/객체를 준다 —
+ * 그대로 두면 문자열 상한 없이 중첩 구조가 로그 한 줄에 실린다. 객체는 JSON 문자열로 바꿔 같은 상한을 적용한다.
+ */
+function safeValue(value: unknown): boolean | number | string | null | undefined {
+  if (typeof value === 'string') return safeString(value);
+  if (value !== null && typeof value === 'object') return safeString(JSON.stringify(value));
+  return value as boolean | number | null | undefined;
 }
 
 function safeString(value: string): string {

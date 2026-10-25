@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { QueryResult } from 'pg';
 import { AuditService } from '../audit/audit.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
@@ -51,7 +52,7 @@ export class RewardsService {
       // 같은 해시의 markPaid와 직렬화 (같은 advisory lock 키) — 입금 tx와 송금 tx는 방향이 반대라 같은 해시일 수 없다
       await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [hash]);
       const asPayout = await tx.query(`SELECT 1 FROM payout WHERE payout_tx_hash = $1 LIMIT 1`, [hash]);
-      if (asPayout.rowCount) throw new ConflictException('TX_HASH_ALREADY_USED');
+      if (asPayout.rowCount || await this.isRecordedRefund(tx, hash)) throw new ConflictException('TX_HASH_ALREADY_USED');
       // 바운티 행 잠금 — 삭제(BountyAdminService.remove의 BOUNTY_HAS_OPEN_FUNDS 검사)와 직렬화하고, 삭제된 바운티의 입금은 받지 않는다
       const parent = await tx.query(`SELECT b.id FROM bounty b JOIN bounty_reward rw ON rw.bounty_id = b.id
         WHERE rw.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [rewardId]);
@@ -184,9 +185,9 @@ export class RewardsService {
         [payoutId, hash, target.rows[0].bounty_id],
       );
       if (reuse.rows[0].other_bounty > 0) throw new ConflictException('TX_HASH_ALREADY_USED');
-      // 스폰서 입금(→ 멀티시그)으로 이미 기록된 해시는 수상자 송금(멀티시그 →)의 증빙이 될 수 없다 — 운영자가 입금 해시를 잘못 붙여 넣는 실수를 막는다
+      // 스폰서 입금(→ 멀티시그)이나 스폰서 환불(scripts/record-refund.js)로 이미 기록된 해시는 수상자 송금(멀티시그 →)의 증빙이 될 수 없다 — 운영자가 다른 용도의 해시를 잘못 붙여 넣는 실수를 막는다
       const asDeposit = await tx.query(`SELECT 1 FROM bounty_reward WHERE deposit_tx_hash = $1 LIMIT 1`, [hash]);
-      if (asDeposit.rowCount) throw new ConflictException('TX_HASH_ALREADY_USED');
+      if (asDeposit.rowCount || await this.isRecordedRefund(tx, hash)) throw new ConflictException('TX_HASH_ALREADY_USED');
       if (reuse.rows[0].same_bounty > 0) {
         this.logger.log(`payout ${payoutId}: tx ${hash} is already recorded on ${reuse.rows[0].same_bounty} PAID payout(s) of the same bounty — multi-recipient send`);
       }
@@ -228,6 +229,15 @@ export class RewardsService {
       await this.audit.record(adminId, 'PAYOUT_PAID', 'payout', payoutId, tx);
       return payout.rows[0];
     });
+  }
+
+  /**
+   * 이 해시가 환불 증빙(audit REWARD_REFUNDED의 txHash)으로 이미 기록됐나 — scripts/record-refund.js의 hashInUse와 반대 방향 검사.
+   * 스크립트도 같은 해시별 advisory lock(hashtext)을 잡고 검사하므로 동시 기록이 서로를 본다. 호출자는 그 락을 먼저 잡아야 한다.
+   */
+  private async isRecordedRefund(tx: QueryRunner, hash: string): Promise<boolean> {
+    const refund = (await tx.query(`SELECT 1 FROM audit_log WHERE action = 'REWARD_REFUNDED' AND after_data->>'txHash' = $1 LIMIT 1`, [hash])) as QueryResult;
+    return Boolean(refund.rowCount);
   }
 
   /**

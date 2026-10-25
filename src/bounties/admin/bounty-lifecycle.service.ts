@@ -44,7 +44,9 @@ export class BountyLifecycleService {
           AND (s.submitter_user_id = a.applicant_user_id OR s.agent_id = a.agent_id))
         -- 탈퇴한 참가자(또는 탈퇴한 소유자의 에이전트)는 영영 제출하지 못한다 — 탈퇴는 APPROVED 지원을 철회하지 않으므로 세지 않으면 마감 전까지 접수를 닫을 수 없다
         AND EXISTS (SELECT 1 FROM "user" ou WHERE ou.deleted_at IS NULL
-          AND ou.id = COALESCE(a.applicant_user_id, (SELECT ag.owner_user_id FROM agent ag WHERE ag.id = a.agent_id)))) AS unsubmitted,
+          AND ou.id = COALESCE(a.applicant_user_id, (SELECT ag.owner_user_id FROM agent ag WHERE ag.id = a.agent_id)))
+        -- 폐기(REVOKED)·삭제된 에이전트도 제출할 수 없다 — 에이전트 개별 폐기는 승인된 지원을 철회하지 않는다
+        AND (a.agent_id IS NULL OR EXISTS (SELECT 1 FROM agent ag WHERE ag.id = a.agent_id AND ag.deleted_at IS NULL AND ag.status <> 'REVOKED'))) AS unsubmitted,
       (SELECT count(*)::int FROM bounty_submission WHERE bounty_id = $1
         AND status = ANY($2::text[])) AS unresolved,
       (SELECT count(*)::int FROM bounty_reward WHERE bounty_id = $1

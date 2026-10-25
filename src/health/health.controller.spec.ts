@@ -20,4 +20,8 @@ describe('HealthController', () => {
     expect((error as ServiceUnavailableException).getStatus()).toBe(503);
     expect((error as ServiceUnavailableException).getResponse()).toEqual({ status: 'degraded', db: 'down' });
   });
+
+  it('is exempt from rate limiting (the throttler storage must not add a database round trip in front of the probe)', () => {
+    expect(Reflect.getMetadata('THROTTLER:SKIPdefault', HealthController.prototype.check)).toBe(true);
+  });
 });

@@ -182,7 +182,7 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 ## 6. 업타임 모니터 (GET /health)
 
-`GET /health`는 DB에 `SELECT 1`을 보낸다 — 정상 `200 {"status":"ok","db":"up"}`, DB 장애 시 **`503 {"status":"degraded","db":"down"}`**. 인증 없이 열려 있다(전역 스로틀 IP당 120/min 안에 있으므로 1분 간격 모니터는 문제없다).
+`GET /health`는 DB에 `SELECT 1`을 보낸다 — 정상 `200 {"status":"ok","db":"up"}`, DB 장애 시 **`503 {"status":"degraded","db":"down"}`**. 인증 없이 열려 있고 rate limit 대상이 아니다(`@SkipThrottle()` — 한도 저장소가 DB를 치는 production에서 DB 장애 때 응답이 타임아웃으로 늘어지지 않게).
 
 외부 모니터(UptimeRobot, Better Stack 등 아무거나 — Railway healthcheck는 배포 시에만 보므로 별도로 둔다):
 - URL `https://<BE>/health`, 메서드 GET, 간격 1분, 타임아웃 10초.

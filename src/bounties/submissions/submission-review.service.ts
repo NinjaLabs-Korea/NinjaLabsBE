@@ -58,7 +58,7 @@ export class SubmissionReviewService {
       await tx.query(
         `INSERT INTO submission_review (submission_id, revision_id, reviewer_id, decision, comment)
          VALUES ($1, $2, $3, $4, $5)`,
-        [submissionId, rev.rows[0]?.id ?? null, adminId, decision, comment ?? null],
+        [submissionId, rev.rows[0]?.id ?? null, adminId, decision, comment?.trim() || null],
       );
       await this.audit.record(adminId, `SUBMISSION_${decision}`, 'bounty_submission', submissionId, tx);
       // APPROVE 시 후속 흐름(payout 요청 → NFT 민팅)은 rewards/nfts 모듈에서 별도 호출

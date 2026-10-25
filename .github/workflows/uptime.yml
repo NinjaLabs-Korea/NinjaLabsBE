@@ -1,0 +1,45 @@
+name: Uptime
+
+# 운영 BE/FE 외부 감시 (docs/runbook.md §6). 실패하면 GitHub가 이 워크플로의 cron을 마지막으로 수정한 사람에게 실패 메일을 보낸다.
+# 한계: GitHub 스케줄은 최소 5분 간격이고 부하에 따라 몇 분 밀릴 수 있다. 공개 레포는 60일간 커밋이 없으면 스케줄이 자동 비활성화된다.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  BE_HEALTH_URL: https://ninjalabsbe-production.up.railway.app/health
+  FE_URL: https://ninjalabsfe.vercel.app/
+
+jobs:
+  check:
+    name: BE /health and FE /
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check endpoints (one retry after 30s before failing)
+        shell: bash
+        run: |
+          set -u
+          check() {
+            local be_status be_body fe_status
+            be_body=$(curl -sS --max-time 10 -o - -w '\n%{http_code}' "$BE_HEALTH_URL" 2>&1) || true
+            be_status=${be_body##*$'\n'}
+            be_body=${be_body%$'\n'*}
+            fe_status=$(curl -sSL --max-redirs 3 --max-time 10 -o /dev/null -w '%{http_code}' "$FE_URL" 2>/dev/null) || fe_status=000
+            echo "BE $be_status $be_body"
+            echo "FE $fe_status"
+            if [ "$be_status" = "503" ]; then echo "::error title=BE DB down::/health returned 503 ($be_body)"; return 1; fi
+            if [ "$be_status" != "200" ] || [[ "$be_body" != *'"db":"up"'* ]]; then echo "::error title=BE app down::/health returned $be_status"; return 1; fi
+            if [ "$fe_status" != "200" ]; then echo "::error title=FE down::$FE_URL returned $fe_status"; return 1; fi
+          }
+          check && exit 0
+          echo "First check failed; retrying in 30s"
+          sleep 30
+          check

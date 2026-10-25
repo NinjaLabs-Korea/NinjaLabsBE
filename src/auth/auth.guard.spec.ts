@@ -47,7 +47,8 @@ describe('AuthGuard token type binding', () => {
 
   // TODO(remove after 2026-11-30): flip back to a rejection together with the legacy branch in AuthService.verifyAccessToken
   it('still accepts a legacy access token issued before typ existed (no typ, no p, string sub) if it predates this process', async () => {
-    const legacy = await jwt.signAsync({ sub: userId, adm: true, iat: Math.floor(performance.timeOrigin / 1000) - 60 });
+    // exp는 payload.iat 기준(프로세스 시작 - 60초 + TTL)이다 — 긴 만료를 줘서 jest 워커가 오래 살아 있어도(전체 실행 5분+) 만료로 실패하지 않게 한다
+    const legacy = await jwt.signAsync({ sub: userId, adm: true, iat: Math.floor(performance.timeOrigin / 1000) - 60 }, { expiresIn: '1d' });
     const { executionContext, request } = context(`Bearer ${legacy}`);
     await expect(guard.canActivate(executionContext)).resolves.toBe(true);
     expect(request.user).toEqual({ userId, isAdmin: true });

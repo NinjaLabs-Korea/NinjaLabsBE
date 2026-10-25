@@ -361,7 +361,8 @@ describeDb('auth over HTTP (e2e)', () => {
     it('a legacy typ-less access token is accepted only if issued before this process started (LEGACY_ACCESS_TOKEN_CUTOFF default)', async () => {
       const session = await e2e.login();
       const jwt = e2e.app.get(JwtService);
-      const legacy = jwt.sign({ sub: session.userId, adm: false, iat: Math.floor(performance.timeOrigin / 1000) - 60 });
+      // exp는 payload.iat 기준이라 프로세스 시작 - 60초 + TTL이다 — 긴 만료로 오래 도는 스위트에서도 만료되지 않게 한다
+      const legacy = jwt.sign({ sub: session.userId, adm: false, iat: Math.floor(performance.timeOrigin / 1000) - 60 }, { expiresIn: '1d' });
       const forgedLater = jwt.sign({ sub: session.userId, adm: true });
       e2e.secrets.add(legacy); e2e.secrets.add(forgedLater);
       expect(claims(legacy).typ).toBeUndefined();

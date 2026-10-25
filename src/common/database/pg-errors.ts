@@ -62,7 +62,7 @@ export function asClientError(err: unknown): unknown {
  *   'Connection terminated due to connection timeout'  새 연결 수립이 connectionTimeoutMillis를 넘었다 (블랙홀 DB)
  *   'Query read timeout'                                query_timeout — 서버가 문장 취소 응답조차 못 보냈다
  *   'Connection terminated unexpectedly'                쿼리 도중 연결이 끊겼다 (DB 재시작·장애조치·네트워크 단절)
- * 코드: 연결 자체가 안 되는 Node 소켓 오류(ECONNREFUSED / ENOTFOUND / EAI_AGAIN — 나가는 연결에서만 나므로 클라이언트 쪽 소켓 오류와 섞이지 않는다)와
+ * 코드: 연결 자체가 안 되는 Node 소켓 오류(ECONNREFUSED / ENOTFOUND / EAI_AGAIN / ETIMEDOUT / ENETUNREACH / EHOSTUNREACH — 나가는 연결에서만 나므로 클라이언트 쪽 소켓 오류와 섞이지 않는다)와
  * 서버가 거절한 연결 계열 SQLSTATE — 08xxx connection_exception, 57P01 admin_shutdown, 57P02 crash_shutdown, 57P03 cannot_connect_now(기동 중), 53300 too_many_connections.
  * 서버가 돌려준 57014(statement_timeout)는 여기 넣지 않는다 — DB는 살아 있고 느린 쿼리(서버 버그)이므로 500으로 남겨 경보 대상이 되게 한다.
  */
@@ -73,7 +73,7 @@ const DATABASE_UNAVAILABLE_MESSAGES: ReadonlySet<string> = new Set([
   'Connection terminated unexpectedly',
 ]);
 const DATABASE_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
-  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN',
+  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH',
   '08000', '08001', '08003', '08004', '08006', '08007', '57P01', '57P02', '57P03', '53300',
 ]);
 

@@ -1,5 +1,5 @@
 import { BadRequestException, InternalServerErrorException, Logger } from '@nestjs/common';
-import { capLogValue, LOG_VALUE_MAX, logSafe } from './log-safe';
+import { capLogValue, errorText, LOG_VALUE_MAX, logSafe } from './log-safe';
 import { onboardingError, onboardingLog } from './onboarding-log';
 
 const LINE_BREAK = /[\r\n\u2028\u2029]/;
@@ -15,6 +15,30 @@ describe('logSafe', () => {
     expect(logSafe('a'.repeat(LOG_VALUE_MAX))).toBe('a'.repeat(LOG_VALUE_MAX));
     expect(logSafe('a'.repeat(1000))).toBe(`${'a'.repeat(LOG_VALUE_MAX)}…(+800 chars)`);
     expect(capLogValue('abcdef', 3)).toBe('abc…(+3 chars)');
+  });
+});
+
+describe('errorText', () => {
+  // What pg surfaces when the host resolves to both ::1 and 127.0.0.1 and neither answers: an AggregateError with an EMPTY message.
+  const dualStackRefused = () => Object.assign(
+    new AggregateError([new Error('connect ECONNREFUSED ::1:5432'), new Error('connect ECONNREFUSED 127.0.0.1:5432')], ''),
+    { code: 'ECONNREFUSED' },
+  );
+
+  it('returns the message when there is one, and String() for non-errors', () => {
+    expect(errorText(new Error('boom'))).toBe('boom');
+    expect(errorText('plain')).toBe('plain');
+    expect(errorText(undefined)).toBe('undefined');
+  });
+
+  it('spells out an AggregateError whose own message is empty (dual-stack connect failure) instead of logging nothing', () => {
+    expect(dualStackRefused().message).toBe('');
+    expect(errorText(dualStackRefused())).toBe('connect ECONNREFUSED ::1:5432; connect ECONNREFUSED 127.0.0.1:5432');
+  });
+
+  it('falls back to the code, then the name, when neither message nor sub-errors say anything', () => {
+    expect(errorText(Object.assign(new Error(''), { code: 'ETIMEDOUT' }))).toBe('Error ETIMEDOUT');
+    expect(errorText(new AggregateError([], ''))).toBe('AggregateError');
   });
 });
 

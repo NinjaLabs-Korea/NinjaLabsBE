@@ -79,6 +79,10 @@ describe('asHttpError — DB connection/response timeouts become 503 DATABASE_UN
   it.each([
     ['a dropped connection mid-query (DB restart / failover)', new Error('Connection terminated unexpectedly')],
     ['ECONNREFUSED while connecting', Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' })],
+    ['ETIMEDOUT while connecting (OS-level connect timeout)', Object.assign(new Error('connect ETIMEDOUT 10.0.0.5:5432'), { code: 'ETIMEDOUT' })],
+    ['ENETUNREACH (e.g. IPv6-only Supabase direct host from an IPv4-only network)', Object.assign(new Error('connect ENETUNREACH 2600:1f18::1:5432'), { code: 'ENETUNREACH' })],
+    ['EHOSTUNREACH', Object.assign(new Error('connect EHOSTUNREACH 10.0.0.5:5432'), { code: 'EHOSTUNREACH' })],
+    ['an empty-message AggregateError from a dual-stack connect failure', Object.assign(new AggregateError([new Error('connect ENETUNREACH 2600::1:5432')], ''), { code: 'ENETUNREACH' })],
     ['ENOTFOUND (DNS)', Object.assign(new Error('getaddrinfo ENOTFOUND db.example'), { code: 'ENOTFOUND' })],
     ['57P01 admin_shutdown (Supabase restart)', pgError({ code: '57P01' })],
     ['57P03 cannot_connect_now (database starting up)', pgError({ code: '57P03' })],

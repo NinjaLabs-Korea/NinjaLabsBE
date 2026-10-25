@@ -5,7 +5,7 @@ import { Request } from 'express';
 import { AlertService } from '../alerts/alert.service';
 import { ErrorBurstDetector } from '../alerts/error-burst';
 import { asHttpError } from '../database/pg-errors';
-import { logSafe } from '../logging/log-safe';
+import { errorText, logSafe } from '../logging/log-safe';
 import { ridSuffix } from './request-id';
 
 /**
@@ -62,7 +62,7 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
       const req = host.switchToHttp().getRequest<Request | undefined>();
       // 503 DATABASE_UNAVAILABLE처럼 바꾼 응답이어도 로그에는 원래 원인(pg 타임아웃 메시지)을 남긴다
       const name = caught instanceof Error ? caught.name : 'UnknownError';
-      const message = caught instanceof Error ? caught.message : String(caught);
+      const message = errorText(caught);
       // 경로·메시지는 사용자 값이 섞일 수 있다(DB 오류 메시지는 요청 값을 인용) — CR/LF 이스케이프 + 200자 상한 (logging/log-safe.ts)
       const line = `${logSafe(req?.method ?? '-', 16)} ${logSafe(req?.path ?? req?.url ?? '-')} ${status} ${logSafe(name, 100)}: ${logSafe(message)}${ridSuffix(req)}`;
       const frames = stackFrames(caught);

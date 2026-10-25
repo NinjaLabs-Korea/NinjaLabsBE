@@ -51,6 +51,16 @@ describe('boot / migration failure alerts', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('a migration that cannot reach the database (dual-stack AggregateError with an empty message) still says why', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    const err = new AggregateError([new Error('connect ECONNREFUSED ::1:5432'), new Error('connect ECONNREFUSED 127.0.0.1:5432')], '');
+    await alertMigrationFailure({ OPS_ALERT_WEBHOOK_URL: WEBHOOK, RAILWAY_ENVIRONMENT_NAME: 'production' }, err);
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body.content).toBe(
+      '[NinjaLabs production] migration-failure: npm run migrate failed — deploy aborted, previous version keeps serving: connect ECONNREFUSED ::1:5432; connect ECONNREFUSED 127.0.0.1:5432',
+    );
+  });
+
   it('webhookStatus accepts only https', () => {
     expect(webhookStatus(undefined)).toBe('unset');
     expect(webhookStatus('  ')).toBe('unset');

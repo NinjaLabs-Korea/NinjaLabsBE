@@ -16,6 +16,7 @@
  *   - bounty_reward: status → REFUNDED.
  *   - audit_log: REWARD_REFUNDED (actor NULL, entity_type 'bounty_reward', after_data {txHash, refundedAmount = deposited − PAID 합계, source}).
  * 이 해시가 이미 입금(deposit_tx_hash)이나 지급(payout_tx_hash)으로 기록돼 있으면 거부한다 — 잘못 붙여 넣은 해시를 환불 증빙으로 남기지 않는다.
+ * 반대 방향도 같다: 환불로 기록된 해시는 confirmDeposit/markPaid가 409 TX_HASH_ALREADY_USED로 거부한다 (해시별 advisory lock 공유).
  * 스키마 변경 없음. 환불 송금 자체는 이 스크립트가 하지 않는다 (docs/runbook.md §7.7).
  * 접속: DATABASE_URL (+ DATABASE_CA_CERT / PGSSLMODE) — scripts/migrate.js와 같은 규칙 (scripts/ops-cli.js).
  */
@@ -96,6 +97,8 @@ async function recordRefund(pool, rewardId, hash) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // 같은 해시의 confirmDeposit/markPaid(rewards.service.ts)와 직렬화 — 같은 advisory lock 키. 환불 해시를 입금/송금 증빙으로도 쓰는 경쟁을 막는다
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [hash]);
     const { reward, refundedAmount } = await inspectReward(client, rewardId, true);
     const reason = refusalReason(reward, refundedAmount) || (await hashInUse(client, hash));
     if (reason) throw new OpsError('REFUSED', reason);

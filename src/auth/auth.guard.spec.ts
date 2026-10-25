@@ -64,6 +64,13 @@ describe('AuthGuard token type binding', () => {
     await expect(guard.canActivate(executionContext)).rejects.toMatchObject({ message: 'INVALID_ACCESS_TOKEN' });
   });
 
+  it('accepts the Bearer scheme in any letter case (RFC 7235) and rejects extra parts', async () => {
+    const accessToken = await jwt.signAsync({ sub: userId, adm: false, typ: 'access' });
+    await expect(guard.canActivate(context(`bearer ${accessToken}`).executionContext)).resolves.toBe(true);
+    await expect(guard.canActivate(context(`BEARER ${accessToken}`).executionContext)).resolves.toBe(true);
+    await expect(guard.canActivate(context(`Bearer ${accessToken} extra`).executionContext)).rejects.toMatchObject({ message: 'MISSING_BEARER_TOKEN' });
+  });
+
   it('rejects a missing or non-Bearer Authorization header before verifying anything', async () => {
     await expect(guard.canActivate(context().executionContext)).rejects.toMatchObject({ message: 'MISSING_BEARER_TOKEN' });
     await expect(guard.canActivate(context('Basic abc').executionContext)).rejects.toMatchObject({ message: 'MISSING_BEARER_TOKEN' });

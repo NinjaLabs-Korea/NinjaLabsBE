@@ -26,6 +26,8 @@ type Pattern = { protocol: string; port: string; host: RegExp };
 export const SHARED_HOSTING_SUFFIXES: ReadonlySet<string> = new Set([
   'vercel.app', 'netlify.app', 'pages.dev', 'github.io', 'railway.app',
   'herokuapp.com', 'onrender.com', 'fly.dev', 'web.app', 'firebaseapp.com',
+  'workers.dev', 'vercel.dev', 'now.sh', 'surge.sh', 'glitch.me', 'amplifyapp.com', 'azurewebsites.net', 'trycloudflare.com',
+  'ngrok.io', 'ngrok.app', 'ngrok-free.app', 'repl.co', 'replit.dev', 'csb.app', 'stackblitz.io', 'deno.dev', 'lovable.app',
 ]);
 
 /**

@@ -96,6 +96,7 @@ describe('OriginAllowlist', () => {
       'https://app-*.pages.dev', 'https://docs-*.github.io', 'https://api-*.railway.app', 'https://x-*.herokuapp.com',
       'https://x-*.onrender.com', 'https://x-*.fly.dev', 'https://x-*.web.app', 'https://x-*.firebaseapp.com',
       'https://*-team.pages.dev', 'https://a-*-b.vercel.app', 'https://*.ninjalabs.vercel.app',
+      'https://x-*.workers.dev', 'https://x-*.ngrok-free.app', 'https://x-*.amplifyapp.com', 'https://x-*.azurewebsites.net', 'https://x-*.now.sh',
     ])('rejects %s (every shared hosting suffix, any wildcard position)', (entry) => {
       const list = OriginAllowlist.fromEnv(entry);
       expect(list.size).toBe(0);

@@ -154,7 +154,8 @@ export class UsersController {
 
   /**
    * DELETE /users/me — 회원 탈퇴 (docs/decisions.md "사용자"). 200 `{ ok: true }`.
-   * 400 CONFIRM_NICKNAME_MISMATCH · 409 WITHDRAWAL_BLOCKED_OPEN_PAYOUTS(종료되지 않은 payout) · 404 USER_NOT_FOUND(이미 탈퇴/정지).
+   * 400 CONFIRM_NICKNAME_MISMATCH · 409 WITHDRAWAL_BLOCKED_OPEN_PAYOUTS(종료되지 않은 payout) ·
+   * 409 WITHDRAWAL_BLOCKED_PENDING_REWARDS(승인됐지만 아직 요청 안 한 지급 가능 보상) · 404 USER_NOT_FOUND(이미 탈퇴/정지).
    * refresh 세션은 전부 폐기된다 — 쿠키 모드 FE는 이어서 POST /auth/logout으로 쿠키를 지운다.
    */
   @Delete('me')

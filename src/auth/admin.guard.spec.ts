@@ -32,10 +32,15 @@ describe('AdminGuard', () => {
     expect(params).toEqual([userId]);
   });
 
-  it('rejects a token without the admin claim before touching the database', async () => {
+  it('re-reads the row even when the token predates the admin grant (adm claim false): a freshly granted admin is not locked out until refresh', async () => {
     const { guard, context, db } = setup({ userId, isAdmin: false });
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(db.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a non-admin user (token without the claim, row without is_admin)', async () => {
+    const { guard, context } = setup({ userId, isAdmin: false }, 0);
     await expect(guard.canActivate(context)).rejects.toMatchObject({ message: 'ADMIN_ONLY' });
-    expect(db.query).not.toHaveBeenCalled();
   });
 
   it('rejects an admin token whose user row lost is_admin (or was suspended/deleted)', async () => {

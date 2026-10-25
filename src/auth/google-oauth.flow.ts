@@ -41,8 +41,16 @@ export class GoogleOAuthFlow {
     private readonly logger: Logger,
   ) {}
 
+  /**
+   * Google 관련 env는 앞뒤 공백을 떼고 쓴다 — 기동 검사(requireProductionAuthUrls·requireGoogleClientSecret)가 이미 trim해서 보기 때문에,
+   * 대시보드에 붙여 넣다 생긴 끝의 개행/공백은 검사를 통과한 채 client_id·redirect_uri·client_secret 불일치로 모든 로그인을 깨뜨렸다.
+   */
+  private googleEnv(key: 'GOOGLE_CLIENT_ID' | 'GOOGLE_CLIENT_SECRET' | 'GOOGLE_CALLBACK_URL'): string {
+    return this.config.get<string>(key)?.trim() ?? '';
+  }
+
   private googleClientId(): string {
-    const id = this.config.get<string>('GOOGLE_CLIENT_ID');
+    const id = this.googleEnv('GOOGLE_CLIENT_ID');
     if (!id) throw new Error('GOOGLE_CLIENT_ID is not configured');
     return id;
   }
@@ -78,7 +86,7 @@ export class GoogleOAuthFlow {
   buildGoogleAuthUrl(state: string): string {
     const params = new URLSearchParams({
       client_id: this.googleClientId(),
-      redirect_uri: this.config.get<string>('GOOGLE_CALLBACK_URL') ?? '',
+      redirect_uri: this.googleEnv('GOOGLE_CALLBACK_URL'),
       response_type: 'code',
       scope: 'openid email',
       state,
@@ -93,8 +101,8 @@ export class GoogleOAuthFlow {
     const form = new URLSearchParams({
       code,
       client_id: this.googleClientId(),
-      client_secret: this.config.get<string>('GOOGLE_CLIENT_SECRET') ?? '',
-      redirect_uri: this.config.get<string>('GOOGLE_CALLBACK_URL') ?? '',
+      client_secret: this.googleEnv('GOOGLE_CLIENT_SECRET'),
+      redirect_uri: this.googleEnv('GOOGLE_CALLBACK_URL'),
       grant_type: 'authorization_code',
     });
     let res: Response;

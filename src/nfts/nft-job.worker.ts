@@ -163,12 +163,26 @@ export class NftJobWorker implements BeforeApplicationShutdown {
         return;
       }
       try {
+        await this.holdUnstarted(batch.slice(index + 1));
         await this.process(job);
       } catch (err) {
         // 잡 하나의 예기치 않은 오류(DB 단절 등)가 배치의 나머지를 버리게 두지 않는다 — 이 잡은 PROCESSING에 남았다가 고아 정리가 되돌린다
         this.logger.error(`nft_job ${job.id} processing threw: ${this.sanitizeError(err)}`);
       }
     }
+  }
+
+  /**
+   * 아직 차례가 오지 않은 배치 꼬리의 started_at을 갱신한다 — 잡 하나가 최대 JOB_EXECUTION_DEADLINE_MS(3분)이므로 배치(10건)가 느리면
+   * 꼬리는 선점 뒤 15분 넘게 기다릴 수 있고, 그러면 다른 인스턴스의 고아 정리가 되돌려 다시 선점한 잡을 이 인스턴스가 PROCESSING으로 보고
+   * 그대로 실행해 같은 잡이 두 인스턴스에서 동시에 돈다. 소유 확인(`status = 'PROCESSING'`)은 그대로 — 이미 되돌려진 잡은 건드리지 않는다.
+   */
+  private async holdUnstarted(tail: ClaimedJob[]) {
+    if (!tail.length) return;
+    await this.db.query(
+      `UPDATE nft_job SET started_at = now() WHERE id = ANY($1::uuid[]) AND status = 'PROCESSING'`,
+      [tail.map((job) => job.id)],
+    );
   }
 
   /**

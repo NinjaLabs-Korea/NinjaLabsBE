@@ -61,6 +61,16 @@ describeDb('wallet challenge/verify on a real database', () => {
     expect(count.rows[0].n).toBe(1);
   });
 
+  it('a user withdrawn after the challenge cannot link a wallet: 404 USER_NOT_FOUND, no wallet row, address stays free', async () => {
+    const userId = await createUser(db);
+    const signer = Wallet.createRandom();
+    const challenge = await wallets.createChallenge(userId, signer.address);
+    await db.query(`UPDATE "user" SET deleted_at = now() WHERE id = $1`, [userId]);
+    await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(challenge.message))).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
+    const wallet = await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [userId]);
+    expect(wallet.rowCount).toBe(0);
+  });
+
   it('a bad signature leaves the challenge open (tx rolled back); an expired one is 400 CHALLENGE_EXPIRED; none is CHALLENGE_NOT_FOUND', async () => {
     const userId = await createUser(db);
     const signer = Wallet.createRandom();

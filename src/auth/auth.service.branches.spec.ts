@@ -49,6 +49,13 @@ describe('AuthService.buildGoogleAuthUrl', () => {
     });
   });
 
+  it('trims the Google env values (a pasted trailing newline passed the boot checks, which trim, yet broke client_id and redirect_uri)', () => {
+    const { service } = createService({ config: { GOOGLE_CLIENT_ID: ' cid.apps\n', GOOGLE_CALLBACK_URL: 'https://api.example/cb \n' } });
+    const params = new URL(service.buildGoogleAuthUrl('s')).searchParams;
+    expect(params.get('client_id')).toBe('cid.apps');
+    expect(params.get('redirect_uri')).toBe('https://api.example/cb');
+  });
+
   it('sends an empty redirect_uri when GOOGLE_CALLBACK_URL is unset, and refuses to build a URL without GOOGLE_CLIENT_ID', () => {
     const { service } = createService({ config: { GOOGLE_CLIENT_ID: 'cid.apps' } });
     expect(new URL(service.buildGoogleAuthUrl('s')).searchParams.get('redirect_uri')).toBe('');
@@ -142,6 +149,21 @@ describe('AuthService.exchangeGoogleCode — token endpoint and claim edge cases
     expect(Object.fromEntries(init.body as URLSearchParams)).toEqual({
       code: '4/the-code', client_id: clientId, client_secret: 'secret', redirect_uri: 'https://api.example/cb', grant_type: 'authorization_code',
     });
+  });
+
+  it('trims client id, secret and callback in the token request and in the id_token audience check', async () => {
+    const verify = jest.fn(async () => claims);
+    const fetchMock = jest.fn(async (_url: string, _init: RequestInit) => ({ ok: true, json: async () => ({ id_token: 'id.token' }) }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { service } = createService({
+      config: { GOOGLE_CLIENT_ID: `${clientId}\n`, GOOGLE_CLIENT_SECRET: ' secret\n', GOOGLE_CALLBACK_URL: ' https://api.example/cb' },
+      verifier: { verify } as never,
+    });
+    await service.exchangeGoogleCode('c');
+    expect(Object.fromEntries(fetchMock.mock.calls[0][1].body as URLSearchParams)).toMatchObject({
+      client_id: clientId, client_secret: 'secret', redirect_uri: 'https://api.example/cb',
+    });
+    expect(verify).toHaveBeenCalledWith('id.token', clientId);
   });
 
   it('bounds the token request with an abort signal', async () => {

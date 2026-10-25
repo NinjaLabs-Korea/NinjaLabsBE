@@ -120,6 +120,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
    * DB/로그에 남길 에러 문자열 — 마스터 지갑 비밀이 들어 있으면 `[redacted]`로 바꾸고 500자로 자른다.
    *   - 니모닉 단어 3개 이상 연속 (순서·구분자 무관, 일부만 들어 있어도) — redactMnemonicRuns
    *   - 64자리 hex (개인키 모양, `0x` 유무 모두)
+   *   - NUL 문자는 제거 (last_error 저장이 거부되지 않게)
    * (SDK가 서명 컨텍스트를 에러 메시지에 실어 보내는 경우가 있다. 비밀은 어떤 저장소에도 남기지 않는다 — docs/security.md)
    */
   sanitizeError(err: unknown): string {
@@ -129,6 +130,8 @@ export class NftJobWorker implements BeforeApplicationShutdown {
     );
     if (words.size) message = redactMnemonicRuns(message, words);
     message = message.replace(HEX_32_BYTES, '[redacted]');
+    // NUL은 Postgres 텍스트 컬럼이 거부한다(22021) — 실패 기록 UPDATE 자체가 실패하면 retry_count가 오르지 않아 잡이 FAILED로 못 가고 15분마다 되돌아온다
+    message = message.replaceAll('\u0000', '');
     return message.length > MAX_LAST_ERROR_LENGTH ? `${message.slice(0, MAX_LAST_ERROR_LENGTH - 1)}…` : message;
   }
 

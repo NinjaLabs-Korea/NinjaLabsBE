@@ -48,6 +48,7 @@ export class HighlightsService {
    * 인스턴스가 여럿이면 각자 캐시를 가지므로 인스턴스마다 최대 60초 차이가 날 수 있다 — 정확한 일관성이 필요해지면 스냅샷 테이블로 전환.
    * 공개 목록과 같은 기준으로, 관리자가 삭제(soft delete)한 바운티와 그에 딸린 제출·NFT는 제외한다.
    * paidTotals 는 status = 'PAID' payout 만 더한다 — 토큰 단위가 서로 달라 bounty_reward 의 (심볼, 토큰 유형)별로 묶고 합을 base unit 문자열로 돌려준다.
+   * sponsors 는 대소문자·앞뒤 공백만 다른 이름("Acme" / "acme ")을 한 후원사로 센다 — 운영자가 손으로 입력하는 값이라 표기가 흔들리고, paidTotals 의 심볼 병합(upper)과 같은 기준이다.
    * builders는 사람(submitter_user_id)과 에이전트(agent_id) 제출자를 모두 센다 (0005 chk_submission_actor: 둘 중 하나만 채워짐).
    */
   async stats(): Promise<HallOfFameStats> {
@@ -105,7 +106,7 @@ export class HighlightsService {
            WHERE n.nft_type = 'BOUNTY_COMPLETION_CHILD'
              AND n.status IN ('MINTED','ATTACHING','ATTACHED')
              AND b.deleted_at IS NULL) AS completion_nfts,
-         (SELECT count(DISTINCT sponsor_name) FROM bounty
+         (SELECT count(DISTINCT lower(btrim(sponsor_name))) FROM bounty
            WHERE status = 'COMPLETED' AND deleted_at IS NULL) AS sponsors`,
     );
     const s = r.rows[0];

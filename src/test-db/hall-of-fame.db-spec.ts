@@ -84,4 +84,17 @@ describeDb('hall-of-fame stats paidTotals on a real database', () => {
     await payout(e.rewardId, e.submissionId, '1', 'PAID');
     expect(totalsFor((await service.stats()).paidTotals, 'INJ').find((t) => t.tokenType === 'NATIVE')!.amount).toBe(inj.amount);
   });
+
+  it('counts sponsors that differ only by case or surrounding whitespace once', async () => {
+    const before = (await freshStats()).sponsors;
+    const name = unique('Sponsor-');
+    for (const sponsor of [name, name.toUpperCase(), ` ${name.toLowerCase()} `]) {
+      await db.query(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, status)
+         VALUES ($1, $2, $3, 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', 'COMPLETED')`,
+        [userId, sponsor, unique('sp-')],
+      );
+    }
+    expect((await freshStats()).sponsors - before).toBe(1);
+  });
 });

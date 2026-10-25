@@ -8,3 +8,5 @@ export declare function postOpsAlert(
   text: string,
   options?: { fetchImpl?: typeof fetch; timeoutMs?: number },
 ): Promise<{ ok: true } | { ok: false; reason: string }>;
+/** `err.message`가 비어 있는 AggregateError(듀얼스택 연결 실패)도 원인이 남는 에러 설명 */
+export declare function errorText(err: unknown): string;

@@ -14,6 +14,7 @@
 const { readdirSync, readFileSync } = require('fs');
 const { join } = require('path');
 const { rootCertificates } = require('tls');
+const { errorText } = require('./ops-alert');
 
 const MIGRATIONS_DIR = join(__dirname, '..', 'supabase', 'migrations');
 
@@ -264,7 +265,7 @@ async function alertMigrationFailure(env, err) {
   const { postOpsAlert, webhookStatus } = require('./ops-alert');
   if (webhookStatus(env.OPS_ALERT_WEBHOOK_URL) !== 'ok') return;
   const environment = env.RAILWAY_ENVIRONMENT_NAME || env.NODE_ENV || 'development';
-  const detail = String((err && err.message) || err).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500);
+  const detail = errorText(err).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500);
   const result = await postOpsAlert(
     env.OPS_ALERT_WEBHOOK_URL,
     `[NinjaLabs ${environment}] migration-failure: npm run migrate failed${err && err.file ? ` at ${err.file}` : ''} — deploy aborted, previous version keeps serving: ${detail}`,
@@ -285,7 +286,7 @@ async function main() {
   try {
     await applyMigrations(pool, { log: console.log });
   } catch (err) {
-    console.error(`FAIL  ${err.file || ''}${err.line ? `:${err.line}` : ''}\n`, err.message);
+    console.error(`FAIL  ${err.file || ''}${err.line ? `:${err.line}` : ''}\n`, errorText(err));
     if (err.hint) console.error('HINT ', err.hint);
     await alertMigrationFailure(process.env, err);
     process.exit(1);

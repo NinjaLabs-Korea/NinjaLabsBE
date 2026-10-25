@@ -77,4 +77,23 @@ async function postOpsAlert(url, text, options = {}) {
   }
 }
 
-module.exports = { postOpsAlert, redactSecrets, webhookStatus, OPS_ALERT_TIMEOUT_MS, MAX_ALERT_CHARS };
+/**
+ * 로그/알림에 실을 에러 설명 — `err.message`가 비어 있어도 원인이 남게 한다.
+ * Node의 happy-eyeballs(autoSelectFamily)는 호스트가 IPv6·IPv4 둘 다로 풀릴 때 연결 실패를 `AggregateError`로 던지고, 그 `message`는 빈 문자열이다
+ * (`new Pool({ host: 'localhost' }).query()` → `AggregateError{ message: '', code: 'ECONNREFUSED', errors: [::1…, 127.0.0.1…] }`).
+ * `err.message`만 찍으면 DB가 닿지 않는 배포(기동 실패 `FATAL: `, preDeploy `FAIL`, 운영 알림, 5xx 줄)의 사유가 통째로 비었다.
+ * 메시지가 있으면 그대로, 없으면 하위 오류 메시지(최대 4개) → `code` → 이름 순. 제어 문자 이스케이프/길이 제한은 호출부 몫이다 (src/common/logging/log-safe.ts `logSafe`).
+ * Nest 안(`log-safe.ts`가 다시 내보낸다)과 밖(migrate.js)이 같은 함수를 쓰도록 이 파일에 둔다.
+ * @param {unknown} err
+ * @returns {string}
+ */
+function errorText(err) {
+  if (!(err instanceof Error)) return String(err);
+  if (err.message) return err.message;
+  const inner = err instanceof AggregateError ? err.errors.filter((e) => e instanceof Error && e.message).slice(0, 4) : [];
+  if (inner.length > 0) return inner.map((e) => e.message).join('; ');
+  const code = /** @type {{ code?: unknown }} */ (err).code;
+  return typeof code === 'string' && code ? `${err.name} ${code}` : err.name;
+}
+
+module.exports = { errorText, postOpsAlert, redactSecrets, webhookStatus, OPS_ALERT_TIMEOUT_MS, MAX_ALERT_CHARS };

@@ -53,7 +53,12 @@ export class NoticeAdminService {
       if (input.publish) expressions.push('published_at = COALESCE(published_at, now())');
       else fields.push(['published_at', null]);
     }
-    if (!fields.length) return { id: noticeId };
+    if (!fields.length) {
+      // 바꿀 게 없는 PATCH도 없는/삭제된 공지는 404 — 존재하지 않는 id에 200 `{ id }`를 돌려주지 않는다
+      const exists = await this.db.query(`SELECT 1 FROM notice WHERE id = $1 AND deleted_at IS NULL`, [noticeId]);
+      if (!exists.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
+      return { id: noticeId };
+    }
     const assignments = [
       ...fields.map(([column], index) => `${column} = $${index + 2}`),
       ...expressions,

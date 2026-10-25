@@ -46,6 +46,15 @@ describe('HighlightAdminService audit transactions', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
+  it('an empty PATCH answers 404 for a missing highlight instead of 200 { id }', async () => {
+    const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
+    const { database } = createMockDb({ query });
+    const service = new HighlightAdminService(database, new AuditService(database));
+    await expect(service.update(highlightId, {}, adminId)).rejects.toMatchObject({ message: 'HIGHLIGHT_NOT_FOUND' });
+    query.mockResolvedValueOnce({ rowCount: 1, rows: [{}] });
+    await expect(service.update(highlightId, {}, adminId)).resolves.toEqual({ id: highlightId });
+  });
+
   it('create with a bountyId that does not exist → 400 BOUNTY_NOT_FOUND (FK fk_highlight_bounty), other errors pass through', async () => {
     const { service, db } = setup();
     const fk = Object.assign(new Error('fk'), { code: '23503', constraint: 'fk_highlight_bounty' });

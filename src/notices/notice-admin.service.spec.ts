@@ -47,6 +47,15 @@ describe('NoticeAdminService update', () => {
     expect(db.query).not.toHaveBeenCalled();
   });
 
+  it('an empty PATCH answers 404 for a missing/deleted notice instead of 200 { id }', async () => {
+    const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
+    const { database } = createMockDb({ query });
+    const service = new NoticeAdminService(database, new AuditService(createMockDb().database));
+    await expect(service.update(noticeId, {}, adminId)).rejects.toMatchObject({ message: 'NOTICE_NOT_FOUND' });
+    query.mockResolvedValueOnce({ rowCount: 1, rows: [{}] });
+    await expect(service.update(noticeId, {}, adminId)).resolves.toEqual({ id: noticeId });
+  });
+
   it('binds every provided column in declaration order ($2.. in the SET list) and nothing else', async () => {
     const { query, service } = setup();
     await service.update(noticeId, { body: 'b', category: 'EVENT', externalUrl: 'https://x.test', publish: true }, adminId);

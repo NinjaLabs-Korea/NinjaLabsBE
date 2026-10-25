@@ -47,11 +47,9 @@ describeDb('turnstile on GET /auth/google (e2e)', () => {
     ['a lookalike of the FE host', { hostname: 'localhost.evil.example' }],
     ['a widget rendered with another action', { action: 'signup' }],
     ['a widget without an action', { action: '' }],
-  ])('a valid token from %s → 400 TURNSTILE_FAILED, no redirect', async (_label, widget) => {
+  ])('a valid token from %s → #error=TURNSTILE_FAILED, not Google', async (_label, widget) => {
     const res = await start({ turnstileToken: e2e.turnstile.issueToken(widget) });
-    expect(res.status).toBe(400);
-    expect(res.body).toEqual({ statusCode: 400, error: 'Bad Request', message: 'TURNSTILE_FAILED' });
-    expect(res.headers.location).toBeUndefined();
+    expectBackToFe(res, 'TURNSTILE_FAILED');
   });
 
   it('a token rendered on an allowed preview origin (AUTH_ALLOWED_REDIRECT_ORIGINS) → 302', async () => {

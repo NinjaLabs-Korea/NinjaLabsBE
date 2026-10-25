@@ -1,4 +1,5 @@
 import { verifyAdr36Signature } from './adr36';
+import { canonicalPublicKeyBase64 } from './canonical-public-key';
 import { recoverEip191PublicKey } from './eip191';
 
 export type WalletSignatureInput = {
@@ -34,7 +35,7 @@ const adr36Scheme: WalletSignatureScheme = {
   kind: 'INJECTIVE',
   verify: ({ address, message, signature, publicKey }) =>
     publicKey && verifyAdr36Signature(address, message, publicKey, signature)
-      ? { publicKey }
+      ? { publicKey: canonicalPublicKeyBase64(publicKey) ?? publicKey } // 저장되는 값은 정규 표기 (canonical-public-key.ts)
       : null,
 };
 

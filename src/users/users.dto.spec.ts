@@ -28,7 +28,7 @@ describe('CompleteProfileDto', () => {
     expect(isSavableNickname(decomposed)).toBe(true);
   });
 
-  it.each(['a', 'n'.repeat(51), 'ninja dev', 'ninja@dev', 'ninja/dev', 'ninja<b>', '   ', '​​'])(
+  it.each(['a', 'n'.repeat(51), 'ninja dev', 'ninja@dev', 'ninja/dev', 'ninja<b>', '   ', '​​', 'ㅤㅤ', 'ninjaㅤdev', 'ninja\u115F', '\u1160ninja', '\uFFA0\uFFA0'])(
     'rejects nickname %p (length 2..50, no whitespace or symbols beyond _ . -)',
     async (nickname) => {
       expect(await failedFields({ ...valid, nickname })).toEqual(['nickname']);

@@ -50,6 +50,9 @@ export default defineRailway(() => {
       REWARD_MULTISIG_ADDRESS: preserve(),
       // 선택 — 전용 gRPC 노드/프록시 URL (자격 증명이 섞일 수 있어 git에 두지 않는다). 비우면 INJECTIVE_NETWORK 프리셋 (docs/runbook.md §8)
       INJECTIVE_GRPC_ENDPOINT: preserve(),
+      // 선택 — 로그인 returnTo/Turnstile hostname에 더 허용할 FE 오리진 (정확한 항목, 예: preview 별칭). 기본 허용 오리진은 AUTH_SUCCESS_REDIRECT의 것 하나.
+      // 비워 두되 자리는 잡는다: 대시보드에서 넣은 값이 `railway config apply` 때 삭제 대상이 되지 않게 (src/auth/fe-origins.ts)
+      AUTH_ALLOWED_REDIRECT_ORIGINS: preserve(),
       // ── 선택 운영 스위치 (기본값이면 비워 둔다) — 대시보드에서 넣은 값이 `railway config apply` 때 삭제 대상이 되지 않게 자리만 잡는다 ──
       // payout 2인 규칙 탈출구 (기본 false — 운영자 1인일 때만 true, README env 표)
       PAYOUT_ALLOW_SELF_APPROVAL: preserve(),

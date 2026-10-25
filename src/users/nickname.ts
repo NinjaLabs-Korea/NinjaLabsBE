@@ -5,12 +5,13 @@ import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
  * 닉네임 규칙 — URL 경로 `/users/:nickname`에 그대로 쓰인다.
  *   - 유니코드 문자/숫자와 `_ . -`만, 공백 불가
  *   - 처음과 끝은 문자/숫자 (`.ninja`, `ninja-`, `...`, `--` 불가 → 경로 세그먼트 `.`/`..`·구분자 혼동 방지)
+ *   - 한글 채움 문자(U+115F, U+1160, U+3164, U+FFA0)는 불가 — 범주가 문자(Lo)라 정규식을 통과하지만 화면에는 빈칸으로 그려져 "보이지 않는 이름"이 된다
  *   - 길이 2~50 (DTO의 @Length)
  *   - 라우트와 충돌하는 예약어(`me`, `check-nickname`, `admin`, `new`, `edit`)는 대소문자 무관 거부
  *   - 탈퇴 익명화 이름의 접두사 `withdrawn_`(대소문자 무관)도 거부 — 남은 제출/payout 기록에 표시되는 탈퇴자 이름을 사칭하지 못하게
  *   - 정적 파일 확장자(`.png`, `.json`, … — STATIC_FILE_EXTENSIONS)로 끝나는 이름 거부 (대소문자 무관)
  */
-export const NICKNAME = /^[\p{L}\p{N}][\p{L}\p{N}_.-]*[\p{L}\p{N}]$/u;
+export const NICKNAME = /^(?!.*[\u115F\u1160\u3164\uFFA0])[\p{L}\p{N}][\p{L}\p{N}_.-]*[\p{L}\p{N}]$/u;
 
 export const RESERVED_NICKNAMES: readonly string[] = ['me', 'check-nickname', 'admin', 'new', 'edit'];
 

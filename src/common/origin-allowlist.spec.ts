@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { isSharedHostingWildcard, OriginAllowlist, SHARED_HOSTING_SUFFIXES } from './origin-allowlist';
 
@@ -90,6 +92,12 @@ describe('OriginAllowlist', () => {
       expect(list.allows('https://ninjalabsfe-evil.vercel.app')).toBe(false);
       expect(list.allows('https://preview-x.netlify.app')).toBe(false);
       expect(list.allows('https://ninjalabs.xyz')).toBe(true);
+    });
+
+    it('.env.example lists every rejected shared hosting suffix', () => {
+      const example = readFileSync(join(__dirname, '..', '..', '.env.example'), 'utf8');
+      const listed = /# 대상 접미사: (.*)\./.exec(example)?.[1].split(' ') ?? [];
+      expect([...SHARED_HOSTING_SUFFIXES].sort()).toEqual([...listed].sort());
     });
 
     it.each([

@@ -3,7 +3,9 @@ import {
   corsOriginsValue,
   requireGoogleClientSecret,
   requireJwtSecret,
+  authRedirectOrigins,
   requireProductionAuthUrls,
+  warnIgnoredAuthRedirectOrigins,
   trustProxyHops,
 } from './bootstrap-checks';
 
@@ -142,6 +144,31 @@ describe('bootstrap environment checks', () => {
       ['GOOGLE_CALLBACK_URL', 'http://[::1]:4000/auth/google/callback'],
     ])('refuses to start in production when %s=%p (not a public http(s) URL)', (key, value) => {
       expect(() => requireProductionAuthUrls({ ...prod, [key]: value })).toThrow(new RegExp(`FATAL: ${key}=.*must be a public http\\(s\\) URL in production`));
+    });
+  });
+
+  describe('AUTH_ALLOWED_REDIRECT_ORIGINS loopback handling', () => {
+    const value = ' https://fe.example.com , http://localhost:3000,http://127.0.0.1:3001,,http://[::1]:3000 ';
+
+    it('production keeps the public origins, drops loopback ones and logs them once at boot', () => {
+      const env = { NODE_ENV: 'production', AUTH_ALLOWED_REDIRECT_ORIGINS: value };
+      expect(authRedirectOrigins(env)).toEqual({
+        kept: ['https://fe.example.com'],
+        ignored: ['http://localhost:3000', 'http://127.0.0.1:3001', 'http://[::1]:3000'],
+      });
+      warnIgnoredAuthRedirectOrigins(env);
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls[0][0]).toContain('AUTH_ALLOWED_REDIRECT_ORIGINS');
+      expect(error.mock.calls[0][0]).toContain('http://localhost:3000');
+    });
+
+    it('does not log when nothing is ignored, and leaves other environments untouched', () => {
+      warnIgnoredAuthRedirectOrigins({ NODE_ENV: 'production', AUTH_ALLOWED_REDIRECT_ORIGINS: 'https://fe.example.com' });
+      warnIgnoredAuthRedirectOrigins({ NODE_ENV: 'production' });
+      warnIgnoredAuthRedirectOrigins({ NODE_ENV: 'development', AUTH_ALLOWED_REDIRECT_ORIGINS: value });
+      expect(error).not.toHaveBeenCalled();
+      expect(authRedirectOrigins({ NODE_ENV: 'development', AUTH_ALLOWED_REDIRECT_ORIGINS: value }).ignored).toEqual([]);
+      expect(authRedirectOrigins({}).kept).toEqual([]);
     });
   });
 });

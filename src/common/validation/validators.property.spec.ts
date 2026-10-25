@@ -39,12 +39,18 @@ function generate(random: () => number, alphabet: readonly string[], maxParts: n
   return out;
 }
 
-/** Fails if `fn` takes longer than `budgetMs` — the budget is ~100x the measured time, so only super-linear blow-ups trip it */
-function expectFast(label: string, fn: () => unknown, budgetMs = 50): void {
-  const started = performance.now();
-  fn();
-  const elapsed = performance.now() - started;
-  if (elapsed > budgetMs) throw new Error(`${label} took ${elapsed.toFixed(1)}ms (budget ${budgetMs}ms) — possible ReDoS`);
+/**
+ * Fails if `fn` takes longer than `budgetMs` on every one of a few tries — the budget is ~100x the measured time, so only super-linear
+ * blow-ups trip it. A real ReDoS is slow every time; a GC pause or a busy CI core under parallel Jest workers slows one try at most.
+ */
+function expectFast(label: string, fn: () => unknown, budgetMs = 50, tries = 3): void {
+  let best = Infinity;
+  for (let i = 0; i < tries && best > budgetMs; i++) {
+    const started = performance.now();
+    fn();
+    best = Math.min(best, performance.now() - started);
+  }
+  if (best > budgetMs) throw new Error(`${label} took ${best.toFixed(1)}ms (budget ${budgetMs}ms) — possible ReDoS`);
 }
 
 const MEDIA = '/media/11111111-1111-4111-8111-111111111111';

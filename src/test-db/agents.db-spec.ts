@@ -23,6 +23,8 @@ describeDb('agent lifecycle on a real database', () => {
   });
   afterAll(async () => db.onApplicationShutdown());
 
+  const keysAuth = (apiKey: string) => keys.authenticate(apiKey);
+
   async function agentRow(id: string) {
     const r = await db.query<{ status: string; deleted_at: Date | null; public_key: string | null; wallet_address: string; verified_at: Date | null }>(
       `SELECT status, deleted_at, public_key, wallet_address, verified_at FROM agent WHERE id = $1`, [id]);
@@ -98,6 +100,23 @@ describeDb('agent lifecycle on a real database', () => {
     await expect(agents.register(squatter, 'squat', undefined, undefined, squat.address)).rejects.toMatchObject({ message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
   });
 
+  it('revoking a never-verified PENDING squat does not turn it into a permanent claim on the wallet', async () => {
+    const squatter = await createUser(db);
+    const victim = await createUser(db);
+    const wallet = Wallet.createRandom();
+
+    // anyone can PENDING-register an address they do not control (no signature at register) and revoke it right away
+    const squat = await agents.register(squatter, 'squat', undefined, undefined, wallet.address);
+    await agents.revoke(squatter, squat.agentId);
+    expect(await agentRow(squat.agentId)).toMatchObject({ status: 'REVOKED', verified_at: null });
+
+    // the real owner is not locked out, and proves ownership as usual
+    const mine = await registerAndVerify(victim, wallet, 'real');
+    expect(await agentRow(mine.agentId)).toMatchObject({ status: 'ACTIVE', wallet_address: wallet.address });
+    expect(await agentRow(squat.agentId)).toMatchObject({ status: 'REVOKED', deleted_at: null }); // the squatter's row is left alone
+    await expect(keysAuth(mine.apiKey)).resolves.toMatchObject({ agentId: mine.agentId });
+  });
+
   it("registering again while my own PENDING row exists returns that row; someone else's agent id is 404 for verify/rotate/revoke", async () => {
     const owner = await createUser(db);
     const stranger = await createUser(db);
@@ -112,5 +131,25 @@ describeDb('agent lifecycle on a real database', () => {
     await expect(agents.verifyAndIssueKey(owner, first.agentId, await Wallet.createRandom().signMessage(first.verificationMessage)))
       .rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
     expect(await agentRow(first.agentId)).toMatchObject({ status: 'PENDING_VERIFICATION', public_key: null });
+  });
+
+  it('myAgents completed_bounties counts approved work like the public profile does: not other statuses, not soft-deleted bounties', async () => {
+    const ownerId = await createUser(db);
+    const adminId = await createUser(db, { isAdmin: true });
+    const { agentId } = await registerAndVerify(ownerId, Wallet.createRandom());
+    const submit = async (title: string, status: string, deleted = false) => {
+      const bountyId = (await db.query<{ id: string }>(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, deleted_at)
+         VALUES ($1, 's', $2, 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', CASE WHEN $3::boolean THEN now() END) RETURNING id`,
+        [adminId, title, deleted])).rows[0].id;
+      await db.query(
+        `INSERT INTO bounty_submission (bounty_id, agent_id, submission_url, description, status) VALUES ($1, $2, 'https://example.test/w', 'd', $3)`,
+        [bountyId, agentId, status]);
+    };
+    await submit('approved', 'APPROVED');
+    await submit('approved-but-deleted', 'APPROVED', true);
+    await submit('rejected', 'REJECTED');
+    const [mine] = await agents.myAgents(ownerId);
+    expect(mine.completed_bounties).toBe(1);
   });
 });

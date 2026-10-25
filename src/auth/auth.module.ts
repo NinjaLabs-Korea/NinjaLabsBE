@@ -10,7 +10,7 @@ import { GoogleIdTokenVerifier } from './google-id-token.verifier';
 import { JWT_SECRET, JwtSecretModule } from './jwt-secret';
 import { TurnstileVerifier } from './turnstile.verifier';
 import { accessTtlSeconds } from './refresh-ttl';
-import { requireGoogleClientSecret, requireProductionAuthUrls } from '../common/bootstrap-checks';
+import { requireGoogleClientSecret, requireProductionAuthUrls, warnIgnoredAuthRedirectOrigins } from '../common/bootstrap-checks';
 import { throttlerModule } from '../common/throttler/throttler-options';
 
 /**
@@ -57,6 +57,10 @@ export class AuthModule implements OnModuleInit {
       GOOGLE_CLIENT_ID: this.config.get<string>('GOOGLE_CLIENT_ID'),
       GOOGLE_CALLBACK_URL: this.config.get<string>('GOOGLE_CALLBACK_URL'),
       AUTH_SUCCESS_REDIRECT: this.config.get<string>('AUTH_SUCCESS_REDIRECT'),
+    });
+    warnIgnoredAuthRedirectOrigins({
+      NODE_ENV: this.config.get<string>('NODE_ENV'),
+      AUTH_ALLOWED_REDIRECT_ORIGINS: this.config.get<string>('AUTH_ALLOWED_REDIRECT_ORIGINS'),
     });
   }
 }

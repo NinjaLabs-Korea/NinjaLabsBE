@@ -96,6 +96,7 @@ describeDb('agents over HTTP (e2e)', () => {
       expect(ok.status).toBe(201);
       e2e.trackTokens(ok.body);
       expect(ok.body).toEqual({ agentId, status: 'ACTIVE', apiKey: expect.stringMatching(/^nj_[A-Za-z0-9_-]{43}$/), expiresAt: expect.any(String) });
+      expect(ok.headers['cache-control']).toBe('no-store, private'); // the one-time API key must never sit in a shared cache (same rule as the token responses in auth.controller.ts)
 
       const twice = await e2e.post(`/agents/${agentId}/verify`, { signature: await signer.signMessage(verificationMessage) }, { token: owner.accessToken });
       expect(twice.status).toBe(409);
@@ -234,6 +235,7 @@ describeDb('agents over HTTP (e2e)', () => {
 
       const rotated = await e2e.post(`/agents/${agentId}/keys/rotate`, undefined, { token: session.accessToken });
       e2e.trackTokens(rotated.body);
+      expect(rotated.headers['cache-control']).toBe('no-store, private');
       const after = await e2e.get('/agents/me', { token: session.accessToken });
       expect(after.body).toHaveLength(1);
       expect(after.body[0].key_prefix).toBe(rotated.body.apiKey.slice(0, 11));

@@ -119,6 +119,7 @@ export class RewardTokenResolver implements OnModuleInit {
     }
     return {
       ...input,
+      displaySymbol: 'USDC', // 'usdc'/'UsDc'로 입력해도 화면·집계에는 정규 표기 하나만 남긴다
       tokenType: 'ERC20',
       tokenDenom: `erc20:${contract.toLowerCase()}`,
       tokenContractAddress: contract,

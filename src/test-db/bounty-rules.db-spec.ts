@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { sslOptions } from '../../scripts/migrate';
@@ -406,6 +407,15 @@ describeDb('bounty rules on a real database', () => {
       expect(rejected[0].message).toBe('TX_HASH_ALREADY_USED');
       const statuses = await db.query<{ status: string }>(`SELECT status FROM bounty_reward WHERE id = ANY($1::uuid[]) ORDER BY status`, [rewardIds]);
       expect(statuses.rows.map((r) => r.status)).toEqual(['DEPOSIT_PENDING', 'FUNDED']);
+    });
+
+    it('a deposit below the posted amount is 400 DEPOSIT_BELOW_REWARD_AMOUNT and leaves the reward DEPOSIT_PENDING; an unknown reward stays 404', async () => {
+      const rewardId = await rewardOf(await createBounty({ amount: '10' }));
+      await expect(rewards.confirmDeposit(rewardId, fakeTxHash(), '9', adminId)).rejects.toMatchObject({ message: 'DEPOSIT_BELOW_REWARD_AMOUNT', status: 400 });
+      expect((await db.query<{ status: string }>(`SELECT status FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0].status).toBe('DEPOSIT_PENDING');
+      await expect(rewards.confirmDeposit(randomUUID(), fakeTxHash(), '9', adminId)).rejects.toMatchObject({ message: 'REWARD_NOT_FOUND_OR_NOT_PENDING' });
+      await rewards.confirmDeposit(rewardId, fakeTxHash(), '10', adminId);
+      await expect(rewards.confirmDeposit(rewardId, fakeTxHash(), '9', adminId)).rejects.toMatchObject({ message: 'REWARD_NOT_FOUND_OR_NOT_PENDING' });
     });
 
     it('one reward confirmed twice at once with different hashes: one FUNDED with its hash, the other 404, one audit row', async () => {

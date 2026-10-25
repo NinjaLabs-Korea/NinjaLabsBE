@@ -91,6 +91,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `INVALID_TOKEN_AMOUNT` | 400 | 토큰 금액이 최소 단위 양의 정수 문자열이 아니다 |
 | `TX_HASH_ALREADY_USED` | 409 | 이미 다른 입금/지급에 쓰인 tx hash다 (중복 사용 불가) |
 | `REWARD_NOT_FOUND` | 404 | 보상 행이 없다 |
+| `DEPOSIT_BELOW_REWARD_AMOUNT` | 400 | 입금액이 보상 게시 금액(amount)보다 적어 입금 확인을 할 수 없다 |
 | `REWARD_NOT_FOUND_OR_NOT_PENDING` | 404 | 보상이 없거나 입금 대기(DEPOSIT_PENDING) 상태가 아니다 |
 | `REWARD_NOT_FUNDED` | 400 | 보상이 없거나 입금 확인(FUNDED 이상)이 안 돼 지급을 요청할 수 없다 |
 | `APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND` | 404 | 승인된 제출이 없거나 수령자의 지갑이 연결돼 있지 않다 |
@@ -295,7 +296,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | POST | `/admin/bounties/:id/transition` | 상태 전환 `{to}` — 허용 전이만 |
 | POST | `/admin/applications/:id/review` | 지원 승인/거절 `{decision, note?}` |
 | POST | `/admin/submissions/:id/review` | 제출 심사 `{decision: START_REVIEW\|REQUEST_REVISION\|APPROVE\|REJECT, comment?}` |
-| POST | `/admin/rewards/:id/confirm-deposit` | 선입금 확인 `{txHash, depositedAmount}` — `txHash` 규칙은 공통 규칙 참조 (`400 INVALID_TX_HASH`, `409 TX_HASH_ALREADY_USED`) |
+| POST | `/admin/rewards/:id/confirm-deposit` | 선입금 확인 `{txHash, depositedAmount}` — `txHash` 규칙은 공통 규칙 참조 (`400 INVALID_TX_HASH`, `409 TX_HASH_ALREADY_USED`), 입금액이 게시 금액보다 적으면 `400 DEPOSIT_BELOW_REWARD_AMOUNT` |
 | POST | `/admin/payouts` | 지급 요청 생성 `{rewardId, submissionId, amount}` (멱등). 보상이 `PAID`여도 여유분(배정 상한 − 취소 아닌 payout 합계)이 남아 있으면 받고 보상은 `PARTIALLY_PAID`로 돌아간다(첫 지급 뒤 `maxWinners`를 올린 경우); 여유분이 없으면 `400 PAYOUT_EXCEEDS_AVAILABLE_REWARD`. **배정 상한 = `LEAST(게시 금액 amount, 입금액 deposited_amount)`** — 초과 입금은 상한을 올리지 않는다 (2026-10-24 결정) |
 | POST | `/admin/payouts/:id/approve` | 멀티시그 승인 완료 표시. **2인 규칙**: 그 payout을 요청한 운영자(`payout.requested_by`)가 승인하면 **403 `PAYOUT_SELF_APPROVAL`** — 다른 운영자가 승인해야 한다(`approved_by` 저장, 감사 `PAYOUT_APPROVED`). 운영자 1인 배포용 탈출구 `PAYOUT_ALLOW_SELF_APPROVAL=true`이면 허용하되 warn 로그 + 감사 `PAYOUT_SELF_APPROVED`. 승인 가능 상태(`REQUESTED`/`AWAITING_MULTISIG_APPROVAL`)가 아니면 404 `PAYOUT_NOT_FOUND_OR_WRONG_STATUS`(자기 승인 검사보다 먼저) |
 | POST | `/admin/payouts/:id/paid` | 송금 완료 기록 `{txHash}` — `400 INVALID_TX_HASH`; 다른 바운티의 PAID payout에 이미 쓰인 해시면 `409 TX_HASH_ALREADY_USED`, 같은 바운티의 다른 payout과 같은 해시는 허용(한 tx로 여러 수상자 송금) |

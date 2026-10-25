@@ -20,7 +20,7 @@
  * 스키마 변경 없음. 환불 송금 자체는 이 스크립트가 하지 않는다 (docs/runbook.md §7.7).
  * 접속: DATABASE_URL (+ DATABASE_CA_CERT / PGSSLMODE) — scripts/migrate.js와 같은 규칙 (scripts/ops-cli.js).
  */
-const { OpsError, UUID_RE, parseArgs, promptYes, runCli } = require('./ops-cli');
+const { OpsError, UUID_RE, extractValueOptions, parseArgs, promptYes, runCli } = require('./ops-cli');
 
 const USAGE = 'usage: node scripts/record-refund.js <reward-id> --tx <hash> [--dry-run] [--yes]';
 const TX_HASH = /^(0x)?[0-9a-fA-F]{64}$/;
@@ -127,20 +127,13 @@ async function recordRefund(pool, rewardId, hash) {
 async function run(argv, deps) {
   const log = deps.log || console.log;
   const prompt = deps.prompt || promptYes;
-  // --tx는 값을 받는 옵션이라 parseArgs(불리언 플래그만)에 넘기기 전에 분리한다
-  const rest = [];
-  let rawHash;
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '--tx') {
-      rawHash = argv[i + 1];
-      i += 1;
-    } else {
-      rest.push(argv[i]);
-    }
-  }
+  // --tx는 값을 받는 옵션이라 parseArgs(불리언 플래그만)에 넘기기 전에 분리한다 — 값 없음/두 번 지정은 사용법 오류(exit 2)
   let parsed;
+  let rawHash;
   try {
-    parsed = parseArgs(rest, ['dry-run', 'yes']);
+    const extracted = extractValueOptions(argv, ['tx']);
+    rawHash = extracted.values.tx;
+    parsed = parseArgs(extracted.rest, ['dry-run', 'yes']);
   } catch (err) {
     log(`${err.message}\n${USAGE}`);
     return 2;

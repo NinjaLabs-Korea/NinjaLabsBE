@@ -144,4 +144,12 @@ describeDb('bounty rules over HTTP (e2e)', () => {
     expect((await e2e.post(`/admin/payouts/${anyId}/approve`, undefined, asApprover)).body)
       .toEqual({ statusCode: 404, error: 'Not Found', message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
   });
+  it('a year-0000 deadline is a 400, not a Postgres datetime overflow 500 (finished bounties skip the future-deadline check)', async () => {
+    const id = await createBounty(bountyForm());
+    await e2e.db.query(`UPDATE bounty SET status = 'CANCELLED' WHERE id = $1`, [id]);
+    for (const field of ['submissionDeadline', 'applicationDeadline']) {
+      const res = await e2e.patch(`/admin/bounties/${id}`, { [field]: '0000-01-01T00:00:00Z' }, asAdmin);
+      expect(res.status).toBe(400);
+    }
+  });
 });

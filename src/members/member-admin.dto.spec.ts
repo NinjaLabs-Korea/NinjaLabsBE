@@ -1,7 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CreateHighlightDto } from '../highlights/highlight-admin.controller';
-import { SetMemberDto } from './member-admin.controller';
+import { SearchUsersQueryDto, SetMemberDto } from './member-admin.controller';
 
 const failedFields = async (cls: new () => object, body: object) =>
   (await validate(plainToInstance(cls, body))).map((error) => error.property);
@@ -17,5 +17,12 @@ describe('admin display order validation', () => {
     const highlight = { type: 'MILESTONE', title: 'Launch', description: 'Shipped' };
     expect(await failedFields(CreateHighlightDto, { ...highlight, displayOrder: 0 })).toEqual([]);
     expect(await failedFields(CreateHighlightDto, { ...highlight, displayOrder: -1 })).toEqual(['displayOrder']);
+  });
+});
+
+describe('admin user search validation', () => {
+  it('rejects search terms longer than any email', async () => {
+    expect(await failedFields(SearchUsersQueryDto, { q: 'a'.repeat(320) })).toEqual([]);
+    expect(await failedFields(SearchUsersQueryDto, { q: 'a'.repeat(321) })).toEqual(['q']);
   });
 });

@@ -52,10 +52,11 @@ export class GoogleOAuthFlow {
    * 콜백에서 서명·만료·용도(p)를 확인한다.
    */
   async issueOauthState(traceId: string | undefined, redirectUrl: string, codeChallenge: string): Promise<string> {
-    if (!CODE_CHALLENGE.test(codeChallenge)) {
+    // typeof: `?codeChallenge[]=<43자>`는 배열로 들어오는데 RegExp.test가 문자열로 바꿔 통과시킨다 — state의 c가 배열이 되어 콜백(구글 왕복 뒤)에서야 AUTH_FAILED로 깨졌다
+    if (typeof codeChallenge !== 'string' || !CODE_CHALLENGE.test(codeChallenge)) {
       throw new UnauthorizedException('INVALID_CODE_CHALLENGE');
     }
-    const safeTraceId = traceId && /^[a-zA-Z0-9-]{1,64}$/.test(traceId) ? traceId : undefined;
+    const safeTraceId = typeof traceId === 'string' && /^[a-zA-Z0-9-]{1,64}$/.test(traceId) ? traceId : undefined;
     return this.jwt.signAsync(
       { p: 'gstate', t: safeTraceId, r: redirectUrl, c: codeChallenge },
       { expiresIn: '10m' },
@@ -65,7 +66,7 @@ export class GoogleOAuthFlow {
   async verifyOauthState(state: string): Promise<OAuthState> {
     try {
       const payload = await this.jwt.verifyAsync<{ p?: string; t?: string; r?: string; c?: string }>(state);
-      if (payload.p !== 'gstate' || !payload.c || !CODE_CHALLENGE.test(payload.c)) {
+      if (payload.p !== 'gstate' || typeof payload.c !== 'string' || !CODE_CHALLENGE.test(payload.c)) {
         throw new Error('invalid state');
       }
       return { traceId: payload.t, redirectUrl: payload.r, codeChallenge: payload.c };

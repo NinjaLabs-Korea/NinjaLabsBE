@@ -78,6 +78,20 @@ describe('AuthService OAuth state', () => {
     expect(jwt.signAsync).not.toHaveBeenCalled();
   });
 
+  it('refuses a repeated query parameter (?codeChallenge[]=…) even when its only element is a valid challenge, and drops an array trace id', async () => {
+    const { service, jwt } = createService();
+    await expect(service.issueOauthState(undefined, 'https://app.example/', [challenge] as unknown as string)).rejects.toMatchObject({ status: 401, message: 'INVALID_CODE_CHALLENGE' });
+    expect(jwt.signAsync).not.toHaveBeenCalled();
+    await service.issueOauthState(['trace-01'] as unknown as string, 'https://app.example/', challenge);
+    expect(jwt.signAsync).toHaveBeenLastCalledWith({ p: 'gstate', t: undefined, r: 'https://app.example/', c: challenge }, { expiresIn: '10m' });
+  });
+
+  it('rejects a state whose challenge claim is not a string', async () => {
+    const verifyAsync = jest.fn(async () => ({ p: 'gstate', c: [challenge] }));
+    const { service } = createService({ jwt: { verifyAsync } });
+    await expect(service.verifyOauthState('state')).rejects.toMatchObject({ message: 'INVALID_OAUTH_STATE' });
+  });
+
   it('returns trace, redirect and challenge from a valid state', async () => {
     const verifyAsync = jest.fn(async () => ({ p: 'gstate', t: 'trace-1', r: 'https://app.example/', c: challenge }));
     const { service } = createService({ jwt: { verifyAsync } });

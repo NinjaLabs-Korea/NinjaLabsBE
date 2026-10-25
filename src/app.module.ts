@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { ThrottlerGuard } from '@nestjs/throttler';
 import { DatabaseModule } from './common/database/database.module';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
@@ -20,6 +19,7 @@ import { MediaModule } from './media/media.module';
 import { AlertsModule } from './common/alerts/alerts.module';
 import { MaintenanceModule } from './common/maintenance/maintenance.module';
 import { throttlerModule } from './common/throttler/throttler-options';
+import { IpThrottlerGuard } from './common/throttler/ip-throttler.guard';
 
 @Module({
   imports: [
@@ -46,6 +46,6 @@ import { throttlerModule } from './common/throttler/throttler-options';
     MediaModule,
     MaintenanceModule, // 만료 challenge/세션/로그인 코드 정리 (매시)
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [{ provide: APP_GUARD, useClass: IpThrottlerGuard }],
 })
 export class AppModule {}

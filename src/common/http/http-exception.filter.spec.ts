@@ -64,7 +64,7 @@ describe('HttpExceptionFilter', () => {
       const [sent] = base.mock.calls[0] as [HttpException];
       expect(sent).toBeInstanceOf(ServiceUnavailableException);
       expect(sent.getResponse()).toMatchObject({ statusCode: 503, message: 'DATABASE_UNAVAILABLE' });
-      expect(error).toHaveBeenCalledWith(`POST /admin/bounties 503 Error: ${message}`);
+      expect(error.mock.calls[0][0]).toBe(`POST /admin/bounties 503 Error: ${message}`);
     },
   );
 
@@ -91,6 +91,15 @@ describe('HttpExceptionFilter', () => {
     expect(error).toHaveBeenCalledTimes(2);
     expect(error.mock.calls[0][0]).toBe('POST /admin/bounties 500 Error: upstream');
     expect(HttpExceptionFilter.statusOf(null)).toBe(500);
+  });
+
+  it('adds the stack frames (never the message line) as the Nest stack argument, so a 5xx stays diagnosable', () => {
+    new HttpExceptionFilter().catch(new Error('boom\n    at forged (/etc/passwd:1:1)'), host);
+    const [line, stack] = error.mock.calls[0] as [string, string];
+    expect(line).toBe('POST /admin/bounties 500 Error: boom\\n    at forged (/etc/passwd:1:1)');
+    expect(stack.split('\n')[0]).toBe('Error');
+    expect(stack).toMatch(/\n\s+at .*http-exception\.filter\.spec\.ts:\d+:\d+/);
+    expect(stack.split('\n').length).toBeLessThanOrEqual(13);
   });
 
   it('escapes CR/LF and caps user-influenced path and message in the 5xx line', () => {
@@ -159,7 +168,7 @@ describe('HttpExceptionFilter — request context edge cases', () => {
   it('still logs one line with "-" placeholders when there is no HTTP request (exception outside a request)', () => {
     const noRequest = { switchToHttp: () => ({ getRequest: () => undefined }) } as unknown as ArgumentsHost;
     new HttpExceptionFilter().catch(new Error('during bootstrap'), noRequest);
-    expect(error.mock.calls).toEqual([['- - 500 Error: during bootstrap']]);
+    expect(error.mock.calls.map(([line]) => line)).toEqual(['- - 500 Error: during bootstrap']);
   });
 
   it('caps an attacker-sized method and error name', () => {
@@ -176,5 +185,53 @@ describe('HttpExceptionFilter — request context edge cases', () => {
     [{ status: NaN }, 500], [{ statusCode: 404, status: 'x' }, 404], [{ status: 409, statusCode: 500 }, 409], [undefined, 500],
   ])('statusOf(%p) → %p', (carried, status) => {
     expect(HttpExceptionFilter.statusOf(carried)).toBe(status);
+  });
+});
+
+/** 실제 BaseExceptionFilter 경로 — 기본 구현이 남기던 `ExceptionsHandler` error 로그가 없어야 한다 */
+describe('HttpExceptionFilter — unknown throwables (real Nest base filter)', () => {
+  const reply = jest.fn();
+  const adapter = { isHeadersSent: jest.fn(() => false), reply, end: jest.fn() };
+  const host = {
+    switchToHttp: () => ({ getRequest: () => ({ method: 'POST', path: '/auth/refresh' }) }),
+    getArgByIndex: () => ({ res: true }),
+  } as unknown as ArgumentsHost;
+  let logged: string[];
+  beforeEach(() => {
+    logged = [];
+    // Logger.prototype.error는 이 필터의 `HttpException` 줄이고, 기본 필터의 static Logger('ExceptionsHandler')도 같은 prototype을 쓴다
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(function (this: { context?: string }, ...args: unknown[]) {
+      logged.push(`${this.context}: ${String(args[0])}`);
+    });
+    reply.mockClear();
+    adapter.isHeadersSent.mockReturnValue(false);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('body-parser 4xx: same response as before, but no error log at all', () => {
+    const malformed = Object.assign(new SyntaxError('Unexpected end of JSON input'), { status: 400, statusCode: 400, type: 'entity.parse.failed' });
+    new HttpExceptionFilter(adapter as never).catch(malformed, host);
+    expect(reply).toHaveBeenCalledWith({ res: true }, { statusCode: 400, message: 'Unexpected end of JSON input' }, 400);
+    expect(logged).toEqual([]);
+  });
+
+  it('a 5xx logs exactly one line (this filter\'s, escaped) — the raw message never reaches ExceptionsHandler', () => {
+    new HttpExceptionFilter(adapter as never).catch(new Error('invalid input syntax: "x\n[Nest] 1 - ERROR [Fake] forged"'), host);
+    expect(reply).toHaveBeenCalledWith({ res: true }, { statusCode: 500, message: 'Internal server error' }, 500);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain('HttpException: POST /auth/refresh 500 Error: invalid input syntax: "x\\n[Nest] 1 - ERROR [Fake] forged"');
+    expect(logged.some((line) => line.includes('ExceptionsHandler') || line.includes('\n'))).toBe(false);
+  });
+
+  it.each([99, 1000, 200, 3.5])('an out-of-range carried statusCode (%p) answers 500 instead of throwing from res.status()', (statusCode) => {
+    new HttpExceptionFilter(adapter as never).catch(Object.assign(new Error('odd'), { statusCode }), host);
+    expect(reply).toHaveBeenCalledWith({ res: true }, { statusCode: 500, message: 'Internal server error' }, 500);
+  });
+
+  it('ends the response instead of replying when headers were already sent', () => {
+    adapter.isHeadersSent.mockReturnValue(true);
+    new HttpExceptionFilter(adapter as never).catch(new Error('late'), host);
+    expect(reply).not.toHaveBeenCalled();
+    expect(adapter.end).toHaveBeenCalledWith({ res: true });
   });
 });

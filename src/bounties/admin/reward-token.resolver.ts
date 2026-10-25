@@ -12,6 +12,9 @@ export type RewardInput = {
   amount: string;
 };
 
+/** bounty_reward.chk_reward_token의 ERC20 컨트랙트 주소 모양 (0011_evm_rewards.sql) */
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
 /** Injective EVM 메인넷(1776) / 테스트넷(1439) */
 const INJECTIVE_EVM_CHAIN_IDS = [1439, 1776];
 
@@ -93,7 +96,8 @@ export class RewardTokenResolver implements OnModuleInit {
     if (reward.tokenType === 'CW20' && !reward.tokenContractAddress) {
       throw new BadRequestException('REWARD_TOKEN_CONTRACT_REQUIRED');
     }
-    if (reward.tokenType === 'ERC20' && (!reward.tokenContractAddress || !reward.evmChainId)) {
+    // 주소 모양은 DB chk_reward_token(0011)과 같다 — 여기서 안 거르면 `0xabc` 같은 오타가 23514 check_violation 500이 된다
+    if (reward.tokenType === 'ERC20' && (!reward.tokenContractAddress || !reward.evmChainId || !EVM_ADDRESS.test(reward.tokenContractAddress))) {
       throw new BadRequestException('REWARD_EVM_METADATA_REQUIRED');
     }
     return reward;
@@ -107,7 +111,7 @@ export class RewardTokenResolver implements OnModuleInit {
   private usdc(input: RewardInput): RewardInput {
     const contract = this.config.get<string>('USDC_EVM_CONTRACT_ADDRESS');
     const chainId = Number(this.config.get<string>('INJECTIVE_EVM_CHAIN_ID'));
-    if (!contract || !/^0x[0-9a-fA-F]{40}$/.test(contract)) {
+    if (!contract || !EVM_ADDRESS.test(contract)) {
       throw new BadRequestException('USDC_EVM_CONTRACT_NOT_CONFIGURED');
     }
     if (!INJECTIVE_EVM_CHAIN_IDS.includes(chainId)) {

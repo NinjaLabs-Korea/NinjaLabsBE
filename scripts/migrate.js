@@ -27,6 +27,27 @@ function sslOptions(env) {
   return { rejectUnauthorized: false };
 }
 
+/** src/common/database/database-ssl.ts의 dbTlsUnverifiedInProduction / DB_TLS_UNVERIFIED_MESSAGE 복제본 (database-ssl.spec.ts가 동일성을 확인) */
+function dbTlsUnverifiedInProduction(env) {
+  return env.NODE_ENV === 'production' && env.PGSSLMODE !== 'disable' && !(env.DATABASE_CA_CERT || '').trim();
+}
+const DB_TLS_UNVERIFIED_MESSAGE =
+  'DATABASE_CA_CERT is empty in production: the Postgres server certificate is NOT verified (rejectUnauthorized: false), so a network attacker between this service and the database can read and alter all traffic. ' +
+  'Set DATABASE_CA_CERT to the Supabase CA PEM now. A later release may refuse to boot without it.';
+
+/**
+ * production에서 CA 없이 TLS를 쓰면 ERROR 로그 + 운영 알림 한 번: 마이그레이션은 막지 않는다 (배포를 멈추지 않기 위해). 절대 throw하지 않는다.
+ */
+async function warnUnverifiedDbTls(env, log = console.error) {
+  if (!dbTlsUnverifiedInProduction(env)) return;
+  log(`[error] migrate: ${DB_TLS_UNVERIFIED_MESSAGE}`);
+  const { postOpsAlert, webhookStatus } = require('./ops-alert');
+  if (webhookStatus(env.OPS_ALERT_WEBHOOK_URL) !== 'ok') return;
+  const environment = env.RAILWAY_ENVIRONMENT_NAME || env.NODE_ENV || 'development';
+  const result = await postOpsAlert(env.OPS_ALERT_WEBHOOK_URL, `[NinjaLabs ${environment}] db-tls-unverified: migrate: ${DB_TLS_UNVERIFIED_MESSAGE}`);
+  if (!result.ok) log(`ops alert webhook unreachable for db tls warning: ${result.reason}`);
+}
+
 /**
  * migrate/운영 스크립트용 pg Pool 타임아웃 — src/common/database/pool-timeouts.ts와 같은 DB_CONNECTION_TIMEOUT_MS 규칙(기본 5000, 잘못된 값은 기본값).
  * 블랙홀 DB에서 preDeploy가 무한히 매달리지 않고 실패(→ 배포 중단 + 알림)하게 한다.
@@ -282,6 +303,7 @@ async function main() {
     console.error('DATABASE_URL is required');
     process.exit(1);
   }
+  await warnUnverifiedDbTls(process.env);
   const pool = new Pool({ connectionString: url, ssl: sslOptions(process.env), ...poolTimeoutOptions(process.env) });
   try {
     await applyMigrations(pool, { log: console.log });
@@ -295,6 +317,6 @@ async function main() {
   console.log('done');
 }
 
-module.exports = { alertMigrationFailure, applyMigrations, assertNoTransactionControl, findTransactionControl, migrationFiles, poolTimeoutOptions, sslOptions, MIGRATIONS_DIR, MIGRATION_LOCK_KEY };
+module.exports = { DB_TLS_UNVERIFIED_MESSAGE, alertMigrationFailure, dbTlsUnverifiedInProduction, warnUnverifiedDbTls, applyMigrations, assertNoTransactionControl, findTransactionControl, migrationFiles, poolTimeoutOptions, sslOptions, MIGRATIONS_DIR, MIGRATION_LOCK_KEY };
 
 if (require.main === module) main();

@@ -104,9 +104,9 @@ describe('runInTransaction — failures outside the callback', () => {
 describe('DatabaseService', () => {
   const config = (values: Record<string, string | undefined>) =>
     ({ get: (key: string) => values[key] }) as unknown as ConfigService;
-  let warn: jest.SpyInstance;
+  let logged: jest.SpyInstance;
   beforeEach(() => {
-    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => jest.restoreAllMocks());
 
@@ -116,11 +116,19 @@ describe('DatabaseService', () => {
     [{ NODE_ENV: 'production', PGSSLMODE: 'require', DATABASE_CA_CERT: '-----BEGIN CERTIFICATE-----' }, false],
     [{ NODE_ENV: 'production', PGSSLMODE: 'disable', DATABASE_CA_CERT: undefined }, false],
     [{ NODE_ENV: 'development', PGSSLMODE: undefined, DATABASE_CA_CERT: undefined }, false],
-  ])('warns about unverified TLS only in production without a CA: %p → %p', async (env, warned) => {
-    const db = new DatabaseService(config({ DATABASE_URL: 'postgresql://u@127.0.0.1:1/x', ...env }));
+  ])('logs an ERROR and raises an ops alert about unverified TLS only in production without a CA: %p → %p', async (env, warned) => {
+    const alerts = { notify: jest.fn().mockResolvedValue(true) };
+    const db = new DatabaseService(config({ DATABASE_URL: 'postgresql://u@127.0.0.1:1/x', ...env }), alerts as never);
     await db.onApplicationShutdown();
-    const tlsWarnings = warn.mock.calls.filter(([message]) => String(message).includes('DATABASE_CA_CERT is empty in production'));
-    expect(tlsWarnings).toHaveLength(warned ? 1 : 0);
+    const tlsErrors = logged.mock.calls.filter(([message]) => String(message).includes('DATABASE_CA_CERT is empty in production'));
+    expect(tlsErrors).toHaveLength(warned ? 1 : 0);
+    expect(alerts.notify.mock.calls).toEqual(warned ? [['db-tls-unverified', expect.stringContaining('DATABASE_CA_CERT')]] : []);
+  });
+
+  it('still boots (no throw) without an AlertService in production without a CA', async () => {
+    const db = new DatabaseService(config({ DATABASE_URL: 'postgresql://u@127.0.0.1:1/x', NODE_ENV: 'production' }));
+    await db.onApplicationShutdown();
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('DATABASE_CA_CERT is empty in production'));
   });
 
   it('registers the idle-client error handler on its pool, so a dropped connection cannot crash the process', async () => {

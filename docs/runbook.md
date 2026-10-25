@@ -184,6 +184,8 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 `GET /health`는 DB에 `SELECT 1`을 보낸다 — 정상 `200 {"status":"ok","db":"up"}`, DB 장애 시 **`503 {"status":"degraded","db":"down"}`**. 인증 없이 열려 있고 rate limit 대상이 아니다(`@SkipThrottle()` — 한도 저장소가 DB를 치는 production에서 DB 장애 때 응답이 타임아웃으로 늘어지지 않게).
 
+**현재 설정: GitHub Actions `.github/workflows/uptime.yml`** — 5분마다 BE `/health`(200 + `"db":"up"`)와 FE `/`(로케일 리다이렉트를 따라가 200)를 확인하고, 실패하면 30초 뒤 한 번 더 본 뒤 실패로 끝난다. 알림은 GitHub의 실패 메일(이 워크플로의 cron을 마지막으로 수정한 계정, GitHub 알림 설정 → Actions)이다. 실패 제목에 `BE DB down`(503) / `BE app down` / `FE down`을 남긴다. 한계: 간격이 최소 5분이고 GitHub 부하로 실행이 밀릴 수 있으며, 공개 레포에 60일간 커밋이 없으면 스케줄이 자동으로 꺼진다(Actions 탭에서 다시 켠다). 더 촘촘한 감시가 필요하면 아래 외부 모니터로 옮긴다.
+
 외부 모니터(UptimeRobot, Better Stack 등 아무거나 — Railway healthcheck는 배포 시에만 보므로 별도로 둔다):
 - URL `https://<BE>/health`, 메서드 GET, 간격 1분, 타임아웃 10초.
 - 성공 조건: 상태 코드 200 **그리고** 본문에 `"db":"up"` 포함(키워드 모니터). 503은 "DB 다운", 연결 실패/5xx(503 외)는 "앱 다운"으로 구분해 알림 제목에 남긴다.

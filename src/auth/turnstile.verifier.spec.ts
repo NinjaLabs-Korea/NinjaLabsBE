@@ -1,4 +1,4 @@
-import { BadRequestException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { TURNSTILE_SITEVERIFY_URL, TURNSTILE_TIMEOUT_MS, TurnstileVerifier } from './turnstile.verifier';
 
@@ -197,13 +197,36 @@ describe('AuthController GET /auth/google with Turnstile', () => {
     expect(s.res.redirect).toHaveBeenCalledWith('https://accounts.google.com/x');
   });
 
-  it('a rejected token stops the flow: no state, no redirect, the 400 propagates', async () => {
-    const s = setup(true, jest.fn(async () => { throw new BadRequestException('TURNSTILE_FAILED'); }));
-    await expect(s.controller.googleRedirect(undefined, undefined, 'c'.repeat(43), 'bad', s.req, s.res as never)).rejects.toMatchObject({
-      status: 400, message: 'TURNSTILE_FAILED',
-    });
+  it.each([
+    ['rejected token', new BadRequestException('TURNSTILE_FAILED'), 'TURNSTILE_FAILED'],
+    ['unreachable Cloudflare', new ServiceUnavailableException('TURNSTILE_UNAVAILABLE'), 'TURNSTILE_UNAVAILABLE'],
+  ])('a %s stops the flow and sends the browser back to the FE callback with #error=<code> (not a raw JSON page)', async (_label, failure, code) => {
+    const s = setup(true, jest.fn(async () => { throw failure; }));
+    await s.controller.googleRedirect(undefined, undefined, 'c'.repeat(43), 'bad', s.req, s.res as never);
     expect(s.auth.issueOauthState).not.toHaveBeenCalled();
-    expect(s.res.redirect).not.toHaveBeenCalled();
+    expect(s.res.redirect).toHaveBeenCalledTimes(1);
+    expect(s.res.redirect).toHaveBeenCalledWith(`http://localhost:3000/auth/callback#error=${code}`);
+  });
+
+  it('a failed start goes back to the allowlisted returnTo origin, and an unexpected (non-HTTP) failure still propagates', async () => {
+    const config: Record<string, string> = { AUTH_SUCCESS_REDIRECT: 'https://app.example/', AUTH_ALLOWED_REDIRECT_ORIGINS: 'https://preview.example' };
+    const verify = jest.fn(async () => { throw new BadRequestException('TURNSTILE_FAILED'); });
+    const auth = { issueOauthState: jest.fn(), buildGoogleAuthUrl: jest.fn() };
+    const controller = new AuthController(auth as never, { get: (key: string) => config[key] } as never, { enabled: true, verify } as never);
+    const res = { redirect: jest.fn() };
+    const req = { ip: '203.0.113.7', headers: {} } as never;
+    await controller.googleRedirect(undefined, 'https://preview.example/x', 'c'.repeat(43), 'bad', req, res as never);
+    expect(res.redirect).toHaveBeenCalledWith('https://preview.example/auth/callback#error=TURNSTILE_FAILED');
+    verify.mockRejectedValueOnce(new Error('boom'));
+    await expect(controller.googleRedirect(undefined, undefined, 'c'.repeat(43), 'bad', req, res as never)).rejects.toThrow('boom');
+  });
+
+  it('an invalid PKCE challenge is #error=AUTH_FAILED on the FE callback too', async () => {
+    const s = setup(false);
+    s.auth.issueOauthState.mockRejectedValueOnce(new UnauthorizedException('INVALID_CODE_CHALLENGE'));
+    await s.controller.googleRedirect(undefined, undefined, 'short', undefined, s.req, s.res as never);
+    expect(s.res.redirect).toHaveBeenCalledWith('http://localhost:3000/auth/callback#error=AUTH_FAILED');
+    expect(s.auth.buildGoogleAuthUrl).not.toHaveBeenCalled();
   });
 
   it('a repeated/array query value is treated as a missing token', async () => {

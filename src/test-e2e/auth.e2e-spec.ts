@@ -13,11 +13,10 @@ describeDb('auth over HTTP (e2e)', () => {
   beforeAll(async () => { e2e = await startApp(); });
   afterAll(async () => e2e?.close());
 
-  it('GET /auth/google without codeChallenge → 401 INVALID_CODE_CHALLENGE (no redirect)', async () => {
+  it('GET /auth/google without codeChallenge → 302 back to the FE callback with #error=AUTH_FAILED (a browser navigation never lands on raw JSON; no Google redirect)', async () => {
     const res = await e2e.get(`/auth/google?returnTo=${encodeURIComponent(FE_ORIGIN)}`);
-    expect(res.status).toBe(401);
-    expect(res.body).toEqual(unauthorized('INVALID_CODE_CHALLENGE'));
-    expect(res.headers.location).toBeUndefined();
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(`${FE_ORIGIN}/auth/callback#error=AUTH_FAILED`);
   });
 
   it('full login: Google consent URL → callback redirect carries only #loginCode → wrong verifier 401 → right verifier tokens with typ → /auth/me', async () => {

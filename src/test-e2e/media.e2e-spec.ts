@@ -33,6 +33,7 @@ describeDb('media over HTTP (e2e)', () => {
     expect(served.headers['cache-control']).toBe('public, max-age=31536000, immutable');
     expect(served.headers.etag).toBe(`"${createHash('sha256').update(PNG_1x1).digest('hex')}"`);
     expect(served.headers['x-content-type-options']).toBe('nosniff');
+    expect(served.headers['cross-origin-resource-policy']).toBe('cross-origin'); // helmet's global same-origin would stop a cross-origin <img>
 
     const revalidated = await e2e.get(res.body.url, { headers: { 'if-none-match': String(served.headers.etag) } });
     expect(revalidated.status).toBe(304);

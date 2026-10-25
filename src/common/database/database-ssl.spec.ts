@@ -1,4 +1,5 @@
 import { rootCertificates } from 'tls';
+import { sslOptions } from '../../../scripts/migrate';
 import { databaseSslOptions } from './database-ssl';
 
 describe('databaseSslOptions', () => {
@@ -25,5 +26,19 @@ describe('databaseSslOptions', () => {
     expect(options.ca.slice(0, rootCertificates.length)).toEqual([...rootCertificates]);
     expect(options.ca[options.ca.length - 1]).toBe(pem);
     expect(options.ca).toHaveLength(rootCertificates.length + 1);
+  });
+
+  it('scripts/migrate.js sslOptions (a copy — it cannot import TS) answers every env the same way', () => {
+    for (const env of [
+      {},
+      { PGSSLMODE: 'disable' },
+      { PGSSLMODE: 'require' },
+      { PGSSLMODE: 'disable', DATABASE_CA_CERT: pem },
+      { DATABASE_CA_CERT: '   ' },
+      { DATABASE_CA_CERT: pem },
+      { DATABASE_CA_CERT: `${pem.replace(/\n/g, '\\n')}\n` },
+    ]) {
+      expect(sslOptions(env)).toEqual(databaseSslOptions(env));
+    }
   });
 });

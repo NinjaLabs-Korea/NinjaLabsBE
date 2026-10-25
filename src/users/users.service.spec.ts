@@ -76,6 +76,13 @@ describe('UsersService completeProfile', () => {
     await expect(setup({ sql: 'INSERT INTO user_tag', error: tag }).service.completeProfile(userId, 'n', 'b', ['DEV'])).rejects.toBe(tag);
   });
 
+  it('a concurrent withdrawal (UPDATE matches no row) → 404 USER_NOT_FOUND and no tags are written for the withdrawn user', async () => {
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 0, rows: [] }));
+    const service = new UsersService(createMockDb({ txQuery: query }).database);
+    await expect(service.completeProfile(userId, 'n', 'b', ['DEV'])).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   it('inserts each tag once even if the caller repeats one', async () => {
     const { service, query } = setup();
     await service.completeProfile(userId, 'n', 'b', ['DEV', 'DEV', 'OTHER']);

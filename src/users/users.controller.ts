@@ -41,6 +41,8 @@ export class CompleteProfileDto {
   @IsNotStaticFileNickname()
   nickname!: string;
 
+  // 앞뒤 공백을 지운 뒤 비어 있지 않아야 한다 — 공백만 있는 자기소개를 필수 항목으로 받지 않는다 (FE ProfileForm도 bio.trim()으로 검사)
+  @Trim()
   @IsString()
   @IsNotEmpty()
   @MaxLength(1000)

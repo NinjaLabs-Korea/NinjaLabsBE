@@ -19,6 +19,8 @@ describe('notice admin DTOs', () => {
     expect(await failedFields(CreateNoticeDto, { ...valid, title: 'a'.repeat(200), summary: 's'.repeat(500), body: 'b'.repeat(50_000) })).toEqual([]);
     expect(await failedFields(CreateNoticeDto, { ...valid, title: 'a'.repeat(201), summary: 's'.repeat(501), body: 'b'.repeat(50_001) })).toEqual(['body', 'summary', 'title']);
     expect(await failedFields(CreateNoticeDto, { ...valid, title: '   ' })).toEqual(['title']);
+    expect(await failedFields(CreateNoticeDto, { ...valid, body: ' \n  ' })).toEqual(['body']);
+    expect(await failedFields(UpdateNoticeDto, { body: ' \n  ' })).toEqual(['body']);
   });
 
   it('rejects non-http(s) or malformed URLs, and a media path where only external links are allowed', async () => {

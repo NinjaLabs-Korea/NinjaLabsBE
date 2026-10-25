@@ -86,7 +86,8 @@ SELECT 'active_admins' AS check, u.id, u.email, u.nickname, u.status
  WHERE u.is_admin = true AND u.deleted_at IS NULL
  ORDER BY u.created_at;
 
--- [review] 8. 플랫폼 설정 — onboarding.nft_mint_enabled 등 체인에 닿는 스위치.
+-- [review] 8. 플랫폼 설정 테이블 값. 주의: 서버 코드는 platform_setting을 읽지 않는다 — onboarding.nft_mint_enabled 등은 시드된 표시용 값일 뿐
+--   바꿔도 민팅이 멈추거나 켜지지 않는다. 체인에 닿는 실제 스위치는 env다: MASTER_WALLET_MNEMONIC / NFT_CONTRACT_ADDRESS를 비우면 워커가 잡을 1시간씩 미룬다 (runbook §7.6).
 SELECT 'platform_settings' AS check, s.key, s.value::text, s.updated_at
   FROM platform_setting s
  ORDER BY s.key;

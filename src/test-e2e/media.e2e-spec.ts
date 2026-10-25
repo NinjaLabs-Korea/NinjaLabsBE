@@ -97,6 +97,13 @@ describeDb('media over HTTP (e2e)', () => {
     expect(row.rows[0].created_by).toBe(admin.userId);
   });
 
+  it('a non-ASCII file name (the browser sends UTF-8 bytes) is stored as typed, not as latin1 mojibake', async () => {
+    const created = await upload(PNG_1x1, 'image/png', '한글 커버 🥷.png');
+    expect(created.status).toBe(201);
+    const row = await e2e.db.query<{ file_name: string }>(`SELECT file_name FROM media_asset WHERE id = $1`, [created.body.id]);
+    expect(row.rows[0].file_name).toBe('한글 커버 🥷.png');
+  });
+
   it('a request with two file parts is refused with 400 (multer files: 1) and stores nothing', async () => {
     const before = (await e2e.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM media_asset`)).rows[0].n;
     const form = multipart([

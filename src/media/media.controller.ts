@@ -27,7 +27,9 @@ export class MediaController {
   @Post('admin/media')
   @UseGuards(AdminGuard)
   // multer 한도: 파일 1개·5 MiB 외에 필드/파트 수와 필드명 길이도 막는다 (multipart 폭탄 방지)
+  // defParamCharset: multer는 charset 없는 filename을 latin1로 읽는다 — 브라우저는 UTF-8 바이트로 보내므로 한글 파일명이 깨져 저장됐다
   @UseInterceptors(FileInterceptor('file', {
+    defParamCharset: 'utf8',
     limits: { files: 1, fileSize: MAX_MEDIA_BYTES, fields: 5, parts: 10, fieldNameSize: 100 },
   }))
   @UseFilters(MediaFileTooLargeFilter)

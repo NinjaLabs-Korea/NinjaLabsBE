@@ -1,8 +1,9 @@
 import { Type } from 'class-transformer';
 import {
-  IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested,
+  IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 import { TOKEN_AMOUNT } from '../../common/validation/token-amount';
+import { IsTimestampString } from '../../common/validation/timestamp';
 import { Trim } from '../../common/validation/trim';
 import { IsHttpUrlOrMediaPath, IsSafeUrl } from '../../common/validation/url';
 import { BountyStatus } from '../bounty-status';
@@ -37,8 +38,8 @@ export class CreateBountyDto {
   @IsBoolean() applicationRequired!: boolean;
   @IsIn(SUBMISSION_MODES) submissionMode!: string;
   @Type(() => Number) @IsInt() @Min(1) @MaxPgInt() maxWinners!: number;
-  @IsDateString() submissionDeadline!: string;
-  @IsOptional() @IsDateString() applicationDeadline?: string;
+  @IsTimestampString() submissionDeadline!: string;
+  @IsOptional() @IsTimestampString() applicationDeadline?: string;
   @IsOptional() @IsHttpUrlOrMediaPath() coverImageUrl?: string;
   @IsOptional() @ValidateNested() @Type(() => RewardDto) reward?: RewardDto;
 }
@@ -59,8 +60,8 @@ export class UpdateBountyDto {
   @IsOptionalNotNull() @IsBoolean() applicationRequired?: boolean;
   @IsOptionalNotNull() @IsIn(SUBMISSION_MODES) submissionMode?: string;
   @IsOptionalNotNull() @Type(() => Number) @IsInt() @Min(1) @MaxPgInt() maxWinners?: number;
-  @IsOptionalNotNull() @IsDateString() submissionDeadline?: string;
-  @IsOptional() @IsDateString() applicationDeadline?: string | null;
+  @IsOptionalNotNull() @IsTimestampString() submissionDeadline?: string;
+  @IsOptional() @IsTimestampString() applicationDeadline?: string | null;
   // null이면 커버 이미지 제거 (IsOptional은 null도 통과시킨다). 레거시 `/uploads/x.png` 같은 값도 통과 (IsSafeUrl)
   @IsOptional() @IsSafeUrl() coverImageUrl?: string | null;
 }

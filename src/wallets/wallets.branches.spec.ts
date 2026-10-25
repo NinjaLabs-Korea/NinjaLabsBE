@@ -171,6 +171,19 @@ describe('WalletsService.verifySignature — EIP-191 (0x…)', () => {
   });
 });
 
+describe('WalletsService.verifySignature — concurrent withdrawal', () => {
+  it('a user withdrawn between the challenge and the verify gets 404 USER_NOT_FOUND and no mint job (the wallet INSERT is rolled back with the tx)', async () => {
+    const signer = Wallet.createRandom();
+    const { service, txQuery, nfts } = setup();
+    const challenge = await service.createChallenge(userId, signer.address);
+    const original = txQuery.getMockImplementation()!;
+    txQuery.mockImplementation(async (sql: string, params?: unknown[]) =>
+      sql.includes('onboarding_step') ? { rowCount: 0, rows: [] } : original(sql, params));
+    await expect(service.verifySignature(userId, signer.address, await signer.signMessage(challenge.message))).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
+    expect(nfts.enqueueParentMintInTransaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('WalletsService.myWallet', () => {
   it('returns null when the user has no connected primary wallet', async () => {
     const { service, db } = setup();

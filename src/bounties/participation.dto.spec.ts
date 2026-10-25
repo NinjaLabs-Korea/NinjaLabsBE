@@ -44,4 +44,10 @@ describe('bounty participation DTOs (user and agent surfaces share the same rule
     expect(await failedFields(ReviewSubmissionDto, { decision: 'APPROVE', comment: 'c'.repeat(2000) })).toEqual([]);
     expect(await failedFields(ReviewSubmissionDto, { decision: 'APPROVE', comment: 'c'.repeat(2001) })).toEqual(['comment']);
   });
+
+  it('revisionNo may be omitted but not null (null used to surface as SUBMISSION_REVISION_CHANGED)', async () => {
+    expect(await failedFields(ReviewSubmissionDto, { decision: 'APPROVE' })).toEqual([]);
+    expect(await failedFields(ReviewSubmissionDto, { decision: 'APPROVE', revisionNo: 2 })).toEqual([]);
+    expect(await failedFields(ReviewSubmissionDto, { decision: 'APPROVE', revisionNo: null })).toEqual(['revisionNo']);
+  });
 });

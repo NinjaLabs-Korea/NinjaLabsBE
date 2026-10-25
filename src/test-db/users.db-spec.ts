@@ -156,11 +156,13 @@ describeDb('users on a real database', () => {
     const admin = await createUser(db, { isAdmin: true });
     const nickname = `Agt${unique().slice(0, 8)}`;
     const owner = await createUser(db, { nickname });
-    const agent = async (deleted: boolean) => (await db.query<{ id: string }>(
+    const agent = async (deleted: boolean, status = 'ACTIVE') => (await db.query<{ id: string }>(
       `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, deleted_at)
-       VALUES ($1, $2, $3, $4, 'ACTIVE', CASE WHEN $5::boolean THEN now() END) RETURNING id`,
-      [owner, unique('bot-'), unique('pk-'), `inj1${unique()}`, deleted])).rows[0].id;
+       VALUES ($1, $2, $3, $4, $6, CASE WHEN $5::boolean THEN now() END) RETURNING id`,
+      [owner, unique('bot-'), unique('pk-'), `inj1${unique()}`, deleted, status])).rows[0].id;
     const [liveAgent, deletedAgent] = [await agent(false), await agent(true)];
+    // unverified / suspended / revoked agents (name + wallet address) are not part of the public profile
+    for (const status of ['PENDING_VERIFICATION', 'SUSPENDED', 'REVOKED']) await agent(false, status);
 
     await submission(await bounty(admin, 'by-agent'), { agentId: liveAgent });
     await submission(await bounty(admin, 'by-agent-deleted-bounty', { deleted: true }), { agentId: liveAgent });

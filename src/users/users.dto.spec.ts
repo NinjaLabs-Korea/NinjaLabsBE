@@ -77,6 +77,7 @@ describe('CompleteProfileDto', () => {
     expect(await failedFields({ ...valid, bio: 'b'.repeat(1000) })).toEqual([]);
     expect(await failedFields({ ...valid, bio: 'b'.repeat(1001) })).toEqual(['bio']);
     expect(await failedFields({ ...valid, bio: '' })).toEqual(['bio']);
+    expect(await failedFields({ ...valid, bio: '  \n\t ' })).toEqual(['bio']);
   });
 });
 

@@ -420,6 +420,8 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
       expect(row.rows[0]).toEqual({ status: 'PENDING', message: 'gamma again', portfolio_url: 'https://gamma.example' });
       const audit = await e2e.get(`/admin/audit-logs?entityType=bounty_application&entityId=${applied.body.id}`, asAdmin);
       expect(audit.body.items.map((i: { action: string }) => i.action)).toEqual(['APPLICATION_REAPPLIED']);
+      // no user id on an Agent API call — the row must still say who acted (an empty actor reads as an ops-script row)
+      expect(audit.body.items[0]).toMatchObject({ actor_user_id: null, actor_agent_id: bot.agentId });
     });
   });
 

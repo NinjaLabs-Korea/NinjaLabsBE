@@ -26,14 +26,14 @@ import { PUBLIC_READ_IP_THROTTLE } from '../common/throttler/public-read-throttl
 import { MaxChars } from '../common/validation/max-chars';
 import { Trim } from '../common/validation/trim';
 import { AccountWithdrawalService } from './account-withdrawal.service';
-import { IsNotReservedNickname, IsNotStaticFileNickname, NICKNAME, NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH } from './nickname';
+import { IsNotReservedNickname, IsNotStaticFileNickname, NICKNAME, NormalizeNickname, NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH } from './nickname';
 import { UsersService } from './users.service';
 
 export { NICKNAME } from './nickname';
 
 export class CompleteProfileDto {
   /** 규칙은 users/nickname.ts — 문자/숫자로 시작·끝, `_ . -` 허용, 예약어(me/check-nickname/admin/new/edit)·정적 파일 확장자(.png 등) 거부 */
-  @Trim()
+  @NormalizeNickname()
   @IsString()
   @Length(NICKNAME_MIN_LENGTH, NICKNAME_MAX_LENGTH)
   @Matches(NICKNAME)
@@ -58,7 +58,7 @@ export class CompleteProfileDto {
 
 /** DELETE /users/me 본문 — 지금 닉네임을 그대로 다시 입력해 확인한다 (비교는 앞뒤 공백·대소문자 무시) */
 export class WithdrawAccountDto {
-  @Trim()
+  @NormalizeNickname()
   @IsString()
   @IsNotEmpty()
   @MaxChars(NICKNAME_MAX_LENGTH)

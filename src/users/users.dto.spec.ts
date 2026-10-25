@@ -20,6 +20,14 @@ describe('CompleteProfileDto', () => {
     expect(plainToInstance(CompleteProfileDto, { ...valid, nickname: '  ninja  ' }).nickname).toBe('ninja');
   });
 
+  it('normalizes the nickname to NFC so a decomposed Hangul spelling cannot duplicate the composed one', async () => {
+    const composed = '한글닌자';
+    const decomposed = composed.normalize('NFD');
+    expect(decomposed).not.toBe(composed);
+    expect(plainToInstance(CompleteProfileDto, { ...valid, nickname: decomposed }).nickname).toBe(composed);
+    expect(isSavableNickname(decomposed)).toBe(true);
+  });
+
   it.each(['a', 'n'.repeat(51), 'ninja dev', 'ninja@dev', 'ninja/dev', 'ninja<b>', '   ', '​​'])(
     'rejects nickname %p (length 2..50, no whitespace or symbols beyond _ . -)',
     async (nickname) => {

@@ -8,7 +8,7 @@ import { withdrawOpenParticipationOfUser } from '../bounties/participation-withd
 import { DatabaseService } from '../common/database/database.service';
 import { PAYABLE_REWARD_STATUSES, rewardHeadroomSql, TERMINAL_PAYOUT_STATUSES } from '../rewards/payout-status';
 import { disconnectAllWalletsOfUser } from '../wallets/wallet-disconnection';
-import { WITHDRAWN_NICKNAME_PREFIX } from './nickname';
+import { normalizeNickname, WITHDRAWN_NICKNAME_PREFIX } from './nickname';
 
 /**
  * 승인됐지만 아직 payout이 요청되지 않은(그래서 아직 받을 수 있는) 보상 — 하나라도 있으면 탈퇴를 막는다 (409 WITHDRAWAL_BLOCKED_PENDING_REWARDS).
@@ -38,7 +38,7 @@ export function withdrawnIdentityPrefix(nowMs: number): string {
 
 /** 탈퇴 확인 문구 비교 — 앞뒤 공백 무시, 대소문자 무시 (닉네임 유니크 인덱스도 lower(nickname) 기준) */
 export function nicknameConfirmed(current: string, typed: string): boolean {
-  return current.trim().toLowerCase() === typed.trim().toLowerCase();
+  return normalizeNickname(current).toLowerCase() === normalizeNickname(typed).toLowerCase();
 }
 
 /**

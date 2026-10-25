@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { getInjectiveAddress, getEthereumAddress } from '@injectivelabs/sdk-ts';
@@ -131,11 +132,14 @@ export class WalletsService {
           // 검증된 키만 저장한다 — EIP-191은 서명에서 복원한 키, ADR-36은 주소와 대조된 키. 클라이언트가 덧붙인 publicKey를 그대로 믿지 않는다
           [userId, injectiveAddress, verified.publicKey],
         );
-        await tx.query(
+        const stepped = await tx.query(
           `UPDATE "user" SET onboarding_step = GREATEST(onboarding_step, 3)
             WHERE id = $1 AND deleted_at IS NULL`,
           [userId],
         );
+        // 동시 탈퇴(유저 행을 먼저 잠그고 지갑을 해제한다)가 커밋됐으면 0행이다 — 이 UPDATE가 탈퇴 커밋을 기다렸다 재평가하기 때문에 위의 지갑 INSERT를
+        // 되돌릴 수 있다. 그냥 두면 탈퇴한 유저의 연결된 지갑이 남아 그 주소가 부분 유니크 인덱스를 영구히 점유한다
+        if (!stepped.rowCount) throw new NotFoundException('USER_NOT_FOUND');
         // 부모 NFT 민팅 잡을 지갑 저장과 같은 트랜잭션에서 등록 (멱등) — 커밋 뒤 크래시로 잡만 빠지는 일이 없다
         await this.nfts.enqueueParentMintInTransaction(tx, userId, w.rows[0].id);
       });

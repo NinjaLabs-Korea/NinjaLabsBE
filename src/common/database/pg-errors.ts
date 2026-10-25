@@ -56,24 +56,35 @@ export function asClientError(err: unknown): unknown {
 }
 
 /**
- * DB에 닿지 못한 오류 — pg Pool 타임아웃(pool-timeouts.ts)이 내는 메시지로 판별한다 (pg 8.16 / pg-pool 3.x 고정 문자열).
+ * DB에 닿지 못한 오류 — 요청 값이 아니라 DB 쪽 상태가 원인이고 재시도하면 될 수 있는 것.
+ * 메시지(pg 8.16 / pg-pool 3.x 고정 문자열):
  *   'timeout exceeded when trying to connect'           풀 고갈 — connectionTimeoutMillis 동안 빈 연결이 안 났다
  *   'Connection terminated due to connection timeout'  새 연결 수립이 connectionTimeoutMillis를 넘었다 (블랙홀 DB)
  *   'Query read timeout'                                query_timeout — 서버가 문장 취소 응답조차 못 보냈다
+ *   'Connection terminated unexpectedly'                쿼리 도중 연결이 끊겼다 (DB 재시작·장애조치·네트워크 단절)
+ * 코드: 연결 자체가 안 되는 Node 소켓 오류(ECONNREFUSED / ENOTFOUND / EAI_AGAIN — 나가는 연결에서만 나므로 클라이언트 쪽 소켓 오류와 섞이지 않는다)와
+ * 서버가 거절한 연결 계열 SQLSTATE — 08xxx connection_exception, 57P01 admin_shutdown, 57P02 crash_shutdown, 57P03 cannot_connect_now(기동 중), 53300 too_many_connections.
  * 서버가 돌려준 57014(statement_timeout)는 여기 넣지 않는다 — DB는 살아 있고 느린 쿼리(서버 버그)이므로 500으로 남겨 경보 대상이 되게 한다.
  */
 const DATABASE_UNAVAILABLE_MESSAGES: ReadonlySet<string> = new Set([
   'timeout exceeded when trying to connect',
   'Connection terminated due to connection timeout',
   'Query read timeout',
+  'Connection terminated unexpectedly',
+]);
+const DATABASE_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN',
+  '08000', '08001', '08003', '08004', '08006', '08007', '57P01', '57P02', '57P03', '53300',
 ]);
 
 export function isDatabaseUnavailable(err: unknown): boolean {
-  return err instanceof Error && DATABASE_UNAVAILABLE_MESSAGES.has(err.message);
+  if (!(err instanceof Error)) return false;
+  const code = (err as PgError)?.code;
+  return DATABASE_UNAVAILABLE_MESSAGES.has(err.message) || (typeof code === 'string' && DATABASE_UNAVAILABLE_CODES.has(code));
 }
 
 /**
- * 응답 상태 결정용 매핑 — asClientError(400) + DB 연결 불가 → 503 DATABASE_UNAVAILABLE. 그 외는 그대로.
+ * 응답 상태 결정용 매핑 — asClientError(400) + DB 연결 불가(타임아웃·연결 끊김·거부) → 503 DATABASE_UNAVAILABLE. 그 외는 그대로.
  * HttpExceptionFilter(응답)와 RequestLoggingInterceptor(요청 로그의 상태)가 같은 판단을 쓴다.
  */
 export function asHttpError(err: unknown): unknown {

@@ -28,13 +28,11 @@ export default defineRailway(() => {
       USDC_EVM_CONTRACT_ADDRESS: "0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d",
       NFT_CONTRACT_ADDRESS: "inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w",
       // production 허용 목록에 localhost를 두지 않는다 — 로컬 FE는 로컬 BE(.env의 CORS_ORIGINS/AUTH_ALLOWED_REDIRECT_ORIGINS)로 붙는다 (README "로컬 오리진")
-      // FE는 n1-nj-4 팀의 ninjalabs-korea-platform으로 옮겼다 (2026-10-25). 옛 ninjalabsfe.vercel.app은 이전 기간 동안만 남긴다
-      CORS_ORIGINS: "https://ninjalabs-korea-platform.vercel.app,https://ninjalabsfe.vercel.app",
+      // FE는 n1-nj-4 팀의 ninjalabs-korea-platform으로 옮겼다 (2026-10-25). 옛 ninjalabsfe.vercel.app은 Vercel에서 새 주소로 308 리다이렉트한다
+      CORS_ORIGINS: "https://ninjalabs-korea-platform.vercel.app",
       GOOGLE_CALLBACK_URL:
         "https://ninjalabsbe-production.up.railway.app/auth/google/callback",
       AUTH_SUCCESS_REDIRECT: "https://ninjalabs-korea-platform.vercel.app/",
-      // 옛 FE 오리진에서 시작한 로그인도 returnTo로 돌아갈 수 있게 (이전 기간 한정 — 옛 프로젝트를 내리면 CORS_ORIGINS와 함께 뺀다)
-      AUTH_ALLOWED_REDIRECT_ORIGINS: "https://ninjalabsfe.vercel.app",
       GOOGLE_CLIENT_ID:
         "693249955885-ejgrdgjr75uhkst92ttloid3lpkpecf1.apps.googleusercontent.com",
       // ── 비밀값 (Railway 대시보드/CLI로만 설정, git에 두지 않음) ──

@@ -40,6 +40,19 @@ describe('AuthController.googleCallback — rejected before touching Google', ()
     expect(rejected).toContain(`"reason":"${providerError ?? 'MISSING_CODE_OR_STATE'}"`);
   });
 
+  it('a database outage during the callback is #error=DATABASE_UNAVAILABLE (retryable copy), any other failure stays AUTH_FAILED', async () => {
+    logs();
+    const { auth, controller, res } = setup();
+    auth.verifyOauthState.mockResolvedValue({ redirectUrl: 'https://app.example/', codeChallenge: challenge });
+    auth.exchangeGoogleCode.mockResolvedValue({ googleId: 'g', email: 'e@example.com' });
+    auth.upsertGoogleUser.mockRejectedValueOnce(new Error('Connection terminated due to connection timeout'));
+    await controller.googleCallback('code', 'state', undefined, { headers: {} } as never, res as never);
+    expect(res.redirect).toHaveBeenLastCalledWith('https://app.example/auth/callback#error=DATABASE_UNAVAILABLE');
+    auth.upsertGoogleUser.mockRejectedValueOnce(new Error('something else'));
+    await controller.googleCallback('code', 'state', undefined, { headers: {} } as never, res as never);
+    expect(res.redirect).toHaveBeenLastCalledWith('https://app.example/auth/callback#error=AUTH_FAILED');
+  });
+
   it('falls back to http://localhost:3000/ when AUTH_SUCCESS_REDIRECT is unset', async () => {
     logs();
     const { controller, res } = setup({});

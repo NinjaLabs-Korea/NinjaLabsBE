@@ -120,7 +120,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
 | GET | `/auth/google` | - | `codeChallenge`(S256, 필수), `returnTo`, `trace`, `turnstileToken`(`TURNSTILE_SECRET_KEY` 설정 시 필수) → 구글 동의 화면. 봇 방지 실패 → FE `/auth/callback#error=TURNSTILE_FAILED`, Cloudflare 불통 → `#error=TURNSTILE_UNAVAILABLE`, challenge 없음/형식 오류 → `#error=AUTH_FAILED` (모두 302, 아래 "Turnstile") |
-| GET | `/auth/google/callback` | - | Google code 교환 → FE `/auth/callback#loginCode=...` |
+| GET | `/auth/google/callback` | - | Google code 교환 → FE `/auth/callback#loginCode=...`. 실패는 `#error=AUTH_FAILED`, DB 일시 장애(503 `DATABASE_UNAVAILABLE` 원인)만 `#error=DATABASE_UNAVAILABLE` |
 | POST | `/auth/exchange` | - | `{code, codeVerifier}` → `{accessToken, refreshToken}`; `Cache-Control: no-store, private`. **쿠키 모드**(`X-Ninja-Session: cookie`): `Set-Cookie: ninja_rt=…` + 본문 `{accessToken}` (아래 "refresh 쿠키 모드") |
 | POST | `/auth/refresh` | - | **쿠키 모드**: 본문 `{}`(또는 없음) + `ninja_rt` 쿠키 → `{accessToken}` + 새 `Set-Cookie`. **본문 모드(deprecated)**: `{refreshToken}` → `{accessToken, refreshToken}` (회전). `Cache-Control: no-store, private`. **재사용 유예 30초**: 방금 회전된 구 토큰이 30초 안에 다시 오면(멀티탭 레이스) 401 대신 이긴 쪽과 **같은 `refreshToken`**(+ 새로 서명한 `accessToken`)을 돌려주고 다시 회전하지 않는다 — 두 탭 모두 그 토큰을 쓰면 된다. 30초가 지났거나 그 후속 토큰이 이미 회전/폐기됐으면 재사용 감지로 보고 `401 INVALID_REFRESH_TOKEN` + 그 토큰에서 파생된 세션 사슬 전체 폐기(재로그인 필요). 정지/삭제된 유저는 항상 401 |
 | POST | `/auth/logout` | - | **쿠키 모드**: 쿠키의 세션 폐기 + 쿠키 삭제(`Max-Age=0`) → 204. **본문 모드(deprecated)**: `{refreshToken}` → 204 |

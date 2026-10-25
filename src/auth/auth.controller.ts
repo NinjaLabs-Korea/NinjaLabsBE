@@ -23,6 +23,7 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
+import { isDatabaseUnavailable } from '../common/database/pg-errors';
 import { requestIdOf } from '../common/http/request-id';
 import { AUTH_PROXIED_ROUTE_IP_THROTTLE, AuthTokenThrottlerGuard } from './auth-throttler.guard';
 import { AuthGuard } from './auth.guard';
@@ -180,8 +181,9 @@ export class AuthController {
       return res.redirect(this.loginCallbackUrl(fe, { loginCode }));
     } catch (caught) {
       onboardingError(this.logger, 'oauth.callback.failed', caught, { rid });
-      // 실패 사유를 FE에 상세 노출하지 않는다 (code/state 탈취 시도 힌트 방지)
-      return res.redirect(this.loginCallbackUrl(fe, { error: 'AUTH_FAILED' }));
+      // 실패 사유를 FE에 상세 노출하지 않는다 (code/state 탈취 시도 힌트 방지). 단 DB 일시 장애는 사용자 입력과 무관하고 재시도하면 되므로
+      // FE가 전용 문구("잠시 후 다시")를 가진 DATABASE_UNAVAILABLE을 알린다 — 그 밖은 일반 AUTH_FAILED
+      return res.redirect(this.loginCallbackUrl(fe, { error: isDatabaseUnavailable(caught) ? 'DATABASE_UNAVAILABLE' : 'AUTH_FAILED' }));
     }
   }
 

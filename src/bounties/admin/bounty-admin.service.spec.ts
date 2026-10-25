@@ -32,6 +32,13 @@ describe('BountyAdminService update safeguards', () => {
     return { service, query, db };
   }
 
+  it('admin list orders each bounty\'s rewards (unordered json_agg let the edit form pick a different "first" reward per read)', async () => {
+    const { service, db } = setup();
+    db.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    await service.list();
+    expect(db.query.mock.calls[0][0]).toContain('ORDER BY rw.created_at, rw.id) FILTER (WHERE rw.id IS NOT NULL)');
+  });
+
   it('an update with no fields still 404s for a missing or deleted bounty (was 200 for any id)', async () => {
     const { service, db } = setup();
     db.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });

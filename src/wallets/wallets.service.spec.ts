@@ -154,6 +154,7 @@ describe('WalletsService challenge lookup', () => {
   it('maps a unique violation on the wallet INSERT (uq_wallet_chain_address_active / uq_wallet_primary_per_user) to 409 WALLET_ALREADY_LINKED', async () => {
     const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_chain_address_active"'), { code: '23505' });
     const { db, txQuery, nfts, signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, duplicate);
+    db.query.mockResolvedValue({ rowCount: 0, rows: [] }); // the user has no wallet of their own: a real conflict
     const signature = await signer.signMessage('m');
     const error = await run(signature).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ConflictException);
@@ -162,7 +163,26 @@ describe('WalletsService challenge lookup', () => {
     expect(txQuery.mock.calls.map(([sql]) => sql as string).filter((sql) => sql.includes('INSERT INTO wallet '))).toHaveLength(1);
     expect(txQuery.mock.calls.some(([sql]) => sql.includes('onboarding_step'))).toBe(false);
     expect(nfts.enqueueParentMintInTransaction).not.toHaveBeenCalled();
-    expect(db.query).not.toHaveBeenCalled(); // myWallet is never read back
+    // the only read after the failure is the "is it already my own wallet?" check — nothing is returned as success
+    expect(db.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers a verify retry for the wallet the user already linked with that wallet instead of 409 (first response lost)', async () => {
+    const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_primary_per_user"'), { code: '23505' });
+    const { db, nfts, signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, duplicate);
+    const linked = { id: 'wallet-id', chain: 'INJECTIVE', address: mockCanonicalInjectiveAddress };
+    db.query.mockResolvedValue({ rowCount: 1, rows: [linked] });
+    const signature = await signer.signMessage('m');
+    await expect(run(signature)).resolves.toEqual(linked);
+    expect(nfts.enqueueParentMintInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("still answers 409 when the user's own wallet is a different address", async () => {
+    const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_primary_per_user"'), { code: '23505' });
+    const { db, signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, duplicate);
+    db.query.mockResolvedValue({ rowCount: 1, rows: [{ id: 'other', address: 'inj1someoneelse' }] });
+    const signature = await signer.signMessage('m');
+    await expect(run(signature)).rejects.toMatchObject({ message: 'WALLET_ALREADY_LINKED' });
   });
 
   it('propagates other INSERT failures unchanged (not every error is a duplicate wallet)', async () => {

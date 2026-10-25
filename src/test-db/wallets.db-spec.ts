@@ -125,4 +125,15 @@ describeDb('wallet challenge/verify on a real database', () => {
     const nft = await db.query(`SELECT 1 FROM nft WHERE owner_user_id = $1`, [second]);
     expect(nft.rowCount).toBe(0);
   });
+
+  it('re-verifying the wallet the user already linked returns it (retry after a lost response) and queues no second mint job', async () => {
+    const signer = Wallet.createRandom();
+    const userId = await createUser(db);
+    const c1 = await wallets.createChallenge(userId, signer.address);
+    const first = await wallets.verifySignature(userId, signer.address, await signer.signMessage(c1.message));
+    const c2 = await wallets.createChallenge(userId, signer.address);
+    await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(c2.message))).resolves.toEqual(first);
+    const rows = await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [userId]);
+    expect(rows.rowCount).toBe(1);
+  });
 });

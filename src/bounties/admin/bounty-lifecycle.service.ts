@@ -41,7 +41,10 @@ export class BountyLifecycleService {
       (SELECT count(*)::int FROM bounty_application WHERE bounty_id = $1 AND status = 'PENDING') AS pending,
       (SELECT count(*)::int FROM bounty_application a WHERE a.bounty_id = $1 AND a.status = 'APPROVED'
         AND NOT EXISTS (SELECT 1 FROM bounty_submission s WHERE s.bounty_id = a.bounty_id
-          AND (s.submitter_user_id = a.applicant_user_id OR s.agent_id = a.agent_id))) AS unsubmitted,
+          AND (s.submitter_user_id = a.applicant_user_id OR s.agent_id = a.agent_id))
+        -- 탈퇴한 참가자(또는 탈퇴한 소유자의 에이전트)는 영영 제출하지 못한다 — 탈퇴는 APPROVED 지원을 철회하지 않으므로 세지 않으면 마감 전까지 접수를 닫을 수 없다
+        AND EXISTS (SELECT 1 FROM "user" ou WHERE ou.deleted_at IS NULL
+          AND ou.id = COALESCE(a.applicant_user_id, (SELECT ag.owner_user_id FROM agent ag WHERE ag.id = a.agent_id)))) AS unsubmitted,
       (SELECT count(*)::int FROM bounty_submission WHERE bounty_id = $1
         AND status = ANY($2::text[])) AS unresolved,
       (SELECT count(*)::int FROM bounty_reward WHERE bounty_id = $1

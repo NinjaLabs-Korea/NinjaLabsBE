@@ -29,15 +29,27 @@ describe('AuthController.googleCallback — rejected before touching Google', ()
     ['a provider error (user denied consent)', 'code', 'state', 'access_denied'],
     ['a missing code', undefined, 'state', undefined],
     ['a missing state', 'code', undefined, undefined],
-  ])('%s → #error=AUTH_FAILED on AUTH_SUCCESS_REDIRECT, state never verified', async (_label, code, state, providerError) => {
+  ])('%s → #error=AUTH_FAILED on AUTH_SUCCESS_REDIRECT, no Google exchange', async (_label, code, state, providerError) => {
     const { log } = logs();
     const { auth, controller, res } = setup();
     await controller.googleCallback(code, state, providerError, { headers: {} } as never, res as never);
     expect(res.redirect).toHaveBeenCalledWith('https://app.example/auth/callback#error=AUTH_FAILED');
-    expect(auth.verifyOauthState).not.toHaveBeenCalled();
     expect(auth.exchangeGoogleCode).not.toHaveBeenCalled();
     const rejected = log.mock.calls.map(([line]) => String(line)).find((line) => line.includes('oauth.callback.rejected'))!;
     expect(rejected).toContain(`"reason":"${providerError ?? 'MISSING_CODE_OR_STATE'}"`);
+  });
+
+  it('a refused consent returns to the FE origin that started the login, falling back to AUTH_SUCCESS_REDIRECT for a bad state', async () => {
+    logs();
+    const config = { AUTH_SUCCESS_REDIRECT: 'https://app.example/', AUTH_ALLOWED_REDIRECT_ORIGINS: 'https://preview.example' };
+    const { auth, controller, res } = setup(config);
+    auth.verifyOauthState.mockResolvedValueOnce({ redirectUrl: 'https://preview.example/', codeChallenge: challenge });
+    await controller.googleCallback(undefined, 'state', 'access_denied', { headers: {} } as never, res as never);
+    expect(res.redirect).toHaveBeenLastCalledWith('https://preview.example/auth/callback#error=AUTH_FAILED');
+    auth.verifyOauthState.mockRejectedValueOnce(new Error('INVALID_OAUTH_STATE'));
+    await controller.googleCallback(undefined, 'forged', 'access_denied', { headers: {} } as never, res as never);
+    expect(res.redirect).toHaveBeenLastCalledWith('https://app.example/auth/callback#error=AUTH_FAILED');
+    expect(auth.exchangeGoogleCode).not.toHaveBeenCalled();
   });
 
   it('a database outage during the callback is #error=DATABASE_UNAVAILABLE (retryable copy), any other failure stays AUTH_FAILED', async () => {

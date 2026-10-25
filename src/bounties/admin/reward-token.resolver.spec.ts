@@ -25,7 +25,7 @@ describe('RewardTokenResolver', () => {
   it('passes a complete NATIVE / CW20 / ERC20 reward through unchanged', () => {
     const native = { tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount: '1' };
     const cw20 = { tokenType: 'CW20', tokenContractAddress: 'inj1cw20', displaySymbol: 'NINJA', amount: '2' };
-    const erc20 = { tokenType: 'ERC20', tokenContractAddress: '0xabc', evmChainId: 1776, displaySymbol: 'WETH', amount: '3' };
+    const erc20 = { tokenType: 'ERC20', tokenContractAddress: '0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d', evmChainId: 1776, displaySymbol: 'WETH', amount: '3' };
     for (const reward of [native, cw20, erc20]) expect(configured().resolve(reward)).toEqual(reward);
   });
 
@@ -33,7 +33,10 @@ describe('RewardTokenResolver', () => {
     [{ tokenType: 'NATIVE', displaySymbol: 'INJ', amount: '1' }, 'REWARD_TOKEN_DENOM_REQUIRED'],
     [{ tokenType: 'CW20', displaySymbol: 'NINJA', amount: '1' }, 'REWARD_TOKEN_CONTRACT_REQUIRED'],
     [{ tokenType: 'ERC20', evmChainId: 1776, displaySymbol: 'WETH', amount: '1' }, 'REWARD_EVM_METADATA_REQUIRED'],
-    [{ tokenType: 'ERC20', tokenContractAddress: '0xabc', displaySymbol: 'WETH', amount: '1' }, 'REWARD_EVM_METADATA_REQUIRED'],
+    [{ tokenType: 'ERC20', tokenContractAddress: '0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d', displaySymbol: 'WETH', amount: '1' }, 'REWARD_EVM_METADATA_REQUIRED'],
+    // DB chk_reward_token는 0x + 40 hex만 받는다 — 오타는 23514 500이 아니라 400
+    [{ tokenType: 'ERC20', tokenContractAddress: '0xabc', evmChainId: 1776, displaySymbol: 'WETH', amount: '1' }, 'REWARD_EVM_METADATA_REQUIRED'],
+    [{ tokenType: 'ERC20', tokenContractAddress: 'inj1notanevmaddress', evmChainId: 1776, displaySymbol: 'WETH', amount: '1' }, 'REWARD_EVM_METADATA_REQUIRED'],
   ])('refuses incomplete token metadata %j → 400 %s', (reward, code) => {
     expect(codeOf(() => configured().resolve(reward))).toBe(code);
   });

@@ -47,14 +47,16 @@ function migrationFiles(dir = MIGRATIONS_DIR) {
  * 마이그레이션 파일 안의 최상위 트랜잭션 제어문 — applyMigrations()가 파일마다 BEGIN … COMMIT으로 감싸므로, 파일 안의 COMMIT 등은
  * 그 트랜잭션을 일찍 끝내 "파일 하나 = 원자적 적용"을 깨뜨린다 (앞부분 DDL은 남고 파일은 기록되지 않아 재실행이 자기 잔재에 걸린다).
  */
-const TRANSACTION_CONTROL = new Set(['BEGIN', 'START', 'COMMIT', 'END', 'ROLLBACK']);
+const TRANSACTION_CONTROL = new Set(['BEGIN', 'START', 'COMMIT', 'END', 'ROLLBACK', 'ABORT', 'PREPARE']);
+/** 이 키워드는 다음 단어가 TRANSACTION일 때만 제어문이다 (`START TRANSACTION`, `PREPARE TRANSACTION` — `PREPARE stmt AS …`는 아니다) */
+const NEEDS_TRANSACTION_WORD = new Set(['START', 'PREPARE']);
 
 /**
- * SQL 텍스트에서 최상위 트랜잭션 제어문(`BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK`)을 찾는다.
+ * SQL 텍스트에서 최상위 트랜잭션 제어문(`BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`(= ROLLBACK), `PREPARE TRANSACTION`)을 찾는다.
  * 문장 경계(`;`)는 최상위에서만 센다 — `--` 주석, `/* *\/` 주석(중첩 포함), '문자열'(E'…'의 백슬래시 이스케이프 포함), "식별자",
  * 달러 인용 본문(`$$ … $$`, `$tag$ … $tag$` — DO 블록·함수 본문의 BEGIN … END)은 건너뛴다.
  * SQL 표준 함수 본문(`BEGIN ATOMIC … END`)은 문장 중간의 BEGIN ATOMIC부터 짝이 맞는 END까지 한 문장으로 본다 (안의 CASE … END 포함).
- * 각 문장의 첫 키워드만 본다: `START`는 다음 단어가 TRANSACTION일 때만.
+ * 각 문장의 첫 키워드만 본다: `START`·`PREPARE`는 다음 단어가 TRANSACTION일 때만.
  * @param {string} sql
  * @returns {{ line: number, keyword: string }[]}
  */
@@ -70,8 +72,8 @@ function findTransactionControl(sql) {
   const isIdent = (c) => c !== undefined && /[A-Za-z0-9_$\u0080-￿]/.test(c);
   const endStatement = () => {
     const first = (words[0] || '').toUpperCase();
-    if (TRANSACTION_CONTROL.has(first) && (first !== 'START' || (words[1] || '').toUpperCase() === 'TRANSACTION')) {
-      found.push({ line: firstLine, keyword: first === 'START' ? 'START TRANSACTION' : first });
+    if (TRANSACTION_CONTROL.has(first) && (!NEEDS_TRANSACTION_WORD.has(first) || (words[1] || '').toUpperCase() === 'TRANSACTION')) {
+      found.push({ line: firstLine, keyword: NEEDS_TRANSACTION_WORD.has(first) ? `${first} TRANSACTION` : first });
     }
     words = [];
     atomicDepth = 0;

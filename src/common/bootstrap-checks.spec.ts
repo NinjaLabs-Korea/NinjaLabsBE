@@ -5,9 +5,11 @@ import {
   requireJwtSecret,
   authRedirectOrigins,
   requireProductionAuthUrls,
+  requireUsableCorsOrigins,
   warnIgnoredAuthRedirectOrigins,
   trustProxyHops,
 } from './bootstrap-checks';
+import { OriginAllowlist } from './origin-allowlist';
 
 describe('bootstrap environment checks', () => {
   const strongSecret = 's'.repeat(32);
@@ -109,6 +111,24 @@ describe('bootstrap environment checks', () => {
 
     it('refuses to start in production when every entry is loopback', () => {
       expect(() => corsOriginsValue({ NODE_ENV: 'production', CORS_ORIGINS: 'http://localhost:3000,http://[::1]:3000' })).toThrow(/lists only loopback origins/);
+    });
+  });
+
+  describe('requireUsableCorsOrigins', () => {
+    const allowlistSize = (value: string) => OriginAllowlist.fromEnv(corsOriginsValue({ NODE_ENV: 'production', CORS_ORIGINS: value })).size;
+
+    it.each([
+      ['a scheme-less host', 'ninjalabsfe.vercel.app'],
+      ['a shared-hosting wildcard only', 'https://ninjalabsfe-*-team.vercel.app'],
+      ['garbage', 'not an origin'],
+    ])('refuses to start in production when CORS_ORIGINS is only %s (every FE call would be blocked by CORS)', (_label, value) => {
+      expect(() => requireUsableCorsOrigins({ NODE_ENV: 'production', CORS_ORIGINS: value }, allowlistSize(value))).toThrow(/has no usable origin/);
+    });
+
+    it('passes when at least one entry is usable, and never fires outside production', () => {
+      const value = 'ninjalabsfe.vercel.app, https://ninjalabsfe.vercel.app';
+      expect(() => requireUsableCorsOrigins({ NODE_ENV: 'production', CORS_ORIGINS: value }, allowlistSize(value))).not.toThrow();
+      expect(() => requireUsableCorsOrigins({ NODE_ENV: 'development', CORS_ORIGINS: '' }, 0)).not.toThrow();
     });
   });
 

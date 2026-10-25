@@ -100,7 +100,8 @@ export class AgentsService {
    * 엇갈리지 않는다. uq_agent_wallet/uq_agent_public_key(0014)는 `deleted_at IS NULL AND status <> 'REVOKED'` 행만 보므로
    * REVOKED 행은 지우지 않아도 지갑/키가 풀린다.
    *   - 내 REVOKED 에이전트 → 그대로 둔다 (soft delete 하지 않음 — 제출/지원 이력이 /agents/me 와 프로필에 계속 보인다)
-   *   - 남의 REVOKED 에이전트 → 409
+   *   - 남의 REVOKED 에이전트 → 409 — 단, **한 번도 verify되지 않은** 것(verified_at IS NULL)은 막지 않는다. PENDING 행을 만들어 바로 폐기(revoke)하면
+   *     소유 증명 없이 남의 지갑/키를 영구히 점유할 수 있었다 (24시간 만료를 우회). 검증된 적 없는 행은 이력(키·제출·지원)도 없다
    *   - 남의 PENDING_VERIFICATION 에이전트 → 등록 후 24시간이 지났으면 버려진 것으로 보고 soft delete.
    *     PENDING 행은 소유를 증명하지 않는다(증명은 verify의 서명) — 누구나 남의 지갑 주소를 먼저 등록해 선점(squatting)할 수 있으므로.
    *     24시간 이내면 서명 제출 중일 수 있어 409
@@ -113,20 +114,20 @@ export class AgentsService {
     walletAddress: string,
   ) {
     const occupied = (await tx.query(
-      `SELECT id, owner_user_id, status,
+      `SELECT id, owner_user_id, status, verified_at IS NOT NULL AS verified,
               (status = 'PENDING_VERIFICATION' AND created_at < now() - interval '24 hours') AS abandoned
          FROM agent
         WHERE (wallet_address = $1 OR ($2::text IS NOT NULL AND public_key = $2::text))
           AND status IN ('REVOKED', 'PENDING_VERIFICATION') AND deleted_at IS NULL
         FOR UPDATE`,
       [walletAddress, publicKey],
-    )) as { rows: Array<{ id: string; owner_user_id: string; status: string; abandoned: boolean }> };
+    )) as { rows: Array<{ id: string; owner_user_id: string; status: string; verified: boolean; abandoned: boolean }> };
     const retire: string[] = [];
     for (const row of occupied.rows) {
       const mine = row.owner_user_id === ownerUserId;
       if (row.status === 'REVOKED') {
-        if (!mine) throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
-        // 내 REVOKED 행: 유니크 인덱스가 무시하므로 건드리지 않는다
+        if (!mine && row.verified) throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
+        // 내 REVOKED 행, 남의 검증된 적 없는 REVOKED 행: 유니크 인덱스가 무시하므로 건드리지 않는다
       } else if (!mine) {
         if (!row.abandoned) throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
         retire.push(row.id);

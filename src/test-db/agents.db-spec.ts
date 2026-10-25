@@ -23,6 +23,8 @@ describeDb('agent lifecycle on a real database', () => {
   });
   afterAll(async () => db.onApplicationShutdown());
 
+  const keysAuth = (apiKey: string) => keys.authenticate(apiKey);
+
   async function agentRow(id: string) {
     const r = await db.query<{ status: string; deleted_at: Date | null; public_key: string | null; wallet_address: string; verified_at: Date | null }>(
       `SELECT status, deleted_at, public_key, wallet_address, verified_at FROM agent WHERE id = $1`, [id]);
@@ -96,6 +98,23 @@ describeDb('agent lifecycle on a real database', () => {
     expect((await agentRow(pending.agentId)).deleted_at).toBeInstanceOf(Date);
     // the squatter's own re-register now returns their soft-deleted row no more: it is blocked by the live PENDING row
     await expect(agents.register(squatter, 'squat', undefined, undefined, squat.address)).rejects.toMatchObject({ message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
+  });
+
+  it('revoking a never-verified PENDING squat does not turn it into a permanent claim on the wallet', async () => {
+    const squatter = await createUser(db);
+    const victim = await createUser(db);
+    const wallet = Wallet.createRandom();
+
+    // anyone can PENDING-register an address they do not control (no signature at register) and revoke it right away
+    const squat = await agents.register(squatter, 'squat', undefined, undefined, wallet.address);
+    await agents.revoke(squatter, squat.agentId);
+    expect(await agentRow(squat.agentId)).toMatchObject({ status: 'REVOKED', verified_at: null });
+
+    // the real owner is not locked out, and proves ownership as usual
+    const mine = await registerAndVerify(victim, wallet, 'real');
+    expect(await agentRow(mine.agentId)).toMatchObject({ status: 'ACTIVE', wallet_address: wallet.address });
+    expect(await agentRow(squat.agentId)).toMatchObject({ status: 'REVOKED', deleted_at: null }); // the squatter's row is left alone
+    await expect(keysAuth(mine.apiKey)).resolves.toMatchObject({ agentId: mine.agentId });
   });
 
   it("registering again while my own PENDING row exists returns that row; someone else's agent id is 404 for verify/rotate/revoke", async () => {

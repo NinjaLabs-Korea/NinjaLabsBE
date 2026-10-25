@@ -108,6 +108,14 @@ describeDb('throttling over HTTP (e2e)', () => {
     expect(last.headers['x-ratelimit-limit-auth-token']).toBeUndefined();
   });
 
+  it('/auth/refresh and /auth/exchange without a credential skip the token bucket: 15 cookie-less refreshes / body-less exchanges from one IP stay 401/400, not 429', async () => {
+    const ip = '203.0.113.55';
+    expect(await burst(15, () => e2e.post('/auth/refresh', {}, { ip, headers: { 'x-ninja-session': 'cookie' } }))).toEqual(Array(15).fill(401));
+    expect(await burst(15, () => e2e.post('/auth/exchange', {}, { ip }))).toEqual(Array(15).fill(400));
+    const last = await e2e.post('/auth/refresh', {}, { ip, headers: { 'x-ninja-session': 'cookie' } });
+    expect(last.headers['x-ratelimit-limit-auth-token']).toBeUndefined();
+  });
+
   it('other routes keep 120/min per IP even after the auth routes were used from that IP', async () => {
     const ip = '203.0.113.53';
     expect((await e2e.post('/auth/refresh', { refreshToken: unknownToken('pre') }, { ip })).headers['x-ratelimit-limit']).toBe('600');

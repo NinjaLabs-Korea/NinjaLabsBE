@@ -242,6 +242,22 @@ describeDb('auth sessions on a real database', () => {
     expect(rows.every((row) => row.revoked_at !== null)).toBe(true);
   });
 
+  it('revoke with a token that was just rotated (logout racing another tab\'s refresh) closes the successor too; after the grace window it leaves the successor alone', async () => {
+    const user = await auth.upsertGoogleUser(unique('google-'), `${unique()}@example.test`);
+    const first = await auth.issueSession(user.id, false);
+    const second = await auth.refresh(first.refreshToken);
+    await auth.revoke(first.refreshToken);
+    expect((await sessionRows(user.id)).every((row) => row.revoked_at !== null && row.grace_refresh_token === null)).toBe(true);
+    await expect(auth.refresh(second.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+
+    const lateUser = await auth.upsertGoogleUser(unique('google-'), `${unique()}@example.test`);
+    const a = await auth.issueSession(lateUser.id, false);
+    const b = await auth.refresh(a.refreshToken);
+    await db.query(`UPDATE auth_session SET prev_rotated_at = now() - interval '31 seconds' WHERE prev_refresh_token_hash = $1`, [sha256(a.refreshToken)]);
+    await auth.revoke(a.refreshToken);
+    await expect(auth.refresh(b.refreshToken)).resolves.toMatchObject({ refreshToken: expect.any(String) });
+  });
+
   it('getMe reflects wallet and parent NFT state', async () => {
     const userId = await createUser(db);
     await expect(auth.getMe(userId)).resolves.toMatchObject({ id: userId, wallet: null, nft: null, onboardingCompleted: false, tags: [] });

@@ -225,12 +225,18 @@ export class AuthSessions {
     );
   }
 
-  /** 세션 폐기 (로그아웃) — 유예 사본도 비운다 */
+  /**
+   * 세션 폐기 (로그아웃) — 유예 사본도 비운다. 제시된 토큰이 방금(30초 유예 안에) 회전됐다면 그 후속 세션도 함께 폐기한다:
+   * 로그아웃과 다른 탭의 refresh가 겹치면 로그아웃 요청은 이미 회전된 구 토큰을 들고 오는데, 구 세션만 닫으면 후속 세션이 살아남아
+   * 로그아웃했는데도 로그인이 유지된다.
+   */
   async revoke(refreshToken: string) {
     const hash = hashToken(refreshToken);
     await this.db.query(
       `UPDATE auth_session SET revoked_at = now(), grace_refresh_token = NULL
-        WHERE refresh_token_hash = $1 AND revoked_at IS NULL`,
+        WHERE revoked_at IS NULL
+          AND (refresh_token_hash = $1
+               OR (prev_refresh_token_hash = $1 AND prev_rotated_at > now() - interval '${REFRESH_REUSE_GRACE}'))`,
       [hash],
     );
   }

@@ -243,13 +243,15 @@ describe('AuthService.issueSession / revoke', () => {
     expect(params.slice(2, 4)).toEqual([null, null]);
   });
 
-  it('revoke closes only the open session of sha256(token) and drops its grace copy', async () => {
+  it('revoke closes the open session of sha256(token) (and its in-grace successor) and drops the grace copy', async () => {
     const query = jest.fn(async () => ({ rowCount: 1, rows: [] }));
     const { service } = createService({ query });
     await service.revoke('raw-refresh');
     const [sql, params] = query.mock.calls[0] as unknown as [string, unknown[]];
     expect(sql).toContain('SET revoked_at = now(), grace_refresh_token = NULL');
-    expect(sql).toContain('WHERE refresh_token_hash = $1 AND revoked_at IS NULL');
+    expect(sql).toContain('WHERE revoked_at IS NULL');
+    expect(sql).toContain('refresh_token_hash = $1');
+    expect(sql).toContain("prev_refresh_token_hash = $1 AND prev_rotated_at > now() - interval '30 seconds'");
     expect(params).toEqual([createHash('sha256').update('raw-refresh').digest('hex')]);
   });
 });

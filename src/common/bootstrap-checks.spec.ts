@@ -164,8 +164,10 @@ describe('bootstrap environment checks', () => {
       ['AUTH_SUCCESS_REDIRECT', 'javascript:alert(1)'],
       ['GOOGLE_CALLBACK_URL', 'http://localhost:4000/auth/google/callback'],
       ['GOOGLE_CALLBACK_URL', 'http://[::1]:4000/auth/google/callback'],
-    ])('refuses to start in production when %s=%p (not a public http(s) URL)', (key, value) => {
-      expect(() => requireProductionAuthUrls({ ...prod, [key]: value })).toThrow(new RegExp(`FATAL: ${key}=.*must be a public http\\(s\\) URL in production`));
+      ['AUTH_SUCCESS_REDIRECT', 'http://ninjalabs.xyz/'], // plaintext: the one-time login code travels in the URL fragment
+      ['GOOGLE_CALLBACK_URL', 'http://api.ninjalabs.xyz/auth/google/callback'],
+    ])('refuses to start in production when %s=%p (not a public https URL)', (key, value) => {
+      expect(() => requireProductionAuthUrls({ ...prod, [key]: value })).toThrow(new RegExp(`FATAL: ${key}=.*must be a public https URL in production`));
     });
   });
 

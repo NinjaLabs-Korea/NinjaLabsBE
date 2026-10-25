@@ -133,7 +133,7 @@ describe('AuthModule boots its secrets from the .env ConfigModule loads (not imp
   it('refuses to boot in production when AUTH_SUCCESS_REDIRECT points at localhost', async () => {
     const env = PROD_PUBLIC.replace('https://fe.example.com/', 'http://localhost:3000/');
     await expect(boot(`${env}GOOGLE_CLIENT_SECRET=g\nJWT_SECRET=${STRONG_SECRET}\n`))
-      .rejects.toThrow(/AUTH_SUCCESS_REDIRECT=.*must be a public http\(s\) URL in production/);
+      .rejects.toThrow(/AUTH_SUCCESS_REDIRECT=.*must be a public https URL in production/);
   });
 
   it('boots in production when both secrets are present in the file', async () => {

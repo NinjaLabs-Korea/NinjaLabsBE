@@ -201,6 +201,10 @@ describe('OriginAllowlist — entry parsing', () => {
     ['https://*.', 0], // no literal host part
     ['https://*.vercel.app.', 0], // trailing dot does not dodge the shared-hosting rule
     ['https://*.VERCEL.APP', 0],
+    ['https://*.com', 0], // the * in the registrable domain matches names anyone can register
+    ['https://ninjalabs-*.com', 0],
+    ['https://ninjalabs-*.com.', 0], // trailing dot does not dodge it
+    ['https://*.ninjalabs.xyz', 1], // left of the registrable domain is fine
     ['HTTPS://PREVIEW-*.NINJALABS.XYZ', 1],
     [',,, ,', 0],
   ])('%p yields %p usable entries', (entry, size) => {

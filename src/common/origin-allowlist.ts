@@ -13,7 +13,8 @@ import { Logger } from '@nestjs/common';
  * 무관하게 안전하지 않다 — `https://ninjalabsfe-*-team.vercel.app`도 공격자가 `ninjalabsfe-evil-team`이라는 프로젝트를
  * 만들면 통과한다 (returnTo로 로그인 코드 탈취). 그래서 등록 가능 도메인(registrable domain, 마지막 두 레이블)이
  * 공용 호스팅 접미사인 와일드카드 항목은 **전부 거부**한다 — 기동 시 error 로그를 남기고 목록에서 제외되므로 어떤
- * 오리진과도 매칭되지 않는다 (CORS/returnTo 모두). Vercel preview는 브랜치 고정 별칭을 **정확한 항목**으로 넣는다
+ * 오리진과도 매칭되지 않는다 (CORS/returnTo 모두). 같은 이유로 `*`가 등록 가능 도메인 자리(마지막 두 레이블: `https://*.com`, `https://ninjalabs-*.com`)에
+ * 있는 항목도 거부한다 — 그 자리는 아무나 등록할 수 있다. Vercel preview는 브랜치 고정 별칭을 **정확한 항목**으로 넣는다
  * (`https://ninjalabsfe-git-develop-<team>.vercel.app`) — 또는 커스텀 preview 도메인을 쓴다.
  */
 const ENTRY = /^([a-z][a-z0-9+.-]*):\/\/([^/?#:@]+)(?::(\d{1,5}))?(?:[/?#].*)?$/i;
@@ -73,6 +74,13 @@ export class OriginAllowlist {
       const wildcardCount = (host.match(/\*/g) ?? []).length;
       const literal = host.replace(/\*/g, '').replace(/\./g, '');
       if (wildcardCount !== 1 || !literal || !labels.every((label) => LABEL.test(label))) continue;
+      if (labels.filter(Boolean).slice(-2).some((label) => label.includes('*'))) {
+        OriginAllowlist.logger.error(
+          `origin allowlist entry "${entry}" REJECTED: the * sits in the registrable domain (last two labels), so it would match domains anyone can register ` +
+          `(https://*.com, https://ninjalabs-*.com); put the wildcard in a label left of your own domain (https://preview-*.ninjalabs.xyz)`,
+        );
+        continue;
+      }
       if (isSharedHostingWildcard(host)) {
         OriginAllowlist.logger.error(
           `origin allowlist entry "${entry}" REJECTED: a wildcard on a shared hosting domain matches hosts anyone can register ` +

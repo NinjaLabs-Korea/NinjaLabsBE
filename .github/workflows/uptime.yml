@@ -15,7 +15,7 @@ permissions: {}
 
 env:
   BE_HEALTH_URL: https://ninjalabsbe-production.up.railway.app/health
-  FE_URL: https://ninjalabsfe.vercel.app/
+  FE_URL: https://ninjalabs-korea-platform.vercel.app/
 
 jobs:
   check:

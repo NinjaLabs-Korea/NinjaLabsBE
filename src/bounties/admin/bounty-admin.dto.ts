@@ -19,8 +19,9 @@ const TOKEN_TYPES = ['NATIVE', 'CW20', 'ERC20'];
 /** 보상 입력 — RewardTokenResolver가 읽는 필드만 받는다. USDC는 서버가 env의 컨트랙트/체인으로 덮어쓴다 */
 export class RewardDto implements RewardInput {
   @IsIn(TOKEN_TYPES) tokenType!: string;
-  @IsOptional() @IsString() @MaxChars(128) tokenDenom?: string;
-  @IsOptional() @IsString() @MaxChars(255) tokenContractAddress?: string;
+  // Trim: 공백뿐인 denom/주소가 `!value` 검사(RewardTokenResolver)와 DB NOT NULL 검사를 통과해 지급 불가 보상으로 굳는 것을 막는다
+  @IsOptional() @Trim() @IsString() @MaxChars(128) tokenDenom?: string;
+  @IsOptional() @Trim() @IsString() @MaxChars(255) tokenContractAddress?: string;
   // BIGINT 컬럼 — JS가 정확히 표현하는 정수까지만 받는다 (그 위는 반올림돼 저장되거나 22003 500)
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) evmChainId?: number;
   @IsString() @Matches(/^[A-Za-z0-9]{1,12}$/) displaySymbol!: string;

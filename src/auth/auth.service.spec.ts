@@ -458,10 +458,21 @@ describe('AuthService upsertGoogleUser', () => {
     const query = jest
       .fn()
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
-      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505' }));
+      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505' }))
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // re-check by google_id: nobody — the conflict is the email of another account
     const error = await createService(query).upsertGoogleUser('google', 'a@example.com').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as ConflictException).message).toBe('ACCOUNT_CONFLICT');
+  });
+
+  it('a concurrent first login of the same Google account signs in as the row the other callback just created (no 409)', async () => {
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505' }))
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: userId, is_admin: false }] });
+    await expect(createService(query).upsertGoogleUser('google', 'a@example.com')).resolves.toMatchObject({ id: userId });
+    expect(query).toHaveBeenCalledTimes(3);
   });
 
   it('propagates other insert errors unchanged', async () => {

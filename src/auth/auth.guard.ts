@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { bearerTokenOf } from '../common/http/bearer-token';
 import { AuthService, SessionUser } from './auth.service';
 
 /**
@@ -17,11 +18,8 @@ export class AuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request & { user?: SessionUser }>();
-    const header = req.headers.authorization ?? '';
-    const [scheme, token] = header.split(' ');
-    if (scheme !== 'Bearer' || !token) {
-      throw new UnauthorizedException('MISSING_BEARER_TOKEN');
-    }
+    const token = bearerTokenOf(req.headers.authorization);
+    if (!token) throw new UnauthorizedException('MISSING_BEARER_TOKEN');
     const user = await this.auth.verifyAccessToken(token);
     await this.auth.assertActiveUser(user.userId);
     req.user = user;

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   ParseUUIDPipe,
   Post,
@@ -64,6 +65,7 @@ export class AgentsController {
   }
 
   /** POST /agents/:id/verify — 주인 지갑 서명 검증 + API key 발급 (원문 1회 노출) */
+  @Header('Cache-Control', 'no-store, private') // 일회성 비밀을 싣는 응답 — 토큰 응답(auth.controller.ts)과 같은 규칙
   @Post(':id/verify')
   verify(
     @Param('id', ParseUUIDPipe) agentId: string,
@@ -80,6 +82,7 @@ export class AgentsController {
   }
 
   /** POST /agents/:id/keys/rotate — 기존 ACTIVE 키 전부 폐기 + 새 키 발급 (원문 1회 노출) */
+  @Header('Cache-Control', 'no-store, private')
   @Post(':id/keys/rotate')
   rotateKey(
     @Param('id', ParseUUIDPipe) agentId: string,

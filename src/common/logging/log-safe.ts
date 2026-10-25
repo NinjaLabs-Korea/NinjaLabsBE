@@ -20,3 +20,6 @@ export function logSafe(value: unknown, max = LOG_VALUE_MAX): string {
 export function capLogValue(value: string, max = LOG_VALUE_MAX): string {
   return value.length > max ? `${value.slice(0, max)}…(+${value.length - max} chars)` : value;
 }
+
+/** 로그에 실을 에러 설명 — 메시지가 빈 AggregateError(듀얼스택 DB 연결 실패)도 원인이 남는다. 구현은 NestJS 밖(migrate.js)과 공유하려고 scripts/ops-alert.js에 있다 */
+export { errorText } from '../../../scripts/ops-alert';

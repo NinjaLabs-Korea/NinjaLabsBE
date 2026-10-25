@@ -2,6 +2,7 @@ import { BeforeApplicationShutdown, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '../database/database.service';
 import { SingleFlightTask } from '../lifecycle/single-flight-task';
+import { errorText } from '../logging/log-safe';
 
 /**
  * 만료 데이터 정리 크론 — 테이블이 무한히 자라지 않게 하고, 쓸모없어진 비밀값(해시·암호화 사본)을 오래 두지 않는다.
@@ -58,7 +59,7 @@ export class MaintenanceService implements BeforeApplicationShutdown {
         `maintenance sweep: challenges=${challenges.rowCount ?? 0} sessions=${sessions.rowCount ?? 0} login_codes=${codes.rowCount ?? 0} throttles=${throttles.rowCount ?? 0}`,
       );
     } catch (err) {
-      this.logger.error(`maintenance sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.error(`maintenance sweep failed: ${errorText(err)}`);
     }
   }
 
@@ -70,7 +71,7 @@ export class MaintenanceService implements BeforeApplicationShutdown {
       );
       if (graces.rowCount) this.logger.log(`grace copies cleared: ${graces.rowCount}`);
     } catch (err) {
-      this.logger.error(`grace copy cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.error(`grace copy cleanup failed: ${errorText(err)}`);
     }
   }
 }

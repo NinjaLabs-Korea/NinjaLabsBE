@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
+import { errorText } from '../logging/log-safe';
 import { databaseSslOptions } from './database-ssl';
 import { databaseTimeoutOptions } from './pool-timeouts';
 
@@ -23,7 +24,7 @@ type ErrorEvents = {
  */
 export function attachPoolErrorHandler(pool: Pick<Pool, 'on'>, logger: ErrorLogger): void {
   pool.on('error', (err: Error) => {
-    logger.error(`idle database client error (connection discarded): ${err.message}`);
+    logger.error(`idle database client error (connection discarded): ${errorText(err)}`);
   });
 }
 
@@ -44,7 +45,7 @@ export async function runInTransaction<T>(
   let broken: Error | undefined;
   const onClientError = (err: Error) => {
     broken ??= err;
-    logger.error(`database client error during transaction (client discarded): ${err.message}`);
+    logger.error(`database client error during transaction (client discarded): ${errorText(err)}`);
   };
   client.on?.('error', onClientError);
   try {
@@ -57,7 +58,7 @@ export async function runInTransaction<T>(
       await client.query('ROLLBACK');
     } catch (rollbackErr) {
       broken ??= rollbackErr as Error;
-      logger.error(`ROLLBACK failed, discarding client: ${(rollbackErr as Error).message}`);
+      logger.error(`ROLLBACK failed, discarding client: ${errorText(rollbackErr)}`);
     }
     throw err;
   } finally {

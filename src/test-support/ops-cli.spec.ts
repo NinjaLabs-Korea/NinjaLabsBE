@@ -1,5 +1,5 @@
 import { run as recordRefund } from '../../scripts/record-refund';
-import { createPool, extractValueOptions, parseArgs, UUID_RE } from '../../scripts/ops-cli';
+import { createPool, extractValueOptions, parseArgs, runCli, UUID_RE } from '../../scripts/ops-cli';
 
 /** scripts/ops-cli.js — 운영 스크립트(grant-admin / requeue-nft-jobs) 공용 파서. 실 DB 동작은 src/test-db/ops-scripts.db-spec.ts */
 describe('scripts/ops-cli.js', () => {
@@ -43,5 +43,23 @@ describe('scripts/ops-cli.js', () => {
     const code = await recordRefund(argv, { pool: undefined as never, log: (line) => lines.push(line) });
     expect(code).toBe(2);
     expect(lines.join('\n')).toContain('usage: node scripts/record-refund.js');
+  });
+
+  it('runCli prints the cause of an unreachable database (dual-stack AggregateError has an empty message) and exits 1', async () => {
+    const saved = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://postgres@localhost:1/x';
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const error = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await runCli(async () => {
+        throw new AggregateError([new Error('connect ECONNREFUSED ::1:5432'), new Error('connect ECONNREFUSED 127.0.0.1:5432')], '');
+      });
+      expect(error).toHaveBeenCalledWith('FAIL     connect ECONNREFUSED ::1:5432; connect ECONNREFUSED 127.0.0.1:5432');
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      if (saved === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = saved;
+      exit.mockRestore();
+      error.mockRestore();
+    }
   });
 });

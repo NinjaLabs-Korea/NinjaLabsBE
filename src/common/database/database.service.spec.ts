@@ -13,6 +13,14 @@ describe('attachPoolErrorHandler', () => {
     expect(() => pool.emit('error', new Error('terminating connection due to administrator command'))).not.toThrow();
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('terminating connection'));
   });
+
+  it('names the cause of an AggregateError with an empty message (dual-stack connect failure)', () => {
+    const pool = new EventEmitter();
+    const logger = { error: jest.fn() };
+    attachPoolErrorHandler(pool as never, logger);
+    pool.emit('error', new AggregateError([new Error('connect ECONNREFUSED ::1:5432')], ''));
+    expect(logger.error).toHaveBeenCalledWith('idle database client error (connection discarded): connect ECONNREFUSED ::1:5432');
+  });
 });
 
 describe('runInTransaction', () => {

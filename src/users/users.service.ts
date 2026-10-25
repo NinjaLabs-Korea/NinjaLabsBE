@@ -56,13 +56,23 @@ export class UsersService {
     });
   }
 
-  /** 온보딩 완료 플래그 */
+  /**
+   * 온보딩 완료 플래그 — 프로필 저장(3단계, onboarding_step 4)을 마친 유저만. 그 전에는 임시 닉네임(`user_xxxx`)·빈 자기소개·태그 없음인 채로
+   * "온보딩 완료"가 되고 공개 프로필로 노출되므로 409 PROFILE_REQUIRED. 이미 완료한 유저는 첫 완료 시각을 유지한 채 멱등.
+   */
   async completeOnboarding(userId: string) {
-    await this.db.query(
+    const stamped = await this.db.query(
       `UPDATE "user" SET onboarding_completed_at = now()
-        WHERE id = $1 AND onboarding_completed_at IS NULL`,
+        WHERE id = $1 AND onboarding_completed_at IS NULL AND onboarding_step >= 4`,
       [userId],
     );
+    if (stamped.rowCount) return { ok: true };
+    const state = await this.db.query<{ done: boolean }>(
+      `SELECT onboarding_completed_at IS NOT NULL AS done FROM "user" WHERE id = $1 AND deleted_at IS NULL`,
+      [userId],
+    );
+    if (!state.rowCount) throw new NotFoundException('USER_NOT_FOUND');
+    if (!state.rows[0].done) throw new ConflictException('PROFILE_REQUIRED');
     return { ok: true };
   }
 

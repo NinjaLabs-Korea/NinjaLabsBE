@@ -227,6 +227,10 @@ describeDb('users on a real database', () => {
 
   it('completeOnboarding stamps once and keeps the first completion time on repeat', async () => {
     const userId = await createUser(db);
+    // the profile (step 4) must be saved first: before that the flag stays unset
+    await expect(users.completeOnboarding(userId)).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    expect((await db.query(`SELECT 1 FROM "user" WHERE id = $1 AND onboarding_completed_at IS NOT NULL`, [userId])).rowCount).toBe(0);
+    await users.completeProfile(userId, `Done${unique().slice(0, 8)}`, 'bio', ['DEV']);
     await users.completeOnboarding(userId);
     const first = (await db.query<{ at: Date }>(`SELECT onboarding_completed_at AS at FROM "user" WHERE id = $1`, [userId])).rows[0].at;
     expect(first).toBeInstanceOf(Date);

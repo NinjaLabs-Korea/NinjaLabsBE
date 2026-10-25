@@ -13,9 +13,15 @@ export const TURNSTILE_TOKEN_MAX = 2048;
 
 /**
  * Cloudflare siteverify의 error-codes 중 **우리 쪽(시크릿/Cloudflare) 문제**인 것 — 토큰 탓이 아니므로 400이 아니라 503으로 답하고 error 로그.
- * (invalid-input-response / timeout-or-duplicate / missing-input-response 등 나머지는 토큰 문제 → 400)
+ * (invalid-input-response / timeout-or-duplicate / missing-input-response 등 나머지는 토큰 문제 → 400). 시크릿 설정 오류를 400으로 두면 모든 로그인이 "토큰이 잘못됐다"로 보이고 error 로그/알림도 없다
  */
-const SERVER_SIDE_ERROR_CODES = new Set(['missing-input-secret', 'invalid-input-secret', 'internal-error']);
+const SERVER_SIDE_ERROR_CODES = new Set([
+  'missing-input-secret',
+  'invalid-input-secret',
+  'invalid-widget-id', // 시크릿에서 읽은 위젯 ID가 없거나 잘못됨 (다른 위젯의 시크릿, 삭제된 위젯)
+  'invalid-parsed-secret', // 시크릿이 테스트 키인데 응답은 실제 토큰이거나 그 반대
+  'internal-error',
+]);
 
 /** FE 위젯이 렌더할 때 넣는 action (NinjaLabsFE `TurnstileWidget` — `action: "login"`). 다른 action의 토큰은 이 로그인에 쓸 수 없다 */
 export const TURNSTILE_EXPECTED_ACTION = 'login';

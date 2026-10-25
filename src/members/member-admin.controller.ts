@@ -6,6 +6,7 @@ import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { MemberAdminService } from './member-admin.service';
 import { MaxPgInt } from '../common/validation/optional-not-null';
+import { MaxChars } from '../common/validation/max-chars';
 
 export class SetMemberDto {
   @IsBoolean()
@@ -24,7 +25,8 @@ export class SetMemberDto {
 }
 
 export class SearchUsersQueryDto {
-  @IsOptional() @IsString()
+  // 이메일(320)·닉네임(50)보다 긴 검색어는 어떤 행과도 맞지 않는다 — 쿼리스트링으로 들어오는 수 KB짜리 ILIKE 패턴을 DB에 넘기지 않는다
+  @IsOptional() @IsString() @MaxChars(320)
   q?: string;
 
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(MAX_PAGE)

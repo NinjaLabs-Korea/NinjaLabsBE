@@ -101,7 +101,12 @@ export class BountyAdminService {
       ['submission_deadline', input.submissionDeadline], ['application_deadline', input.applicationDeadline],
       ['submission_mode', input.submissionMode], ['cover_image_url', input.coverImageUrl],
     ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
-    if (!fields.length) return { id: bountyId };
+    if (!fields.length) {
+      // 바꿀 필드가 없어도 없는/삭제된 바운티는 404 (빈 PATCH가 존재하지 않는 id에 200을 주지 않게)
+      const exists = await this.db.query(`SELECT 1 FROM bounty WHERE id = $1 AND deleted_at IS NULL`, [bountyId]);
+      if (!exists.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      return { id: bountyId };
+    }
     const values = fields.map(([, value]) => value);
     const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
     return this.db.tx(async (tx) => {

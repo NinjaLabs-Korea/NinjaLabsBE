@@ -48,6 +48,8 @@ export class MediaController {
   ) {
     const asset = await this.media.find(id);
     response.set({
+      // helmet은 전역으로 `same-origin`을 둔다 — 공개 이미지는 FE 오리진(rewrite가 아닌 절대 BE URL, 마크다운 본문의 `![](…)` 등)의 <img>가 불러야 하므로 이 응답만 푼다
+      'Cross-Origin-Resource-Policy': 'cross-origin',
       'Cache-Control': 'public, max-age=31536000, immutable',
       'Content-Length': String(asset.file_size),
       'Content-Type': asset.mime_type,

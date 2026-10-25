@@ -11,6 +11,14 @@ describe('throttleIpKey', () => {
     expect(throttleIpKey('::FFFF:203.0.113.7')).toBe('203.0.113.7');
   });
 
+  it('maps the hex spelling of an IPv4-mapped address too, instead of pooling every such client into the "::" bucket', () => {
+    expect(throttleIpKey('::ffff:cb00:7107')).toBe('203.0.113.7');
+    expect(throttleIpKey('0:0:0:0:0:ffff:0a01:0203')).toBe('10.1.2.3');
+    expect(throttleIpKey('::ffff:0:0')).toBe('0.0.0.0');
+    expect(throttleIpKey('::1')).toBe('0:0:0:0::/64'); // not mapped
+    expect(throttleIpKey('::fffe:cb00:7107')).toBe('0:0:0:0::/64');
+  });
+
   it('buckets IPv6 by /64, so one subscriber rotating addresses inside its prefix shares one bucket', () => {
     const key = throttleIpKey('2001:db8:abcd:12:1111:2222:3333:4444');
     expect(key).toBe('2001:db8:abcd:12::/64');

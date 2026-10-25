@@ -21,7 +21,7 @@ describe('MediaController.get', () => {
     return { res, headers };
   }
 
-  it('serves the stored bytes with the stored mime type, a quoted sha256 ETag, an immutable year-long cache and nosniff', async () => {
+  it('serves the stored bytes with the stored mime type, a quoted sha256 ETag, an immutable year-long cache, nosniff and a cross-origin resource policy (the global helmet default would block cross-origin <img> embeds)', async () => {
     const media = { find: jest.fn().mockResolvedValue(asset) };
     const { res, headers } = response();
     await new MediaController(media as unknown as MediaService).get(asset.id, res as unknown as Response);
@@ -31,6 +31,7 @@ describe('MediaController.get', () => {
       'Cache-Control': 'public, max-age=31536000, immutable',
       'Content-Length': '1234',
       'Content-Type': 'image/webp',
+      'Cross-Origin-Resource-Policy': 'cross-origin',
       ETag: `"${'ab'.repeat(32)}"`,
       'X-Content-Type-Options': 'nosniff',
     });

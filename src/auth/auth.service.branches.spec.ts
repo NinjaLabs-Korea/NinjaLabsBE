@@ -249,6 +249,21 @@ describe('AuthService.issueSession / revoke', () => {
     expect(JSON.stringify(params)).not.toContain(session.refreshToken);
   });
 
+  it.each(['1.2.3.4:5678', 'fe80::1%eth0', 'not-an-ip', ''])('issueSession stores a null ip for the non-INET value %j (a 22P02 would 500 every login)', async (ip) => {
+    const query = jest.fn(async () => ({ rowCount: 1, rows: [] }));
+    const { service } = createService({ query });
+    await service.issueSession(userId, false, ip, 'agent');
+    const params = (query.mock.calls[0] as unknown as [string, unknown[]])[1];
+    expect(params.slice(2, 4)).toEqual([null, 'agent']);
+  });
+
+  it.each(['203.0.113.7', '2001:db8::1', '::ffff:203.0.113.7'])('issueSession keeps the valid INET value %s', async (ip) => {
+    const query = jest.fn(async () => ({ rowCount: 1, rows: [] }));
+    const { service } = createService({ query });
+    await service.issueSession(userId, false, ip);
+    expect((query.mock.calls[0] as unknown as [string, unknown[]])[1][2]).toBe(ip);
+  });
+
   it('issueSession stores null ip / user agent when the request has none', async () => {
     const query = jest.fn(async () => ({ rowCount: 1, rows: [] }));
     const { service } = createService({ query });

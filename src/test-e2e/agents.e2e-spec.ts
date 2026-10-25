@@ -195,6 +195,15 @@ describeDb('agents over HTTP (e2e)', () => {
       expect(own.status).toBe(201);
       expect(await agentKey(own.body.agentId)).toBe(victimKey.publicKey);
     });
+
+    it('inj1: the stored public key is the canonical spelling, not the (possibly padded with ignorable characters) string the client sent', async () => {
+      const bot = await e2e.login();
+      const signer = Wallet.createRandom();
+      const key = Buffer.from(signer.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64');
+      const res = await e2e.post('/agents', { name: 'padded', walletAddress: getInjectiveAddress(signer.address), publicKey: `${key.slice(0, 20)}\n${key.slice(20).replace(/=+$/, '')}${'!'.repeat(20_000)}` }, { token: bot.accessToken });
+      expect(res.status).toBe(201);
+      expect(await agentKey(res.body.agentId)).toBe(key);
+    });
   });
 
   describe('rotate / revoke / list', () => {

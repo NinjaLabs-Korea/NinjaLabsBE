@@ -123,7 +123,10 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
         spy.mockRestore();
       }
       const lines = e2e.linesFor('HttpException').slice(before);
-      expect(lines).toEqual([`GET /members 500 TypeError: pool exploded rid=${rid}`]);
+      // 한 줄 + 스택 프레임(하네스가 Nest의 stack 인자를 같은 메시지에 이어 붙인다) — Nest 기본 필터의 `ExceptionsHandler` 로그는 더 이상 없다
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(new RegExp(`^GET /members 500 TypeError: pool exploded rid=${rid} TypeError\\n\\s+at `));
+      expect(e2e.linesFor('ExceptionsHandler')).toEqual([]);
       const all = e2e.logs.map((l) => l.message).join('\n');
       for (const leaked of ['header-value-token', 'cookie-value', 'query-value']) expect(all).not.toContain(leaked);
       expect(rid).toMatch(/^[0-9a-f-]{36}$/);

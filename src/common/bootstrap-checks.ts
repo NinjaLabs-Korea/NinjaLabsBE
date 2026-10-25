@@ -123,6 +123,28 @@ export function corsOriginsValue(env: BootstrapEnv): string {
   return kept.join(',');
 }
 
+/**
+ * AUTH_ALLOWED_REDIRECT_ORIGINS(로그인 returnTo + Turnstile hostname 허용 목록)의 항목 — production에서는 corsOriginsValue와 같은 이유로
+ * 루프백 오리진(localhost/127.x)을 뺀다: 로그인 코드를 사용자 자신의 기계에서 도는 아무 서버로 보낼 수 있게 되기 때문이다.
+ * 대시보드에서 넣은 `http://localhost:3000`으로 크래시 루프가 나지 않게 기동은 거부하지 않는다 (`ignored`는 AuthModule이 error로 로그).
+ * 그 외 환경은 그대로 둔다 — 로컬 FE가 정상 경로다.
+ */
+export function authRedirectOrigins(env: BootstrapEnv): { kept: string[]; ignored: string[] } {
+  const entries = (env.AUTH_ALLOWED_REDIRECT_ORIGINS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean);
+  if (!isProduction(env)) return { kept: entries, ignored: [] };
+  return { kept: entries.filter((entry) => !isLoopbackUrl(entry)), ignored: entries.filter(isLoopbackUrl) };
+}
+
+/** production에서 AUTH_ALLOWED_REDIRECT_ORIGINS의 루프백 항목이 무시되고 있음을 기동 때 한 번 알린다 (feRedirectAllowlist가 같은 규칙으로 뺀다) */
+export function warnIgnoredAuthRedirectOrigins(env: BootstrapEnv): void {
+  const { ignored } = authRedirectOrigins(env);
+  if (ignored.length === 0) return;
+  logger.error(
+    `AUTH_ALLOWED_REDIRECT_ORIGINS contains loopback origin(s) ${ignored.map((entry) => JSON.stringify(entry)).join(', ')} — IGNORED in production ` +
+      '(a login code could be delivered to any server running on the user\'s own machine). Remove them from the Railway variable.',
+  );
+}
+
 /** production에서 반드시 있어야 하는 로그인 플로우 값 — 없으면 Google 동의 화면/콜백/완료 리다이렉트 중 하나가 깨진다 */
 const PRODUCTION_AUTH_KEYS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CALLBACK_URL', 'AUTH_SUCCESS_REDIRECT'] as const;
 /** 이 중 URL인 값 — http(s) URL이어야 하고 루프백이면 안 된다 */

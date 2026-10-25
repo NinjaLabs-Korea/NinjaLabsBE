@@ -155,6 +155,15 @@ export class AuthController {
       providerError: error ?? null,
     });
     if (error || !code || !state) {
+      // 동의 취소(access_denied)처럼 state가 함께 온 거절은 로그인을 시작한 FE 오리진으로 돌려보낸다 (preview에서 시작한 사용자가 기본 FE로 튕기지 않게).
+      // state가 위조/만료면 기본 FE 그대로
+      if (typeof state === 'string' && state) {
+        try {
+          fe = this.authSuccessRedirect((await this.auth.verifyOauthState(state)).redirectUrl);
+        } catch {
+          // 기본 FE 유지
+        }
+      }
       onboardingLog(this.logger, 'oauth.callback.rejected', {
         rid,
         reason: error ?? 'MISSING_CODE_OR_STATE',

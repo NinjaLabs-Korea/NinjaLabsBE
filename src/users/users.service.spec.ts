@@ -49,6 +49,12 @@ describe('UsersService publicProfile', () => {
     expect(sql).toContain('SELECT b.id, b.title, b.category, s.reviewed_at AS completed_at');
   });
 
+  it('looks the profile up by the NFC form of the nickname', async () => {
+    const { query, service } = setup();
+    await service.publicProfile('한글닌자'.normalize('NFD'));
+    expect(query.mock.calls[0][1]).toEqual(['한글닌자']);
+  });
+
   it('returns 404 for unknown or inactive users', async () => {
     const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
     await expect(new UsersService(createMockDb({ query }).database).publicProfile('ghost'))

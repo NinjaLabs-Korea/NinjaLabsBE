@@ -128,6 +128,7 @@ describe('AccountWithdrawalService', () => {
     expect(withdrawnIdentityPrefix(5)).toBe('deleted:5:');
     expect(nicknameConfirmed('Ryan', '  rYAN ')).toBe(true);
     expect(nicknameConfirmed('Ryan', 'Ryan2')).toBe(false);
+    expect(nicknameConfirmed('한글닌자', '한글닌자'.normalize('NFD'))).toBe(true); // 같게 보이는 분해형도 확인으로 인정
     expect(TERMINAL_PAYOUT_STATUSES).toEqual(['PAID', 'CANCELLED', 'FAILED']);
   });
 });

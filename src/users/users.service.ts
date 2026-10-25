@@ -2,7 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { payoutStatusSql } from '../rewards/payout-status';
-import { isSavableNickname } from './nickname';
+import { isSavableNickname, normalizeNickname } from './nickname';
 
 /** 활성 유저 닉네임 유니크 인덱스 (0001_users.sql, lower(nickname) WHERE deleted_at IS NULL) */
 export const NICKNAME_UNIQUE_INDEX = 'uq_user_nickname_active';
@@ -20,7 +20,7 @@ export class UsersService {
     if (!isSavableNickname(nickname)) return false;
     const r = await this.db.query(
       `SELECT 1 FROM "user" WHERE lower(nickname) = lower($1) AND deleted_at IS NULL`,
-      [nickname.trim()],
+      [normalizeNickname(nickname)],
     );
     return r.rowCount === 0;
   }
@@ -79,7 +79,7 @@ export class UsersService {
         WHERE lower(u.nickname) = lower($1)
           AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
         GROUP BY u.id`,
-      [nickname],
+      [normalizeNickname(nickname)],
     );
     if (!user.rowCount) throw new NotFoundException('USER_NOT_FOUND');
     const u = user.rows[0];

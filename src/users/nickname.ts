@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
 
 /**
@@ -27,6 +28,14 @@ export const STATIC_FILE_EXTENSIONS: readonly string[] = [
 /** `/\.(ico|png|…)$/i` — 정적 파일 확장자로 끝나는가 (대소문자 무관) */
 export const STATIC_FILE_SUFFIX = new RegExp(`\\.(${STATIC_FILE_EXTENSIONS.join('|')})$`, 'i');
 
+/**
+ * 닉네임의 정규형 — 앞뒤 공백 제거 + 유니코드 NFC. 한글 자모(U+1100…)로 풀어 쓴 "한"과 완성형 "한"은 화면에서 구별되지 않지만
+ * 다른 문자열이라 `lower(nickname)` 유니크 인덱스가 둘을 따로 받아 줬다(사칭). 저장·중복검사·조회·탈퇴 확인 모두 이 값으로 비교한다.
+ */
+export function normalizeNickname(value: string): string {
+  return value.trim().normalize('NFC');
+}
+
 export function endsWithStaticFileExtension(value: unknown): boolean {
   return typeof value === 'string' && STATIC_FILE_SUFFIX.test(value.trim());
 }
@@ -47,10 +56,13 @@ export const NICKNAME_MAX_LENGTH = 50;
  */
 export function isSavableNickname(value: unknown): value is string {
   if (typeof value !== 'string') return false;
-  const nickname = value.trim();
+  const nickname = normalizeNickname(value);
   const length = [...nickname].length;
   return length >= NICKNAME_MIN_LENGTH && length <= NICKNAME_MAX_LENGTH && NICKNAME.test(nickname) && !isReservedNickname(nickname) && !endsWithStaticFileExtension(nickname);
 }
+
+/** DTO 변환 — 닉네임 입력을 normalizeNickname으로 (문자열이 아니면 그대로 두어 @IsString이 거부한다) */
+export const NormalizeNickname = () => Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? normalizeNickname(value) : value));
 
 /** DTO 데코레이터 — 예약어면 거부 (대소문자 무관) */
 export const IsNotReservedNickname = (options?: ValidationOptions) =>

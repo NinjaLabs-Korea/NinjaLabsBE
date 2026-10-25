@@ -318,7 +318,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 
 `AdminGuard`는 JWT의 `isAdmin` 클레임 외에 요청마다 `"user"` 행(`is_admin`, `status='ACTIVE'`, 미삭제)을 다시 확인한다 — 어드민 해제/정지가 토큰 만료 전에 즉시 반영된다 (403 `ADMIN_ONLY`).
 
-`GET /media/:id`는 인증 없이 업로드 원본을 immutable cache header와 함께 반환한다. 파일 MIME과
+`GET /media/:id`는 인증 없이 업로드 원본을 immutable cache header와 함께 반환한다(`Cross-Origin-Resource-Policy: cross-origin` — 전역 helmet의 `same-origin`을 이 응답만 풀어 다른 오리진의 `<img>`가 절대 BE URL을 불러올 수 있다). 파일 MIME과
 signature는 업로드 시 검증되며 DB의 `media_asset`이 원본 데이터와 URL의 소스 오브 트루스다.
 
 USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심볼이 `USDC`이면 서버가

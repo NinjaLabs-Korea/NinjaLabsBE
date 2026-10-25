@@ -96,11 +96,19 @@ export class RewardTokenResolver implements OnModuleInit {
     if (reward.tokenType === 'CW20' && !reward.tokenContractAddress) {
       throw new BadRequestException('REWARD_TOKEN_CONTRACT_REQUIRED');
     }
-    // 주소 모양은 DB chk_reward_token(0011)과 같다 — 여기서 안 거르면 `0xabc` 같은 오타가 23514 check_violation 500이 된다
-    if (reward.tokenType === 'ERC20' && (!reward.tokenContractAddress || !reward.evmChainId || !EVM_ADDRESS.test(reward.tokenContractAddress))) {
+    // 주소 모양은 DB chk_reward_token(0011)과 같다 — 여기서 안 거르면 `0xabc` 같은 오타가 23514 500이 된다.
+    // 체인은 Injective EVM(1439/1776)뿐이다 — 보상은 Injective 멀티시그가 지급하고 mainnet-preflight.sql도 1776이 아닌 ERC20을 blocker로 본다.
+    // 보상은 생성 뒤 고칠 수 없어서 `evmChainId: 1` 같은 오타는 그 바운티를 지급 불가로 굳힌다.
+    if (reward.tokenType === 'ERC20' && (!reward.tokenContractAddress || !reward.evmChainId || !EVM_ADDRESS.test(reward.tokenContractAddress)
+      || !INJECTIVE_EVM_CHAIN_IDS.includes(reward.evmChainId))) {
       throw new BadRequestException('REWARD_EVM_METADATA_REQUIRED');
     }
-    return reward;
+    // 토큰 유형에 속하지 않는 메타데이터는 저장하지 않는다 — NATIVE 보상에 붙은 컨트랙트/체인이 공개 응답과 운영 화면에
+    // ERC-20처럼 보이거나 idx_bounty_reward_evm_token에 섞이지 않게
+    const { tokenContractAddress, evmChainId, ...rest } = reward;
+    if (reward.tokenType === 'NATIVE') return rest;
+    if (reward.tokenType === 'CW20') return { ...rest, tokenContractAddress };
+    return { ...rest, tokenContractAddress, evmChainId };
   }
 
   /** 스폰서 선입금을 받는 멀티시그 주소 (미설정·빈 값이면 자리표시값 — Railway 변수가 `''`로 남아도 빈 custody를 저장하지 않는다) */

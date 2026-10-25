@@ -86,7 +86,7 @@ export function requireGoogleClientSecret(env: BootstrapEnv): void {
 export const LOCAL_FE_ORIGIN = 'http://localhost:3000';
 export const LOCAL_AUTH_SUCCESS_REDIRECT = 'http://localhost:3000/';
 
-/** 루프백 호스트 — localhost(·*.localhost), 127.0.0.0/8, ::1, 0.0.0.0. production 브라우저가 이 주소로 가면 사용자 자신의 기계에 닿는다 */
+/** 루프백 호스트 — localhost(·*.localhost), 127.0.0.0/8(IPv4-mapped IPv6 표기 포함), ::1, ::, 0.0.0.0. production 브라우저가 이 주소로 가면 사용자 자신의 기계에 닿는다 */
 function isLoopbackUrl(value: string): boolean {
   let host: string;
   try {
@@ -94,7 +94,9 @@ function isLoopbackUrl(value: string): boolean {
   } catch {
     return false;
   }
-  return host === 'localhost' || host.endsWith('.localhost') || /^127(\.\d{1,3}){3}$/.test(host) || host === '[::1]' || host === '0.0.0.0';
+  // URL이 IPv4-mapped IPv6를 16진으로 정규화한다: http://[::ffff:127.0.0.1] -> hostname `[::ffff:7f00:1]` (127.0.0.0/8 전체 = 7f00..7fff)
+  const mappedLoopback = /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/.test(host);
+  return host === 'localhost' || host.endsWith('.localhost') || /^127(\.\d{1,3}){3}$/.test(host) || host === '[::1]' || host === '[::]' || host === '0.0.0.0' || mappedLoopback;
 }
 
 /**

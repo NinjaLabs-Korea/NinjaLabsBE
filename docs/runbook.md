@@ -362,7 +362,7 @@ railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
 
 | 위치 | 키 | testnet (현재) | mainnet |
 |---|---|---|---|
-| BE `.railway/railway.ts` | `INJECTIVE_NETWORK` | `testnet` | `mainnet` (→ `@injectivelabs/networks` Mainnet 프리셋, `injective-nft.client.ts`) |
+| BE `.railway/railway.ts` | `INJECTIVE_NETWORK` | `testnet` | `mainnet` (대소문자·공백 무시; `mainnet`/`testnet` 밖의 값은 testnet으로 읽지 않고 민팅 잡이 `INJECTIVE_NETWORK must be …`로 실패 → `@injectivelabs/networks` Mainnet 프리셋, `injective-nft.client.ts`) |
 | BE `.railway/railway.ts` | `INJECTIVE_EVM_CHAIN_ID` | `1439` | `1776` |
 | BE `.railway/railway.ts` | `USDC_EVM_CONTRACT_ADDRESS` | `0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d` | 메인넷 USDC ERC-20 주소 (Injective 공식 문서에서 확인 — 추측 금지) |
 | BE `.railway/railway.ts` | `NFT_CONTRACT_ADDRESS` | `inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w` | 메인넷에 배포한 CW-721 주소 |

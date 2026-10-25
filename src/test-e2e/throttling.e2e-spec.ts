@@ -22,6 +22,15 @@ describeDb('throttling over HTTP (e2e)', () => {
   const code43 = (c: string) => c.repeat(43);
   const verifier = 'v'.repeat(43);
 
+  it('the global IP limit keys IPv6 clients by /64: rotating addresses inside one prefix does not escape the 120/min bucket', async () => {
+    const prefix = '2001:db8:e2e:7';
+    const statuses = await burst(121, (i) => e2e.get(NON_PUBLIC_ROUTE, { ip: `${prefix}:${i.toString(16)}::${i + 1}` }));
+    expect(statuses.slice(0, 120)).toEqual(Array(120).fill(401));
+    expect(statuses[120]).toBe(429);
+    // a neighbouring /64 is a different subscriber and is untouched
+    expect((await e2e.get(NON_PUBLIC_ROUTE, { ip: '2001:db8:e2e:8::1' })).status).toBe(401);
+  });
+
   it('/auth/refresh: the 11th call in a minute with the same refresh token is 429 (Retry-After-auth-token) even from changing IPs', async () => {
     const token = unknownToken('same');
     const statuses = await burst(10, (i) => e2e.post('/auth/refresh', { refreshToken: token }, { ip: `203.0.113.${10 + i}` }));

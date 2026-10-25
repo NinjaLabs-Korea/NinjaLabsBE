@@ -300,6 +300,7 @@ export class AgentsService {
                    ELSE k.status END AS key_status,
               k.expires_at AS key_expires_at,
               (SELECT count(*)::int FROM bounty_submission s
+                 JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL -- 공개 프로필 completedBounties와 같은 기준: 삭제된 바운티는 세지 않는다
                 WHERE s.agent_id = a.id AND s.status = 'APPROVED') AS completed_bounties
          FROM agent a
          LEFT JOIN LATERAL (

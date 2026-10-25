@@ -113,4 +113,24 @@ describeDb('agent lifecycle on a real database', () => {
       .rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
     expect(await agentRow(first.agentId)).toMatchObject({ status: 'PENDING_VERIFICATION', public_key: null });
   });
+
+  it('myAgents completed_bounties counts approved work like the public profile does: not other statuses, not soft-deleted bounties', async () => {
+    const ownerId = await createUser(db);
+    const adminId = await createUser(db, { isAdmin: true });
+    const { agentId } = await registerAndVerify(ownerId, Wallet.createRandom());
+    const submit = async (title: string, status: string, deleted = false) => {
+      const bountyId = (await db.query<{ id: string }>(
+        `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, deleted_at)
+         VALUES ($1, 's', $2, 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', CASE WHEN $3::boolean THEN now() END) RETURNING id`,
+        [adminId, title, deleted])).rows[0].id;
+      await db.query(
+        `INSERT INTO bounty_submission (bounty_id, agent_id, submission_url, description, status) VALUES ($1, $2, 'https://example.test/w', 'd', $3)`,
+        [bountyId, agentId, status]);
+    };
+    await submit('approved', 'APPROVED');
+    await submit('approved-but-deleted', 'APPROVED', true);
+    await submit('rejected', 'REJECTED');
+    const [mine] = await agents.myAgents(ownerId);
+    expect(mine.completed_bounties).toBe(1);
+  });
 });

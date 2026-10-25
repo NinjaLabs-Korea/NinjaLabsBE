@@ -56,7 +56,6 @@ describe('.railway/railway.ts covers every env key the code reads', () => {
     PORT: 'injected by Railway',
     RAILWAY_ENVIRONMENT_NAME: 'injected by Railway',
     PGSSLMODE: 'local Postgres only (disable); production uses TLS',
-    AUTH_ALLOWED_REDIRECT_ORIGINS: 'optional public value — added as a literal when a second FE origin exists (AUTH_SUCCESS_REDIRECT origin is always allowed)',
   };
 
   function sourceFiles(dir: string): string[] {
@@ -81,5 +80,10 @@ describe('.railway/railway.ts covers every env key the code reads', () => {
   it('every key read by code is declared in railway.ts (value or preserve()) or listed as intentionally absent', () => {
     const missing = [...readKeys].filter((key) => !new RegExp(`\\b${key}:`).test(railway) && !(key in NOT_IN_RAILWAY)).sort();
     expect(missing).toEqual([]);
+  });
+
+  it('the intentionally-absent list holds only keys railway.ts really lacks (a stale entry would hide the coverage check for that key)', () => {
+    const declared = Object.keys(NOT_IN_RAILWAY).filter((key) => new RegExp(`\\b${key}:`).test(railway));
+    expect(declared).toEqual([]);
   });
 });

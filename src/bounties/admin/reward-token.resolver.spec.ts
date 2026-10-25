@@ -45,7 +45,7 @@ describe('RewardTokenResolver', () => {
     const resolved = configured().resolve({ tokenType: 'NATIVE', tokenDenom: 'peggy0xfake', tokenContractAddress: '0xevil', evmChainId: 1, displaySymbol: symbol, amount: '5' });
     expect(resolved).toEqual({
       tokenType: 'ERC20', tokenDenom: `erc20:${USDC_CONTRACT.toLowerCase()}`, tokenContractAddress: USDC_CONTRACT, evmChainId: 1776,
-      displaySymbol: symbol, amount: '5',
+      displaySymbol: 'USDC', amount: '5', // canonical spelling whatever case the operator typed
     });
   });
 

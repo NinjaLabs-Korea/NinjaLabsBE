@@ -361,7 +361,7 @@ describeDb('auth over HTTP (e2e)', () => {
     it('a legacy typ-less access token is accepted only if issued before this process started (LEGACY_ACCESS_TOKEN_CUTOFF default)', async () => {
       const session = await e2e.login();
       const jwt = e2e.app.get(JwtService);
-      const legacy = jwt.sign({ sub: session.userId, adm: false, iat: Math.floor(performance.timeOrigin / 1000) - 60 });
+      const legacy = jwt.sign({ sub: session.userId, adm: false, iat: Math.floor(performance.timeOrigin / 1000) - 60 }, { expiresIn: '1d' }); // exp = iat + TTL: 기본 15m이면 프로세스가 14분 넘게 돈 뒤 만료로 거부된다
       const forgedLater = jwt.sign({ sub: session.userId, adm: true });
       e2e.secrets.add(legacy); e2e.secrets.add(forgedLater);
       expect(claims(legacy).typ).toBeUndefined();

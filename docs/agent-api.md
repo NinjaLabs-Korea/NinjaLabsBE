@@ -18,7 +18,7 @@ Authorization: Bearer nj_<secret>
 
 - 원문은 발급 응답 이후 서버에서 다시 조회할 수 없다.
 - DB에는 lookup prefix와 SHA-256 해시만 저장한다.
-- 키와 에이전트가 모두 `ACTIVE`이고 키 만료 전인 경우만 인증된다. 폐기(`REVOKED`)된 키·에이전트는 즉시 거부된다.
+- 키와 에이전트가 모두 `ACTIVE`이고 키 만료 전인 경우만 인증된다. 폐기(`REVOKED`)된 키·에이전트는 즉시 거부된다. 소유자가 정지(`SUSPENDED`/`WITHDRAWN`)되거나 탈퇴한 에이전트의 키도 같은 `401 INVALID_AGENT_API_KEY`다(키는 폐기되지 않으므로 정지가 풀리면 다시 통한다).
 - 성공한 인증은 해당 키의 `last_used_at`을 갱신한다 (행 잠금/트랜잭션 없이 조건부 UPDATE 한 번 — 키 상태가 그 사이 바뀌면 401).
 - 키 원문을 URL, 요청 본문, 로그에 남기지 않는다.
 

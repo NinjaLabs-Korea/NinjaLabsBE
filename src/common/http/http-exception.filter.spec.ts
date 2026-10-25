@@ -94,11 +94,18 @@ describe('HttpExceptionFilter', () => {
   });
 
   it('still logs plain errors whose carried status is outside 4xx or not numeric', () => {
-    new HttpExceptionFilter().catch(Object.assign(new Error('upstream'), { status: 502 }), host);
-    new HttpExceptionFilter().catch(Object.assign(new Error('weird'), { status: '400' }), host);
+    new HttpExceptionFilter().catch(Object.assign(new Error('upstream'), { statusCode: 502 }), host);
+    new HttpExceptionFilter().catch(Object.assign(new Error('weird'), { statusCode: '400' }), host);
     expect(error).toHaveBeenCalledTimes(2);
-    expect(error.mock.calls[0][0]).toBe('POST /admin/bounties 500 Error: upstream');
+    expect(error.mock.calls[0][0]).toBe('POST /admin/bounties 502 Error: upstream');
     expect(HttpExceptionFilter.statusOf(null)).toBe(500);
+  });
+
+  it('logs an upstream-client error that carries only `status` (gaxios/undici): the response is a 500, so the log must be too', () => {
+    const upstream = Object.assign(new Error('invalid_grant'), { status: 400 });
+    new HttpExceptionFilter().catch(upstream, host);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0][0]).toBe('POST /admin/bounties 500 Error: invalid_grant');
   });
 
   it('adds the stack frames (never the message line) as the Nest stack argument, so a 5xx stays diagnosable', () => {
@@ -189,8 +196,12 @@ describe('HttpExceptionFilter — request context edge cases', () => {
   });
 
   it.each([
-    [{ status: 399 }, 500], [{ status: 400 }, 400], [{ status: 499 }, 499], [{ status: 500 }, 500],
-    [{ status: NaN }, 500], [{ statusCode: 404, status: 'x' }, 404], [{ status: 409, statusCode: 500 }, 409], [undefined, 500],
+    [{ statusCode: 399, message: 'm' }, 500], [{ statusCode: 400, message: 'm' }, 400], [{ statusCode: 499, message: 'm' }, 499], [{ statusCode: 500, message: 'm' }, 500],
+    [{ statusCode: NaN, message: 'm' }, 500], [{ statusCode: 404, status: 'x', message: 'm' }, 404], [{ status: 409, statusCode: 500, message: 'm' }, 500], [undefined, 500],
+    // 응답은 message와 statusCode가 있어야 그 상태로 나간다 (Nest isHttpError) — 없으면 500
+    [{ statusCode: 422 }, 500], [{ statusCode: 502, message: 'm' }, 502],
+    // gaxios·undici류는 상류 응답의 status만 싣는다 — 응답은 500이므로 로그도 5xx여야 한다
+    [{ status: 400, message: 'm' }, 500], [{ status: 404, message: 'm' }, 500],
   ])('statusOf(%p) → %p', (carried, status) => {
     expect(HttpExceptionFilter.statusOf(carried)).toBe(status);
   });

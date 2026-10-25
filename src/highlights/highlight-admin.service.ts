@@ -60,7 +60,12 @@ export class HighlightAdminService {
       if (input.publish) expressions.push('published_at = COALESCE(published_at, now())');
       else fields.push(['published_at', null]);
     }
-    if (!fields.length) return { id: highlightId };
+    if (!fields.length) {
+      // 바꿀 게 없는 PATCH도 없는 하이라이트는 404 — 존재하지 않는 id에 200 `{ id }`를 돌려주지 않는다
+      const exists = await this.db.query(`SELECT 1 FROM platform_highlight WHERE id = $1`, [highlightId]);
+      if (!exists.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
+      return { id: highlightId };
+    }
     const assignments = [
       ...fields.map(([column], index) => `${column} = $${index + 2}`),
       ...expressions,

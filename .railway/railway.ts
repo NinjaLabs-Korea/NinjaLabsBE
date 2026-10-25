@@ -55,6 +55,9 @@ export default defineRailway(() => {
       PAYOUT_ALLOW_SELF_APPROVAL: preserve(),
       // 구 access 토큰 전환기 경계 (기본 = 프로세스 시작 시각, 2026-11-30 이후 코드와 함께 제거)
       LEGACY_ACCESS_TOKEN_CUTOFF: preserve(),
+      // 선택 — CORS_ORIGINS 밖에서 시작하는 로그인 returnTo/Turnstile hostname 허용 오리진 (콤마 구분). 비워 둔다: 옛 FE 오리진(ninjalabsfe.vercel.app)은 Vercel이 308로 넘기므로 뺐다.
+      // 선언을 지우면 코드가 읽는 키를 railway.ts가 모르게 되어 대시보드에 다시 넣은 값이 plan의 삭제 대상이 된다 (railway-config.spec)
+      AUTH_ALLOWED_REDIRECT_ORIGINS: preserve(),
       // pg Pool 타임아웃 튜닝 (기본 5000 / 15000 ms — common/database/pool-timeouts.ts)
       DB_CONNECTION_TIMEOUT_MS: preserve(),
       DB_STATEMENT_TIMEOUT_MS: preserve(),

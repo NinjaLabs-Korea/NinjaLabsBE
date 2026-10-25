@@ -24,16 +24,18 @@ export class InjectiveNftClient {
 
   constructor(private readonly config: ConfigService) {}
 
-  /** env 미설정이면 false — 워커가 잡을 미루는 판단에 사용 */
+  /** 앞뒤 공백(대시보드 붙여넣기의 줄바꿈 등)을 뗀 env 값 — 공백뿐이면 미설정 */
+  private env(key: string): string | undefined {
+    return this.config.get<string>(key)?.trim() || undefined;
+  }
+
+  /** env 미설정(공백뿐인 값 포함)이면 false — 워커가 잡을 미루는 판단에 사용 */
   isConfigured(): boolean {
-    return Boolean(
-      this.config.get<string>('MASTER_WALLET_MNEMONIC') &&
-        this.config.get<string>('NFT_CONTRACT_ADDRESS'),
-    );
+    return Boolean(this.env('MASTER_WALLET_MNEMONIC') && this.env('NFT_CONTRACT_ADDRESS'));
   }
 
   contractAddress(): string {
-    return this.config.get<string>('NFT_CONTRACT_ADDRESS') ?? '';
+    return this.env('NFT_CONTRACT_ADDRESS') ?? '';
   }
 
   /**
@@ -57,7 +59,7 @@ export class InjectiveNftClient {
   private getBroadcaster(): { broadcaster: MsgBroadcasterWithPk; sender: string } {
     if (!this.broadcaster) {
       const pk = PrivateKey.fromMnemonic(
-        this.config.get<string>('MASTER_WALLET_MNEMONIC') ?? '',
+        this.env('MASTER_WALLET_MNEMONIC') ?? '',
       );
       this.masterAddress = pk.toBech32();
       this.broadcaster = new MsgBroadcasterWithPk({

@@ -20,7 +20,7 @@ export class NftsService {
 
   /** CW-721 컨트랙트 주소 — 배포 전이면 자리표시값으로 레코드만 쌓아 둔다 */
   private contractAddress(): string {
-    return this.config.get<string>('NFT_CONTRACT_ADDRESS') ?? 'PENDING_CONTRACT_DEPLOY';
+    return this.config.get<string>('NFT_CONTRACT_ADDRESS')?.trim() || 'PENDING_CONTRACT_DEPLOY';
   }
 
   /** 부모 NFT 레코드 생성 + 민팅 잡 등록 (지갑 연결 성공 시 호출) */

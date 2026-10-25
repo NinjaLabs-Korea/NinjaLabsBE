@@ -109,8 +109,14 @@ describe('InjectiveNftClient configuration and mint', () => {
     [{ MASTER_WALLET_MNEMONIC: 'm' }, false],
     [{ NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
     [{ MASTER_WALLET_MNEMONIC: '', NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
+    [{ MASTER_WALLET_MNEMONIC: 'm', NFT_CONTRACT_ADDRESS: ' \n' }, false],
+    [{ MASTER_WALLET_MNEMONIC: '  ', NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
   ])('isConfigured(%j) is %s — the worker defers jobs unless both the mnemonic and the contract are set', (values, expected) => {
     expect(new InjectiveNftClient(config(values)).isConfigured()).toBe(expected);
+  });
+
+  it('contractAddress() drops surrounding whitespace from a pasted value', () => {
+    expect(new InjectiveNftClient(config({ NFT_CONTRACT_ADDRESS: ' inj1c\n' })).contractAddress()).toBe('inj1c');
   });
 
   it('contractAddress() is empty (never a placeholder) when NFT_CONTRACT_ADDRESS is unset', () => {

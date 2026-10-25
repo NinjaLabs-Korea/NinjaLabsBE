@@ -29,6 +29,23 @@ beforeEach(() => {
 });
 
 describe('InjectiveNftClient endpoints', () => {
+  it.each([['mainnet', 'mainnet'], [' Mainnet ', 'mainnet'], ['MAINNET', 'mainnet'], ['testnet', 'testnet'], [' TestNet', 'testnet'], ['', 'testnet'], [undefined, 'testnet']])(
+    'reads INJECTIVE_NETWORK=%j as %s (case and surrounding whitespace do not matter)',
+    async (value, network) => {
+      const client = new InjectiveNftClient(config({ INJECTIVE_NETWORK: value, NFT_CONTRACT_ADDRESS: 'inj1c', MASTER_WALLET_MNEMONIC: 'm' }));
+      await client.mint('t', 'inj1owner');
+      expect(broadcasterCtor).toHaveBeenLastCalledWith(expect.objectContaining({ network }));
+    },
+  );
+
+  it('refuses an unknown INJECTIVE_NETWORK instead of silently using testnet', async () => {
+    const client = new InjectiveNftClient(config({ INJECTIVE_NETWORK: 'main-net', NFT_CONTRACT_ADDRESS: 'inj1c', MASTER_WALLET_MNEMONIC: 'm' }));
+    await expect(client.tokenExists('t')).rejects.toThrow('INJECTIVE_NETWORK must be "mainnet" or "testnet" (got "main-net")');
+    await expect(client.mint('t', 'inj1owner')).rejects.toThrow('INJECTIVE_NETWORK must be');
+    expect(wasmCtor).not.toHaveBeenCalled();
+    expect(broadcasterCtor).not.toHaveBeenCalled();
+  });
+
   it('uses the INJECTIVE_NETWORK preset gRPC endpoint when INJECTIVE_GRPC_ENDPOINT is unset or blank', async () => {
     for (const value of [undefined, '', '   ']) {
       const client = new InjectiveNftClient(config({ INJECTIVE_NETWORK: 'testnet', INJECTIVE_GRPC_ENDPOINT: value, NFT_CONTRACT_ADDRESS: 'inj1c' }));

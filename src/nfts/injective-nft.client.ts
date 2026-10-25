@@ -36,10 +36,15 @@ export class InjectiveNftClient {
     return this.config.get<string>('NFT_CONTRACT_ADDRESS') ?? '';
   }
 
+  /**
+   * 미설정·빈 값은 testnet(기본값). `mainnet`/`testnet`은 앞뒤 공백·대소문자를 무시한다 — 'Mainnet'이나 ' mainnet'을 조용히 testnet으로 읽어
+   * mainnet 컨트랙트 주소로 testnet 노드를 부르던 것을 막는다. 그 밖의 값은 throw: 잡이 실패하고 `last_error`/운영 알림에 값이 보인다.
+   */
   private network(): Network {
-    return this.config.get<string>('INJECTIVE_NETWORK') === 'mainnet'
-      ? Network.Mainnet
-      : Network.Testnet;
+    const raw = this.config.get<string>('INJECTIVE_NETWORK')?.trim().toLowerCase();
+    if (!raw || raw === 'testnet') return Network.Testnet;
+    if (raw === 'mainnet') return Network.Mainnet;
+    throw new Error(`INJECTIVE_NETWORK must be "mainnet" or "testnet" (got ${JSON.stringify(raw.slice(0, 40))})`);
   }
 
   /** 네트워크 프리셋 엔드포인트. `INJECTIVE_GRPC_ENDPOINT`가 있으면 gRPC만 그 값으로 덮어쓴다 (전용 노드/프록시) — 브로드캐스터와 스마트 쿼리가 같은 노드를 본다 */

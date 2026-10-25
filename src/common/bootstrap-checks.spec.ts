@@ -61,6 +61,8 @@ describe('bootstrap environment checks', () => {
       ['unset', undefined],
       ['the .env.example placeholder', 'change-me-long-random-string'],
       ['empty', ''],
+      ['whitespace only', '  \n'],
+      ['the placeholder pasted with a trailing newline', 'change-me-long-random-string\n'],
     ])('refuses to start in production when JWT_SECRET is %s', (_label, value) => {
       expect(() => requireJwtSecret({ NODE_ENV: 'production', JWT_SECRET: value })).toThrow(/JWT_SECRET must be set to a random value in production/);
     });

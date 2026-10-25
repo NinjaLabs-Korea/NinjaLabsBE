@@ -18,6 +18,9 @@ import {
  * 받은 프로필로 유저를 찾거나 만드는 것은 여기가 아니라 AuthService.upsertGoogleUser다.
  */
 
+/** Google 토큰 엔드포인트를 기다리는 최대 시간 — 넘기면 503 GOOGLE_UNAVAILABLE (콜백 요청이 무한정 매달리지 않게) */
+export const GOOGLE_TOKEN_TIMEOUT_MS = 10_000;
+
 export interface OAuthState {
   traceId?: string;
   redirectUrl?: string;
@@ -86,17 +89,26 @@ export class GoogleOAuthFlow {
 
   /** code → 토큰 교환 후 구글 프로필(google_id, email) 반환 */
   async exchangeGoogleCode(code: string): Promise<{ googleId: string; email: string }> {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: this.googleClientId(),
-        client_secret: this.config.get<string>('GOOGLE_CLIENT_SECRET') ?? '',
-        redirect_uri: this.config.get<string>('GOOGLE_CALLBACK_URL') ?? '',
-        grant_type: 'authorization_code',
-      }),
+    const form = new URLSearchParams({
+      code,
+      client_id: this.googleClientId(),
+      client_secret: this.config.get<string>('GOOGLE_CLIENT_SECRET') ?? '',
+      redirect_uri: this.config.get<string>('GOOGLE_CALLBACK_URL') ?? '',
+      grant_type: 'authorization_code',
     });
+    let res: Response;
+    try {
+      res = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: form,
+        signal: AbortSignal.timeout(GOOGLE_TOKEN_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // 네트워크 오류·타임아웃은 코드 탓이 아니다 — id_token JWKS 조회 실패와 같이 503 (콜백은 어느 쪽이든 #error=AUTH_FAILED)
+      this.logger.warn(`Google token endpoint unavailable: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
+      throw new ServiceUnavailableException('GOOGLE_UNAVAILABLE');
+    }
     if (!res.ok) throw new UnauthorizedException('GOOGLE_CODE_EXCHANGE_FAILED');
     const body = (await res.json()) as { id_token?: string };
     if (!body.id_token) throw new UnauthorizedException('GOOGLE_CODE_EXCHANGE_FAILED');

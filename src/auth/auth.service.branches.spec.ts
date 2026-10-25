@@ -130,6 +130,20 @@ describe('AuthService.exchangeGoogleCode — token endpoint and claim edge cases
     });
   });
 
+  it('bounds the token request with an abort signal', async () => {
+    const { service, fetchMock } = setup(jest.fn(async () => claims));
+    await service.exchangeGoogleCode('c');
+    expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('a network failure or timeout on the token endpoint is 503 GOOGLE_UNAVAILABLE, not an unhandled 500', async () => {
+    const verify = jest.fn();
+    const { service } = setup(verify);
+    global.fetch = jest.fn(async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); }) as unknown as typeof fetch;
+    await expect(service.exchangeGoogleCode('c')).rejects.toMatchObject({ status: 503, message: 'GOOGLE_UNAVAILABLE' });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it('a 200 without an id_token is 401 GOOGLE_CODE_EXCHANGE_FAILED and the verifier is never called', async () => {
     const verify = jest.fn();
     const { service } = setup(verify, { access_token: 'ya29' });

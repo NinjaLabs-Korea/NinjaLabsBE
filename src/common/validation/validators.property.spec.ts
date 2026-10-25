@@ -40,11 +40,11 @@ function generate(random: () => number, alphabet: readonly string[], maxParts: n
 }
 
 /**
- * Fails if `fn` takes longer than `budgetMs` on its fastest of `runs` attempts — the budget is ~100x the measured time, so only
- * super-linear blow-ups trip it. Best-of-N because runner noise (GC, parallel jest workers) only ever adds time, while catastrophic
- * backtracking is slow on every run. (A single sample flaked on CI at 70.9ms for the linear `charLength` — 2026-10-25.)
+ * Fails if `fn` takes longer than `budgetMs` on its fastest of `runs` attempts — the budget is far above the measured time (a few ms locally, 53ms best-of-3 on a loaded CI runner), while a
+ * super-linear blow-up takes seconds, so only that trips it. Best-of-N because runner noise (GC, parallel jest workers) only ever adds time, while catastrophic
+ * backtracking is slow on every run. (CI flaked twice on the linear `charLength` at 70.9ms and 53.3ms against a 50ms budget — 2026-10-25; budget raised to 250ms.)
  */
-function expectFast(label: string, fn: () => unknown, budgetMs = 50, runs = 3): void {
+function expectFast(label: string, fn: () => unknown, budgetMs = 250, runs = 5): void {
   let best = Infinity;
   for (let i = 0; i < runs && best > budgetMs; i++) {
     const started = performance.now();

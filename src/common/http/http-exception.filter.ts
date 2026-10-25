@@ -14,7 +14,7 @@ import { ridSuffix } from './request-id';
  * 본문·헤더·쿼리스트링·토큰은 절대 기록하지 않는다 (onboarding-log 원칙과 동일).
  *
  * HttpException이 아니어도 body-parser 오류(`entity.parse.failed` 400, `entity.too.large` 413)처럼
- * 숫자 status/statusCode(4xx)를 들고 오면 그 값으로 판단한다 — Nest 기본 필터도 그 상태로 응답하므로 에러 로그가 아니다.
+ * 숫자 `statusCode`(4xx)를 들고 오면 그 값으로 판단한다 — Nest 기본 필터도 그 상태로 응답하므로 에러 로그가 아니다.
  *
  * 5xx 버스트 알림: 5분 안에 5xx가 20건을 넘으면 AlertService로 `http-5xx-burst` 알림 (30분 쿨다운은 AlertService가). 알림에는 건수와
  * 마지막 요청의 method·**라우트 패턴**(`/bounties/:id` — 실제 경로가 아니다)·상태·에러 이름만 싣는다. 메시지·경로 값은 사용자 값이 섞일 수 있어 뺀다.
@@ -45,13 +45,21 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
     this.burst = new ErrorBurstDetector(HTTP_5XX_BURST_THRESHOLD, HTTP_5XX_BURST_WINDOW_MS, now);
   }
 
-  /** 로그 판단용 상태 — HttpException은 getStatus(), 그 외는 4xx로 표시된 status/statusCode만 인정하고 나머지는 500 */
+  /**
+   * HttpException이 아닌 throwable이 응답 상태로 들고 온 값 — Nest `BaseExceptionFilter.isHttpError`와 같은 기준이다: 비어 있지 않은 `message`와
+   * `statusCode`(정수 400–599). `status`는 보지 않는다 — body-parser는 둘 다 싣지만 gaxios·undici·SDK류는 상류 응답의 `status`(예: Google 토큰 엔드포인트 400)만
+   * 싣고, 응답은 그 값을 쓰지 않고 500이다. 로그 판단이 `status`를 믿으면 실제 500이 4xx로 분류돼 로그·버스트 알림 없이 사라진다.
+   */
+  private static carriedStatus(exception: unknown): number | undefined {
+    const carried = exception as { statusCode?: unknown; message?: unknown } | null | undefined;
+    const code = carried?.statusCode;
+    return carried?.message && typeof code === 'number' && Number.isInteger(code) && code >= 400 && code <= 599 ? code : undefined;
+  }
+
+  /** 로그 판단용 상태 — 실제로 응답에 나가는 상태와 같다: HttpException은 getStatus(), 그 외는 carriedStatus 또는 500 */
   static statusOf(exception: unknown): number {
     if (exception instanceof HttpException) return exception.getStatus();
-    const carried = exception as { status?: unknown; statusCode?: unknown } | null | undefined;
-    const code = typeof carried?.status === 'number' ? carried.status
-      : typeof carried?.statusCode === 'number' ? carried.statusCode : undefined;
-    return code !== undefined && code >= 400 && code < 500 ? code : 500;
+    return HttpExceptionFilter.carriedStatus(exception) ?? 500;
   }
 
   catch(caught: unknown, host: ArgumentsHost) {
@@ -86,8 +94,9 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
    */
   handleUnknownError(exception: unknown, host: ArgumentsHost, applicationRef: AbstractHttpAdapter | HttpServer): void {
     // 범위 밖 코드(`res.status(99)`는 RangeError)는 필터 안에서 던지지 않게 500으로 돌린다
-    const body = this.isHttpError(exception) && Number.isInteger(exception.statusCode) && exception.statusCode >= 400 && exception.statusCode <= 599
-      ? { statusCode: exception.statusCode, message: exception.message }
+    const carried = HttpExceptionFilter.carriedStatus(exception);
+    const body = carried !== undefined
+      ? { statusCode: carried, message: (exception as Error).message }
       : { statusCode: HttpStatus.INTERNAL_SERVER_ERROR, message: 'Internal server error' };
     const response = host.getArgByIndex(1);
     if (!applicationRef.isHeadersSent(response)) applicationRef.reply(response, body, body.statusCode);

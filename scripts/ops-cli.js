@@ -7,6 +7,7 @@
 const { join } = require('path');
 const { createInterface } = require('readline');
 const { poolTimeoutOptions, sslOptions } = require('./migrate');
+const { errorText } = require('./ops-alert');
 
 /** 레포 루트 .env를 읽는다 (이미 셸에 있는 값은 덮어쓰지 않는다 — dotenv 기본 동작) */
 function loadDotEnv() {
@@ -107,7 +108,7 @@ async function runCli(run) {
   try {
     code = await run(process.argv.slice(2), { pool });
   } catch (err) {
-    console.error(`FAIL     ${err.message}`);
+    console.error(`FAIL     ${errorText(err)}`); // 연결 불가는 message가 빈 AggregateError일 수 있다
   } finally {
     await pool.end();
   }

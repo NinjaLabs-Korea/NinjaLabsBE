@@ -104,6 +104,7 @@ describe('ApplicationsService owner visibility of agent applications', () => {
     // `= ANY(ARRAY(subquery))` so the planner can BitmapOr idx_application_applicant + idx_application_agent (0015); `IN (subquery)` cannot
     expect(sql).toContain('OR a.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))');
     expect(sql).not.toContain('agent_id IN (');
+    expect(sql).toContain('JOIN bounty b ON b.id = a.bounty_id AND b.deleted_at IS NULL'); // soft-deleted bounties are gone, as on the public profile
     expect(sql).toContain('ORDER BY a.applied_at DESC');
   });
 

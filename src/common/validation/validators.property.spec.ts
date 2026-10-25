@@ -176,7 +176,8 @@ describe('nickname — adversarial table', () => {
     ['a..b', true], // inner dots are fine — only leading/trailing dots make "." / ".." segments
     ['😀😀', false], // emoji is neither \p{L} nor \p{N}
     ['❤\ufe0f❤\ufe0f', false], // U+FE0F is a mark, not allowed
-    ['ninja\u0301', false], // combining mark at the end
+    ['ninja\u0301', true], // composes to á under NFC
+    ['ninj\u0301', false], // no precomposed form: the combining mark stays and ends the nickname
     ['a b', false],
     ['a\u200bb', false], // zero-width space
     ['a\u202eb', false], // bidi override

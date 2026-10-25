@@ -149,6 +149,19 @@ describe('NftJobWorker', () => {
     expect(stamp).toBeLessThan(defer);
   });
 
+  it('keeps the unstarted tail of a slow batch alive: refreshes its started_at before each job so a peer stale sweep cannot reclaim it', async () => {
+    const { worker, query } = setup({
+      configured: false,
+      claimed: [{ id: 'a', scheduled_at: new Date('2026-01-01T00:00:00Z') }, { id: 'b', scheduled_at: new Date('2026-01-01T00:01:00Z') }, { id: 'c', scheduled_at: new Date('2026-01-01T00:02:00Z') }],
+    });
+    await worker.poll();
+    const holds = query.mock.calls.filter(([sql]) => sql.includes('SET started_at = now() WHERE id = ANY($1::uuid[]) AND status = \'PROCESSING\''));
+    expect(holds.map(([, params]) => params![0])).toEqual([['b', 'c'], ['c']]);
+    const sqls = query.mock.calls.map(([sql]) => sql as string);
+    const firstStamp = sqls.findIndex((sql) => sql.includes(`WHERE id = $1 AND status = 'PROCESSING' RETURNING id`));
+    expect(sqls.findIndex((sql) => sql.includes('id = ANY($1::uuid[]) AND status = \'PROCESSING\''))).toBeLessThan(firstStamp);
+  });
+
   it('skips a claimed job whose re-stamp touches 0 rows (requeued and reclaimed by another instance meanwhile)', async () => {
     const { worker, query, chain } = setup({ restamp: { job: 0 } });
     const warn = jest.spyOn(worker['logger'], 'warn').mockImplementation(() => undefined);
@@ -608,7 +621,7 @@ describe('NftJobWorker', () => {
       const { worker, query, chain } = setup({ claimed: [{ id: 'a', scheduled_at: new Date(1) }, { id: 'b', scheduled_at: new Date(2) }] });
       const base = query.getMockImplementation()!;
       query.mockImplementation(async (sql: string, params?: unknown[]) => {
-        if (sql.includes('id = ANY($1::uuid[]) AND status')) throw new Error('pool gone');
+        if (sql.includes("SET status = 'PENDING' WHERE id = ANY($1::uuid[])")) throw new Error('pool gone');
         return base(sql, params);
       });
       const error = jest.spyOn(worker['logger'], 'error').mockImplementation(() => undefined);

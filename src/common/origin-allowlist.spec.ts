@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { isSharedHostingWildcard, OriginAllowlist, SHARED_HOSTING_SUFFIXES } from './origin-allowlist';
 
@@ -92,10 +94,17 @@ describe('OriginAllowlist', () => {
       expect(list.allows('https://ninjalabs.xyz')).toBe(true);
     });
 
+    it('.env.example lists every rejected shared hosting suffix', () => {
+      const example = readFileSync(join(__dirname, '..', '..', '.env.example'), 'utf8');
+      const listed = /# 대상 접미사: (.*)\./.exec(example)?.[1].split(' ') ?? [];
+      expect([...SHARED_HOSTING_SUFFIXES].sort()).toEqual([...listed].sort());
+    });
+
     it.each([
       'https://app-*.pages.dev', 'https://docs-*.github.io', 'https://api-*.railway.app', 'https://x-*.herokuapp.com',
       'https://x-*.onrender.com', 'https://x-*.fly.dev', 'https://x-*.web.app', 'https://x-*.firebaseapp.com',
       'https://*-team.pages.dev', 'https://a-*-b.vercel.app', 'https://*.ninjalabs.vercel.app',
+      'https://x-*.workers.dev', 'https://x-*.ngrok-free.app', 'https://x-*.amplifyapp.com', 'https://x-*.azurewebsites.net', 'https://x-*.now.sh',
     ])('rejects %s (every shared hosting suffix, any wildcard position)', (entry) => {
       const list = OriginAllowlist.fromEnv(entry);
       expect(list.size).toBe(0);

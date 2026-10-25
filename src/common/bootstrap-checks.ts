@@ -57,7 +57,9 @@ const MIN_JWT_SECRET_BYTES = 32;
  */
 export function requireJwtSecret(env: BootstrapEnv): string {
   const secret = env.JWT_SECRET;
-  const usable = Boolean(secret) && secret !== DEV_JWT_SECRET_PLACEHOLDER;
+  // 앞뒤 공백/개행은 무시하고 판정한다 — 대시보드에 .env.example 값을 줄바꿈째 붙여 넣으면 자리표시값(28바이트)이 "알려진 시크릿"인데도 경고만 남기고 기동했다
+  const trimmed = secret?.trim();
+  const usable = Boolean(trimmed) && trimmed !== DEV_JWT_SECRET_PLACEHOLDER;
   if (isProduction(env)) {
     if (!usable) {
       throw new Error('FATAL: JWT_SECRET must be set to a random value in production (not the .env.example placeholder). Generate one with: openssl rand -base64 48');

@@ -9,6 +9,7 @@ import {
   onboardingLog,
   requestTraceId,
 } from '../common/logging/onboarding-log';
+import { isEvmAddress } from '../common/crypto/wallet-signature';
 import { requestIdOf } from '../common/http/request-id';
 import { WalletsService } from './wallets.service';
 
@@ -85,7 +86,7 @@ export class WalletsController {
       traceId,
       userId: req.user.userId,
       wallet,
-      signatureType: dto.address.trim().startsWith('0x') ? 'EIP191' : 'ADR36',
+      signatureType: isEvmAddress(dto.address) ? 'EIP191' : 'ADR36',
     });
     try {
       const verified = await this.wallets.verifySignature(

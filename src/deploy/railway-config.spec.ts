@@ -22,6 +22,12 @@ describe('.railway/railway.ts production origins', () => {
     }
   });
 
+  it('declares every env key once (a duplicated key is a TS error and an ambiguous plan)', () => {
+    const env = source.slice(source.indexOf('env: {'));
+    const keys = [...env.matchAll(/^\s{6}([A-Z][A-Z0-9_]+):/gm)].map((m) => m[1]);
+    expect(keys.filter((key, i) => keys.indexOf(key) !== i)).toEqual([]);
+  });
+
   it('THROTTLER_STORAGE is postgres so rate limits are shared across replicas (docs/security.md)', () => {
     expect(envValue('THROTTLER_STORAGE')).toBe('postgres');
   });

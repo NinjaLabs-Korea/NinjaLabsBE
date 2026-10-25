@@ -230,6 +230,11 @@ describe('WalletsController', () => {
     expect(lines[0]).toContain('"signatureType":"EIP191"');
     expect(lines.find((line) => line.includes('inj1qq') && line.includes('verify.requested'))).toContain('"signatureType":"ADR36"');
 
+    // 서비스는 `0X…`도 EVM으로 보고 EIP-191로 검증한다 — 로그 라벨이 같은 판정(isEvmAddress)을 써야 한다
+    log.mockClear();
+    await controller.verify(req, { address: '  0X1234567890abcdef1234567890abcdef12345678', signature: 's' });
+    expect(String(log.mock.calls[0][0])).toContain('"signatureType":"EIP191"');
+
     const bad = Object.assign(new Error('INVALID_SIGNATURE'), { name: 'UnauthorizedException' });
     wallets.verifySignature.mockRejectedValueOnce(bad);
     await expect(controller.verify(req, { address, signature: 's' })).rejects.toBe(bad);

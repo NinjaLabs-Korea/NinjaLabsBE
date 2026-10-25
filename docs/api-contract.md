@@ -162,7 +162,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | 토큰 없음/빈 값/2048자 초과/배열 | `TURNSTILE_FAILED` (siteverify 호출 없음) |
 | siteverify `success:false` (위조·만료·재사용 — 토큰은 1회용, 300초) | `TURNSTILE_FAILED` |
 | `success:true`지만 `hostname`이 로그인 FE 오리진(`AUTH_SUCCESS_REDIRECT`의 오리진 + `AUTH_ALLOWED_REDIRECT_ORIGINS`, returnTo와 같은 목록)의 호스트가 아니거나 `action`이 `login`이 아님 (같은 사이트 키를 쓰는 다른 사이트/위젯의 토큰) | `TURNSTILE_FAILED` |
-| 네트워크 오류·5초 초과·비2xx·JSON 아님·`invalid-input-secret`/`missing-input-secret`/`internal-error` | `TURNSTILE_UNAVAILABLE` |
+| 네트워크 오류·5초 초과·비2xx·JSON 아님·`invalid-input-secret`/`missing-input-secret`/`invalid-widget-id`/`invalid-parsed-secret`/`internal-error` | `TURNSTILE_UNAVAILABLE` |
 | `TURNSTILE_SECRET_KEY` 미설정 | 검사 생략 — `turnstileToken`이 와도 무시 (production이면 기동 시 warn) |
 
 이 라우트는 브라우저 전체 페이지 이동이라 JSON 4xx/503을 내면 사용자가 날것의 JSON 페이지에 갇힌다. 그래서 위 실패(와 `INVALID_CODE_CHALLENGE`)는 **302로 FE `/auth/callback#error=<코드>`**(코드: `TURNSTILE_FAILED`/`TURNSTILE_UNAVAILABLE`, challenge 오류는 `AUTH_FAILED`)로 돌려보낸다 — 대상은 returnTo 허용 목록을 통과한 FE 오리진(아니면 `AUTH_SUCCESS_REDIRECT`). 예기치 못한 5xx만 JSON으로 남는다. FE 위젯은 `action: "login"`으로 렌더해야 한다(NinjaLabsFE `TurnstileWidget`). FE는 위젯 토큰을 받은 뒤에만 이동하고(`NEXT_PUBLIC_TURNSTILE_SITE_KEY`),
@@ -325,6 +325,8 @@ USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심
 `INJECTIVE_EVM_CHAIN_ID`와 `USDC_EVM_CONTRACT_ADDRESS`를 소스 오브 트루스로 사용해
 `tokenType=ERC20`, `tokenContractAddress`, `evmChainId`, 그리고 Cosmos 호환
 `tokenDenom=erc20:<lowercase address>`를 기록한다. 금액은 6자리 최소 단위 정수다.
+
+그 밖의 `ERC20` 보상은 `evmChainId`가 Injective EVM(1439/1776)이어야 한다(아니면 400 `REWARD_EVM_METADATA_REQUIRED`). 토큰 유형에 속하지 않는 `tokenContractAddress`/`evmChainId`는 저장하지 않는다(NATIVE는 `tokenDenom`만, CW20은 컨트랙트까지).
 
 ## 미구현(스텁) 현황
 

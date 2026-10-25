@@ -107,6 +107,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `MEDIA_FILE_TYPE_UNSUPPORTED` | 400 | 허용되지 않는 이미지 형식이다 (시그니처 검사) |
 | `MEDIA_NOT_FOUND` | 404 | 미디어가 없다 |
 | `INVALID_CHARACTER` | 400 | 요청 값에 DB가 거부하는 문자(NUL 등)가 있다 |
+| `INVALID_DATE` | 400 | 요청 값의 날짜/시각이 달력에 없다 (예: 2월 31일) |
 | `REFERENCE_NOT_FOUND` | 400 | 참조하는 대상 행이 없다 (FK 위반) |
 | `DATABASE_UNAVAILABLE` | 503 | DB 연결 풀/응답 타임아웃 (재시도 가능) |
 <!-- error-codes:end -->

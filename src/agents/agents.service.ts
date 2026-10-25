@@ -206,7 +206,10 @@ export class AgentsService {
           WHERE id = $1`,
         [agentId, verified.publicKey],
       );
-      return this.insertKey(tx, agentId, key);
+      const expiresAt = await this.insertKey(tx, agentId, key);
+      // 첫 API key 발급도 rotate와 같은 자격 증명 발급이다 — 감사 없이는 ACTIVE 에이전트가 언제 생겼는지 알 수 없다
+      await this.audit.record(ownerUserId, 'AGENT_VERIFIED', 'agent', agentId, tx);
+      return expiresAt;
     }).catch((err: unknown) => {
       // 그래도 이 키를 쥔 다른 행(ACTIVE 등)이 있으면 500이 아니라 409 — 트랜잭션은 이미 롤백됐다
       if (isUniqueViolation(err, 'uq_agent_public_key')) {

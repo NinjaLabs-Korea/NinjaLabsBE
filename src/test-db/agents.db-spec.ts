@@ -59,7 +59,7 @@ describeDb('agent lifecycle on a real database', () => {
     await expect(agents.revoke(ownerId, agentId)).resolves.toEqual({ agentId, status: 'REVOKED' }); // idempotent
     await expect(keys.authenticate(rotated.apiKey)).rejects.toMatchObject({ message: 'INVALID_AGENT_API_KEY' });
     await expect(agents.rotateKey(ownerId, agentId)).rejects.toMatchObject({ message: 'AGENT_NOT_ACTIVE' });
-    expect(await auditActions(db, 'agent', agentId)).toEqual(['AGENT_KEY_ROTATED', 'AGENT_REVOKED']);
+    expect(await auditActions(db, 'agent', agentId)).toEqual(['AGENT_VERIFIED', 'AGENT_KEY_ROTATED', 'AGENT_REVOKED']);
 
     // re-register the same wallet: a NEW row; the REVOKED one is neither deleted nor hidden
     const again = await registerAndVerify(ownerId, signer, 'bot-v2');

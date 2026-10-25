@@ -7,7 +7,7 @@ Injective 생태계 빌더 커뮤니티 & 바운티 마켓플레이스 [NinjaLab
 ## 구조
 
 ```
-supabase/migrations/   스키마의 소스 오브 트루스 (ERD v1 → SQL, 24 테이블 + 운영용 `throttler_storage`)
+supabase/migrations/   스키마의 소스 오브 트루스 (ERD v1 → SQL, 24 테이블 + 운영용 `throttler_storage`; 모든 테이블 RLS on — 0017)
 src/
   common/database/     pg Pool 기반 DatabaseService (query + tx 헬퍼, 연결/문장 타임아웃 — pool-timeouts.ts) + SchemaGuard (미적용 마이그레이션이 있으면 기동 거부)
   common/http/         요청 id, 쿠키, 전역 예외 필터, 요청 로깅 인터셉터, 에러 코드 카탈로그(error-codes.ts)

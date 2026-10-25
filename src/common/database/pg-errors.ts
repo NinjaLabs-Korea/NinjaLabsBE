@@ -33,8 +33,16 @@ function isMissingReference(err: unknown): boolean {
 const INVALID_CHARACTER_CODES: ReadonlySet<string> = new Set(['22021', '22P05']);
 
 /**
+ * 달력에 없는 날짜/시각 — class-validator의 `IsDateString`(비-strict ISO 8601)은 `2026-02-31`·`2026-04-31T00:00:00Z`를 통과시키고
+ * Postgres가 timestamptz 캐스트에서 22008(datetime_field_overflow, "date/time field value out of range")로 거부한다. 22007은 형식 자체가 틀린 경우.
+ * 둘 다 서버가 만든 값이 아니라 요청 값이 원인이다(서버 쪽 시각은 전부 now()/Date).
+ */
+const INVALID_DATE_CODES: ReadonlySet<string> = new Set(['22007', '22008']);
+
+/**
  * 요청 값 때문에 난 Postgres 오류를 400으로 바꾼다 — 그 외는 그대로 돌려준다.
  *   22021/22P05 → INVALID_CHARACTER (저장할 수 없는 문자)
+ *   22007/22008 → INVALID_DATE (달력에 없는 날짜/시각 — 예: 2월 31일)
  *   23503 + "is not present in table" → REFERENCE_NOT_FOUND (요청이 없는 행의 id를 가리킴) — 서비스가 도메인 코드(BOUNTY_NOT_FOUND 등)로
  *     먼저 바꾸지 못한 경우의 **안전망**이다. 새 FK 입력은 서비스에서 해당 제약 이름으로 잡아 구체적인 코드를 주는 것이 원칙.
  * HttpExceptionFilter·RequestLoggingInterceptor는 asHttpError()(아래)를 거쳐 이 판단을 쓴다.
@@ -42,6 +50,7 @@ const INVALID_CHARACTER_CODES: ReadonlySet<string> = new Set(['22021', '22P05'])
 export function asClientError(err: unknown): unknown {
   const code = (err as PgError)?.code;
   if (typeof code === 'string' && INVALID_CHARACTER_CODES.has(code)) return new BadRequestException('INVALID_CHARACTER');
+  if (typeof code === 'string' && INVALID_DATE_CODES.has(code)) return new BadRequestException('INVALID_DATE');
   if (isMissingReference(err)) return new BadRequestException('REFERENCE_NOT_FOUND');
   return err;
 }

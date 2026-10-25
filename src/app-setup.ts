@@ -1,3 +1,4 @@
+import type { Server } from 'http';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpAdapterHost } from '@nestjs/core';
@@ -9,6 +10,13 @@ import { RequestLoggingInterceptor } from './common/http/request-logging.interce
 import { corsOriginsValue, trustProxyHops } from './common/bootstrap-checks';
 import { OriginAllowlist } from './common/origin-allowlist';
 import { REQUEST_ID_HEADER, requestIdMiddleware } from './common/http/request-id';
+
+/**
+ * keep-alive 유휴 한도 — Node 기본값은 5초라 Railway 엣지 프록시(자기 쪽 유휴 한도가 더 길다)가 이미 닫힌 연결에 요청을 재사용해 간헐적 502가 난다.
+ * 프록시/로드밸런서의 유휴 한도(Railway·AWS ALB 모두 60초 안팎)보다 길게 둔다. headersTimeout은 keepAliveTimeout보다 커야 한다.
+ */
+export const KEEP_ALIVE_TIMEOUT_MS = 65_000;
+export const HEADERS_TIMEOUT_MS = 66_000;
 
 /**
  * HTTP 파이프라인 설정의 단일 출처 — main.ts와 HTTP e2e 스위트(src/test-e2e)가 **같은 함수**로 앱을 구성한다.
@@ -26,6 +34,10 @@ export function configureApp(app: NestExpressApplication): void {
     NODE_ENV: config.get<string>('NODE_ENV'),
   });
   if (trustProxy > 0) app.set('trust proxy', trustProxy);
+
+  const server = app.getHttpServer() as Server;
+  server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+  server.headersTimeout = HEADERS_TIMEOUT_MS;
 
   // SIGTERM/SIGINT 시 종료 훅 실행 — 크론/워커 드레인 → HTTP 종료 → pg Pool 종료(DatabaseService.onApplicationShutdown). 재배포 중 연결 누수·요청 실패 방지
   app.enableShutdownHooks();

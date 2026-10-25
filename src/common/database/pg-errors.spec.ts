@@ -35,6 +35,8 @@ describe('asClientError — only request-caused Postgres errors become 400', () 
   it.each([
     ['22021 NUL byte', { code: '22021' }, 'INVALID_CHARACTER'],
     ['22P05 untranslatable', { code: '22P05' }, 'INVALID_CHARACTER'],
+    ['22008 date out of range (2026-02-31)', { code: '22008' }, 'INVALID_DATE'],
+    ['22007 invalid datetime format', { code: '22007' }, 'INVALID_DATE'],
     ['23503 missing reference', { code: '23503', detail: 'Key (bounty_id)=(00000000-0000-0000-0000-000000000000) is not present in table "bounty".' }, 'REFERENCE_NOT_FOUND'],
   ])('%s → 400 %s', (_label, fields, message) => {
     const mapped = asClientError(Object.assign(new Error('pg'), fields));

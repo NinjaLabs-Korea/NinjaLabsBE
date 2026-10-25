@@ -126,6 +126,7 @@ export const ERROR_CODES = {
 
   // ── 공통 (DB 오류 매핑 — common/database/pg-errors.ts) ──
   INVALID_CHARACTER: { statuses: [400], ko: '요청 값에 DB가 거부하는 문자(NUL 등)가 있다' },
+  INVALID_DATE: { statuses: [400], ko: '요청 값의 날짜/시각이 달력에 없다 (예: 2월 31일)' },
   REFERENCE_NOT_FOUND: { statuses: [400], ko: '참조하는 대상 행이 없다 (FK 위반)' },
   DATABASE_UNAVAILABLE: { statuses: [503], ko: 'DB 연결 풀/응답 타임아웃 (재시도 가능)' },
 } as const satisfies Record<string, ErrorCodeEntry>;

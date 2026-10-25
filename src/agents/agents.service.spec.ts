@@ -129,6 +129,10 @@ describe('AgentsService EVM registration', () => {
     expect(computeAddress(recoveredPublicKey)).toBe(signer.address);
     expect(verifyQuery.mock.calls[1][0]).toContain('UPDATE agent SET public_key = NULL');
     expect(verifyQuery.mock.calls[1][1]).toEqual([recoveredPublicKey, agentId]);
+    // the first key issuance is audited inside the same tx, after the key insert
+    expect(verifyQuery.mock.calls[4][0]).toContain('INSERT INTO audit_log');
+    expect(verifyQuery.mock.calls[4][1]).toEqual([ownerUserId, 'AGENT_VERIFIED', 'agent', agentId]);
+    expect(db.query).not.toHaveBeenCalled();
   });
 
   it('returns the existing pending challenge after a rejected signature retry — looked up by (owner, wallet) outside the rolled-back tx', async () => {
@@ -335,6 +339,7 @@ describe('AgentsService EVM registration', () => {
       if (sql.includes('INSERT INTO agent_api_key')) {
         return { rowCount: 1, rows: [{ expires_at: '2026-12-01T00:00:00.000Z' }] };
       }
+      if (sql.includes('INSERT INTO audit_log')) return { rowCount: 1, rows: [] };
       throw new Error(`Unexpected query: ${sql}`);
     }));
     db.tx.mockImplementation(
@@ -356,6 +361,7 @@ describe('AgentsService EVM registration', () => {
     const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
     expect(rejected.reason).toMatchObject({ message: 'AGENT_ALREADY_VERIFIED' });
     expect(txQuery.mock.calls.filter(([sql]) => sql.includes('INSERT INTO agent_api_key'))).toHaveLength(1);
+    expect(txQuery.mock.calls.filter(([sql]) => sql.includes('INSERT INTO audit_log'))).toHaveLength(1);
   });
 });
 

@@ -45,7 +45,7 @@ Agent API key로는 호출할 수 없다.
 | POST | `/agents/:id/revoke` | `{ agentId, status: 'REVOKED' }` | 에이전트 `REVOKED` + 모든 키 `REVOKED`. 멱등 — 이미 REVOKED여도 같은 응답. 폐기된 에이전트는 삭제되지 않고 `/agents/me`에 남으며(이력 유지), 같은 지갑/공개키로 `POST /agents`를 다시 호출하면 새 에이전트가 만들어진다 |
 
 - 에러: `404 AGENT_NOT_FOUND`(내 에이전트가 아니거나 삭제됨), `409 AGENT_NOT_ACTIVE`(rotate만).
-- 두 작업 모두 에이전트 행을 잠근 한 트랜잭션에서 처리되며 감사 로그 `AGENT_KEY_ROTATED` / `AGENT_REVOKED`(entity `agent`)를 같은 트랜잭션에 남긴다.
+- 두 작업 모두 에이전트 행을 잠근 한 트랜잭션에서 처리되며 감사 로그 `AGENT_KEY_ROTATED` / `AGENT_REVOKED`(entity `agent`)를 같은 트랜잭션에 남긴다. 첫 키 발급(`POST /agents/:id/verify`)도 같은 방식으로 `AGENT_VERIFIED`를 남긴다.
 - 재발급 직후 구 키로 들어오는 요청은 `401 INVALID_AGENT_API_KEY`다. 에이전트 쪽 설정을 먼저 교체할 수 없으므로 짧은 공백을 감안해 호출한다.
 
 `GET /agents/me`는 에이전트당 1행이며 키 정보는 최신 키 1개만 담는다:

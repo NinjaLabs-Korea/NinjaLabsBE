@@ -53,12 +53,18 @@ export class HighlightAdminService {
       ['type', input.type], ['title', input.title], ['description', input.description],
       ['image_url', input.imageUrl], ['link_url', input.linkUrl], ['display_order', input.displayOrder],
     ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
+    const expressions: string[] = [];
     if (input.publish !== undefined) {
       fields.push(['is_published', input.publish]);
-      fields.push(['published_at', input.publish ? new Date() : null]);
+      // 최초 발행 시각은 유지 — 이미 발행된 하이라이트를 다시 publish:true로 저장해도 published_at(목록 2차 정렬)을 덮지 않는다 (notice-admin과 같은 규칙)
+      if (input.publish) expressions.push('published_at = COALESCE(published_at, now())');
+      else fields.push(['published_at', null]);
     }
     if (!fields.length) return { id: highlightId };
-    const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
+    const assignments = [
+      ...fields.map(([column], index) => `${column} = $${index + 2}`),
+      ...expressions,
+    ].join(', ');
     return this.db.tx(async (tx) => {
       const r = await tx.query(
         `UPDATE platform_highlight SET ${assignments} WHERE id = $1 RETURNING id, is_published`,

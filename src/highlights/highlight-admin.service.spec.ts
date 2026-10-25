@@ -28,13 +28,13 @@ describe('HighlightAdminService audit transactions', () => {
     expect(query.mock.calls[1][1]).toEqual([adminId, action, 'platform_highlight', highlightId]);
   });
 
-  it('update binds the provided columns in order and stamps published_at from the publish flag', async () => {
+  it('update binds the provided columns in order and keeps the first published_at on publish, clears it on unpublish', async () => {
     const { service, query } = setup();
     await service.update(highlightId, { title: 'T', displayOrder: 3, publish: true }, adminId);
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toContain('UPDATE platform_highlight SET title = $2, display_order = $3, is_published = $4, published_at = $5 WHERE id = $1 RETURNING id, is_published');
-    expect(params.slice(0, 4)).toEqual([highlightId, 'T', 3, true]);
-    expect(params[4]).toBeInstanceOf(Date);
+    expect(sql).toContain('UPDATE platform_highlight SET title = $2, display_order = $3, is_published = $4, published_at = COALESCE(published_at, now()) WHERE id = $1 RETURNING id, is_published');
+    // the first publish time is kept on re-publish (same rule as notices) — no client-side Date is bound
+    expect(params).toEqual([highlightId, 'T', 3, true]);
 
     await service.update(highlightId, { publish: false }, adminId);
     expect(query.mock.calls[2][1]).toEqual([highlightId, false, null]);

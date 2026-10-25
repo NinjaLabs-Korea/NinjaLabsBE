@@ -40,12 +40,14 @@ export class UsersService {
 
   private async doCompleteProfile(userId: string, nickname: string, bio: string, tags: string[]) {
     return this.db.tx(async (tx) => {
-      await tx.query(
+      const updated = await tx.query(
         `UPDATE "user"
             SET nickname = $2, bio = $3, onboarding_step = 4
           WHERE id = $1 AND deleted_at IS NULL`,
         [userId, nickname, bio],
       );
+      // 동시 탈퇴가 먼저 커밋됐으면 0행이다 — 탈퇴자 행에 태그를 다시 심고 성공으로 답하지 않는다
+      if (!updated.rowCount) throw new NotFoundException('USER_NOT_FOUND');
       await tx.query(`DELETE FROM user_tag WHERE user_id = $1`, [userId]);
       for (const tag of new Set(tags)) {
         await tx.query(`INSERT INTO user_tag (user_id, tag) VALUES ($1, $2)`, [userId, tag]);

@@ -12,11 +12,13 @@ function setup(options: {
   submission?: { id: string; status: string; current_revision_no: number } | null;
   approved?: number;
   revisionRowExists?: boolean;
+  submitterActive?: boolean;
 } = {}) {
   const bounty = options.bounty === undefined ? { id: 'bounty', status: 'OPEN', max_winners: 3 } : options.bounty;
   const submission = options.submission === undefined ? { id: 'sub', status: 'SUBMITTED', current_revision_no: 1 } : options.submission;
   const query = jest.fn(async (sql: string, params?: unknown[]) => {
     if (sql.includes('FOR UPDATE OF b')) return bounty ? { rowCount: 1, rows: [bounty] } : { rowCount: 0, rows: [] };
+    if (sql.includes('FOR SHARE OF u')) return options.submitterActive === false ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ id: 'user' }] };
     if (sql.includes('FROM bounty_submission WHERE id = $1 FOR UPDATE')) return submission ? { rowCount: 1, rows: [submission] } : { rowCount: 0, rows: [] };
     if (sql.includes("status = 'APPROVED'")) return { rowCount: 1, rows: [{ count: String(options.approved ?? 0) }] };
     if (sql.includes('FROM submission_revision WHERE submission_id = $1 AND revision_no = $2')) {
@@ -172,5 +174,32 @@ describe('SubmissionReviewService max winners', () => {
     const { service, call } = setup({ bounty: { id: 'b', status: 'OPEN', max_winners: 1 }, approved: 1 });
     await expect(service.review('sub', decision, 'fix it', 'admin')).resolves.toBeDefined();
     expect(call("SELECT count(*) FROM bounty_submission")).toBeUndefined();
+  });
+});
+
+describe('SubmissionReviewService approval and the submitter account', () => {
+  it('APPROVE locks the submitter (or the agent owner) user row FOR SHARE, active and not deleted, before the submission row', async () => {
+    const { service, query } = setup();
+    await service.review('sub', 'APPROVE', undefined, 'admin');
+    const sqls = query.mock.calls.map(([sql]) => sql as string);
+    const userLock = sqls.findIndex((sql) => sql.includes('FOR SHARE OF u'));
+    expect(userLock).toBeGreaterThan(-1);
+    expect(userLock).toBeLessThan(sqls.findIndex((sql) => sql.includes('FROM bounty_submission WHERE id = $1 FOR UPDATE')));
+    expect(sqls[userLock]).toContain('COALESCE(s.submitter_user_id, a.owner_user_id)');
+    expect(sqls[userLock]).toContain('u.deleted_at IS NULL');
+    expect(sqls[userLock]).toContain("u.status = 'ACTIVE'");
+    expect(query.mock.calls[userLock][1]).toEqual(['sub']);
+  });
+
+  it('APPROVE of a withdrawn or suspended submitter is 404 USER_NOT_FOUND and writes nothing', async () => {
+    const { service, wrote } = setup({ submitterActive: false });
+    await expect(service.review('sub', 'APPROVE', undefined, 'admin')).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
+    expect(wrote()).toBe(false);
+  });
+
+  it.each(['START_REVIEW', 'REQUEST_REVISION', 'REJECT'])('%s does not need the submitter lock (rejecting a withdrawn user submission stays possible)', async (decision) => {
+    const { service, call } = setup({ submitterActive: false });
+    await expect(service.review('sub', decision, 'feedback', 'admin')).resolves.toMatchObject({ id: 'sub' });
+    expect(call('FOR SHARE OF u')).toBeUndefined();
   });
 });

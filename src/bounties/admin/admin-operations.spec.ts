@@ -97,17 +97,19 @@ describe('BountyAdminService EVM rewards', () => {
 
 describe('Admin review safeguards', () => {
   function setup(status: string, revision = 2) {
-    const query = jest.fn()
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'OPEN' }] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'sub', status, current_revision_no: revision }] })
-      .mockResolvedValue({ rowCount: 1, rows: [{ id: 'revision' }] });
+    // answered in order (bounty lock, submission lock, then the rest); the APPROVE-only submitter user lock is answered by its shape
+    const answers = [{ rowCount: 1, rows: [{ status: 'OPEN' }] }, { rowCount: 1, rows: [{ id: 'sub', status, current_revision_no: revision }] }];
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+      if (sql.includes('FOR SHARE OF u')) return { rowCount: 1, rows: [{ id: 'user' }] };
+      return answers.shift() ?? { rowCount: 1, rows: [{ id: 'revision' }] };
+    });
     const { db, dbQuery } = dbWith(query);
     return { query, dbQuery, services: adminServicesFor(db) };
   }
   it.each(['APPROVED', 'REJECTED', 'WITHDRAWN', 'REVISION_REQUESTED'])('does not overwrite %s submissions', async (status) => {
     const { services, query, dbQuery } = setup(status);
     await expect(services.submissionReviews.review('sub', 'APPROVE', undefined, 'admin', 2)).rejects.toThrow('SUBMISSION_NOT_REVIEWABLE');
-    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenCalledTimes(3); // bounty lock, submitter lock (APPROVE), submission lock
     expect(dbQuery).not.toHaveBeenCalled();
   });
   it('rejects a review of an outdated revision', async () => {

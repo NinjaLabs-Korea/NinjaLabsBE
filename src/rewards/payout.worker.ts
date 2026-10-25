@@ -43,7 +43,7 @@ export class PayoutWorker implements BeforeApplicationShutdown {
     const n = Number(stale.rows[0].count);
     if (n > 0) {
       this.logger.warn(`${n} payout(s) pending multisig approval for over 48h`);
-      await this.alerts.notify('payout-unapproved-48h', `${n} payout(s) pending multisig approval for over 48h — review /admin payouts`);
+      await this.alerts.notify('payout-unapproved-48h', `${n} payout(s) pending multisig approval for over 48h — approve or cancel them in the admin console (/admin/operations, per bounty)`);
     }
   }
 }

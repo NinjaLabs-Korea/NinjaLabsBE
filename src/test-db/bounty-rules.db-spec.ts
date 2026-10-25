@@ -267,6 +267,21 @@ describeDb('bounty rules on a real database', () => {
     await expect(submissions.submit(id, userB, work('b3'))).rejects.toMatchObject({ message: 'BOUNTY_NOT_OPEN' });
   });
 
+  it('a soft-deleted bounty drops out of /applications/me and /submissions/me (the link would 404) while other rows stay', async () => {
+    const gone = await createBounty({ applicationRequired: true });
+    const kept = await createBounty({ applicationRequired: true });
+    for (const id of [gone, kept]) await bounties.transition(id, 'OPEN', adminId);
+    const user = await createUser(db);
+    for (const id of [gone, kept]) {
+      const application = await applications.apply(id, user, 'hi');
+      await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+      await submissions.submit(id, user, work(id));
+    }
+    await bounties.remove(gone, adminId);
+    expect((await applications.myApplications(user)).map((r) => r.bounty_id)).toEqual([kept]);
+    expect((await submissions.mySubmissions(user)).map((r) => r.bounty_id)).toEqual([kept]);
+  });
+
   it('withdrawal is limited to the applicant and their own agents, and only while PENDING', async () => {
     const id = await createBounty({ applicationRequired: true });
     await bounties.transition(id, 'OPEN', adminId);

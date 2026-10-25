@@ -106,7 +106,7 @@ export class ApplicationsService {
               CASE WHEN ag.id IS NULL THEN NULL
                    ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent
          FROM bounty_application a
-         JOIN bounty b ON b.id = a.bounty_id
+         JOIN bounty b ON b.id = a.bounty_id AND b.deleted_at IS NULL -- 삭제된 바운티는 없는 것으로 본다 (링크가 404가 된다)
          LEFT JOIN agent ag ON ag.id = a.agent_id
         WHERE a.applicant_user_id = $1
            OR a.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))

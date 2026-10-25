@@ -20,3 +20,19 @@ export function logSafe(value: unknown, max = LOG_VALUE_MAX): string {
 export function capLogValue(value: string, max = LOG_VALUE_MAX): string {
   return value.length > max ? `${value.slice(0, max)}…(+${value.length - max} chars)` : value;
 }
+
+/**
+ * 로그에 실을 에러 설명 — `err.message`가 비어 있어도 원인이 남게 한다.
+ * Node의 happy-eyeballs(autoSelectFamily)는 호스트가 IPv6·IPv4 둘 다로 풀릴 때 연결 실패를 `AggregateError`로 던지고, 그 `message`는 빈 문자열이다
+ * (`new Pool({ host: 'localhost' }).query()` → `AggregateError{ message: '', code: 'ECONNREFUSED', errors: [::1…, 127.0.0.1…] }`).
+ * `err.message`만 찍으면 DB가 닿지 않는 배포(기동 실패 `FATAL: `, 운영 알림, 5xx 줄)의 사유가 통째로 비었다.
+ * 메시지가 있으면 그대로, 없으면 하위 오류 메시지(최대 4개) → `code` → 이름 순으로 돌려준다. 제어 문자 이스케이프/길이 제한은 호출부의 `logSafe`가 한다.
+ */
+export function errorText(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  if (err.message) return err.message;
+  const inner = err instanceof AggregateError ? err.errors.filter((e): e is Error => e instanceof Error && Boolean(e.message)).slice(0, 4) : [];
+  if (inner.length > 0) return inner.map((e) => e.message).join('; ');
+  const code = (err as { code?: unknown }).code;
+  return typeof code === 'string' && code ? `${err.name} ${code}` : err.name;
+}

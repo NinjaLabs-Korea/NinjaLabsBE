@@ -57,6 +57,14 @@ describe('HttpExceptionFilter', () => {
     expect(sent.getResponse()).toMatchObject({ message: 'INVALID_CHARACTER' });
   });
 
+  it('logs the sub-error messages when the database error has an empty message (dual-stack ECONNREFUSED AggregateError) — the 503 line must not end in a bare ": "', () => {
+    const refused = Object.assign(new AggregateError([new Error('connect ECONNREFUSED ::1:5432'), new Error('connect ECONNREFUSED 127.0.0.1:5432')], ''), { code: 'ECONNREFUSED' });
+    new HttpExceptionFilter().catch(refused, host);
+    const [sent] = base.mock.calls[0] as [HttpException];
+    expect(sent.getResponse()).toMatchObject({ statusCode: 503, message: 'DATABASE_UNAVAILABLE' });
+    expect(error.mock.calls[0][0]).toBe('POST /admin/bounties 503 AggregateError: connect ECONNREFUSED ::1:5432; connect ECONNREFUSED 127.0.0.1:5432');
+  });
+
   it.each(['timeout exceeded when trying to connect', 'Connection terminated due to connection timeout'])(
     'answers 503 DATABASE_UNAVAILABLE for a pool connect timeout (%s) and logs the original cause',
     (message) => {

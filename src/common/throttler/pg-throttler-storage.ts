@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { ThrottlerStorage } from '@nestjs/throttler';
-import { logSafe } from '../logging/log-safe';
+import { errorText, logSafe } from '../logging/log-safe';
 import { QueryRunner } from '../database/database.service';
 
 /**
@@ -77,7 +77,7 @@ export class PgThrottlerStorage implements ThrottlerStorage {
       const now = Date.now();
       if (now - this.lastErrorLogAt >= ERROR_LOG_INTERVAL_MS) {
         this.lastErrorLogAt = now;
-        this.logger.error(`throttler storage unavailable, failing open: ${logSafe(err instanceof Error ? err.message : String(err))}`);
+        this.logger.error(`throttler storage unavailable, failing open: ${logSafe(errorText(err))}`);
       }
       return { totalHits: 0, timeToExpire: Math.ceil(ttl / 1000), isBlocked: false, timeToBlockExpire: 0 };
     }

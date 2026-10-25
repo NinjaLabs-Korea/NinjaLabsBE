@@ -64,7 +64,15 @@ export class RewardsService {
           RETURNING id, bounty_id, status`,
         [rewardId, hash, depositedAmount],
       );
-      if (!r.rowCount) throw new NotFoundException('REWARD_NOT_FOUND_OR_NOT_PENDING');
+      if (!r.rowCount) {
+        // 입금 대기 보상인데 금액이 모자란 경우는 "없거나 입금 대기가 아니다"가 아니라 금액 문제로 알려 준다 — 운영자가 금액을 고쳐 다시 보내면 된다
+        const short = await tx.query(
+          `SELECT 1 FROM bounty_reward WHERE id = $1 AND status = 'DEPOSIT_PENDING' AND amount > $2::numeric`,
+          [rewardId, depositedAmount],
+        );
+        if (short.rowCount) throw new BadRequestException('DEPOSIT_BELOW_REWARD_AMOUNT');
+        throw new NotFoundException('REWARD_NOT_FOUND_OR_NOT_PENDING');
+      }
       await this.audit.record(adminId, 'REWARD_DEPOSIT_CONFIRMED', 'bounty_reward', rewardId, tx);
       return r.rows[0];
     }));

@@ -214,7 +214,7 @@ describe('RewardsService markPaid', () => {
 
 describe('RewardsService confirmDeposit', () => {
   /** SQL 모양으로 답한다 — 해시 잠금, payout 해시 조회(options.payoutHashes), 조건부 UPDATE(rowCount), 감사 INSERT */
-  function setup(rowCount = 1, options: { payoutHashes?: string[]; refundHashes?: string[]; bountyDeleted?: boolean } = {}) {
+  function setup(rowCount = 1, options: { payoutHashes?: string[]; refundHashes?: string[]; bountyDeleted?: boolean; belowAmount?: boolean } = {}) {
     const query = jest.fn(async (sql: string, params?: unknown[]) => {
       if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [{}] };
       if (sql.includes('FROM payout WHERE payout_tx_hash = $1')) {
@@ -227,6 +227,7 @@ describe('RewardsService confirmDeposit', () => {
       }
       if (sql.includes('FROM bounty b JOIN bounty_reward rw')) return options.bountyDeleted ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ id: 'bounty' }] };
       if (sql.includes("SET status = 'FUNDED'")) return { rowCount, rows: rowCount ? [{ id: 'reward', bounty_id: 'bounty', status: 'FUNDED' }] : [] };
+      if (sql.includes("status = 'DEPOSIT_PENDING' AND amount > $2::numeric")) return options.belowAmount ? { rowCount: 1, rows: [{}] } : { rowCount: 0, rows: [] };
       return { rowCount: 1, rows: [] };
     });
     const { database, db } = createMockDb({ txQuery: query });
@@ -279,6 +280,13 @@ describe('RewardsService confirmDeposit', () => {
   it('does not audit when the reward is not pending', async () => {
     const { service, query } = setup(0);
     await expect(service.confirmDeposit('reward', txHash, '1000000', 'admin')).rejects.toThrow('REWARD_NOT_FOUND_OR_NOT_PENDING');
+    expect(sqlIndex(query, 'INSERT INTO audit_log')).toBe(-1);
+  });
+
+  it('answers a pending reward whose deposit is below the posted amount with 400 DEPOSIT_BELOW_REWARD_AMOUNT, not "not pending"', async () => {
+    const { service, query } = setup(0, { belowAmount: true });
+    await expect(service.confirmDeposit('reward', txHash, '1', 'admin')).rejects.toMatchObject({ message: 'DEPOSIT_BELOW_REWARD_AMOUNT', status: 400 });
+    expect(query.mock.calls[sqlIndex(query, "AND amount > $2::numeric")][1]).toEqual(['reward', '1']);
     expect(sqlIndex(query, 'INSERT INTO audit_log')).toBe(-1);
   });
 

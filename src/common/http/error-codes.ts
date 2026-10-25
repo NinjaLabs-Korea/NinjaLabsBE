@@ -106,6 +106,7 @@ export const ERROR_CODES = {
   INVALID_TOKEN_AMOUNT: { statuses: [400], ko: '토큰 금액이 최소 단위 양의 정수 문자열이 아니다' },
   TX_HASH_ALREADY_USED: { statuses: [409], ko: '이미 다른 입금/지급에 쓰인 tx hash다 (중복 사용 불가)' },
   REWARD_NOT_FOUND: { statuses: [404], ko: '보상 행이 없다' },
+  DEPOSIT_BELOW_REWARD_AMOUNT: { statuses: [400], ko: '입금액이 보상 게시 금액(amount)보다 적어 입금 확인을 할 수 없다' },
   REWARD_NOT_FOUND_OR_NOT_PENDING: { statuses: [404], ko: '보상이 없거나 입금 대기(DEPOSIT_PENDING) 상태가 아니다' },
   REWARD_NOT_FUNDED: { statuses: [400], ko: '보상이 없거나 입금 확인(FUNDED 이상)이 안 돼 지급을 요청할 수 없다' },
   APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND: { statuses: [404], ko: '승인된 제출이 없거나 수령자의 지갑이 연결돼 있지 않다' },

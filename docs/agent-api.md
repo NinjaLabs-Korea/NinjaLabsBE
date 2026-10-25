@@ -24,7 +24,7 @@ Authorization: Bearer nj_<secret>
 
 ## Rate limit
 
-- **키(에이전트)당 분당 60회** — 전역 IP 한도(120/min)와 별도로 집계한다 (`AgentApiThrottlerGuard`, throttler 이름 `agent-api`).
+- **키(에이전트)당 분당 60회** — 전역 IP 한도(라우트별 IP당 120/min)와 별도로 집계한다 (`AgentApiThrottlerGuard`, throttler 이름 `agent-api`).
   `@nestjs/throttler`는 이름이 `default`가 아닌 throttler의 헤더에 `-<이름>` 접미사를 붙이므로 실제로 내려가는 헤더는:
   - 허용된 응답: `X-RateLimit-Limit-agent-api: 60` / `X-RateLimit-Remaining-agent-api` / `X-RateLimit-Reset-agent-api`(초)
   - 초과(`429 Too Many Requests`, 본문 `{ "statusCode": 429, "message": "ThrottlerException: Too Many Requests" }`): **`Retry-After-agent-api`(초)만** 온다 — 429에는 `X-RateLimit-*` 헤더가 없다.

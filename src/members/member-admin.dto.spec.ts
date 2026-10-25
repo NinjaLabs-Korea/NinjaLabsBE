@@ -25,4 +25,9 @@ describe('admin user search validation', () => {
     expect(await failedFields(SearchUsersQueryDto, { q: 'a'.repeat(320) })).toEqual([]);
     expect(await failedFields(SearchUsersQueryDto, { q: 'a'.repeat(321) })).toEqual(['q']);
   });
+
+  it('trims the search term so a pasted trailing space still matches', () => {
+    expect(plainToInstance(SearchUsersQueryDto, { q: '  ninja@x.com ' }).q).toBe('ninja@x.com');
+    expect(plainToInstance(SearchUsersQueryDto, { q: '   ' }).q).toBe('');
+  });
 });

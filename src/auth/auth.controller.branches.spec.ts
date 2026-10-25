@@ -61,6 +61,20 @@ describe('AuthController.googleCallback — rejected before touching Google', ()
 });
 
 describe('AuthController.googleRedirect', () => {
+  it('builds the returnTo allowlist once — a rejected shared-hosting wildcard is reported once, not on every login', async () => {
+    const { error } = logs();
+    const auth = { issueOauthState: jest.fn(async () => 'state'), buildGoogleAuthUrl: jest.fn(() => 'https://accounts.google.com/') };
+    const config: Record<string, string> = {
+      AUTH_SUCCESS_REDIRECT: 'https://app.example/',
+      AUTH_ALLOWED_REDIRECT_ORIGINS: 'https://ninjalabsfe-*-team.vercel.app',
+    };
+    const controller = new AuthController(auth as never, { get: (key: string) => config[key] } as never, { enabled: false } as never);
+    for (let i = 0; i < 3; i++) {
+      await controller.googleRedirect(undefined, 'https://app.example/', challenge, undefined, { ip: '1.2.3.4' } as never, { redirect: jest.fn() } as never);
+    }
+    expect(error.mock.calls.filter(([line]) => String(line).includes('REJECTED'))).toHaveLength(1);
+  });
+
   it('an unparseable AUTH_SUCCESS_REDIRECT is still the fallback for any returnTo (the allowlist cannot be built)', async () => {
     logs();
     const auth = { issueOauthState: jest.fn(async () => 'state'), buildGoogleAuthUrl: jest.fn((state: string) => `https://accounts.google.com/?state=${state}`) };

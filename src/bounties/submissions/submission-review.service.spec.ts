@@ -50,6 +50,15 @@ describe('SubmissionReviewService decisions', () => {
     expect(dbQuery).not.toHaveBeenCalled();
   });
 
+  it('stores a blank or padded comment as NULL / trimmed (the submitter sees it as the review comment)', async () => {
+    const blank = setup();
+    await blank.service.review('sub', 'APPROVE', '  \n ', 'admin');
+    expect(blank.call('INSERT INTO submission_review')![1]).toEqual(['sub', 'rev-1', 'admin', 'APPROVE', null]);
+    const padded = setup();
+    await padded.service.review('sub', 'APPROVE', '  nice work ', 'admin');
+    expect(padded.call('INSERT INTO submission_review')![1]).toEqual(['sub', 'rev-1', 'admin', 'APPROVE', 'nice work']);
+  });
+
   it('an unknown decision is refused before any transaction is opened', async () => {
     const { service, db } = setup();
     const error = await errorOf(service.review('sub', 'DELETE', undefined, 'admin'));

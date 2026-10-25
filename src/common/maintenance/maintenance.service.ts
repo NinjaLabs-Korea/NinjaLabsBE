@@ -40,26 +40,38 @@ export class MaintenanceService implements BeforeApplicationShutdown {
     await Promise.all([this.sweeps.stop(), this.graceClears.stop()]);
   }
 
+  /**
+   * 정리 대상마다 따로 실행한다 — 한 문장이 실패(예: 쌓인 auth_session 삭제가 statement_timeout)해도 나머지 정리는 건너뛰지 않는다.
+   * 하나로 묶으면 그 문장이 계속 실패하는 동안 throttler_storage·oauth_login_code 정리가 매시간 같이 죽어 테이블이 무한히 자란다.
+   */
   private async sweepOnce() {
-    try {
-      const challenges = await this.db.query(
-        `DELETE FROM wallet_verification_challenge WHERE expires_at < now() - interval '1 day'`,
-      );
-      const sessions = await this.db.query(
+    const counts = {
+      challenges: await this.deleteRows('challenges', `DELETE FROM wallet_verification_challenge WHERE expires_at < now() - interval '1 day'`),
+      sessions: await this.deleteRows(
+        'sessions',
         `DELETE FROM auth_session
           WHERE (revoked_at IS NOT NULL AND revoked_at < now() - interval '30 days')
              OR expires_at < now() - interval '30 days'`,
-      );
-      const codes = await this.db.query(`DELETE FROM oauth_login_code WHERE expires_at <= now()`);
-      const throttles = await this.db.query(
+      ),
+      login_codes: await this.deleteRows('login_codes', `DELETE FROM oauth_login_code WHERE expires_at <= now()`),
+      throttles: await this.deleteRows(
+        'throttles',
         `DELETE FROM throttler_storage
           WHERE expires_at <= now() AND (blocked_until IS NULL OR blocked_until <= now())`,
-      );
-      this.logger.log(
-        `maintenance sweep: challenges=${challenges.rowCount ?? 0} sessions=${sessions.rowCount ?? 0} login_codes=${codes.rowCount ?? 0} throttles=${throttles.rowCount ?? 0}`,
-      );
+      ),
+    };
+    this.logger.log(
+      `maintenance sweep: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`,
+    );
+  }
+
+  /** 삭제 한 건 — 지운 행 수, 실패하면 `failed`(원인은 error 로그) */
+  private async deleteRows(name: string, sql: string): Promise<number | 'failed'> {
+    try {
+      return (await this.db.query(sql)).rowCount ?? 0;
     } catch (err) {
-      this.logger.error(`maintenance sweep failed: ${errorText(err)}`);
+      this.logger.error(`maintenance sweep ${name} failed: ${errorText(err)}`);
+      return 'failed';
     }
   }
 

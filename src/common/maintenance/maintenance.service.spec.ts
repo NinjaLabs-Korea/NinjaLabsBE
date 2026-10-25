@@ -62,6 +62,17 @@ describe('MaintenanceService crons', () => {
     expect(service['sweeps'].isRunning).toBe(false);
   });
 
+  it('a failing step does not skip the later cleanups and is named in the log (a stuck session delete must not starve the throttler table)', async () => {
+    const { service, query, log, error } = setup([5, 7]); // the two rejected calls below do not consume the default implementation
+    query.mockRejectedValueOnce(new Error('first'));
+    query.mockRejectedValueOnce(new Error('canceling statement due to statement timeout'));
+    await service.sweep();
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(error).toHaveBeenCalledWith('maintenance sweep challenges failed: first');
+    expect(error).toHaveBeenCalledWith('maintenance sweep sessions failed: canceling statement due to statement timeout');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=failed sessions=failed login_codes=5 throttles=7');
+  });
+
   it('runs at most once at a time', async () => {
     const { service, query } = setup();
     let release!: () => void;
@@ -88,13 +99,13 @@ describe('MaintenanceService — robustness', () => {
     expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=0 sessions=0 login_codes=0 throttles=0');
   });
 
-  it('stops at the first failing statement (no later deletes) and logs a non-Error rejection as text', async () => {
-    const query = jest.fn().mockResolvedValueOnce({ rowCount: 1 }).mockRejectedValueOnce('lock timeout');
+  it('keeps going after a failing statement and logs a non-Error rejection as text', async () => {
+    const query = jest.fn().mockResolvedValueOnce({ rowCount: 1 }).mockRejectedValueOnce('lock timeout').mockResolvedValue({ rowCount: 4 });
     const { service, log, error } = setup(query);
     await service.sweep();
-    expect(query).toHaveBeenCalledTimes(2);
-    expect(log).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith('maintenance sweep failed: lock timeout');
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(error).toHaveBeenCalledWith('maintenance sweep sessions failed: lock timeout');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=1 sessions=failed login_codes=4 throttles=4');
   });
 
   it('runs again on the next tick after a failure (the in-progress flag is reset)', async () => {

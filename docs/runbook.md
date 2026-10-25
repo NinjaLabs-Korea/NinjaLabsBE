@@ -198,7 +198,7 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 ### 7.1 DB 다운 (`/health` 503)
 1. Supabase status 페이지와 `Dashboard → Reports/Logs`로 원인 분류: 플랫폼 장애 / 프로젝트 일시정지(무료 플랜 비활성) / 접속 수 초과 / 디스크 가득 / 인증서·비밀번호 변경.
-2. Railway 로그에서 `timeout exceeded when trying to connect`(풀 고갈 — 느린 쿼리/커넥션 누수, API는 `503 DATABASE_UNAVAILABLE`), `Connection terminated due to connection timeout`(DB 무응답 — 연결 수립 `DB_CONNECTION_TIMEOUT_MS` 초과), `canceling statement due to statement timeout`(`DB_STATEMENT_TIMEOUT_MS` 초과 쿼리 — 500), `ECONNREFUSED`, `too many connections`, `self-signed certificate`(→ `DATABASE_CA_CERT` 불일치), `password authentication failed`(→ `DATABASE_URL` 회전) 중 무엇인지 본다.
+2. Railway 로그에서 `timeout exceeded when trying to connect`(풀 고갈 — 느린 쿼리/커넥션 누수, API는 `503 DATABASE_UNAVAILABLE`), `Connection terminated unexpectedly`·`ECONNREFUSED`·SQLSTATE `57P01`/`57P03`/`53300`(DB 재시작·기동 중·연결 수 초과 — 이것도 API는 `503 DATABASE_UNAVAILABLE`), `Connection terminated due to connection timeout`(DB 무응답 — 연결 수립 `DB_CONNECTION_TIMEOUT_MS` 초과), `canceling statement due to statement timeout`(`DB_STATEMENT_TIMEOUT_MS` 초과 쿼리 — 500), `self-signed certificate`(→ `DATABASE_CA_CERT` 불일치), `password authentication failed`(→ `DATABASE_URL` 회전) 중 무엇인지 본다.
 3. 원인별: 플랫폼 장애는 대기(재배포 금지 — healthcheck가 실패해 롤아웃이 멈춘다). 접속 수 초과는 Supavisor session 모드 URL로 교체 또는 인스턴스 수 축소. 자격 증명/인증서 문제는 Railway 변수 수정 → 재배포.
 4. 복구 후: `/health` 200, `nft_job`의 PROCESSING 잡은 워커가 15분 뒤 스스로 PENDING으로 되돌린다(조치 불필요). 장애 중 실패한 사용자 요청은 재시도 안내.
 

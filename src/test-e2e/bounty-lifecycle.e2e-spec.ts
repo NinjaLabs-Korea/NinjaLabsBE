@@ -75,8 +75,8 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect(ops.body.rewards[0]).toMatchObject({ status: 'DEPOSIT_PENDING', display_symbol: 'INJ', amount: '100000000000000000000', custody_address: 'inj1e2emultisig' });
 
     const short = await e2e.post(`/admin/rewards/${rewardId}/confirm-deposit`, { txHash: txHash(), depositedAmount: '1' }, asAdmin);
-    expect(short.status).toBe(404);
-    expect(short.body.message).toBe('REWARD_NOT_FOUND_OR_NOT_PENDING');
+    expect(short.status).toBe(400);
+    expect(short.body.message).toBe('DEPOSIT_BELOW_REWARD_AMOUNT');
     const depositHash = txHash().toUpperCase().replace('0X', '0x');
     const deposit = await e2e.post(`/admin/rewards/${rewardId}/confirm-deposit`, { txHash: depositHash, depositedAmount: '100000000000000000000' }, asAdmin);
     expect(deposit.status).toBe(201);

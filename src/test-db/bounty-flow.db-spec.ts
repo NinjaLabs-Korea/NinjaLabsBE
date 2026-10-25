@@ -82,7 +82,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     });
 
     const depositHash = fakeTxHash();
-    await expect(rewards.confirmDeposit(rewardId, depositHash, '999', adminId)).rejects.toMatchObject({ message: 'REWARD_NOT_FOUND_OR_NOT_PENDING' }); // short deposit
+    await expect(rewards.confirmDeposit(rewardId, depositHash, '999', adminId)).rejects.toMatchObject({ message: 'DEPOSIT_BELOW_REWARD_AMOUNT' }); // short deposit
     await expect(rewards.confirmDeposit(rewardId, depositHash, '1000', adminId)).resolves.toMatchObject({ id: rewardId, status: 'FUNDED' });
     expect(await rewardRow(rewardId)).toEqual({ status: 'FUNDED', deposit_tx_hash: `0x${depositHash.slice(2).toLowerCase()}`, deposited_amount: '1000' });
     await expect(rewards.confirmDeposit(rewardId, depositHash, '1000', adminId)).rejects.toMatchObject({ message: 'REWARD_NOT_FOUND_OR_NOT_PENDING' }); // idempotent-ish

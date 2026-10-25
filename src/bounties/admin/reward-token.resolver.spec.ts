@@ -41,6 +41,19 @@ describe('RewardTokenResolver', () => {
     expect(codeOf(() => configured().resolve(reward))).toBe(code);
   });
 
+  it('drops metadata that does not belong to the token type (a NATIVE reward never carries a contract or chain)', () => {
+    expect(configured().resolve({ tokenType: 'NATIVE', tokenDenom: 'inj', tokenContractAddress: '0xevil', evmChainId: 1776, displaySymbol: 'INJ', amount: '1' }))
+      .toEqual({ tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount: '1' });
+    expect(configured().resolve({ tokenType: 'CW20', tokenContractAddress: 'inj1cw20', evmChainId: 1776, displaySymbol: 'NINJA', amount: '1' }))
+      .toEqual({ tokenType: 'CW20', tokenContractAddress: 'inj1cw20', displaySymbol: 'NINJA', amount: '1' });
+  });
+
+  it('refuses an ERC-20 on a chain other than the Injective EVM chains (rewards cannot be edited after creation)', () => {
+    const erc20 = { tokenType: 'ERC20', tokenContractAddress: USDC_CONTRACT, displaySymbol: 'WETH', amount: '1' };
+    expect(codeOf(() => configured().resolve({ ...erc20, evmChainId: 1 }))).toBe('REWARD_EVM_METADATA_REQUIRED');
+    expect(configured().resolve({ ...erc20, evmChainId: 1439 })!.evmChainId).toBe(1439);
+  });
+
   it.each(['USDC', 'usdc', 'UsDc'])('%s is pinned to the configured Injective EVM ERC-20, whatever the operator typed', (symbol) => {
     const resolved = configured().resolve({ tokenType: 'NATIVE', tokenDenom: 'peggy0xfake', tokenContractAddress: '0xevil', evmChainId: 1, displaySymbol: symbol, amount: '5' });
     expect(resolved).toEqual({

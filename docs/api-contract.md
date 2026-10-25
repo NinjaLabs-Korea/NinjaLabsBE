@@ -326,6 +326,8 @@ USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심
 `tokenType=ERC20`, `tokenContractAddress`, `evmChainId`, 그리고 Cosmos 호환
 `tokenDenom=erc20:<lowercase address>`를 기록한다. 금액은 6자리 최소 단위 정수다.
 
+그 밖의 `ERC20` 보상은 `evmChainId`가 Injective EVM(1439/1776)이어야 한다(아니면 400 `REWARD_EVM_METADATA_REQUIRED`). 토큰 유형에 속하지 않는 `tokenContractAddress`/`evmChainId`는 저장하지 않는다(NATIVE는 `tokenDenom`만, CW20은 컨트랙트까지).
+
 ## 미구현(스텁) 현황
 
 없음 — 전 엔드포인트 구현 완료.

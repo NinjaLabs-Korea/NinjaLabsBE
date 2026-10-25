@@ -1,6 +1,7 @@
-import { Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { HttpException, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { logSafe } from '../common/logging/log-safe';
 import {
   GoogleIdTokenClaims,
   GoogleIdTokenVerifier,
@@ -20,6 +21,12 @@ import {
 
 /** Google 토큰 엔드포인트를 기다리는 최대 시간 — 넘기면 503 GOOGLE_UNAVAILABLE (콜백 요청이 무한정 매달리지 않게) */
 export const GOOGLE_TOKEN_TIMEOUT_MS = 10_000;
+
+/**
+ * Google 토큰 엔드포인트가 돌려주는 `error` 중 **우리 쪽 설정 문제**인 것 (잘못된/회전된 client secret, 다른 클라이언트, 등록 안 된 리디렉션 URI) -
+ * 사용자 코드 탓이 아니므로 401이 아니라 503 + error 로그. 나머지(`invalid_grant`: 만료/재사용된 code 등)는 사용자 쪽이라 401.
+ */
+const SERVER_SIDE_TOKEN_ERRORS: ReadonlySet<string> = new Set(['invalid_client', 'unauthorized_client', 'redirect_uri_mismatch']);
 
 export interface OAuthState {
   traceId?: string;
@@ -96,6 +103,29 @@ export class GoogleOAuthFlow {
     return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   }
 
+  /**
+   * 토큰 엔드포인트 비-2xx 응답 → 예외. 이전에는 모두 조용한 401이라 `GOOGLE_CLIENT_SECRET` 오설정이 "사용자 코드가 틀림"과 구분되지 않았다 (로그에 Google의 `error`도 없었다).
+   * 5xx/429는 Google 장애로 보고 JWKS 조회 실패와 같이 503 GOOGLE_UNAVAILABLE (warn), 설정 문제(SERVER_SIDE_TOKEN_ERRORS)는 503 + error 로그.
+   */
+  private async tokenEndpointFailure(res: Response): Promise<HttpException> {
+    let error = '';
+    try {
+      const body = (await res.json()) as { error?: unknown };
+      if (typeof body?.error === 'string') error = body.error;
+    } catch {
+      // 본문이 JSON이 아니면 error 없이 상태 코드만으로 판단
+    }
+    if (SERVER_SIDE_TOKEN_ERRORS.has(error)) {
+      this.logger.error(`Google token endpoint rejected the server request (HTTP ${res.status}): ${logSafe(error, 100)} - check GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/GOOGLE_CALLBACK_URL`);
+      return new ServiceUnavailableException('GOOGLE_UNAVAILABLE');
+    }
+    if (res.status >= 500 || res.status === 429) {
+      this.logger.warn(`Google token endpoint unavailable: HTTP ${res.status}`);
+      return new ServiceUnavailableException('GOOGLE_UNAVAILABLE');
+    }
+    return new UnauthorizedException('GOOGLE_CODE_EXCHANGE_FAILED');
+  }
+
   /** code → 토큰 교환 후 구글 프로필(google_id, email) 반환 */
   async exchangeGoogleCode(code: string): Promise<{ googleId: string; email: string }> {
     const form = new URLSearchParams({
@@ -118,7 +148,7 @@ export class GoogleOAuthFlow {
       this.logger.warn(`Google token endpoint unavailable: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
       throw new ServiceUnavailableException('GOOGLE_UNAVAILABLE');
     }
-    if (!res.ok) throw new UnauthorizedException('GOOGLE_CODE_EXCHANGE_FAILED');
+    if (!res.ok) throw await this.tokenEndpointFailure(res);
     const body = (await res.json()) as { id_token?: string };
     if (!body.id_token) throw new UnauthorizedException('GOOGLE_CODE_EXCHANGE_FAILED');
 

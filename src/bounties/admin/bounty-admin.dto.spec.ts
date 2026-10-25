@@ -31,6 +31,12 @@ describe('bounty admin DTOs', () => {
     ).toEqual(['sponsorName', 'submissionDeadline', 'title']);
   });
 
+  it('trims reward denom and contract so whitespace-only values reach the resolver as empty', () => {
+    const dto = plainToInstance(CreateBountyDto, { ...validCreate, reward: { tokenType: 'NATIVE', tokenDenom: '  ', displaySymbol: 'INJ', amount: '1' } });
+    expect(dto.reward?.tokenDenom).toBe('');
+    expect(plainToInstance(CreateBountyDto, { ...validCreate, reward: { tokenType: 'CW20', tokenContractAddress: ' inj1abc ', displaySymbol: 'X', amount: '1' } }).reward?.tokenContractAddress).toBe('inj1abc');
+  });
+
   it('trims text fields', () => {
     expect(plainToInstance(CreateBountyDto, { ...validCreate, title: '  Build a widget  ' }).title).toBe('Build a widget');
   });

@@ -164,8 +164,10 @@ describe('bootstrap environment checks', () => {
       ['AUTH_SUCCESS_REDIRECT', 'javascript:alert(1)'],
       ['GOOGLE_CALLBACK_URL', 'http://localhost:4000/auth/google/callback'],
       ['GOOGLE_CALLBACK_URL', 'http://[::1]:4000/auth/google/callback'],
-    ])('refuses to start in production when %s=%p (not a public http(s) URL)', (key, value) => {
-      expect(() => requireProductionAuthUrls({ ...prod, [key]: value })).toThrow(new RegExp(`FATAL: ${key}=.*must be a public http\\(s\\) URL in production`));
+      ['AUTH_SUCCESS_REDIRECT', 'http://ninjalabs.xyz/'], // plaintext: the one-time login code travels in the URL fragment
+      ['GOOGLE_CALLBACK_URL', 'http://api.ninjalabs.xyz/auth/google/callback'],
+    ])('refuses to start in production when %s=%p (not a public https URL)', (key, value) => {
+      expect(() => requireProductionAuthUrls({ ...prod, [key]: value })).toThrow(new RegExp(`FATAL: ${key}=.*must be a public https URL in production`));
     });
   });
 
@@ -182,6 +184,16 @@ describe('bootstrap environment checks', () => {
       expect(error).toHaveBeenCalledTimes(1);
       expect(error.mock.calls[0][0]).toContain('AUTH_ALLOWED_REDIRECT_ORIGINS');
       expect(error.mock.calls[0][0]).toContain('http://localhost:3000');
+    });
+
+    it('also drops loopback spelled as an IPv4-mapped or unspecified IPv6 host', () => {
+      const entries = ['http://[::ffff:127.0.0.1]:3000', 'http://[::ffff:7f00:1]', 'http://[::ffff:7fff:ffff]', 'http://[::]:3000'];
+      expect(authRedirectOrigins({ NODE_ENV: 'production', AUTH_ALLOWED_REDIRECT_ORIGINS: [...entries, 'https://fe.example.com'].join(',') })).toEqual({
+        kept: ['https://fe.example.com'],
+        ignored: entries,
+      });
+      // 공인 IPv4를 감싼 매핑 주소는 루프백이 아니다
+      expect(authRedirectOrigins({ NODE_ENV: 'production', AUTH_ALLOWED_REDIRECT_ORIGINS: 'http://[::ffff:8.8.8.8]' }).ignored).toEqual([]);
     });
 
     it('does not log when nothing is ignored, and leaves other environments untouched', () => {

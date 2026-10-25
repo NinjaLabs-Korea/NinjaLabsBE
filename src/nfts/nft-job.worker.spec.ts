@@ -344,6 +344,11 @@ describe('NftJobWorker', () => {
       expect(worker.sanitizeError('plain string')).toBe('plain string');
     });
 
+    it('drops NUL characters that Postgres would reject in last_error', () => {
+      const { worker } = setup();
+      expect(worker.sanitizeError(new Error('bad\u0000bytes'))).toBe('badbytes');
+    });
+
     it.each([
       ['comma-joined', 'words: abandon,ability,able,about,above,absent,absorb,abstract,absurd,abuse,access,accident!', 'words: [redacted]!'],
       ['mixed separators', 'abandon\tability\nable / about', '[redacted]'],

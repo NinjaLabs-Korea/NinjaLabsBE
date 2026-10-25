@@ -1,6 +1,7 @@
 import { Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, randomBytes, randomUUID } from 'crypto';
+import { isIP } from 'net';
 import { QueryResult } from 'pg';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { decryptGraceToken, encryptGraceToken, REFRESH_REUSE_GRACE } from './refresh-grace';
@@ -38,6 +39,11 @@ export async function revokeAllSessionsOfUser(runner: QueryRunner, userId: strin
       WHERE user_id = $1 AND revoked_at IS NULL`,
     [userId],
   );
+}
+
+/** auth_session.ip_address(INET)에 넣어도 되는 값만 통과 — Node의 isIP는 존 ID(`fe80::1%eth0`)를 받지만 Postgres inet은 거부한다 */
+function inetOrNull(ip: string | undefined): string | null {
+  return ip && isIP(ip) && !ip.includes('%') ? ip : null;
 }
 
 export class AuthSessions {
@@ -198,6 +204,8 @@ export class AuthSessions {
 
   /**
    * refresh 세션 저장 — 원문 토큰은 저장하지 않고 해시만, 수명은 JWT_REFRESH_TTL.
+   * ip_address는 INET 컬럼이라 IP 리터럴이 아닌 값(포트가 붙은 `1.2.3.4:5678`, 존 ID가 붙은 IPv6, 프록시가 넘긴 쓰레기)은 Postgres가
+   * 22P02로 거부해 그 클라이언트의 모든 로그인·refresh가 500이 된다 — 기록용 값이라 IP가 아니면 null로 둔다.
    * 회전으로 만들어진 세션은 선행 토큰 해시(prev_refresh_token_hash, 재사용 감지 사슬)와
    * 30초 유예용 암호화 사본(grace_refresh_token)을 함께 적는다. 사본은 이 행의 id를 AAD로 묶으므로 id를 앱에서 먼저 만든다 ($8).
    * `$6`은 두 번 쓰이므로 두 자리 모두 같은 캐스트(::varchar)여야 한다 — 한쪽만 캐스트하면 Postgres가
@@ -218,7 +226,7 @@ export class AuthSessions {
           prev_refresh_token_hash, prev_rotated_at, grace_refresh_token)
        VALUES ($8::uuid, $1, $2, $3, $4, now() + $5::interval,
                $6::varchar, CASE WHEN $6::varchar IS NULL THEN NULL ELSE now() END, $7)`,
-      [userId, refreshHash, ip ?? null, userAgent ?? null, this.refreshTtl,
+      [userId, refreshHash, inetOrNull(ip), userAgent ?? null, this.refreshTtl,
        rotation?.prevHash ?? null,
        rotation ? encryptGraceToken(this.graceSecret, sessionId, rotation.graceRefreshToken) : null,
        sessionId],

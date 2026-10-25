@@ -153,12 +153,8 @@ export class AuthService {
 
   /** 구글 프로필로 유저를 찾거나 생성한다 */
   async upsertGoogleUser(googleId: string, email: string) {
-    const found = await this.db.query(
-      `SELECT id, is_admin, onboarding_step, onboarding_completed_at
-         FROM "user" WHERE google_id = $1 AND deleted_at IS NULL`,
-      [googleId],
-    );
-    if (found.rowCount) return found.rows[0];
+    const found = await this.findGoogleUser(googleId);
+    if (found) return found;
 
     // Google 인증(1단계)은 완료됐으므로 다음 화면인 지갑 연결(2단계)부터 시작한다.
     // 닉네임은 온보딩 3단계에서 입력받으므로 임시값으로 생성한다.
@@ -173,9 +169,23 @@ export class AuthService {
     } catch (err: unknown) {
       // uq_user_email / uq_user_google_id는 deleted_at IS NULL 행만 본다(0014). 그래도 같은 이메일/구글 계정의 활성 행과
       // 충돌하면(동시 첫 로그인, 또는 탈퇴 후 다른 google_id로 같은 이메일) 500 대신 409 → 콜백이 #error=AUTH_FAILED로 보낸다
-      if (isUniqueViolation(err)) throw new ConflictException('ACCOUNT_CONFLICT');
+      if (isUniqueViolation(err)) {
+        // 같은 구글 계정의 동시 첫 로그인(두 콜백이 겹침)이면 상대가 방금 만든 행이 이제 보인다 — 그 유저로 로그인시킨다. 안 보이면 이메일 충돌이다
+        const raced = await this.findGoogleUser(googleId);
+        if (raced) return raced;
+        throw new ConflictException('ACCOUNT_CONFLICT');
+      }
       throw err;
     }
+  }
+
+  private async findGoogleUser(googleId: string) {
+    const found = await this.db.query(
+      `SELECT id, is_admin, onboarding_step, onboarding_completed_at
+         FROM "user" WHERE google_id = $1 AND deleted_at IS NULL`,
+      [googleId],
+    );
+    return found.rowCount ? found.rows[0] : undefined;
   }
 
   /** OAuth 콜백용 60초 일회용 코드 발급 (브라우저 PKCE challenge에 묶임) — login-codes.ts */

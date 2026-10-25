@@ -192,6 +192,14 @@ async function applyMigrations(pool, options = {}) {
   const log = options.log || (() => {});
   assertNoTransactionControl(dir);
   const client = await pool.connect();
+  // pg-pool은 체크아웃된 클라이언트에서 idle 'error' 리스너를 떼어낸다 — 실행 도중 소켓이 끊기면(DB 재시작·장애조치) 리스너 없는 'error'가
+  // uncaught exception이 되어 main()의 FAIL 출력과 운영 알림(alertMigrationFailure) 없이 프로세스가 죽는다. 받아서 폐기 사유로 쓴다
+  let brokenClient;
+  const onClientError = (e) => {
+    brokenClient ??= e;
+    log(`[error] database connection error during migrate: ${e.message}`);
+  };
+  client.on('error', onClientError);
   // 마이그레이션 안의 RAISE NOTICE를 운영자가 볼 수 있게 (조건부 DO 블록이 무엇을 했는지 등). 풀 클라이언트는 재사용되므로 끝나면 떼어낸다
   const onNotice = (n) => log(`[notice] ${n.message}`);
   client.on('notice', onNotice);
@@ -227,7 +235,8 @@ async function applyMigrations(pool, options = {}) {
         log(`apply ${file}`);
         applied.push(file);
       } catch (err) {
-        await client.query('ROLLBACK');
+        // 연결이 끊겼으면 ROLLBACK도 실패한다 — 서버가 이미 트랜잭션을 버렸고, 그 에러로 원래 에러(와 err.file)를 덮으면 안 된다
+        await client.query('ROLLBACK').catch(() => {});
         err.file = file;
         throw err;
       }
@@ -235,10 +244,12 @@ async function applyMigrations(pool, options = {}) {
     return { applied, skipped };
   } finally {
     try {
-      if (locked) await client.query('SELECT pg_advisory_unlock($1::bigint)', [MIGRATION_LOCK_KEY]);
+      // 끊긴 연결에서는 unlock도 실패한다 — 세션 락은 연결이 끊기면 Postgres가 풀므로 삼키고, 던지던 에러를 덮지 않는다
+      if (locked && !brokenClient) await client.query('SELECT pg_advisory_unlock($1::bigint)', [MIGRATION_LOCK_KEY]).catch(() => {});
     } finally {
       client.off('notice', onNotice);
-      client.release();
+      if (!brokenClient) client.off('error', onClientError); // 폐기하는 클라이언트에는 리스너를 남겨 늦게 오는 'error'도 삼킨다
+      client.release(brokenClient);
     }
   }
 }

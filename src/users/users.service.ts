@@ -83,7 +83,7 @@ export class UsersService {
   async publicProfile(nickname: string) {
     const user = await this.db.query(
       `SELECT u.id, u.nickname, u.bio, u.is_member, u.member_role, u.created_at,
-              COALESCE(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL), '{}') AS tags
+              COALESCE(array_agg(t.tag ORDER BY t.tag) FILTER (WHERE t.tag IS NOT NULL), '{}') AS tags
          FROM "user" u
          LEFT JOIN user_tag t ON t.user_id = u.id
         WHERE lower(u.nickname) = lower($1)
@@ -115,7 +115,7 @@ export class UsersService {
           AND (s.submitter_user_id = $1
                OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)))
         GROUP BY s.id, b.id
-        ORDER BY s.reviewed_at DESC`,
+        ORDER BY s.reviewed_at DESC, s.id`,
       [u.id],
     );
 
@@ -125,13 +125,14 @@ export class UsersService {
     // NFT는 남기되 그 바운티 제목은 NULL이 된다 (FE는 제목 없는 NFT를 "Ninja NFT"로 보여준다)
     const agents = await this.db.query(
       `SELECT a.id, a.name, a.description, a.status, a.wallet_address,
-              COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title))
+              COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title) ORDER BY s.reviewed_at DESC, b.id)
                        FILTER (WHERE b.id IS NOT NULL), '[]') AS completed_bounties
          FROM agent a
          LEFT JOIN bounty_submission s ON s.agent_id = a.id AND s.status = 'APPROVED'
          LEFT JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL
         WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL AND a.status = 'ACTIVE'
-        GROUP BY a.id`,
+        GROUP BY a.id
+        ORDER BY a.created_at, a.id`,
       [u.id],
     );
 
@@ -142,7 +143,7 @@ export class UsersService {
          FROM nft n
          LEFT JOIN bounty b ON b.id = n.bounty_id AND b.deleted_at IS NULL
         WHERE n.owner_user_id = $1
-        ORDER BY n.created_at`,
+        ORDER BY n.created_at, n.id`,
       [u.id],
     );
 

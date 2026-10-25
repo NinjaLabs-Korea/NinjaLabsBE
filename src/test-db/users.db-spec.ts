@@ -181,6 +181,27 @@ describeDb('users on a real database', () => {
     expect(agents[0].completed_bounties.map((b) => b.title)).toEqual(['by-agent']);
   });
 
+  it('publicProfile lists tags, agents and an agent\'s completed bounties in a stable order (tag name, creation, newest review first)', async () => {
+    const admin = await createUser(db, { isAdmin: true });
+    const nickname = `Ord${unique().slice(0, 8)}`;
+    const owner = await createUser(db, { nickname });
+    for (const tag of ['OTHER', 'DEV', 'CONTENT', 'DESIGN']) await db.query(`INSERT INTO user_tag (user_id, tag) VALUES ($1, $2)`, [owner, tag]);
+    const agent = async (name: string, createdAt: string) => (await db.query<{ id: string }>(
+      `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, created_at)
+       VALUES ($1, $2, $3, $4, 'ACTIVE', $5) RETURNING id`,
+      [owner, name, unique('pk-'), `inj1${unique()}`, createdAt])).rows[0].id;
+    const second = await agent('second', '2026-02-01T00:00:00Z');
+    const first = await agent('first', '2026-01-01T00:00:00Z');
+    await submission(await bounty(admin, 'older'), { agentId: first }, 'APPROVED', `'2026-03-01T00:00:00Z'`);
+    await submission(await bounty(admin, 'newer'), { agentId: first }, 'APPROVED', `'2026-04-01T00:00:00Z'`);
+
+    const profile = await users.publicProfile(nickname);
+    expect((profile as Record<string, unknown>).tags).toEqual(['CONTENT', 'DESIGN', 'DEV', 'OTHER']);
+    const agents = profile.agents as Array<{ id: string; completed_bounties: Array<{ title: string }> }>;
+    expect(agents.map((a) => a.id)).toEqual([first, second]);
+    expect(agents[0].completed_bounties.map((b) => b.title)).toEqual(['newer', 'older']);
+  });
+
   it('publicProfile nfts keep a completion NFT of a soft-deleted bounty but drop the bounty title (no bounty id is exposed)', async () => {
     const admin = await createUser(db, { isAdmin: true });
     const nickname = `Nft${unique().slice(0, 8)}`;

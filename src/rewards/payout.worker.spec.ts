@@ -19,6 +19,8 @@ describe('PayoutWorker.monitor', () => {
     expect(sql).toContain("requested_at < now() - interval '48 hours'");
     expect(warn).toHaveBeenCalledWith('3 payout(s) pending multisig approval for over 48h');
     expect(alerts.notify).toHaveBeenCalledWith('payout-unapproved-48h', expect.stringContaining('3 payout(s) pending multisig approval for over 48h'));
+    // payouts live under /admin/operations (per bounty) — the FE has no /admin/payouts page
+    expect((alerts.notify.mock.calls[0] as unknown as string[])[1]).toContain('/admin/operations');
   });
 
   it('stays quiet when nothing is stale', async () => {

@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { isProduction, LOCAL_AUTH_SUCCESS_REDIRECT } from '../common/bootstrap-checks';
+import { authRedirectOrigins, isProduction, LOCAL_AUTH_SUCCESS_REDIRECT } from '../common/bootstrap-checks';
 import { OriginAllowlist } from '../common/origin-allowlist';
 
 /**
@@ -16,7 +16,7 @@ export function authSuccessRedirectUrl(config: Pick<ConfigService, 'get'>): stri
 /**
  * 로그인 플로우가 신뢰하는 FE 오리진 — AUTH_SUCCESS_REDIRECT의 오리진(항상) + AUTH_ALLOWED_REDIRECT_ORIGINS.
  * returnTo 검증(auth.controller.ts)과 Turnstile siteverify `hostname` 검증(turnstile.verifier.ts)이 같은 목록을 쓴다.
- * AUTH_SUCCESS_REDIRECT가 URL이 아니면 그 항목만 빠진다.
+ * AUTH_SUCCESS_REDIRECT가 URL이 아니면 그 항목만 빠진다. production에서는 AUTH_ALLOWED_REDIRECT_ORIGINS의 루프백 항목도 빠진다 (bootstrap-checks.ts).
  */
 export function feRedirectAllowlist(config: Pick<ConfigService, 'get'>): OriginAllowlist {
   let successOrigin: string[] = [];
@@ -25,5 +25,9 @@ export function feRedirectAllowlist(config: Pick<ConfigService, 'get'>): OriginA
   } catch {
     successOrigin = [];
   }
-  return new OriginAllowlist([...successOrigin, ...(config.get<string>('AUTH_ALLOWED_REDIRECT_ORIGINS') ?? '').split(',')]);
+  const { kept } = authRedirectOrigins({
+    NODE_ENV: config.get<string>('NODE_ENV'),
+    AUTH_ALLOWED_REDIRECT_ORIGINS: config.get<string>('AUTH_ALLOWED_REDIRECT_ORIGINS'),
+  });
+  return new OriginAllowlist([...successOrigin, ...kept]);
 }

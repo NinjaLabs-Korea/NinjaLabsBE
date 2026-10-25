@@ -38,7 +38,7 @@ export class BountiesService {
               COALESCE(json_agg(json_build_object(
                 'symbol', r.display_symbol, 'amount', r.amount::text, 'tokenType', r.token_type,
                 'tokenContractAddress', r.token_contract_address, 'evmChainId', r.evm_chain_id
-              )) FILTER (WHERE r.id IS NOT NULL), '[]') AS rewards
+              ) ORDER BY r.created_at, r.id) FILTER (WHERE r.id IS NOT NULL), '[]') AS rewards
          FROM bounty b
          LEFT JOIN bounty_reward r ON r.bounty_id = b.id
         WHERE ${where}
@@ -61,23 +61,23 @@ export class BountiesService {
    * 바운티 상세 (공개) — 명시적 컬럼 목록. `b.*`는 내부 컬럼(created_by·sponsor_user_id = 운영자/유저 id, deleted_at)까지 공개 응답에 실었다.
    * FE(NinjaLabsFE src/lib/bounties.ts BountyDetailRow)가 읽는 필드는 전부 남아 있다. 새 컬럼은 공개해도 되는지 확인한 뒤 여기 추가한다.
    * 노출 조건은 목록과 같은 publicBountySql — 비공개 바운티는 없는 바운티와 같은 404다.
+   * 보상·첨부는 상관 서브쿼리로 모은다 — 두 테이블을 JOIN한 뒤 `json_agg(DISTINCT …)`로 곱집합을 걷으면 같은 모양의 보상 두 개(심볼·금액·상태 동일)가 하나로 합쳐졌다.
    */
   async detail(id: string) {
     const r = await this.db.query(
       `SELECT ${PUBLIC_DETAIL_COLUMNS},
-              COALESCE(json_agg(DISTINCT jsonb_build_object(
-                'symbol', rw.display_symbol, 'amount', rw.amount::text,
-                'tokenType', rw.token_type, 'tokenContractAddress', rw.token_contract_address,
-                'evmChainId', rw.evm_chain_id, 'status', rw.status
-              )) FILTER (WHERE rw.id IS NOT NULL), '[]') AS rewards,
-              COALESCE(json_agg(DISTINCT jsonb_build_object(
-                'id', a.id, 'fileName', a.file_name, 'fileUrl', a.file_url
-              )) FILTER (WHERE a.id IS NOT NULL), '[]') AS attachments
+              (SELECT COALESCE(json_agg(jsonb_build_object(
+                  'symbol', rw.display_symbol, 'amount', rw.amount::text,
+                  'tokenType', rw.token_type, 'tokenContractAddress', rw.token_contract_address,
+                  'evmChainId', rw.evm_chain_id, 'status', rw.status
+                ) ORDER BY rw.created_at, rw.id), '[]')
+                 FROM bounty_reward rw WHERE rw.bounty_id = b.id) AS rewards,
+              (SELECT COALESCE(json_agg(jsonb_build_object(
+                  'id', a.id, 'fileName', a.file_name, 'fileUrl', a.file_url
+                ) ORDER BY a.display_order, a.created_at, a.id), '[]')
+                 FROM bounty_attachment a WHERE a.bounty_id = b.id) AS attachments
          FROM bounty b
-         LEFT JOIN bounty_reward rw ON rw.bounty_id = b.id
-         LEFT JOIN bounty_attachment a ON a.bounty_id = b.id
-        WHERE b.id = $1 AND ${publicBountySql('b')}
-        GROUP BY b.id`,
+        WHERE b.id = $1 AND ${publicBountySql('b')}`,
       [id],
     );
     if (!r.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');

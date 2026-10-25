@@ -13,8 +13,8 @@
 - 요청 본문/쿼리에 DTO에 없는 필드가 있으면 `400`(`forbidNonWhitelisted`). FE 페이로드와 DTO를 1:1로 유지한다.
 - 자유 텍스트 상한(초과 시 `400`): 닉네임 2~50자 — 유니코드 문자/숫자와 `_ . -`만, 공백 불가(앞뒤 공백은 trim) · bio 1000 · 지원 `message` 4000 · 제출 `description` 8000 · 심사 `comment`/`note` 2000 · 공지 `title` 200/`summary` 500/`body` 50000 · 하이라이트 `title` 200/`description` 2000 · 바운티 `title` 200/`summary` 500/`description` 50000/`requirements`·`evaluationCriteria` 20000/`sponsorName` 100 · 에이전트 `name` 100(trim 후 1~100, FE 입력 `maxLength`와 동일)/`description` 1000. **수정(PATCH) DTO**(`/admin/bounties/:id`, `/admin/notices/:id`, `/admin/highlights/:id`)는 상한이 생성의 **2배** — FE가 바뀌지 않은 필드도 저장값 그대로 되보내므로 규칙 강화 이전에 저장된 행이 편집 불가가 되지 않게 한다 (`title`류 컬럼은 DB `VARCHAR(200)`이 최종 상한).
 - URL 필드는 `http(s)://`만 받는다 (`javascript:` 등 `400`). 이미지 필드(`thumbnailUrl`, `imageUrl`, `coverImageUrl`)는 `POST /admin/media`가 돌려주는 상대 경로 `/media/<uuid>`도 받는다. 하이라이트 `linkUrl`은 사이트 내부 경로(`/bounties/<slug>`)도 받는다. `externalUrl`/`portfolioUrl`/`submissionUrl`/`repositoryUrl`은 절대 http(s) URL만. **수정(PATCH) DTO의 URL 필드는 완화 규칙**: http(s) 절대 URL, `/` 하나로 시작하는 아무 사이트 경로(레거시 `/uploads/x.png` 등), 스킴 없는 레거시 bare host(`cdn.example/x.png` — FE가 바뀌지 않은 값을 그대로 되보내므로 막으면 그 행의 모든 수정이 `400`이 된다; 실행 불가하고 FE는 그리지 않는다)를 받고, `javascript:`/`data:`/`vbscript:`·프로토콜 상대(`//host`)·제어 문자·공백/역슬래시는 `400`. 생성 DTO는 bare host를 계속 거부한다.
-- tx 해시(`txHash`): 32바이트 hex, `0x` 접두사 선택 (`^(0x)?[0-9a-fA-F]{64}$`) — 그 외 `400 INVALID_TX_HASH`. 서버는 `0x`+소문자로 정규화해 저장한다. 입금 해시는 이미 다른 보상에 기록돼 있으면 `409 TX_HASH_ALREADY_USED`. 송금 해시는 **다른 바운티**의 PAID payout에 이미 기록돼 있으면 `409 TX_HASH_ALREADY_USED`이고, **같은 바운티** 안에서는 여러 payout에 같은 해시를 기록할 수 있다 (멀티시그 tx 하나로 여러 수상자에게 송금).
-- DB에 닿지 못하면(풀 대기·연결 수립 5초 초과, DB 응답 없음) 어느 엔드포인트든 `503 DATABASE_UNAVAILABLE` — 일시 장애이므로 FE는 재시도 안내를 띄운다 (`common/database/pool-timeouts.ts`, `pg-errors.ts` `asHttpError`). 서버 측 문장 시간 초과(15초, Postgres 57014)는 `500`.
+- tx 해시(`txHash`): 32바이트 hex, `0x` 접두사 선택 (`^(0x)?[0-9a-fA-F]{64}$`) — 그 외 `400 INVALID_TX_HASH`. 서버는 `0x`+소문자로 정규화해 저장한다. 입금 해시는 이미 다른 보상에 기록돼 있으면 `409 TX_HASH_ALREADY_USED`. 송금 해시는 **다른 바운티**의 PAID payout에 이미 기록돼 있으면 `409 TX_HASH_ALREADY_USED`이고, **같은 바운티** 안에서는 여러 payout에 같은 해시를 기록할 수 있다 (멀티시그 tx 하나로 여러 수상자에게 송금). 환불로 기록된 해시(`scripts/record-refund.js`, 감사 `REWARD_REFUNDED`)는 입금·송금 어느 쪽에도 `409 TX_HASH_ALREADY_USED`.
+- DB에 닿지 못하면(풀 대기·연결 수립 5초 초과, DB 응답 없음, 쿼리 도중 연결 끊김, 연결 거부, DB 재시작·기동 중·연결 수 초과) 어느 엔드포인트든 `503 DATABASE_UNAVAILABLE` — 일시 장애이므로 FE는 재시도 안내를 띄운다 (`common/database/pool-timeouts.ts`, `pg-errors.ts` `asHttpError`). 서버 측 문장 시간 초과(15초, Postgres 57014)는 `500`.
 - 읽기(공개) 엔드포인트는 로그인 불필요 — "행동" 시점에만 인증 요구 (기획 원칙)
 - CORS/`returnTo` 허용 오리진은 정확한 오리진, 또는 팀이 소유한 도메인에서만 호스트 레이블 하나의 `*` 와일드카드를 받는다 (`CORS_ORIGINS`, `AUTH_ALLOWED_REDIRECT_ORIGINS`). Vercel preview는 브랜치 고정 별칭을 **정확한 항목**으로 넣는다 (`https://ninjalabsfe-git-develop-<team>.vercel.app`) — 또는 커스텀 preview 도메인. vercel.app 같은 공용 호스팅 접미사 위의 와일드카드는 `*`의 위치와 무관하게(`https://ninjalabsfe-*-<team>.vercel.app` 포함) 아무나 일치하는 호스트를 등록할 수 있어 **거부된다** — 기동 시 error 로그 후 목록에서 제외되어 어떤 오리진도 허용하지 않는다 (docs/security.md).
 
@@ -91,6 +91,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `INVALID_TOKEN_AMOUNT` | 400 | 토큰 금액이 최소 단위 양의 정수 문자열이 아니다 |
 | `TX_HASH_ALREADY_USED` | 409 | 이미 다른 입금/지급에 쓰인 tx hash다 (중복 사용 불가) |
 | `REWARD_NOT_FOUND` | 404 | 보상 행이 없다 |
+| `DEPOSIT_BELOW_REWARD_AMOUNT` | 400 | 입금액이 보상 게시 금액(amount)보다 적어 입금 확인을 할 수 없다 |
 | `REWARD_NOT_FOUND_OR_NOT_PENDING` | 404 | 보상이 없거나 입금 대기(DEPOSIT_PENDING) 상태가 아니다 |
 | `REWARD_NOT_FUNDED` | 400 | 보상이 없거나 입금 확인(FUNDED 이상)이 안 돼 지급을 요청할 수 없다 |
 | `APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND` | 404 | 승인된 제출이 없거나 수령자의 지갑이 연결돼 있지 않다 |
@@ -107,8 +108,9 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `MEDIA_FILE_TYPE_UNSUPPORTED` | 400 | 허용되지 않는 이미지 형식이다 (시그니처 검사) |
 | `MEDIA_NOT_FOUND` | 404 | 미디어가 없다 |
 | `INVALID_CHARACTER` | 400 | 요청 값에 DB가 거부하는 문자(NUL 등)가 있다 |
+| `INVALID_DATE` | 400 | 요청 값의 날짜/시각이 달력에 없다 (예: 2월 31일) |
 | `REFERENCE_NOT_FOUND` | 400 | 참조하는 대상 행이 없다 (FK 위반) |
-| `DATABASE_UNAVAILABLE` | 503 | DB 연결 풀/응답 타임아웃 (재시도 가능) |
+| `DATABASE_UNAVAILABLE` | 503 | DB 연결 풀/응답 타임아웃·연결 끊김/거부 (재시도 가능) |
 <!-- error-codes:end -->
 
 
@@ -213,7 +215,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | POST | `/wallets/verify` | ✅ | Keplr/Leap: `{address, signature, publicKey}` / EVM: `{address, signature}` → 검증 성공 시 지갑 저장 + NFT 민팅 잡 등록 |
 | GET | `/wallets/me` | ✅ | 내 대표 지갑 (없으면 null — 미연결 상태) |
 
-- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_ALREADY_LINKED`
+- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_ALREADY_LINKED`, `USER_NOT_FOUND`(404 — challenge 뒤에 탈퇴한 계정, 지갑은 저장되지 않는다)
 - Keplr/Leap: challenge의 `message`를 `signArbitrary(chainId, address, message)`로 서명.
   응답의 `signature`(base64)와 `pub_key.value`(base64)를 그대로 `signature`, `publicKey`로 전송.
   서버는 ADR-36 sign doc을 재구성해 keccak256/secp256k1로 검증하고 공개키→주소 일치도 확인한다.
@@ -263,7 +265,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) EVM: `{name, description?, walletAddress: "0x..."}` (보낸 `publicKey`는 무시 — 키는 verify의 EIP-191 서명에서 복원해 저장) / ADR-36: `{name, description?, publicKey, walletAddress: "inj1..."}` (`publicKey`가 그 주소의 키가 아니면 400 `AGENT_PUBLIC_KEY_MISMATCH`) → `{agentId, status, verificationMessage}`. 같은 지갑/공개키의 **내** `REVOKED` 에이전트가 있으면 그 행은 그대로 두고(soft delete 없음 — `/agents/me`와 프로필의 이력 유지) 새 행을 등록한다 (유니크 인덱스가 REVOKED 행을 무시한다, 0014). 내 `PENDING_VERIFICATION` 행이 있으면 그 행을 그대로 돌려준다. **남의** `PENDING_VERIFICATION` 행은 소유 증명이 아니므로(증명은 verify의 서명) 등록 후 **24시간이 지났으면 버려진 것으로 보고 soft delete 후 진행**, 24시간 이내면 409. 남의 `ACTIVE`/`REVOKED` 에이전트면 409 `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` |
+| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) EVM: `{name, description?, walletAddress: "0x..."}` (보낸 `publicKey`는 무시 — 키는 verify의 EIP-191 서명에서 복원해 저장) / ADR-36: `{name, description?, publicKey, walletAddress: "inj1..."}` (`publicKey`가 그 주소의 키가 아니면 400 `AGENT_PUBLIC_KEY_MISMATCH`) → `{agentId, status, verificationMessage}`. 같은 지갑/공개키의 **내** `REVOKED` 에이전트가 있으면 그 행은 그대로 두고(soft delete 없음 — `/agents/me`와 프로필의 이력 유지) 새 행을 등록한다 (유니크 인덱스가 REVOKED 행을 무시한다, 0014). 내 `PENDING_VERIFICATION` 행이 있으면 그 행을 그대로 돌려준다. **남의** `PENDING_VERIFICATION` 행은 소유 증명이 아니므로(증명은 verify의 서명) 등록 후 **24시간이 지났으면 버려진 것으로 보고 soft delete 후 진행**, 24시간 이내면 409. 남의 `ACTIVE` 에이전트, 또는 **한 번이라도 verify된** 남의 `REVOKED` 에이전트면 409 `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` (verify된 적 없는 남의 `REVOKED` 행 — PENDING을 만들자마자 폐기한 선점 — 은 지갑을 점유하지 않는다) |
 | POST | `/agents/:id/verify` | ✅ | `{signature}` — 에이전트 지갑 서명 검증 → ACTIVE + **API key 원문 1회 반환** `{agentId, status, apiKey, expiresAt}` |
 | GET | `/agents/me` | ✅ | 내 에이전트 목록 (`REVOKED` 에이전트 포함, soft delete된 행만 제외) — 에이전트당 1행, 최신 키의 `key_prefix`·`key_expires_at`(ISO\|null)·`key_status`(`ACTIVE`\|`REVOKED`\|`EXPIRED`\|null) |
 | POST | `/agents/:id/keys/rotate` | ✅ | 기존 ACTIVE 키 전부 폐기 + 새 키 발급 → `{agentId, apiKey, expiresAt}` (원문 1회). 404 `AGENT_NOT_FOUND`, 409 `AGENT_NOT_ACTIVE` |
@@ -294,7 +296,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | POST | `/admin/bounties/:id/transition` | 상태 전환 `{to}` — 허용 전이만 |
 | POST | `/admin/applications/:id/review` | 지원 승인/거절 `{decision, note?}` |
 | POST | `/admin/submissions/:id/review` | 제출 심사 `{decision: START_REVIEW\|REQUEST_REVISION\|APPROVE\|REJECT, comment?}` |
-| POST | `/admin/rewards/:id/confirm-deposit` | 선입금 확인 `{txHash, depositedAmount}` — `txHash` 규칙은 공통 규칙 참조 (`400 INVALID_TX_HASH`, `409 TX_HASH_ALREADY_USED`) |
+| POST | `/admin/rewards/:id/confirm-deposit` | 선입금 확인 `{txHash, depositedAmount}` — `txHash` 규칙은 공통 규칙 참조 (`400 INVALID_TX_HASH`, `409 TX_HASH_ALREADY_USED`), 입금액이 게시 금액보다 적으면 `400 DEPOSIT_BELOW_REWARD_AMOUNT` |
 | POST | `/admin/payouts` | 지급 요청 생성 `{rewardId, submissionId, amount}` (멱등). 보상이 `PAID`여도 여유분(배정 상한 − 취소 아닌 payout 합계)이 남아 있으면 받고 보상은 `PARTIALLY_PAID`로 돌아간다(첫 지급 뒤 `maxWinners`를 올린 경우); 여유분이 없으면 `400 PAYOUT_EXCEEDS_AVAILABLE_REWARD`. **배정 상한 = `LEAST(게시 금액 amount, 입금액 deposited_amount)`** — 초과 입금은 상한을 올리지 않는다 (2026-10-24 결정) |
 | POST | `/admin/payouts/:id/approve` | 멀티시그 승인 완료 표시. **2인 규칙**: 그 payout을 요청한 운영자(`payout.requested_by`)가 승인하면 **403 `PAYOUT_SELF_APPROVAL`** — 다른 운영자가 승인해야 한다(`approved_by` 저장, 감사 `PAYOUT_APPROVED`). 운영자 1인 배포용 탈출구 `PAYOUT_ALLOW_SELF_APPROVAL=true`이면 허용하되 warn 로그 + 감사 `PAYOUT_SELF_APPROVED`. 승인 가능 상태(`REQUESTED`/`AWAITING_MULTISIG_APPROVAL`)가 아니면 404 `PAYOUT_NOT_FOUND_OR_WRONG_STATUS`(자기 승인 검사보다 먼저) |
 | POST | `/admin/payouts/:id/paid` | 송금 완료 기록 `{txHash}` — `400 INVALID_TX_HASH`; 다른 바운티의 PAID payout에 이미 쓰인 해시면 `409 TX_HASH_ALREADY_USED`, 같은 바운티의 다른 payout과 같은 해시는 허용(한 tx로 여러 수상자 송금) |
@@ -311,7 +313,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | POST | `/admin/nft-jobs/:id/retry` | 운영자 수동 재시도: `FAILED` 잡만 → `PENDING`, `retry_count = 0`, `scheduled_at = now()`, `started_at`/`processed_at` NULL(`last_error`는 원인 확인용으로 유지). nft는 `FAILED`에서 `minted_at`이 있으면 `MINTED`(attach 실패 — 재민팅하지 않음), 없으면 `PENDING`. 감사 `NFT_JOB_RETRIED`(entity `nft_job`)를 같은 트랜잭션에 → `{ id, nft_id, status: 'PENDING', retry_count: 0 }`. FAILED가 아니거나 없으면 **404 `NFT_JOB_NOT_FOUND_OR_NOT_FAILED`** |
 | GET | `/admin/audit-logs?entityType=&entityId=&page=` | 감사 로그 → `{ items, page, pageSize: 30, total }` (최신순). `page`≥1 정수, `entityType`≤64자, `entityId` UUID — 그 외 `400`. (이전엔 배열을 반환했으나 FE 호출처가 없어 공통 페이지네이션 봉투로 변경) |
 
-운영자 지정(`is_admin`)은 API가 없다 — `scripts/grant-admin.js`로만 바꾼다([runbook.md](runbook.md) §3). 그 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/requeue-nft-jobs.js`는 `NFT_JOB_REQUEUED`(entity `nft_job`)를, `scripts/record-refund.js`는 `REWARD_REFUNDED`(entity `bounty_reward`, `after_data` `{txHash, refundedAmount}`)를, runbook §7.4의 수동 SQL은 `PAYOUT_CORRECTED_MANUAL`/`PAYOUT_CANCELLED_MANUAL`(entity `payout`)을 남긴다 — 감사 로그 화면은 actor가 비어 있고 action이 위 여섯 가지 중 하나인 행을 "운영 스크립트"로 표시하면 된다. 일곱 번째 운영 스크립트 action `SUBMISSION_AWARD_FORFEITED`(entity `bounty_submission`, `scripts/forfeit-award.js`, runbook §7.4 "지급할 수 없는 수상")는 **actor가 채워진다**(`--admin`으로 받은 결정 운영자 id) — action 이름만으로 "운영 스크립트"로 표시한다. `before_data` `{status: "APPROVED"}`, `after_data` `{status: "REJECTED", reason, bountyId, source}`. 같은 트랜잭션에 `submission_review`(decision `REJECT`, comment `forfeited: <사유>`) 행이 남으므로 제출자의 `GET /submissions/me` `review_comment`에 그 코멘트가 보인다. actor가 비어 있다는 것만으로는 구분하지 말 것 — 에이전트의 `APPLICATION_REAPPLIED`처럼 `AuditService.record`가 `actor_agent_id`를 채우지 않아 actor가 비는 행이 이미 있다.
+운영자 지정(`is_admin`)은 API가 없다 — `scripts/grant-admin.js`로만 바꾼다([runbook.md](runbook.md) §3). 그 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/requeue-nft-jobs.js`는 `NFT_JOB_REQUEUED`(entity `nft_job`)를, `scripts/record-refund.js`는 `REWARD_REFUNDED`(entity `bounty_reward`, `after_data` `{txHash, refundedAmount}`)를, runbook §7.4의 수동 SQL은 `PAYOUT_CORRECTED_MANUAL`/`PAYOUT_CANCELLED_MANUAL`(entity `payout`)을 남긴다 — 감사 로그 화면은 actor가 비어 있고 action이 위 여섯 가지 중 하나인 행을 "운영 스크립트"로 표시하면 된다. 일곱 번째 운영 스크립트 action `SUBMISSION_AWARD_FORFEITED`(entity `bounty_submission`, `scripts/forfeit-award.js`, runbook §7.4 "지급할 수 없는 수상")는 **actor가 채워진다**(`--admin`으로 받은 결정 운영자 id) — action 이름만으로 "운영 스크립트"로 표시한다. `before_data` `{status: "APPROVED"}`, `after_data` `{status: "REJECTED", reason, bountyId, source}`. 같은 트랜잭션에 `submission_review`(decision `REJECT`, comment `forfeited: <사유>`) 행이 남으므로 제출자의 `GET /submissions/me` `review_comment`에 그 코멘트가 보인다. 에이전트 키로 한 행위는 `actor_user_id`가 비는 대신 `actor_agent_id`가 채워진다(`AuditService.recordAgentAction` — 지금은 `APPLICATION_REAPPLIED`). 다만 이 수정 이전에 쌓인 에이전트 `APPLICATION_REAPPLIED` 행은 actor가 둘 다 비어 있으므로, 표시는 action 이름으로 판단하고 "actor가 비었다"만으로 운영 스크립트로 단정하지 말 것.
 
 `AdminGuard`는 JWT의 `isAdmin` 클레임 외에 요청마다 `"user"` 행(`is_admin`, `status='ACTIVE'`, 미삭제)을 다시 확인한다 — 어드민 해제/정지가 토큰 만료 전에 즉시 반영된다 (403 `ADMIN_ONLY`).
 

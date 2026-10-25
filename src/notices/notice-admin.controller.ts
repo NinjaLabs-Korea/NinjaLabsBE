@@ -13,7 +13,7 @@ const NOTICE_CATEGORIES = ['NINJALABS', 'INJECTIVE_ECOSYSTEM', 'EVENT', 'RECRUIT
 export class CreateNoticeDto {
   @Trim() @IsString() @IsNotEmpty() @MaxChars(200) title!: string;
   @IsOptional() @IsString() @MaxLength(500) summary?: string;
-  @IsString() @IsNotEmpty() @MaxLength(50_000) body!: string;
+  @Trim() @IsString() @IsNotEmpty() @MaxLength(50_000) body!: string;
   @IsIn(NOTICE_CATEGORIES) category!: string;
   @IsOptional() @IsHttpUrlOrMediaPath() thumbnailUrl?: string;
   @IsOptional() @IsHttpUrl() externalUrl?: string;
@@ -26,7 +26,7 @@ export class CreateNoticeDto {
 export class UpdateNoticeDto {
   @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxChars(200) title?: string;
   @IsOptional() @IsString() @MaxLength(1000) summary?: string;
-  @IsOptionalNotNull() @IsString() @IsNotEmpty() @MaxLength(100_000) body?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(100_000) body?: string;
   @IsOptionalNotNull() @IsIn(NOTICE_CATEGORIES) category?: string;
   @IsOptional() @IsSafeUrl() thumbnailUrl?: string;
   @IsOptional() @IsSafeUrl() externalUrl?: string;

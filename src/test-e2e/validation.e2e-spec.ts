@@ -232,6 +232,13 @@ describeDb('validation over HTTP (e2e)', () => {
       expect(e2e.linesFor('HttpException').filter((line) => line.includes('0x00'))).toEqual([]);
     });
 
+    it('a date that is not on the calendar (2026-02-31) → 400 INVALID_DATE instead of a 22008 500, logged as 400', async () => {
+      const body = { ...saveAdminBountyBody(bountyForm(), true), submissionDeadline: '2099-02-31T00:00:00Z' };
+      const res = await e2e.post('/admin/bounties', body, asAdmin());
+      expect(res.body).toEqual(badRequest('INVALID_DATE'));
+      expect(e2e.linesFor('HttpException').filter((line) => line.includes('out of range'))).toEqual([]);
+    });
+
     it('non-UUID :id → 400 "Validation failed (uuid is expected)" on public, user and admin routes', async () => {
       // bodies are valid so only the :id pipe can fail
       for (const [method, path, token, json] of [

@@ -29,7 +29,7 @@ describe('AuthTokenThrottlerGuard tracker', () => {
     expect(a).not.toBe(b);
   });
 
-  it('/auth/exchange is keyed by the login-code hash, IP when the code is missing or not a string', async () => {
+  it('/auth/exchange is keyed by the login-code hash (the IP key is only the unreachable fallback — such requests are skipped)', async () => {
     expect(await tracker({ body: { code: 'c'.repeat(43) } }, 'exchange')).toBe(`code:${sha256('c'.repeat(43))}`);
     expect(await tracker({ body: { code: 42 } }, 'exchange')).toBe('ip:10.0.0.1');
     expect(await tracker({ body: undefined }, 'exchange')).toBe('ip:10.0.0.1');
@@ -50,13 +50,21 @@ describe('AuthTokenThrottlerGuard.shouldSkip', () => {
       switchToHttp: () => ({ getRequest: () => ({ ip: '10.0.0.1', headers: {}, body: {}, ...req }) }),
     });
 
-  it('skips the token-hash limit only for a logout that presents no token (nothing to revoke — the IP bucket would be shared by every user behind one egress IP)', async () => {
+  it('skips the token-hash limit for any request that presents no credential (the IP bucket would be shared by every user behind one egress IP)', async () => {
     expect(await skip('logout', {})).toBe(true);
     expect(await skip('logout', { headers: { cookie: 'ninja_rt=t' } })).toBe(true); // cookie without the header is ignored
+    expect(await skip('refresh', {})).toBe(true);
+    expect(await skip('refresh', { body: { refreshToken: 42 } })).toBe(true);
+    expect(await skip('exchange', {})).toBe(true);
+    expect(await skip('exchange', { body: { code: 42 } })).toBe(true);
+    expect(await skip('exchange', { body: undefined })).toBe(true);
+  });
+
+  it('keeps the limit for requests that do present a credential', async () => {
     expect(await skip('logout', { body: { refreshToken: 't' } })).toBe(false);
     expect(await skip('logout', { headers: { cookie: 'ninja_rt=t', 'x-ninja-session': 'cookie' } })).toBe(false);
-    expect(await skip('refresh', {})).toBe(false);
-    expect(await skip('exchange', {})).toBe(false);
+    expect(await skip('refresh', { body: { refreshToken: 't' } })).toBe(false);
+    expect(await skip('exchange', { body: { code: 'c'.repeat(43) } })).toBe(false);
   });
 });
 

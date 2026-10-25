@@ -49,6 +49,12 @@ describe('UsersService publicProfile', () => {
     expect(sql).toContain('SELECT b.id, b.title, b.category, s.reviewed_at AS completed_at');
   });
 
+  it('looks the profile up by the NFC form of the nickname', async () => {
+    const { query, service } = setup();
+    await service.publicProfile('한글닌자'.normalize('NFD'));
+    expect(query.mock.calls[0][1]).toEqual(['한글닌자']);
+  });
+
   it('returns 404 for unknown or inactive users', async () => {
     const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
     await expect(new UsersService(createMockDb({ query }).database).publicProfile('ghost'))
@@ -74,6 +80,13 @@ describe('UsersService completeProfile', () => {
       .rejects.toMatchObject({ status: 409, message: 'NICKNAME_TAKEN' });
     const tag = Object.assign(new Error('dup'), { code: '23505', constraint: 'user_tag_pkey' });
     await expect(setup({ sql: 'INSERT INTO user_tag', error: tag }).service.completeProfile(userId, 'n', 'b', ['DEV'])).rejects.toBe(tag);
+  });
+
+  it('a concurrent withdrawal (UPDATE matches no row) → 404 USER_NOT_FOUND and no tags are written for the withdrawn user', async () => {
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 0, rows: [] }));
+    const service = new UsersService(createMockDb({ txQuery: query }).database);
+    await expect(service.completeProfile(userId, 'n', 'b', ['DEV'])).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it('inserts each tag once even if the caller repeats one', async () => {

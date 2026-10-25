@@ -25,6 +25,24 @@ export class AuditService {
     );
   }
 
+  /**
+   * Agent API 키로 한 행위 — 유저 id가 없으므로 `actor_agent_id`를 채운다. 둘 다 비면 운영 스크립트가 남긴 행으로 읽히기 때문에
+   * (api-contract.md "운영 스크립트" action 표시 규칙) 에이전트 행위는 이 메서드로 남긴다.
+   */
+  async recordAgentAction(
+    agentId: string,
+    action: string,
+    entityType: string,
+    entityId: string,
+    runner: QueryRunner = this.db,
+  ): Promise<void> {
+    await runner.query(
+      `INSERT INTO audit_log (actor_agent_id, action, entity_type, entity_id)
+       VALUES ($1, $2, $3, $4)`,
+      [agentId, action, entityType, entityId],
+    );
+  }
+
   /** 운영자 조회 — 최신순, 30건/페이지. 필터는 파라미터 바인딩으로만 조립한다 */
   async list(filter: { page: number; entityType?: string; entityId?: string }) {
     const pageSize = AUDIT_LOG_PAGE_SIZE;

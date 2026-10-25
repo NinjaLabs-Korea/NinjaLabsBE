@@ -2,7 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { payoutStatusSql } from '../rewards/payout-status';
-import { isSavableNickname } from './nickname';
+import { isSavableNickname, normalizeNickname } from './nickname';
 
 /** 활성 유저 닉네임 유니크 인덱스 (0001_users.sql, lower(nickname) WHERE deleted_at IS NULL) */
 export const NICKNAME_UNIQUE_INDEX = 'uq_user_nickname_active';
@@ -20,7 +20,7 @@ export class UsersService {
     if (!isSavableNickname(nickname)) return false;
     const r = await this.db.query(
       `SELECT 1 FROM "user" WHERE lower(nickname) = lower($1) AND deleted_at IS NULL`,
-      [nickname.trim()],
+      [normalizeNickname(nickname)],
     );
     return r.rowCount === 0;
   }
@@ -40,12 +40,14 @@ export class UsersService {
 
   private async doCompleteProfile(userId: string, nickname: string, bio: string, tags: string[]) {
     return this.db.tx(async (tx) => {
-      await tx.query(
+      const updated = await tx.query(
         `UPDATE "user"
             SET nickname = $2, bio = $3, onboarding_step = 4
           WHERE id = $1 AND deleted_at IS NULL`,
         [userId, nickname, bio],
       );
+      // 동시 탈퇴가 먼저 커밋됐으면 0행이다 — 탈퇴자 행에 태그를 다시 심고 성공으로 답하지 않는다
+      if (!updated.rowCount) throw new NotFoundException('USER_NOT_FOUND');
       await tx.query(`DELETE FROM user_tag WHERE user_id = $1`, [userId]);
       for (const tag of new Set(tags)) {
         await tx.query(`INSERT INTO user_tag (user_id, tag) VALUES ($1, $2)`, [userId, tag]);
@@ -77,7 +79,7 @@ export class UsersService {
         WHERE lower(u.nickname) = lower($1)
           AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
         GROUP BY u.id`,
-      [nickname],
+      [normalizeNickname(nickname)],
     );
     if (!user.rowCount) throw new NotFoundException('USER_NOT_FOUND');
     const u = user.rows[0];

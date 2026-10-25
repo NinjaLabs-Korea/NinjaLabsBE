@@ -63,3 +63,16 @@ describe('scripts/migrate.js poolTimeoutOptions', () => {
     expect(Object.keys(poolTimeoutOptions({}))).not.toEqual(expect.arrayContaining(['query_timeout']));
   });
 });
+
+describe('pool-timeouts.ts ↔ scripts/migrate.js parity', () => {
+  // migrate.js cannot import the TS module, so it carries a copy of the rule — this keeps the two from drifting apart
+  it.each([undefined, '', ' ', '0', '-5', 'x', '1e3', '0x10', '5000.5', ' 7 ', '007', '9'.repeat(30), '2500', '1'])(
+    'DB_CONNECTION_TIMEOUT_MS=%j resolves to the same connectionTimeoutMillis in the app pool and in migrate/ops scripts',
+    (raw) => {
+      expect(poolTimeoutOptions({ DB_CONNECTION_TIMEOUT_MS: raw }).connectionTimeoutMillis).toBe(
+        databaseTimeoutOptions({ DB_CONNECTION_TIMEOUT_MS: raw }).connectionTimeoutMillis,
+      );
+    },
+  );
+});
+

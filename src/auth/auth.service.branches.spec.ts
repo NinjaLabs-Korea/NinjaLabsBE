@@ -130,6 +130,20 @@ describe('AuthService.exchangeGoogleCode — token endpoint and claim edge cases
     });
   });
 
+  it('bounds the token request with an abort signal', async () => {
+    const { service, fetchMock } = setup(jest.fn(async () => claims));
+    await service.exchangeGoogleCode('c');
+    expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('a network failure or timeout on the token endpoint is 503 GOOGLE_UNAVAILABLE, not an unhandled 500', async () => {
+    const verify = jest.fn();
+    const { service } = setup(verify);
+    global.fetch = jest.fn(async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); }) as unknown as typeof fetch;
+    await expect(service.exchangeGoogleCode('c')).rejects.toMatchObject({ status: 503, message: 'GOOGLE_UNAVAILABLE' });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it('a 200 without an id_token is 401 GOOGLE_CODE_EXCHANGE_FAILED and the verifier is never called', async () => {
     const verify = jest.fn();
     const { service } = setup(verify, { access_token: 'ya29' });
@@ -229,13 +243,15 @@ describe('AuthService.issueSession / revoke', () => {
     expect(params.slice(2, 4)).toEqual([null, null]);
   });
 
-  it('revoke closes only the open session of sha256(token) and drops its grace copy', async () => {
+  it('revoke closes the open session of sha256(token) (and its in-grace successor) and drops the grace copy', async () => {
     const query = jest.fn(async () => ({ rowCount: 1, rows: [] }));
     const { service } = createService({ query });
     await service.revoke('raw-refresh');
     const [sql, params] = query.mock.calls[0] as unknown as [string, unknown[]];
     expect(sql).toContain('SET revoked_at = now(), grace_refresh_token = NULL');
-    expect(sql).toContain('WHERE refresh_token_hash = $1 AND revoked_at IS NULL');
+    expect(sql).toContain('WHERE revoked_at IS NULL');
+    expect(sql).toContain('refresh_token_hash = $1');
+    expect(sql).toContain("prev_refresh_token_hash = $1 AND prev_rotated_at > now() - interval '30 seconds'");
     expect(params).toEqual([createHash('sha256').update('raw-refresh').digest('hex')]);
   });
 });

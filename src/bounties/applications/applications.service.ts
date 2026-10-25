@@ -73,7 +73,9 @@ export class ApplicationsService {
           RETURNING id, status, applied_at`,
           [existing.rows[0].id, message, portfolioUrl ?? null],
         );
-        await this.audit.record(actor.userId ?? undefined, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
+        // 에이전트 키로 낸 재지원은 유저 id가 없다 — 행위자 없는 행은 운영 스크립트 기록으로 읽히므로 에이전트 id를 남긴다
+        if (actor.kind === 'AGENT') await this.audit.recordAgentAction(actor.id, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
+        else await this.audit.record(actor.id, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
         return reopened.rows[0];
       }
 

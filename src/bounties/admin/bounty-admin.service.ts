@@ -45,6 +45,10 @@ export class BountyAdminService {
     coverImageUrl?: string;
     reward?: RewardInput;
   }) {
+    // 수정(update)과 같은 규칙: 새 바운티의 마감은 미래여야 한다 — 과거 마감으로 만들면 DRAFT에서 열 수도(DEADLINE_PASSED) 접수할 수도 없는 행이 생긴다
+    for (const deadline of [input.submissionDeadline, input.applicationDeadline]) {
+      if (deadline && !(new Date(deadline).getTime() > Date.now())) throw new BadRequestException('DEADLINE_IN_PAST');
+    }
     const reward = this.rewardTokens.resolve(input.reward);
     return this.db.tx(async (tx) => {
       const b = await tx.query<{ id: string }>(
@@ -97,7 +101,12 @@ export class BountyAdminService {
       ['submission_deadline', input.submissionDeadline], ['application_deadline', input.applicationDeadline],
       ['submission_mode', input.submissionMode], ['cover_image_url', input.coverImageUrl],
     ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
-    if (!fields.length) return { id: bountyId };
+    if (!fields.length) {
+      // 바꿀 필드가 없어도 없는/삭제된 바운티는 404 (빈 PATCH가 존재하지 않는 id에 200을 주지 않게)
+      const exists = await this.db.query(`SELECT 1 FROM bounty WHERE id = $1 AND deleted_at IS NULL`, [bountyId]);
+      if (!exists.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
+      return { id: bountyId };
+    }
     const values = fields.map(([, value]) => value);
     const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
     return this.db.tx(async (tx) => {

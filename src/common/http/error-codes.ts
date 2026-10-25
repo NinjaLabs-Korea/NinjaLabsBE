@@ -106,6 +106,7 @@ export const ERROR_CODES = {
   INVALID_TOKEN_AMOUNT: { statuses: [400], ko: '토큰 금액이 최소 단위 양의 정수 문자열이 아니다' },
   TX_HASH_ALREADY_USED: { statuses: [409], ko: '이미 다른 입금/지급에 쓰인 tx hash다 (중복 사용 불가)' },
   REWARD_NOT_FOUND: { statuses: [404], ko: '보상 행이 없다' },
+  DEPOSIT_BELOW_REWARD_AMOUNT: { statuses: [400], ko: '입금액이 보상 게시 금액(amount)보다 적어 입금 확인을 할 수 없다' },
   REWARD_NOT_FOUND_OR_NOT_PENDING: { statuses: [404], ko: '보상이 없거나 입금 대기(DEPOSIT_PENDING) 상태가 아니다' },
   REWARD_NOT_FUNDED: { statuses: [400], ko: '보상이 없거나 입금 확인(FUNDED 이상)이 안 돼 지급을 요청할 수 없다' },
   APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND: { statuses: [404], ko: '승인된 제출이 없거나 수령자의 지갑이 연결돼 있지 않다' },
@@ -126,8 +127,9 @@ export const ERROR_CODES = {
 
   // ── 공통 (DB 오류 매핑 — common/database/pg-errors.ts) ──
   INVALID_CHARACTER: { statuses: [400], ko: '요청 값에 DB가 거부하는 문자(NUL 등)가 있다' },
+  INVALID_DATE: { statuses: [400], ko: '요청 값의 날짜/시각이 달력에 없다 (예: 2월 31일)' },
   REFERENCE_NOT_FOUND: { statuses: [400], ko: '참조하는 대상 행이 없다 (FK 위반)' },
-  DATABASE_UNAVAILABLE: { statuses: [503], ko: 'DB 연결 풀/응답 타임아웃 (재시도 가능)' },
+  DATABASE_UNAVAILABLE: { statuses: [503], ko: 'DB 연결 풀/응답 타임아웃·연결 끊김/거부 (재시도 가능)' },
 } as const satisfies Record<string, ErrorCodeEntry>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

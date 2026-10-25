@@ -32,6 +32,15 @@ describe('BountyAdminService update safeguards', () => {
     return { service, query, db };
   }
 
+  it('an update with no fields still 404s for a missing or deleted bounty (was 200 for any id)', async () => {
+    const { service, db } = setup();
+    db.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    await expect(service.update(bountyId, {}, adminId)).rejects.toMatchObject({ message: 'BOUNTY_NOT_FOUND' });
+    expect(db.query.mock.calls[0][0]).toContain('deleted_at IS NULL');
+    db.query.mockResolvedValueOnce({ rowCount: 1, rows: [{ '?column?': 1 }] });
+    await expect(service.update(bountyId, {}, adminId)).resolves.toEqual({ id: bountyId });
+  });
+
   it('updates inside one transaction with the bounty row locked and audits there', async () => {
     const { service, query, db } = setup({ approved: 1 });
     await expect(service.update(bountyId, { title: 'New', maxWinners: 2 }, adminId)).resolves.toEqual({ id: bountyId, status: 'OPEN' });

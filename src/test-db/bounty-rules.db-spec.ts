@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Pool } from 'pg';
 import { sslOptions } from '../../scripts/migrate';
@@ -408,6 +409,15 @@ describeDb('bounty rules on a real database', () => {
       expect(statuses.rows.map((r) => r.status)).toEqual(['DEPOSIT_PENDING', 'FUNDED']);
     });
 
+    it('a deposit below the posted amount is 400 DEPOSIT_BELOW_REWARD_AMOUNT and leaves the reward DEPOSIT_PENDING; an unknown reward stays 404', async () => {
+      const rewardId = await rewardOf(await createBounty({ amount: '10' }));
+      await expect(rewards.confirmDeposit(rewardId, fakeTxHash(), '9', adminId)).rejects.toMatchObject({ message: 'DEPOSIT_BELOW_REWARD_AMOUNT', status: 400 });
+      expect((await db.query<{ status: string }>(`SELECT status FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0].status).toBe('DEPOSIT_PENDING');
+      await expect(rewards.confirmDeposit(randomUUID(), fakeTxHash(), '9', adminId)).rejects.toMatchObject({ message: 'REWARD_NOT_FOUND_OR_NOT_PENDING' });
+      await rewards.confirmDeposit(rewardId, fakeTxHash(), '10', adminId);
+      await expect(rewards.confirmDeposit(rewardId, fakeTxHash(), '9', adminId)).rejects.toMatchObject({ message: 'REWARD_NOT_FOUND_OR_NOT_PENDING' });
+    });
+
     it('one reward confirmed twice at once with different hashes: one FUNDED with its hash, the other 404, one audit row', async () => {
       const rewardId = await rewardOf(await createBounty({ amount: '10' }));
       const hashes = [fakeTxHash(), fakeTxHash()];
@@ -499,6 +509,21 @@ describeDb('bounty rules on a real database', () => {
       expect((outcome as Error).message).toBe('TX_HASH_ALREADY_USED');
       expect((await db.query<{ status: string; payout_tx_hash: string | null }>(`SELECT status, payout_tx_hash FROM payout WHERE id = $1`, [payout.id])).rows[0])
         .toEqual({ status: 'APPROVED', payout_tx_hash: null });
+    });
+
+    it('a hash recorded as a sponsor refund (REWARD_REFUNDED audit) is refused as a payout proof and as a deposit proof → 409 TX_HASH_ALREADY_USED', async () => {
+      const { bountyId, rewardId } = await openFunded();
+      const payout = await rewards.requestPayout(rewardId, await approvedSubmission(bountyId), '1000', adminId);
+      await rewards.markApproved(payout.id, approverId);
+      const otherReward = await rewardOf(await createBounty({ amount: '10' }));
+      const hash = fakeTxHash();
+      await db.query(
+        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, after_data)
+         VALUES (NULL, 'REWARD_REFUNDED', 'bounty_reward', $1, jsonb_build_object('txHash', $2::text))`, [rewardId, hash.toLowerCase()]);
+      await expect(rewards.markPaid(payout.id, hash.toUpperCase().replace('0X', '0x'), adminId)).rejects.toMatchObject({ message: 'TX_HASH_ALREADY_USED' });
+      await expect(rewards.confirmDeposit(otherReward, hash, '10', adminId)).rejects.toMatchObject({ message: 'TX_HASH_ALREADY_USED' });
+      expect((await db.query<{ status: string }>(`SELECT status FROM payout WHERE id = $1`, [payout.id])).rows[0].status).toBe('APPROVED');
+      expect((await db.query<{ status: string }>(`SELECT status FROM bounty_reward WHERE id = $1`, [otherReward])).rows[0].status).toBe('DEPOSIT_PENDING');
     });
 
     it('two admins approving the same payout at once: one APPROVED with its approver, the other 404; a single PAYOUT_APPROVED', async () => {

@@ -48,13 +48,13 @@ describe('AgentsService EVM registration', () => {
     return { db, service };
   }
 
-  type OccupiedRow = { id: string; owner_user_id: string; status?: string; abandoned?: boolean };
+  type OccupiedRow = { id: string; owner_user_id: string; status?: string; verified?: boolean; abandoned?: boolean };
 
   /** register() tx: occupied-row lookup (REVOKED / PENDING on the same wallet or key) → INSERT. `revoked` rows are what the FOR UPDATE lookup returns. */
   function registerTxQuery(options: { revoked?: OccupiedRow[]; insert?: unknown } = {}) {
     return jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
       if (sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION') AND deleted_at IS NULL")) {
-        const rows = (options.revoked ?? []).map((row) => ({ status: 'REVOKED', abandoned: false, ...row }));
+        const rows = (options.revoked ?? []).map((row) => ({ status: 'REVOKED', verified: true, abandoned: false, ...row }));
         return { rowCount: rows.length, rows };
       }
       if (sql.includes('INSERT INTO agent (')) {
@@ -129,6 +129,10 @@ describe('AgentsService EVM registration', () => {
     expect(computeAddress(recoveredPublicKey)).toBe(signer.address);
     expect(verifyQuery.mock.calls[1][0]).toContain('UPDATE agent SET public_key = NULL');
     expect(verifyQuery.mock.calls[1][1]).toEqual([recoveredPublicKey, agentId]);
+    // the first key issuance is audited inside the same tx, after the key insert
+    expect(verifyQuery.mock.calls[4][0]).toContain('INSERT INTO audit_log');
+    expect(verifyQuery.mock.calls[4][1]).toEqual([ownerUserId, 'AGENT_VERIFIED', 'agent', agentId]);
+    expect(db.query).not.toHaveBeenCalled();
   });
 
   it('returns the existing pending challenge after a rejected signature retry — looked up by (owner, wallet) outside the rolled-back tx', async () => {
@@ -212,6 +216,20 @@ describe('AgentsService EVM registration', () => {
     ).rejects.toMatchObject({ message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
     expect(registerQuery).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("does not let another owner's never-verified REVOKED agent (a PENDING squat revoked on the spot) block the wallet", async () => {
+    const { db, service } = createService();
+    const signer = Wallet.createRandom();
+    const registerQuery = registerTxQuery({
+      revoked: [{ id: '33333333-3333-4333-8333-333333333333', owner_user_id: '44444444-4444-4444-8444-444444444444', verified: false }],
+    });
+    db.tx.mockImplementation(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
+      callback({ query: registerQuery }));
+
+    await expect(service.register(ownerUserId, 'market-agent', undefined, undefined, signer.address)).resolves.toMatchObject({ agentId });
+    expect(registerQuery.mock.calls.some(([sql]) => sql.includes('SET deleted_at = now()'))).toBe(false); // the revoked row is left as is
+    expect(registerQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO agent ('))).toBe(true);
   });
 
   it("soft-deletes another owner's PENDING_VERIFICATION agent older than 24h (abandoned squat) and proceeds", async () => {
@@ -335,6 +353,7 @@ describe('AgentsService EVM registration', () => {
       if (sql.includes('INSERT INTO agent_api_key')) {
         return { rowCount: 1, rows: [{ expires_at: '2026-12-01T00:00:00.000Z' }] };
       }
+      if (sql.includes('INSERT INTO audit_log')) return { rowCount: 1, rows: [] };
       throw new Error(`Unexpected query: ${sql}`);
     }));
     db.tx.mockImplementation(
@@ -356,6 +375,7 @@ describe('AgentsService EVM registration', () => {
     const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
     expect(rejected.reason).toMatchObject({ message: 'AGENT_ALREADY_VERIFIED' });
     expect(txQuery.mock.calls.filter(([sql]) => sql.includes('INSERT INTO agent_api_key'))).toHaveLength(1);
+    expect(txQuery.mock.calls.filter(([sql]) => sql.includes('INSERT INTO audit_log'))).toHaveLength(1);
   });
 });
 

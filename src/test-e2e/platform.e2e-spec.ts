@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
+import { KEEP_ALIVE_TIMEOUT_MS } from '../app-setup';
 import { describeDb } from '../test-db/describe-db';
 import { getEthereumAddress, getInjectiveAddress } from './support/injective-sdk.stub';
 import { E2eApp, FE_ORIGIN, PREVIEW_ORIGIN, startApp } from './support/harness';
@@ -43,6 +44,12 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
       }
       expect((await e2e.get('/health')).body).toEqual({ status: 'ok', db: 'up' });
     });
+  });
+
+  it('keeps idle connections longer than the proxy in front of it (Node default 5s causes intermittent 502s)', () => {
+    const server = e2e.app.getHttpServer();
+    expect(server.keepAliveTimeout).toBe(KEEP_ALIVE_TIMEOUT_MS);
+    expect(server.headersTimeout).toBeGreaterThan(server.keepAliveTimeout);
   });
 
   describe('d. CORS', () => {

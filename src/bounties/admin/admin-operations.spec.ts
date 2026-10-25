@@ -42,7 +42,7 @@ describe('BountyAdminService EVM rewards', () => {
     description: 'description', requirements: 'requirements',
     evaluationCriteria: 'criteria', category: 'DEV', applicationRequired: false,
     submissionMode: 'DIRECT',
-    maxWinners: 1, submissionDeadline: '2026-09-30T00:00:00.000Z',
+    maxWinners: 1, submissionDeadline: new Date(Date.now() + 30 * 86_400_000).toISOString(),
     reward: { tokenType: 'ERC20', displaySymbol: 'USDC', amount: '12500000' },
   };
 
@@ -70,6 +70,19 @@ describe('BountyAdminService EVM rewards', () => {
       'PENDING_MULTISIG_SETUP',
     ]);
     expect(txQuery.mock.calls.find(([sql]) => sql.includes("UPDATE bounty SET status = 'FUNDING_PENDING'"))?.[1]).toEqual(['11111111-1111-4111-8111-111111111111']);
+    expect(dbQuery).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['submissionDeadline', {}],
+    ['applicationDeadline', { applicationDeadline: new Date(Date.now() - 1000).toISOString() }],
+  ])('rejects a new bounty whose %s is in the past before touching the database', async (field, extra) => {
+    const txQuery = jest.fn();
+    const { db, dbQuery } = dbWith(txQuery);
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const body = field === 'submissionDeadline' ? { ...input, submissionDeadline: past } : { ...input, ...extra };
+    await expect(adminServicesFor(db).bounties.create('admin', body)).rejects.toMatchObject({ message: 'DEADLINE_IN_PAST' });
+    expect(txQuery).not.toHaveBeenCalled();
     expect(dbQuery).not.toHaveBeenCalled();
   });
 

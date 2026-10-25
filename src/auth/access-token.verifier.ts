@@ -1,5 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { JWT_VERIFY_OPTIONS } from './jwt-algorithm';
 
 /**
  * access JWT 검증의 단일 출처 — Bearer 토큰 → SessionUser. AuthService.verifyAccessToken(→ AuthGuard)이 이 클래스에 위임한다.
@@ -52,7 +53,7 @@ export class AccessTokenVerifier {
   async verify(token: string): Promise<SessionUser> {
     let payload: { sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown; iat?: unknown };
     try {
-      payload = await this.jwt.verifyAsync<{ sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown; iat?: unknown }>(token);
+      payload = await this.jwt.verifyAsync<{ sub?: unknown; adm?: unknown; typ?: unknown; p?: unknown; iat?: unknown }>(token, JWT_VERIFY_OPTIONS);
     } catch {
       throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
     }

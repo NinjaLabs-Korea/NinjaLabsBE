@@ -1,5 +1,5 @@
 import { alertBootFailure } from './boot-alert';
-import { alertMigrationFailure } from '../../../scripts/migrate';
+import { alertMigrationFailure, warnUnverifiedDbTls } from '../../../scripts/migrate';
 import { postOpsAlert, redactSecrets, webhookStatus } from '../../../scripts/ops-alert';
 
 const WEBHOOK = 'https://hooks.slack.com/services/T000/B000/secret';
@@ -88,5 +88,34 @@ describe('boot / migration failure alerts', () => {
     expect(out).not.toMatch(/@(everyone|here)\b/);
     expect(out).not.toMatch(/<!/);
     expect(out).toContain('@\u200beveryone');
+  });
+});
+
+describe('migrate.js unverified DB TLS warning', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('logs an error and alerts once in production without a CA', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    const log = jest.fn();
+    await warnUnverifiedDbTls({ NODE_ENV: 'production', OPS_ALERT_WEBHOOK_URL: WEBHOOK }, log);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).toContain('DATABASE_CA_CERT is empty in production');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body.content).toContain('db-tls-unverified');
+    expect(body.content).toContain('DATABASE_CA_CERT');
+  });
+
+  it('only logs without a webhook, and says nothing with a CA, with TLS off or outside production', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    const log = jest.fn();
+    await warnUnverifiedDbTls({ NODE_ENV: 'production' }, log);
+    expect(log).toHaveBeenCalledTimes(1);
+    log.mockClear();
+    for (const env of [{ NODE_ENV: 'production', DATABASE_CA_CERT: 'PEM' }, { NODE_ENV: 'production', PGSSLMODE: 'disable' }, { NODE_ENV: 'development' }]) {
+      await warnUnverifiedDbTls({ ...env, OPS_ALERT_WEBHOOK_URL: WEBHOOK }, log);
+    }
+    expect(log).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

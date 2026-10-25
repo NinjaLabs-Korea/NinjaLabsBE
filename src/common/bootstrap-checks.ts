@@ -66,8 +66,8 @@ export function requireJwtSecret(env: BootstrapEnv): string {
     }
     if (Buffer.byteLength(secret!, 'utf8') < MIN_JWT_SECRET_BYTES) {
       logger.error(
-        `JWT_SECRET is only ${Buffer.byteLength(secret!, 'utf8')} bytes — production requires at least ${MIN_JWT_SECRET_BYTES} random bytes. ` +
-          'Booting anyway so the service stays up; rotate it now (openssl rand -base64 48). Rotating invalidates every access token and refresh grace copy.',
+        `JWT_SECRET is only ${Buffer.byteLength(secret!, 'utf8')} bytes, below the required minimum of ${MIN_JWT_SECRET_BYTES} bytes: tokens signed with it can be brute-forced offline. ` +
+          'Booting anyway so the service stays up, but rotate it now (openssl rand -base64 48). A later release may refuse to boot. Rotating invalidates every access token and refresh grace copy.',
       );
     }
     return secret!;

@@ -8,6 +8,11 @@ export declare function migrationFiles(dir?: string): string[];
 export declare function sslOptions(
   env: Record<string, string | undefined>,
 ): { ca: string[]; rejectUnauthorized: true } | { rejectUnauthorized: false } | undefined;
+/** production + TLS 켜짐 + CA 없음 (서버 인증서 미검증) */
+export declare function dbTlsUnverifiedInProduction(env: Record<string, string | undefined>): boolean;
+export declare const DB_TLS_UNVERIFIED_MESSAGE: string;
+/** 위 상태면 ERROR 로그 + 운영 알림 한 번. 절대 throw하지 않는다 */
+export declare function warnUnverifiedDbTls(env: Record<string, string | undefined>, log?: (line: string) => void): Promise<void>;
 /** connectionTimeoutMillis(DB_CONNECTION_TIMEOUT_MS, 기본 5000) + idleTimeoutMillis 30000. statement_timeout은 걸지 않는다 */
 export declare function poolTimeoutOptions(
   env: Record<string, string | undefined>,

@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
 import { AdminGuard } from './admin.guard';
 import { GoogleIdTokenVerifier } from './google-id-token.verifier';
+import { JWT_SIGN_OPTIONS, JWT_VERIFY_OPTIONS } from './jwt-algorithm';
 import { JWT_SECRET, JwtSecretModule } from './jwt-secret';
 import { TurnstileVerifier } from './turnstile.verifier';
 import { accessTtlSeconds } from './refresh-ttl';
@@ -36,7 +37,8 @@ import { throttlerModule } from '../common/throttler/throttler-options';
       useFactory: (secret: string, config: ConfigService) => ({
         secret,
         // 초 단위 숫자로 넘긴다 — 문자열 `900`은 jsonwebtoken이 밀리초로 읽어 발급 즉시 만료된다. 형식/범위(60초~60분)가 틀리면 부팅 실패 (refresh-ttl.ts)
-        signOptions: { expiresIn: accessTtlSeconds(config.get<string>('JWT_ACCESS_TTL')) },
+        signOptions: { expiresIn: accessTtlSeconds(config.get<string>('JWT_ACCESS_TTL')), ...JWT_SIGN_OPTIONS },
+        verifyOptions: JWT_VERIFY_OPTIONS,
       }),
     }),
   ],

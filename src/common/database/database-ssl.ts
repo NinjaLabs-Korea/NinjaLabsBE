@@ -5,7 +5,7 @@ import { rootCertificates } from 'tls';
  *
  *   PGSSLMODE=disable        → TLS 없음 (로컬 Postgres)
  *   DATABASE_CA_CERT=<PEM>   → Supabase CA로 서버 인증서 검증 (MITM 차단). 줄바꿈은 실제 개행 또는 `\n` 이스케이프 모두 허용
- *   그 외                     → TLS는 쓰되 인증서 검증 생략 (기존 동작, 운영 전 CA 설정 권장 — docs/security.md)
+ *   그 외                     → TLS는 쓰되 인증서 검증 생략 (기존 동작). production이면 부팅 시 ERROR + 운영 알림: docs/security.md
  *
  * 커스텀 `ca`는 Node 루트 저장소를 "대체"하므로 Supabase CA만 넣으면 공인 인증서를 쓰는 풀러
  * (`*.pooler.supabase.com`)가 거부된다 — 루트 인증서 뒤에 커스텀 CA를 덧붙여 둘 다 통하게 한다.
@@ -21,3 +21,13 @@ export function databaseSslOptions(env: {
   if (ca) return { ca: [...rootCertificates, ca], rejectUnauthorized: true };
   return { rejectUnauthorized: false };
 }
+
+/** production에서 TLS는 켜져 있는데 CA가 없어 서버 인증서를 검증하지 않는 상태인가 (database.service.ts와 scripts/migrate.js가 부팅 시 크게 알린다) */
+export function dbTlsUnverifiedInProduction(env: { NODE_ENV?: string; PGSSLMODE?: string; DATABASE_CA_CERT?: string }): boolean {
+  return env.NODE_ENV === 'production' && env.PGSSLMODE !== 'disable' && !env.DATABASE_CA_CERT?.trim();
+}
+
+/** 위 상태의 로그/운영 알림 문구: scripts/migrate.js에 같은 문구의 복제본이 있다 (스펙이 동일성을 확인) */
+export const DB_TLS_UNVERIFIED_MESSAGE =
+  'DATABASE_CA_CERT is empty in production: the Postgres server certificate is NOT verified (rejectUnauthorized: false), so a network attacker between this service and the database can read and alter all traffic. ' +
+  'Set DATABASE_CA_CERT to the Supabase CA PEM now. A later release may refuse to boot without it.';

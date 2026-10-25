@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationShutdown, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
+import { AlertService } from '../alerts/alert.service';
 import { errorText } from '../logging/log-safe';
-import { databaseSslOptions } from './database-ssl';
+import { DB_TLS_UNVERIFIED_MESSAGE, databaseSslOptions, dbTlsUnverifiedInProduction } from './database-ssl';
 import { databaseTimeoutOptions } from './pool-timeouts';
 
 /** DatabaseService와 트랜잭션 클라이언트(PoolClient)를 함께 받는 최소 쿼리 인터페이스 */
@@ -72,17 +73,16 @@ export class DatabaseService implements OnApplicationShutdown {
   private static readonly logger = new Logger(DatabaseService.name);
   private readonly pool: Pool;
 
-  constructor(config: ConfigService) {
+  constructor(config: ConfigService, @Optional() alerts?: AlertService) {
     const ssl = {
       PGSSLMODE: config.get<string>('PGSSLMODE'),
       DATABASE_CA_CERT: config.get<string>('DATABASE_CA_CERT'),
     };
-    // production에서 CA 없이 TLS를 쓰면 서버 인증서 검증이 빠진다(MITM 취약). 인증서가 아직 발급/배포되지 않았을 수 있어
-    // 기동은 막지 않고 부팅 시 한 번만 경고한다 — docs/security.md "DB TLS 인증서 검증"
-    if (config.get<string>('NODE_ENV') === 'production' && ssl.PGSSLMODE !== 'disable' && !ssl.DATABASE_CA_CERT?.trim()) {
-      DatabaseService.logger.warn(
-        'DATABASE_CA_CERT is empty in production — the Postgres server certificate is NOT verified (rejectUnauthorized: false). Set the Supabase CA PEM before go-live.',
-      );
+    // production에서 CA 없이 TLS를 쓰면 서버 인증서 검증이 빠진다(MITM 취약). 운영 Railway에 CA가 들어 있는지 이 코드만으로는 알 수 없고
+    // 머지가 곧 배포라 기동은 막지 않는다: 대신 부팅 시 한 번 ERROR로 크게 알리고 운영 알림도 보낸다 (docs/security.md "DB TLS 인증서 검증")
+    if (dbTlsUnverifiedInProduction({ NODE_ENV: config.get<string>('NODE_ENV'), ...ssl })) {
+      DatabaseService.logger.error(DB_TLS_UNVERIFIED_MESSAGE);
+      void alerts?.notify('db-tls-unverified', DB_TLS_UNVERIFIED_MESSAGE);
     }
     this.pool = new Pool({
       connectionString: config.get<string>('DATABASE_URL'),

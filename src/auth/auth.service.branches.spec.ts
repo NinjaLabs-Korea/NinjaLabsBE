@@ -69,10 +69,10 @@ describe('AuthService OAuth state', () => {
     const { service, jwt } = createService();
     for (const trace of ['has space', 'a'.repeat(65), 'line\nbreak', '']) {
       await service.issueOauthState(trace, 'https://app.example/', challenge);
-      expect(jwt.signAsync).toHaveBeenLastCalledWith({ p: 'gstate', t: undefined, r: 'https://app.example/', c: challenge }, { expiresIn: '10m' });
+      expect(jwt.signAsync).toHaveBeenLastCalledWith({ p: 'gstate', t: undefined, r: 'https://app.example/', c: challenge }, { expiresIn: '10m', algorithm: 'HS256' });
     }
     await service.issueOauthState('trace-01', 'https://app.example/', challenge);
-    expect(jwt.signAsync).toHaveBeenLastCalledWith({ p: 'gstate', t: 'trace-01', r: 'https://app.example/', c: challenge }, { expiresIn: '10m' });
+    expect(jwt.signAsync).toHaveBeenLastCalledWith({ p: 'gstate', t: 'trace-01', r: 'https://app.example/', c: challenge }, { expiresIn: '10m', algorithm: 'HS256' });
   });
 
   it.each([
@@ -90,7 +90,7 @@ describe('AuthService OAuth state', () => {
     await expect(service.issueOauthState(undefined, 'https://app.example/', [challenge] as unknown as string)).rejects.toMatchObject({ status: 401, message: 'INVALID_CODE_CHALLENGE' });
     expect(jwt.signAsync).not.toHaveBeenCalled();
     await service.issueOauthState(['trace-01'] as unknown as string, 'https://app.example/', challenge);
-    expect(jwt.signAsync).toHaveBeenLastCalledWith({ p: 'gstate', t: undefined, r: 'https://app.example/', c: challenge }, { expiresIn: '10m' });
+    expect(jwt.signAsync).toHaveBeenLastCalledWith({ p: 'gstate', t: undefined, r: 'https://app.example/', c: challenge }, { expiresIn: '10m', algorithm: 'HS256' });
   });
 
   it('rejects a state whose challenge claim is not a string', async () => {
@@ -103,7 +103,7 @@ describe('AuthService OAuth state', () => {
     const verifyAsync = jest.fn(async () => ({ p: 'gstate', t: 'trace-1', r: 'https://app.example/', c: challenge }));
     const { service } = createService({ jwt: { verifyAsync } });
     await expect(service.verifyOauthState('state')).resolves.toEqual({ traceId: 'trace-1', redirectUrl: 'https://app.example/', codeChallenge: challenge });
-    expect(verifyAsync).toHaveBeenCalledWith('state');
+    expect(verifyAsync).toHaveBeenCalledWith('state', { algorithms: ['HS256'] });
   });
 
   it.each([
@@ -268,7 +268,7 @@ describe('AuthService.exchangeLoginCode — format guard', () => {
       createHash('sha256').update(good.code).digest('hex'),
       createHash('sha256').update(verifier).digest('base64url'),
     ]);
-    expect(jwt.signAsync).toHaveBeenCalledWith({ sub: userId, adm: true, typ: 'access' });
+    expect(jwt.signAsync).toHaveBeenCalledWith({ sub: userId, adm: true, typ: 'access' }, { algorithm: 'HS256' });
     // ip / user agent reach the session row
     expect(txQuery.mock.calls[1][1].slice(2, 4)).toEqual(['10.0.0.9', 'ua/1']);
   });
@@ -280,7 +280,7 @@ describe('AuthService.issueSession / revoke', () => {
     const { service, jwt, db } = createService({ query });
     const session = await service.issueSession(userId, false, '10.1.1.1', 'agent');
     expect(session).toEqual({ accessToken: 'signed-access', refreshToken: expect.stringMatching(/^[A-Za-z0-9_-]{64}$/) });
-    expect(jwt.signAsync).toHaveBeenCalledWith({ sub: userId, adm: false, typ: 'access' });
+    expect(jwt.signAsync).toHaveBeenCalledWith({ sub: userId, adm: false, typ: 'access' }, { algorithm: 'HS256' });
     expect(db.tx).not.toHaveBeenCalled();
     const [sql, params] = query.mock.calls[0] as unknown as [string, unknown[]];
     expect(sql).toContain('INSERT INTO auth_session');

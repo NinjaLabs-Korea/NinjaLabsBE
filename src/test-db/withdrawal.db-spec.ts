@@ -291,4 +291,84 @@ describeDb('account withdrawal on a real database', () => {
     await expect(request).rejects.toMatchObject({ status: 404, message: 'APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND' });
     expect((await db.query(`SELECT 1 FROM payout WHERE submission_id = $1`, [submission.id])).rowCount).toBe(0);
   });
+  it('an approval racing a withdrawal waits for it and then refuses (no approved winner who can never be paid)', async () => {
+    const builder = await createUser(db);
+    await createPrimaryWallet(db, builder);
+    const open = await openBounty();
+    const application = await applications.apply(open.bountyId, builder, 'hi');
+    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+    const submission = await submissions.submit(open.bountyId, builder, { submissionUrl: 'https://x.test/race-approve', description: 'd' });
+
+    // the withdrawal's first lock (the user row, FOR UPDATE) is held while the approval starts; the submission row stays untouched
+    // here (the real withdrawal would only withdraw it after this lock, which is exactly the window the approval used to slip through)
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => { locked = resolve; });
+    const withdrawing = db.tx(async (tx) => {
+      await tx.query(`SELECT id FROM "user" WHERE id = $1 FOR UPDATE`, [builder]);
+      locked();
+      await released;
+      await tx.query(`UPDATE "user" SET status = 'WITHDRAWN', deleted_at = now() WHERE id = $1`, [builder]);
+    });
+    await isLocked;
+    let settled = false;
+    const approval = submissionReview.review(submission.id, 'APPROVE', undefined, adminId).finally(() => { settled = true; });
+    approval.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(settled).toBe(false); // blocked on the user row
+    release();
+    await withdrawing;
+    await expect(approval).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
+    expect((await db.query<{ status: string }>(`SELECT status FROM bounty_submission WHERE id = $1`, [submission.id])).rows[0].status).toBe('SUBMITTED');
+    expect(await auditActions(db, 'bounty_submission', submission.id)).toEqual([]);
+  });
+
+  it('a withdrawal racing an approval waits for it and then refuses with WITHDRAWAL_BLOCKED_PENDING_REWARDS', async () => {
+    const builder = await createUser(db);
+    await createPrimaryWallet(db, builder);
+    const open = await openBounty();
+    const application = await applications.apply(open.bountyId, builder, 'hi');
+    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+    const submission = await submissions.submit(open.bountyId, builder, { submissionUrl: 'https://x.test/race-withdraw', description: 'd' });
+    const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [builder])).rows[0].nickname;
+
+    // the approval holds the user row FOR SHARE until it commits; park it just before the commit by holding the shared lock in our own tx
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => { locked = resolve; });
+    const approving = db.tx(async (tx) => {
+      await tx.query(`SELECT id FROM "user" WHERE id = $1 FOR SHARE`, [builder]);
+      await tx.query(`UPDATE bounty_submission SET status = 'APPROVED' WHERE id = $1`, [submission.id]);
+      locked();
+      await released;
+    });
+    await isLocked;
+    let settled = false;
+    const withdrawing = withdrawal.withdraw(builder, nickname).finally(() => { settled = true; });
+    withdrawing.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(settled).toBe(false); // blocked on the user row
+    release();
+    await approving;
+    await expect(withdrawing).rejects.toMatchObject({ status: 409, message: 'WITHDRAWAL_BLOCKED_PENDING_REWARDS' });
+    expect((await db.query<{ status: string }>(`SELECT status FROM "user" WHERE id = $1`, [builder])).rows[0].status).toBe('ACTIVE');
+  });
+
+  it('approving an agent submission whose owner is gone is refused too (the owner row is the one locked)', async () => {
+    const owner = await createUser(db);
+    await createPrimaryWallet(db, owner);
+    const agentId = await activeAgentWithKey(owner);
+    const open = await openBounty('AGENT');
+    const sid = (await db.query<{ id: string }>(
+      `INSERT INTO bounty_submission (bounty_id, agent_id, submission_url, description, status) VALUES ($1, $2, 'https://x.test/a', 'd', 'SUBMITTED') RETURNING id`,
+      [open.bountyId, agentId])).rows[0].id;
+    await db.query(`INSERT INTO submission_revision (submission_id, revision_no, submission_url, description, created_by_agent_id) VALUES ($1, 1, 'https://x.test/a', 'd', $2)`, [sid, agentId]);
+
+    await db.query(`UPDATE "user" SET status = 'WITHDRAWN', deleted_at = now() WHERE id = $1`, [owner]);
+    await expect(submissionReview.review(sid, 'APPROVE', undefined, adminId)).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
+    // rejecting it stays possible
+    await expect(submissionReview.review(sid, 'REJECT', undefined, adminId)).resolves.toMatchObject({ status: 'REJECTED' });
+  });
 });

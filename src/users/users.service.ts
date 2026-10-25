@@ -56,13 +56,23 @@ export class UsersService {
     });
   }
 
-  /** 온보딩 완료 플래그 */
+  /**
+   * 온보딩 완료 플래그 — 프로필 저장(3단계, onboarding_step 4)을 마친 유저만. 그 전에는 임시 닉네임(`user_xxxx`)·빈 자기소개·태그 없음인 채로
+   * "온보딩 완료"가 되고 공개 프로필로 노출되므로 409 PROFILE_REQUIRED. 이미 완료한 유저는 첫 완료 시각을 유지한 채 멱등.
+   */
   async completeOnboarding(userId: string) {
-    await this.db.query(
+    const stamped = await this.db.query(
       `UPDATE "user" SET onboarding_completed_at = now()
-        WHERE id = $1 AND onboarding_completed_at IS NULL`,
+        WHERE id = $1 AND onboarding_completed_at IS NULL AND onboarding_step >= 4`,
       [userId],
     );
+    if (stamped.rowCount) return { ok: true };
+    const state = await this.db.query<{ done: boolean }>(
+      `SELECT onboarding_completed_at IS NOT NULL AS done FROM "user" WHERE id = $1 AND deleted_at IS NULL`,
+      [userId],
+    );
+    if (!state.rowCount) throw new NotFoundException('USER_NOT_FOUND');
+    if (!state.rows[0].done) throw new ConflictException('PROFILE_REQUIRED');
     return { ok: true };
   }
 
@@ -73,7 +83,7 @@ export class UsersService {
   async publicProfile(nickname: string) {
     const user = await this.db.query(
       `SELECT u.id, u.nickname, u.bio, u.is_member, u.member_role, u.created_at,
-              COALESCE(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL), '{}') AS tags
+              COALESCE(array_agg(t.tag ORDER BY t.tag) FILTER (WHERE t.tag IS NOT NULL), '{}') AS tags
          FROM "user" u
          LEFT JOIN user_tag t ON t.user_id = u.id
         WHERE lower(u.nickname) = lower($1)
@@ -105,21 +115,24 @@ export class UsersService {
           AND (s.submitter_user_id = $1
                OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)))
         GROUP BY s.id, b.id
-        ORDER BY s.reviewed_at DESC`,
+        ORDER BY s.reviewed_at DESC, s.id`,
       [u.id],
     );
 
+    // 공개 프로필에는 검증을 마친 ACTIVE 에이전트만 — PENDING_VERIFICATION(서명 없이 남의 지갑 주소를 적어 둘 수 있다)·SUSPENDED·REVOKED의
+    // 이름/지갑 주소를 공개 API로 내보내지 않는다 (FE도 ACTIVE만 그린다). 폐기 전에 승인된 제출은 위 completedBounties(본인 + 소유 에이전트)에 그대로 남는다.
     // soft delete된 바운티는 공개 프로필 어디에도 나오지 않는다 (completedBounties와 같은 기준) — JOIN 조건에 두어 FILTER가 그 행을 버리고,
     // NFT는 남기되 그 바운티 제목은 NULL이 된다 (FE는 제목 없는 NFT를 "Ninja NFT"로 보여준다)
     const agents = await this.db.query(
       `SELECT a.id, a.name, a.description, a.status, a.wallet_address,
-              COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title))
+              COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title) ORDER BY s.reviewed_at DESC, b.id)
                        FILTER (WHERE b.id IS NOT NULL), '[]') AS completed_bounties
          FROM agent a
          LEFT JOIN bounty_submission s ON s.agent_id = a.id AND s.status = 'APPROVED'
          LEFT JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL
-        WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL
-        GROUP BY a.id`,
+        WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL AND a.status = 'ACTIVE'
+        GROUP BY a.id
+        ORDER BY a.created_at, a.id`,
       [u.id],
     );
 
@@ -130,7 +143,7 @@ export class UsersService {
          FROM nft n
          LEFT JOIN bounty b ON b.id = n.bounty_id AND b.deleted_at IS NULL
         WHERE n.owner_user_id = $1
-        ORDER BY n.created_at`,
+        ORDER BY n.created_at, n.id`,
       [u.id],
     );
 

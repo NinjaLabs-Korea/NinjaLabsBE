@@ -1,4 +1,4 @@
-import { ConflictException, Logger } from '@nestjs/common';
+import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
 import { createMockDb } from '../test-support/mock-db';
 import { UsersController } from './users.controller';
@@ -60,13 +60,27 @@ describe('UsersService.completeProfile / completeOnboarding', () => {
     expect(error).not.toBeInstanceOf(ConflictException);
   });
 
-  it('completeOnboarding only stamps a user that has not completed yet (the first completion time is kept)', async () => {
-    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 0, rows: [] }));
+  it('completeOnboarding only stamps a user that saved the profile and has not completed yet (the first completion time is kept)', async () => {
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [] }));
     const service = new UsersService(createMockDb({ query }).database);
     await expect(service.completeOnboarding(userId)).resolves.toEqual({ ok: true });
     expect(query.mock.calls[0][0]).toContain('SET onboarding_completed_at = now()');
-    expect(query.mock.calls[0][0]).toContain('WHERE id = $1 AND onboarding_completed_at IS NULL');
+    expect(query.mock.calls[0][0]).toContain('WHERE id = $1 AND onboarding_completed_at IS NULL AND onboarding_step >= 4');
     expect(query.mock.calls[0][1]).toEqual([userId]);
+  });
+
+  it('completeOnboarding is idempotent for a completed user, 409 PROFILE_REQUIRED before the profile is saved, 404 for a missing user', async () => {
+    const answers = [{ rowCount: 0, rows: [] }, { rowCount: 1, rows: [{ done: true }] }];
+    const query = jest.fn(async () => answers.shift()!);
+    await expect(new UsersService(createMockDb({ query }).database).completeOnboarding(userId)).resolves.toEqual({ ok: true });
+
+    const early = [{ rowCount: 0, rows: [] }, { rowCount: 1, rows: [{ done: false }] }];
+    const q2 = jest.fn(async () => early.shift()!);
+    await expect(new UsersService(createMockDb({ query: q2 }).database).completeOnboarding(userId)).rejects.toMatchObject({ message: 'PROFILE_REQUIRED', status: 409 });
+
+    const gone = [{ rowCount: 0, rows: [] }, { rowCount: 0, rows: [] }];
+    const q3 = jest.fn(async () => gone.shift()!);
+    await expect(new UsersService(createMockDb({ query: q3 }).database).completeOnboarding(userId)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 

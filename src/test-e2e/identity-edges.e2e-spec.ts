@@ -192,6 +192,11 @@ describeDb('identity edge cases over HTTP (e2e)', () => {
     it('complete-onboarding is idempotent (the first completion time is kept) and requires a session', async () => {
       const session = await e2e.login();
       expect((await e2e.post('/users/me/complete-onboarding', undefined)).status).toBe(401);
+      // before the profile is saved the flag cannot be set (placeholder nickname would be published as "onboarded")
+      const early = await e2e.post('/users/me/complete-onboarding', undefined, { token: session.accessToken });
+      expect(early.status).toBe(409);
+      expect(early.body.message).toBe('PROFILE_REQUIRED');
+      await e2e.post('/users/me/profile', { nickname: `Idem_${Date.now().toString(36)}`, bio: 'b', tags: ['DEV'] }, { token: session.accessToken });
       await e2e.post('/users/me/complete-onboarding', undefined, { token: session.accessToken });
       const first = (await e2e.db.query<{ at: Date }>(`SELECT onboarding_completed_at AS at FROM "user" WHERE id = $1`, [session.userId])).rows[0].at;
       await new Promise((resolve) => setTimeout(resolve, 20));

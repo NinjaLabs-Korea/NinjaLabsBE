@@ -79,7 +79,7 @@
 
 ### 마이그레이션 파일의 트랜잭션 제어문 거부
 
-`npm run migrate`는 파일 하나를 `BEGIN … COMMIT` 하나로 감싼다. 그래서 파일 안에 최상위 `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK` 문이 있으면 러너가 **아무것도 실행하기 전에** 거부한다 — 모든 파일을 먼저 검사하고, 어느 파일이든 걸리면 실행 전체가 멈춘다 (DB에 붙지 않으므로 `_migrations`에도 아무것도 기록되지 않는다). 출력은 `FAIL  <file>:<line>` + 걸린 위치 전부, 종료 코드 1 (preDeploy면 배포 중단 + 운영 알림).
+`npm run migrate`는 파일 하나를 `BEGIN … COMMIT` 하나로 감싼다. 그래서 파일 안에 최상위 `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`(= ROLLBACK), `PREPARE TRANSACTION` 문이 있으면 러너가 **아무것도 실행하기 전에** 거부한다 — 모든 파일을 먼저 검사하고, 어느 파일이든 걸리면 실행 전체가 멈춘다 (DB에 붙지 않으므로 `_migrations`에도 아무것도 기록되지 않는다). 출력은 `FAIL  <file>:<line>` + 걸린 위치 전부, 종료 코드 1 (preDeploy면 배포 중단 + 운영 알림).
 `--` 주석, `/* */` 주석, 문자열 리터럴, 달러 인용 본문(`DO $$ BEGIN … END $$`, 함수 본문)은 검사하지 않는다. 고치는 법: 그 줄을 지운다 — 파일 전체가 이미 한 트랜잭션이다. 트랜잭션 밖에서 돌아야 하는 문장(`CREATE INDEX CONCURRENTLY` 등)은 이 러너로 적용할 수 없다. 검증: `src/common/database/migration-guard.spec.ts`, `src/test-db/migrate-runner.db-spec.ts`.
 
 ### 닉네임 규칙 배포 전 점검 — 정적 파일 확장자

@@ -15,6 +15,8 @@ describe('findTransactionControl', () => {
     ['commit', [{ line: 1, keyword: 'COMMIT' }]], // last statement without a semicolon
     ['END;', [{ line: 1, keyword: 'END' }]],
     ['ROLLBACK;', [{ line: 1, keyword: 'ROLLBACK' }]],
+    ['ABORT;', [{ line: 1, keyword: 'ABORT' }]], // synonym of ROLLBACK
+    ["PREPARE TRANSACTION 'x';", [{ line: 1, keyword: 'PREPARE TRANSACTION' }]],
     ['Rollback To Savepoint s;', [{ line: 1, keyword: 'ROLLBACK' }]],
     ['CREATE TABLE a (id int);\n\nCOMMIT;\nSELECT 1;', [{ line: 3, keyword: 'COMMIT' }]],
     ['BEGIN;\nCREATE TABLE a (id int);\nCOMMIT;', [{ line: 1, keyword: 'BEGIN' }, { line: 3, keyword: 'COMMIT' }]],
@@ -26,6 +28,7 @@ describe('findTransactionControl', () => {
   });
 
   it.each([
+    ["PREPARE stmt AS SELECT 1; SELECT 'abort'; ALTER TABLE abort ADD COLUMN x int;"], // PREPARE without TRANSACTION, ABORT as a name
     ['DO $$ BEGIN RAISE NOTICE \'x\'; END $$;'],
     ['DO $$\nBEGIN\n  IF true THEN\n    COMMIT;\n  END IF;\nEND\n$$;'],
     ['DO $body$ BEGIN PERFORM 1; END $body$;'],

@@ -24,22 +24,29 @@ export class InjectiveNftClient {
 
   constructor(private readonly config: ConfigService) {}
 
-  /** env 미설정이면 false — 워커가 잡을 미루는 판단에 사용 */
+  /** 앞뒤 공백(대시보드 붙여넣기의 줄바꿈 등)을 뗀 env 값 — 공백뿐이면 미설정 */
+  private env(key: string): string | undefined {
+    return this.config.get<string>(key)?.trim() || undefined;
+  }
+
+  /** env 미설정(공백뿐인 값 포함)이면 false — 워커가 잡을 미루는 판단에 사용 */
   isConfigured(): boolean {
-    return Boolean(
-      this.config.get<string>('MASTER_WALLET_MNEMONIC') &&
-        this.config.get<string>('NFT_CONTRACT_ADDRESS'),
-    );
+    return Boolean(this.env('MASTER_WALLET_MNEMONIC') && this.env('NFT_CONTRACT_ADDRESS'));
   }
 
   contractAddress(): string {
-    return this.config.get<string>('NFT_CONTRACT_ADDRESS') ?? '';
+    return this.env('NFT_CONTRACT_ADDRESS') ?? '';
   }
 
+  /**
+   * 미설정·빈 값은 testnet(기본값). `mainnet`/`testnet`은 앞뒤 공백·대소문자를 무시한다 — 'Mainnet'이나 ' mainnet'을 조용히 testnet으로 읽어
+   * mainnet 컨트랙트 주소로 testnet 노드를 부르던 것을 막는다. 그 밖의 값은 throw: 잡이 실패하고 `last_error`/운영 알림에 값이 보인다.
+   */
   private network(): Network {
-    return this.config.get<string>('INJECTIVE_NETWORK') === 'mainnet'
-      ? Network.Mainnet
-      : Network.Testnet;
+    const raw = this.config.get<string>('INJECTIVE_NETWORK')?.trim().toLowerCase();
+    if (!raw || raw === 'testnet') return Network.Testnet;
+    if (raw === 'mainnet') return Network.Mainnet;
+    throw new Error(`INJECTIVE_NETWORK must be "mainnet" or "testnet" (got ${JSON.stringify(raw.slice(0, 40))})`);
   }
 
   /** 네트워크 프리셋 엔드포인트. `INJECTIVE_GRPC_ENDPOINT`가 있으면 gRPC만 그 값으로 덮어쓴다 (전용 노드/프록시) — 브로드캐스터와 스마트 쿼리가 같은 노드를 본다 */
@@ -52,7 +59,7 @@ export class InjectiveNftClient {
   private getBroadcaster(): { broadcaster: MsgBroadcasterWithPk; sender: string } {
     if (!this.broadcaster) {
       const pk = PrivateKey.fromMnemonic(
-        this.config.get<string>('MASTER_WALLET_MNEMONIC') ?? '',
+        this.env('MASTER_WALLET_MNEMONIC') ?? '',
       );
       this.masterAddress = pk.toBech32();
       this.broadcaster = new MsgBroadcasterWithPk({

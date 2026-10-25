@@ -29,6 +29,23 @@ beforeEach(() => {
 });
 
 describe('InjectiveNftClient endpoints', () => {
+  it.each([['mainnet', 'mainnet'], [' Mainnet ', 'mainnet'], ['MAINNET', 'mainnet'], ['testnet', 'testnet'], [' TestNet', 'testnet'], ['', 'testnet'], [undefined, 'testnet']])(
+    'reads INJECTIVE_NETWORK=%j as %s (case and surrounding whitespace do not matter)',
+    async (value, network) => {
+      const client = new InjectiveNftClient(config({ INJECTIVE_NETWORK: value, NFT_CONTRACT_ADDRESS: 'inj1c', MASTER_WALLET_MNEMONIC: 'm' }));
+      await client.mint('t', 'inj1owner');
+      expect(broadcasterCtor).toHaveBeenLastCalledWith(expect.objectContaining({ network }));
+    },
+  );
+
+  it('refuses an unknown INJECTIVE_NETWORK instead of silently using testnet', async () => {
+    const client = new InjectiveNftClient(config({ INJECTIVE_NETWORK: 'main-net', NFT_CONTRACT_ADDRESS: 'inj1c', MASTER_WALLET_MNEMONIC: 'm' }));
+    await expect(client.tokenExists('t')).rejects.toThrow('INJECTIVE_NETWORK must be "mainnet" or "testnet" (got "main-net")');
+    await expect(client.mint('t', 'inj1owner')).rejects.toThrow('INJECTIVE_NETWORK must be');
+    expect(wasmCtor).not.toHaveBeenCalled();
+    expect(broadcasterCtor).not.toHaveBeenCalled();
+  });
+
   it('uses the INJECTIVE_NETWORK preset gRPC endpoint when INJECTIVE_GRPC_ENDPOINT is unset or blank', async () => {
     for (const value of [undefined, '', '   ']) {
       const client = new InjectiveNftClient(config({ INJECTIVE_NETWORK: 'testnet', INJECTIVE_GRPC_ENDPOINT: value, NFT_CONTRACT_ADDRESS: 'inj1c' }));
@@ -92,8 +109,14 @@ describe('InjectiveNftClient configuration and mint', () => {
     [{ MASTER_WALLET_MNEMONIC: 'm' }, false],
     [{ NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
     [{ MASTER_WALLET_MNEMONIC: '', NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
+    [{ MASTER_WALLET_MNEMONIC: 'm', NFT_CONTRACT_ADDRESS: ' \n' }, false],
+    [{ MASTER_WALLET_MNEMONIC: '  ', NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
   ])('isConfigured(%j) is %s — the worker defers jobs unless both the mnemonic and the contract are set', (values, expected) => {
     expect(new InjectiveNftClient(config(values)).isConfigured()).toBe(expected);
+  });
+
+  it('contractAddress() drops surrounding whitespace from a pasted value', () => {
+    expect(new InjectiveNftClient(config({ NFT_CONTRACT_ADDRESS: ' inj1c\n' })).contractAddress()).toBe('inj1c');
   });
 
   it('contractAddress() is empty (never a placeholder) when NFT_CONTRACT_ADDRESS is unset', () => {

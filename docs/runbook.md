@@ -79,7 +79,7 @@
 
 ### 마이그레이션 파일의 트랜잭션 제어문 거부
 
-`npm run migrate`는 파일 하나를 `BEGIN … COMMIT` 하나로 감싼다. 그래서 파일 안에 최상위 `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK` 문이 있으면 러너가 **아무것도 실행하기 전에** 거부한다 — 모든 파일을 먼저 검사하고, 어느 파일이든 걸리면 실행 전체가 멈춘다 (DB에 붙지 않으므로 `_migrations`에도 아무것도 기록되지 않는다). 출력은 `FAIL  <file>:<line>` + 걸린 위치 전부, 종료 코드 1 (preDeploy면 배포 중단 + 운영 알림).
+`npm run migrate`는 파일 하나를 `BEGIN … COMMIT` 하나로 감싼다. 그래서 파일 안에 최상위 `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`(= ROLLBACK), `PREPARE TRANSACTION` 문이 있으면 러너가 **아무것도 실행하기 전에** 거부한다 — 모든 파일을 먼저 검사하고, 어느 파일이든 걸리면 실행 전체가 멈춘다 (DB에 붙지 않으므로 `_migrations`에도 아무것도 기록되지 않는다). 출력은 `FAIL  <file>:<line>` + 걸린 위치 전부, 종료 코드 1 (preDeploy면 배포 중단 + 운영 알림).
 `--` 주석, `/* */` 주석, 문자열 리터럴, 달러 인용 본문(`DO $$ BEGIN … END $$`, 함수 본문)은 검사하지 않는다. 고치는 법: 그 줄을 지운다 — 파일 전체가 이미 한 트랜잭션이다. 트랜잭션 밖에서 돌아야 하는 문장(`CREATE INDEX CONCURRENTLY` 등)은 이 러너로 적용할 수 없다. 검증: `src/common/database/migration-guard.spec.ts`, `src/test-db/migrate-runner.db-spec.ts`.
 
 ### 닉네임 규칙 배포 전 점검 — 정적 파일 확장자
@@ -364,7 +364,7 @@ railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
 
 | 위치 | 키 | testnet (현재) | mainnet |
 |---|---|---|---|
-| BE `.railway/railway.ts` | `INJECTIVE_NETWORK` | `testnet` | `mainnet` (→ `@injectivelabs/networks` Mainnet 프리셋, `injective-nft.client.ts`) |
+| BE `.railway/railway.ts` | `INJECTIVE_NETWORK` | `testnet` | `mainnet` (대소문자·공백 무시; `mainnet`/`testnet` 밖의 값은 testnet으로 읽지 않고 민팅 잡이 `INJECTIVE_NETWORK must be …`로 실패 → `@injectivelabs/networks` Mainnet 프리셋, `injective-nft.client.ts`) |
 | BE `.railway/railway.ts` | `INJECTIVE_EVM_CHAIN_ID` | `1439` | `1776` |
 | BE `.railway/railway.ts` | `USDC_EVM_CONTRACT_ADDRESS` | `0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d` | 메인넷 USDC ERC-20 주소 (Injective 공식 문서에서 확인 — 추측 금지) |
 | BE `.railway/railway.ts` | `NFT_CONTRACT_ADDRESS` | `inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w` | 메인넷에 배포한 CW-721 주소 |

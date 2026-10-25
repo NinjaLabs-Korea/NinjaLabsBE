@@ -159,7 +159,7 @@ export class SubmissionsService {
               CASE WHEN s.status = 'APPROVED' THEN ${payoutStatusSql('s', 'b')} ELSE 'NONE' END AS payment_status, s.description,
               review.comment AS review_comment
          FROM bounty_submission s
-         JOIN bounty b ON b.id = s.bounty_id
+         JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL -- 삭제된 바운티는 공개 프로필·상세와 같이 없는 것으로 본다 (링크가 404가 된다)
          LEFT JOIN agent ag ON ag.id = s.agent_id
          LEFT JOIN LATERAL (SELECT comment FROM submission_review WHERE submission_id = s.id
                             ORDER BY created_at DESC LIMIT 1) review ON true

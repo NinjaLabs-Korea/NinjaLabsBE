@@ -124,6 +124,20 @@ export function corsOriginsValue(env: BootstrapEnv): string {
 }
 
 /**
+ * production에서 CORS 허용 목록이 비었으면 기동 거부 — `corsOriginsValue`는 값이 **있는지**만 본다. 스킴 없는 항목(`ninjalabsfe.vercel.app`),
+ * 오타, 공용 호스팅 와일드카드(OriginAllowlist가 거부)만 있으면 OriginAllowlist가 전부 버려 어떤 FE 오리진도 통과하지 못하고,
+ * 서버는 정상 기동한 채 운영 FE의 모든 API 호출이 브라우저에서 CORS로 막힌다. @param size OriginAllowlist.size
+ */
+export function requireUsableCorsOrigins(env: BootstrapEnv, size: number): void {
+  if (isProduction(env) && size === 0) {
+    throw new Error(
+      `FATAL: CORS_ORIGINS=${JSON.stringify(env.CORS_ORIGINS)} has no usable origin — entries must look like https://host[:port] ` +
+        '(scheme required; a wildcard on a shared hosting domain such as vercel.app is rejected). Every browser request from the FE would be blocked by CORS.',
+    );
+  }
+}
+
+/**
  * AUTH_ALLOWED_REDIRECT_ORIGINS(로그인 returnTo + Turnstile hostname 허용 목록)의 항목 — production에서는 corsOriginsValue와 같은 이유로
  * 루프백 오리진(localhost/127.x)을 뺀다: 로그인 코드를 사용자 자신의 기계에서 도는 아무 서버로 보낼 수 있게 되기 때문이다.
  * 대시보드에서 넣은 `http://localhost:3000`으로 크래시 루프가 나지 않게 기동은 거부하지 않는다 (`ignored`는 AuthModule이 error로 로그).

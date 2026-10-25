@@ -26,7 +26,7 @@ export class BountyAdminService {
               COALESCE(json_agg(json_build_object(
                 'symbol', rw.display_symbol, 'amount', rw.amount::text, 'tokenType', rw.token_type,
                 'tokenContractAddress', rw.token_contract_address, 'evmChainId', rw.evm_chain_id
-              )) FILTER (WHERE rw.id IS NOT NULL), '[]') AS rewards
+              ) ORDER BY rw.created_at, rw.id) FILTER (WHERE rw.id IS NOT NULL), '[]') AS rewards
          FROM bounty b
          LEFT JOIN bounty_reward rw ON rw.bounty_id = b.id
         WHERE b.deleted_at IS NULL

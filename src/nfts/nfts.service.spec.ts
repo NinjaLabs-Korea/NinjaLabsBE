@@ -48,6 +48,15 @@ describe('NftsService', () => {
       expect(txQuery.mock.calls[0][1]).toEqual([userId, walletId, 'PENDING_CONTRACT_DEPLOY']);
     });
 
+    it('trims a pasted NFT_CONTRACT_ADDRESS and treats a blank one as unset', async () => {
+      const padded = setup({ contract: ' inj1contract\n' });
+      await padded.service.enqueueParentMint(userId, walletId);
+      expect(padded.txQuery.mock.calls[0][1]).toEqual([userId, walletId, 'inj1contract']);
+      const blank = setup({ contract: '  ' });
+      await blank.service.enqueueParentMint(userId, walletId);
+      expect(blank.txQuery.mock.calls[0][1]).toEqual([userId, walletId, 'PENDING_CONTRACT_DEPLOY']);
+    });
+
     it('returns null and queues no job when the user already has a parent NFT (1 parent per user)', async () => {
       const { service, txQuery } = setup({ nftInserted: false });
       await expect(service.enqueueParentMint(userId, walletId)).resolves.toBeNull();

@@ -113,7 +113,7 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
    `_migrations`에 있는지 확인하고, 빠진 게 있으면 listen 전에 `FATAL: MIGRATIONS_PENDING: run npm run migrate (missing: 0014_…)`를 찍고 exit 1.
    preDeploy를 우회해 배포했거나(수동 `railway up`, 다른 호스팅) `npm run migrate`가 실패한 채 컨테이너만 올라오는 상황을 잡는다.
 
-따라서 수동 배포라면 **`npm run migrate` → 새 코드 기동** 순서를 지킨다. `scripts/migrate.js`는 실행 전체를 `pg_advisory_lock`(고정 키 `MIGRATION_LOCK_KEY`)으로 직렬화한다 — 두 배포의 preDeploy가 겹치면 뒤의 것은 `wait  another migration run holds the lock`을 찍고 기다렸다가 이미 적용된 파일을 skip한다 (`src/test-db/migrate-lock.db-spec.ts`). 파일 하나를 트랜잭션 하나로 적용하므로 파일 안의 최상위 `BEGIN`/`START TRANSACTION`/`COMMIT`/`END`/`ROLLBACK`은 **실행 전에 거부**한다 (주석·문자열·`$$` 본문은 제외, 모든 파일을 먼저 검사해 하나라도 걸리면 아무것도 실행/기록하지 않고 `FAIL  <file>:<line>`으로 exit 1 — `docs/runbook.md` §2). 적용 중에는
+따라서 수동 배포라면 **`npm run migrate` → 새 코드 기동** 순서를 지킨다. `scripts/migrate.js`는 실행 전체를 `pg_advisory_lock`(고정 키 `MIGRATION_LOCK_KEY`)으로 직렬화한다 — 두 배포의 preDeploy가 겹치면 뒤의 것은 `wait  another migration run holds the lock`을 찍고 기다렸다가 이미 적용된 파일을 skip한다 (`src/test-db/migrate-lock.db-spec.ts`). 파일 하나를 트랜잭션 하나로 적용하므로 파일 안의 최상위 `BEGIN`/`START TRANSACTION`/`COMMIT`/`END`/`ROLLBACK`/`ABORT`/`PREPARE TRANSACTION`은 **실행 전에 거부**한다 (주석·문자열·`$$` 본문은 제외, 모든 파일을 먼저 검사해 하나라도 걸리면 아무것도 실행/기록하지 않고 `FAIL  <file>:<line>`으로 exit 1 — `docs/runbook.md` §2). 적용 중에는
 `RAISE NOTICE`/실패 시 `HINT`를 그대로 출력한다. `0014`는 `deposit_tx_hash` 중복이 남아 있으면 **에러로 멈춘다**(중복 값·건수·조사 SQL 포함) —
 운영자가 정리한 뒤 다시 `npm run migrate`하면 이어서 적용된다 (`src/test-db/migrations.db-spec.ts`). `payout_tx_hash`는 정규화만 한다 (한 멀티시그 tx가 여러 수상자에게 보낼 수 있어 중복이 정당하다).
 
@@ -140,7 +140,7 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
 | `REWARD_MULTISIG_ADDRESS` | 기동은 하지만(거부하지 않음) 미설정/빈 값이면 새 보상의 `custody_address`가 자리표시값 `PENDING_MULTISIG_SETUP` — 스폰서가 입금할 주소가 없다. production 기동 시 미설정·빈 값·모양 불일치(`inj1`+38/58자 bech32 체크섬, 또는 EVM `0x`+40 hex — `mainnet-preflight.sql`과 같은 집합)면 **`error` 로그** (값은 그대로 쓴다). `railway.ts`의 `preserve()` 자리 — 값은 대시보드/CLI로 넣는다 (`docs/runbook.md` §1, §8) |
 | `PAYOUT_ALLOW_SELF_APPROVAL` | 선택, 기본 `false` — payout 승인 2인 규칙(요청자 ≠ 승인자, 403 `PAYOUT_SELF_APPROVAL`). 운영자 1인일 때만 `true` → 자기 승인 허용 + 기동/승인 시 `warn` + 감사 `PAYOUT_SELF_APPROVED`. railway.ts에는 값 없이 `preserve()` 자리만 있다(기본값 유지 — 대시보드에서 켠 값이 apply로 지워지지 않게) |
 | `OPS_ALERT_WEBHOOK_URL` | 선택 (railway.ts `preserve()`). Discord/Slack incoming webhook(https). 없으면 알림은 `OpsAlert` warn 로그로만, https가 아니면 기동 시 `error` 로그 후 무시 (기동은 함). 대상·규칙은 `docs/security.md` "운영 알림" |
-| `CORS_ORIGINS` | 미설정/빈 값이면 **기동 거부** (production에는 localhost 폴백이 없다). `localhost`/`127.x`/`::1` 항목은 **빼고 `error` 로그**(기동은 함 — 옛 main의 railway.ts가 `http://localhost:3000`을 넣었기 때문), 그것만 있으면 기동 거부. railway.ts에 공개값으로 고정 |
+| `CORS_ORIGINS` | 미설정/빈 값이면 **기동 거부** (production에는 localhost 폴백이 없다). `localhost`/`127.x`/`::1` 항목은 **빼고 `error` 로그**(기동은 함 — 옛 main의 railway.ts가 `http://localhost:3000`을 넣었기 때문), 그것만 있으면 기동 거부. 쓸 수 있는 오리진이 하나도 안 남아도(스킴 없는 `ninjalabsfe.vercel.app`, 오타, 공용 호스팅 와일드카드뿐) **기동 거부** — 항목은 `https://host[:port]` 모양이어야 한다. railway.ts에 공개값으로 고정 |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT` | 미설정/빈 값이면 **기동 거부**. 두 URL은 http(s) URL이 아니거나 localhost/`127.x`이면 **기동 거부** (예전엔 `AUTH_SUCCESS_REDIRECT`가 `http://localhost:3000/`으로 폴백). railway.ts에 공개값으로 고정 |
 | `AUTH_ALLOWED_REDIRECT_ORIGINS` | 선택. 값이 틀리면 그 오리진으로의 `returnTo`가 무시될 뿐 |
 

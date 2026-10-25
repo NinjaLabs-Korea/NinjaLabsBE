@@ -146,6 +146,10 @@ export class WalletsService {
     } catch (err: unknown) {
       // 부분 유니크 인덱스 충돌: 주소가 이미 다른 계정에 연결됐거나 내 대표 지갑이 이미 있음
       if (isUniqueViolation(err)) {
+        // 이미 내 대표 지갑이 바로 이 주소면 충돌이 아니라 재시도다 — 첫 verify가 커밋됐는데 응답이 유실된 경우(서명은 위에서 방금 검증됐다).
+        // 409로 답하면 온보딩이 이미 끝난 일을 실패로 보여 준다. 이 트랜잭션은 롤백됐지만 지갑·단계·민팅 잡은 첫 호출이 이미 남겼다
+        const mine = await this.myWallet(userId);
+        if (mine?.address === injectiveAddress) return mine;
         throw new ConflictException('WALLET_ALREADY_LINKED');
       }
       throw err;

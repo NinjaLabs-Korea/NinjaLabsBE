@@ -215,7 +215,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | POST | `/wallets/verify` | ✅ | Keplr/Leap: `{address, signature, publicKey}` / EVM: `{address, signature}` → 검증 성공 시 지갑 저장 + NFT 민팅 잡 등록 |
 | GET | `/wallets/me` | ✅ | 내 대표 지갑 (없으면 null — 미연결 상태) |
 
-- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_ALREADY_LINKED`, `USER_NOT_FOUND`(404 — challenge 뒤에 탈퇴한 계정, 지갑은 저장되지 않는다)
+- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_ALREADY_LINKED`(다른 계정의 주소이거나 내 대표 지갑이 다른 주소일 때 — 내 지갑이 이미 **같은 주소**면 재시도로 보고 200과 그 지갑을 돌려준다), `USER_NOT_FOUND`(404 — challenge 뒤에 탈퇴한 계정, 지갑은 저장되지 않는다)
 - Keplr/Leap: challenge의 `message`를 `signArbitrary(chainId, address, message)`로 서명.
   응답의 `signature`(base64)와 `pub_key.value`(base64)를 그대로 `signature`, `publicKey`로 전송.
   서버는 ADR-36 sign doc을 재구성해 keccak256/secp256k1로 검증하고 공개키→주소 일치도 확인한다.

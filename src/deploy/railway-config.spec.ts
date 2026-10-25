@@ -56,6 +56,7 @@ describe('.railway/railway.ts covers every env key the code reads', () => {
     PORT: 'injected by Railway',
     RAILWAY_ENVIRONMENT_NAME: 'injected by Railway',
     PGSSLMODE: 'local Postgres only (disable); production uses TLS',
+    AUTH_ALLOWED_REDIRECT_ORIGINS: 'optional extra returnTo origins; production allows only the CORS_ORIGINS origin since the old FE origin was dropped (8b7b744)',
   };
 
   function sourceFiles(dir: string): string[] {

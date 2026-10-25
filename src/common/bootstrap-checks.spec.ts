@@ -184,6 +184,16 @@ describe('bootstrap environment checks', () => {
       expect(error.mock.calls[0][0]).toContain('http://localhost:3000');
     });
 
+    it('also drops loopback spelled as an IPv4-mapped or unspecified IPv6 host', () => {
+      const entries = ['http://[::ffff:127.0.0.1]:3000', 'http://[::ffff:7f00:1]', 'http://[::ffff:7fff:ffff]', 'http://[::]:3000'];
+      expect(authRedirectOrigins({ NODE_ENV: 'production', AUTH_ALLOWED_REDIRECT_ORIGINS: [...entries, 'https://fe.example.com'].join(',') })).toEqual({
+        kept: ['https://fe.example.com'],
+        ignored: entries,
+      });
+      // 공인 IPv4를 감싼 매핑 주소는 루프백이 아니다
+      expect(authRedirectOrigins({ NODE_ENV: 'production', AUTH_ALLOWED_REDIRECT_ORIGINS: 'http://[::ffff:8.8.8.8]' }).ignored).toEqual([]);
+    });
+
     it('does not log when nothing is ignored, and leaves other environments untouched', () => {
       warnIgnoredAuthRedirectOrigins({ NODE_ENV: 'production', AUTH_ALLOWED_REDIRECT_ORIGINS: 'https://fe.example.com' });
       warnIgnoredAuthRedirectOrigins({ NODE_ENV: 'production' });

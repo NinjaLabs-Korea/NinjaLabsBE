@@ -180,6 +180,25 @@ describe('AuthService.exchangeGoogleCode — token endpoint and claim edge cases
     expect(verify).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['invalid_grant (expired or reused code)', 400, { error: 'invalid_grant' }, 401, 'GOOGLE_CODE_EXCHANGE_FAILED'],
+    ['a non-JSON 400', 400, undefined, 401, 'GOOGLE_CODE_EXCHANGE_FAILED'],
+    ['invalid_client (wrong or rotated client secret)', 401, { error: 'invalid_client' }, 503, 'GOOGLE_UNAVAILABLE'],
+    ['redirect_uri_mismatch', 400, { error: 'redirect_uri_mismatch' }, 503, 'GOOGLE_UNAVAILABLE'],
+    ['a Google 5xx', 502, undefined, 503, 'GOOGLE_UNAVAILABLE'],
+    ['a Google 429', 429, { error: 'rate_limit_exceeded' }, 503, 'GOOGLE_UNAVAILABLE'],
+  ])('token endpoint failure: %s', async (_label, status, errorBody, expectedStatus, expectedCode) => {
+    const verify = jest.fn();
+    const { service } = setup(verify);
+    global.fetch = jest.fn(async () => ({
+      ok: false,
+      status,
+      json: async () => { if (!errorBody) throw new SyntaxError('Unexpected token <'); return errorBody; },
+    })) as unknown as typeof fetch;
+    await expect(service.exchangeGoogleCode('c')).rejects.toMatchObject({ status: expectedStatus, message: expectedCode });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it('a 200 without an id_token is 401 GOOGLE_CODE_EXCHANGE_FAILED and the verifier is never called', async () => {
     const verify = jest.fn();
     const { service } = setup(verify, { access_token: 'ya29' });

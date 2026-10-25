@@ -208,11 +208,13 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 - 증상: 사용자는 Google 동의 뒤 FE `/auth/callback#error=AUTH_FAILED`로 돌아온다 — 콜백(`GET /auth/google/callback`)은 모든 실패를 같은 리다이렉트로 감추므로(api-contract.md) **HTTP 503/401은 브라우저나 업타임 모니터에 보이지 않는다**. 원인은 Railway 로그로만 구분한다:
   - `Google id_token verification unavailable: …` (warn) 뒤 `[onboarding] {"event":"oauth.callback.failed",…,"errorCode":"GOOGLE_UNAVAILABLE"}` — Google JWKS를 못 받아 id_token 서명을 검증할 수 없음(내부적으로 503).
   - `Google token endpoint unavailable: <TimeoutError|TypeError|…>` (warn) 뒤 같은 `"errorCode":"GOOGLE_UNAVAILABLE"` — 토큰 엔드포인트에 연결 자체가 안 되거나 10초 안에 응답이 없음(내부적으로 503). 위 줄과는 앞선 warn으로 구분한다.
-  - `"errorCode":"GOOGLE_CODE_EXCHANGE_FAILED"` — 토큰 엔드포인트가 비-2xx 응답(내부적으로 401).
+  - `Google token endpoint unavailable: HTTP 5xx|429` (warn) 뒤 `"errorCode":"GOOGLE_UNAVAILABLE"` — 토큰 엔드포인트가 Google 쪽 오류로 응답(내부적으로 503).
+  - `Google token endpoint rejected the server request (HTTP …): invalid_client|unauthorized_client|redirect_uri_mismatch` (**error**) 뒤 `"errorCode":"GOOGLE_UNAVAILABLE"` — 우리 설정 문제(`GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_CALLBACK_URL`, §4). 모든 로그인이 실패한다.
+  - `"errorCode":"GOOGLE_CODE_EXCHANGE_FAILED"` — 토큰 엔드포인트가 그 밖의 비-2xx(주로 `invalid_grant`: 만료·재사용된 code, 사용자 쪽)로 응답(내부적으로 401).
   - `"errorCode":"INVALID_OAUTH_STATE"` — Google 문제가 아니다(state 만료·`JWT_SECRET` 교체 직후, §7.5).
 - 영향: **새 로그인만** 막힌다. 이미 로그인한 사용자는 refresh 토큰(우리 DB)으로 계속 쓴다. 에이전트 API(API 키)는 무관.
 - 조치: Google Cloud status 확인 → 대기. 우리 쪽에서 우회하지 않는다(서명 검증을 끄지 않는다). 공지 채널에 "로그인 일시 장애, 기존 세션은 정상" 안내.
-- `GOOGLE_CODE_EXCHANGE_FAILED`가 Google 정상인데 계속 나면: `GOOGLE_CLIENT_SECRET` 회전/만료, 리디렉션 URI 불일치(§4)를 의심한다.
+- 위 error 로그(`rejected the server request`)가 보이면: `GOOGLE_CLIENT_SECRET` 회전/만료, 리디렉션 URI 불일치(§4)를 고친다.
 
 ### 7.3 NFT 민팅 정체
 1. 상태 보기:

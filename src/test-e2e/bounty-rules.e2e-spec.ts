@@ -41,8 +41,8 @@ describeDb('bounty rules over HTTP (e2e)', () => {
   it('revision flow: requested revision may be delivered after the deadline (once), everything else is DEADLINE_PASSED / BOUNTY_NOT_OPEN; reviews pin revisions', async () => {
     const id = await createBounty(bountyForm({ maxWinners: 2 }));
     expect((await transition(id, 'OPEN')).body).toEqual({ id, status: 'OPEN' });
-    const builder = await e2e.login();
-    const late = await e2e.login();
+    const builder = await e2e.loginOnboarded();
+    const late = await e2e.loginOnboarded();
 
     const first = await submit(id, builder, 1);
     expect(first.status).toBe(201);
@@ -87,13 +87,13 @@ describeDb('bounty rules over HTTP (e2e)', () => {
     const rewardId: string = (await e2e.get(`/admin/bounties/${id}/operations`, asAdmin)).body.rewards[0].id;
     expect((await e2e.post(`/admin/rewards/${rewardId}/confirm-deposit`, { txHash: txHash(), depositedAmount: '1000000000000000000' }, asAdmin)).status).toBe(201);
     expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
-    const winner = await e2e.login();
+    const winner = await e2e.loginOnboarded();
     await e2e.onboard(winner);
     // left unreviewed — an approved winner still owed would block the cancel (UNPAID_WINNERS, bounty-lifecycle e2e)
     const sub = await submit(id, winner, 'w');
 
     expect((await transition(id, 'CANCELLED')).body).toEqual({ id, status: 'CANCELLED' });
-    expect((await submit(id, await e2e.login(), 'x')).body).toEqual(badRequest('BOUNTY_NOT_OPEN'));
+    expect((await submit(id, await e2e.loginOnboarded(), 'x')).body).toEqual(badRequest('BOUNTY_NOT_OPEN'));
     expect((await review(sub.body.id, { decision: 'APPROVE' })).body).toEqual(badRequest('BOUNTY_REVIEW_CLOSED'));
     const payout = await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000000' }, asAdmin);
     expect(payout.body).toEqual(badRequest('BOUNTY_REVIEW_CLOSED'));
@@ -108,7 +108,7 @@ describeDb('bounty rules over HTTP (e2e)', () => {
   it('application review over HTTP: approval closes with intake, rejection stays possible, finished applications are 404', async () => {
     const id = await createBounty(bountyForm({ intakeEnabled: true }));
     expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
-    const [a, b] = [await e2e.login(), await e2e.login()];
+    const [a, b] = [await e2e.loginOnboarded(), await e2e.loginOnboarded()];
     const appA = await e2e.post(`/bounties/${id}/applications`, applyBody('A'), { token: a.accessToken });
     const appB = await e2e.post(`/bounties/${id}/applications`, applyBody('B'), { token: b.accessToken });
     expect((await e2e.post(`/applications/${appA.body.id}/withdraw`, undefined, { token: b.accessToken })).body)
@@ -151,5 +151,21 @@ describeDb('bounty rules over HTTP (e2e)', () => {
       const res = await e2e.patch(`/admin/bounties/${id}`, { [field]: '0000-01-01T00:00:00Z' }, asAdmin);
       expect(res.status).toBe(400);
     }
+  });
+
+  it('submissions need a finished onboarding (409 PROFILE_REQUIRED) and a public URL (400 for localhost / private addresses)', async () => {
+    const id = await createBounty(bountyForm());
+    expect((await transition(id, 'OPEN')).body).toEqual({ id, status: 'OPEN' });
+    const newbie = await e2e.login(); // Google login only: onboarding_step 2, temporary nickname
+    expect((await submit(id, newbie, 'x')).body).toEqual({ statusCode: 409, error: 'Conflict', message: 'PROFILE_REQUIRED' });
+    expect((await e2e.db.query(`SELECT 1 FROM bounty_submission WHERE bounty_id = $1`, [id])).rowCount).toBe(0);
+
+    const builder = await e2e.loginOnboarded();
+    for (const submissionUrl of ['http://localhost:3000/x', 'http://127.0.0.1/x', 'http://192.168.1.10/x']) {
+      const res = await e2e.post(`/bounties/${id}/submissions`, submitBody({ submissionUrl, description: 'd' }), { token: builder.accessToken });
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(res.body.message)).toContain('submissionUrl must be a public http(s) URL');
+    }
+    expect((await submit(id, builder, 'ok')).status).toBe(201);
   });
 });

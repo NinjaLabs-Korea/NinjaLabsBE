@@ -56,6 +56,7 @@ export class ApplicationsService {
       }
       if ([bounty.rows[0].submission_deadline, bounty.rows[0].application_deadline].some((date) => date && new Date(date).getTime() <= Date.now())) throw new BadRequestException('APPLICATION_DEADLINE_PASSED');
       actor.assertAllowedBy(bounty.rows[0].submission_mode);
+      await actor.assertOnboarded(tx);
 
       // 바운티 행 잠금(FOR UPDATE) 아래라 같은 주체의 동시 지원은 여기서 직렬화된다
       const existing = await tx.query<{ id: string; status: string }>(

@@ -31,7 +31,7 @@ describeDb('wallet challenge/verify on a real database', () => {
   }
 
   it('challenge → verify (EIP-191) stores the inj1 wallet, advances onboarding, enqueues the parent mint job and burns the challenge', async () => {
-    const userId = await createUser(db);
+    const userId = await createUser(db, { onboarded: false });
     const signer = Wallet.createRandom();
     const challenge = await wallets.createChallenge(userId, signer.address.toLowerCase());
     expect(challenge.message).toContain(`주소: ${signer.address}`);
@@ -116,7 +116,7 @@ describeDb('wallet challenge/verify on a real database', () => {
     const c1 = await wallets.createChallenge(first, signer.address);
     await wallets.verifySignature(first, signer.address, await signer.signMessage(c1.message));
 
-    const second = await createUser(db);
+    const second = await createUser(db, { onboarded: false });
     const c2 = await wallets.createChallenge(second, signer.address);
     await expect(wallets.verifySignature(second, signer.address, await signer.signMessage(c2.message)))
       .rejects.toMatchObject({ message: 'WALLET_ALREADY_LINKED' });

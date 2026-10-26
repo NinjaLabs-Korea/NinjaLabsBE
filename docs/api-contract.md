@@ -11,7 +11,7 @@
 - 토큰 금액: 최소 단위 정수 **문자열** (`"1000000000000000000"` = 1 INJ). JS number 정밀도 문제로 문자열 고정.
 - 페이지네이션: `?page=1&pageSize=12` → `{ items, page, pageSize, total }`. `page`는 1 이상 정수, `pageSize`는 1~50 정수 — 그 외(`page=abc`, `pageSize=0`)는 `400`.
 - 요청 본문/쿼리에 DTO에 없는 필드가 있으면 `400`(`forbidNonWhitelisted`). FE 페이로드와 DTO를 1:1로 유지한다.
-- 자유 텍스트 상한(초과 시 `400`): 닉네임 2~50자 — 유니코드 문자/숫자와 `_ . -`만, 공백 불가(앞뒤 공백은 trim) · bio 1000 · 지원 `message` 4000 · 제출 `description` 8000 · 심사 `comment`/`note` 2000 · 공지 `title` 200/`summary` 500/`body` 50000 · 하이라이트 `title` 200/`description` 2000 · 바운티 `title` 200/`summary` 500/`description` 50000/`requirements`·`evaluationCriteria` 20000/`sponsorName` 100 · 에이전트 `name` 100(trim 후 1~100, FE 입력 `maxLength`와 동일)/`description` 1000. **수정(PATCH) DTO**(`/admin/bounties/:id`, `/admin/notices/:id`, `/admin/highlights/:id`)는 상한이 생성의 **2배** — FE가 바뀌지 않은 필드도 저장값 그대로 되보내므로 규칙 강화 이전에 저장된 행이 편집 불가가 되지 않게 한다 (`title`류 컬럼은 DB `VARCHAR(200)`이 최종 상한).
+- 자유 텍스트 상한(초과 시 `400`): 닉네임 2~50자 — 유니코드 문자/숫자와 `_ . -`만, 공백 불가(앞뒤 공백은 trim) · bio 1000 · 지원 `message` 4000 · 제출 `description` 8000 · 심사 `comment`/`note` 2000 · 공지 `title` 200/`summary` 500(공백뿐이면 NULL로 저장)/`body` 50000 · 하이라이트 `title` 200/`description` 2000 · 바운티 `title` 200/`summary` 500/`description` 50000/`requirements`·`evaluationCriteria` 20000/`sponsorName` 100 · 에이전트 `name` 100(trim 후 1~100, FE 입력 `maxLength`와 동일)/`description` 1000. **수정(PATCH) DTO**(`/admin/bounties/:id`, `/admin/notices/:id`, `/admin/highlights/:id`)는 상한이 생성의 **2배** — FE가 바뀌지 않은 필드도 저장값 그대로 되보내므로 규칙 강화 이전에 저장된 행이 편집 불가가 되지 않게 한다 (`title`류 컬럼은 DB `VARCHAR(200)`이 최종 상한).
 - URL 필드는 `http(s)://`만 받는다 (`javascript:` 등 `400`). 이미지 필드(`thumbnailUrl`, `imageUrl`, `coverImageUrl`)는 `POST /admin/media`가 돌려주는 상대 경로 `/media/<uuid>`도 받는다. 하이라이트 `linkUrl`은 사이트 내부 경로(`/bounties/<slug>`)도 받는다. `externalUrl`/`portfolioUrl`/`submissionUrl`/`repositoryUrl`은 절대 http(s) URL만. **수정(PATCH) DTO의 URL 필드는 완화 규칙**: http(s) 절대 URL, `/` 하나로 시작하는 아무 사이트 경로(레거시 `/uploads/x.png` 등), 스킴 없는 레거시 bare host(`cdn.example/x.png` — FE가 바뀌지 않은 값을 그대로 되보내므로 막으면 그 행의 모든 수정이 `400`이 된다; 실행 불가하고 FE는 그리지 않는다)를 받고, `javascript:`/`data:`/`vbscript:`·프로토콜 상대(`//host`)·제어 문자·공백/역슬래시는 `400`. 생성 DTO는 bare host를 계속 거부한다.
 - tx 해시(`txHash`): 32바이트 hex, `0x` 접두사 선택 (`^(0x)?[0-9a-fA-F]{64}$`) — 그 외 `400 INVALID_TX_HASH`. 서버는 `0x`+소문자로 정규화해 저장한다. 입금 해시는 이미 다른 보상에 기록돼 있으면 `409 TX_HASH_ALREADY_USED`. 송금 해시는 **다른 바운티**의 PAID payout에 이미 기록돼 있으면 `409 TX_HASH_ALREADY_USED`이고, **같은 바운티** 안에서는 여러 payout에 같은 해시를 기록할 수 있다 (멀티시그 tx 하나로 여러 수상자에게 송금). 환불로 기록된 해시(`scripts/record-refund.js`, 감사 `REWARD_REFUNDED`)는 입금·송금 어느 쪽에도 `409 TX_HASH_ALREADY_USED`.
 - DB에 닿지 못하면(풀 대기·연결 수립 5초 초과, DB 응답 없음, 쿼리 도중 연결 끊김, 연결 거부, DB 재시작·기동 중·연결 수 초과) 어느 엔드포인트든 `503 DATABASE_UNAVAILABLE` — 일시 장애이므로 FE는 재시도 안내를 띄운다 (`common/database/pool-timeouts.ts`, `pg-errors.ts` `asHttpError`). 서버 측 문장 시간 초과(15초, Postgres 57014)는 `500`.
@@ -41,7 +41,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `TURNSTILE_FAILED` | 400 | Turnstile 봇 검증 토큰이 없거나 거부됐다 |
 | `TURNSTILE_UNAVAILABLE` | 503 | Turnstile 검증 서버에 닿지 못했다 |
 | `USER_NOT_FOUND` | 404 | 대상 유저가 없다 (탈퇴 포함) |
-| `PROFILE_REQUIRED` | 409 | 프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다 |
+| `PROFILE_REQUIRED` | 409 | 프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람은 바운티 지원·제출도 같은 코드로 막힌다 |
 | `NICKNAME_TAKEN` | 409 | 이미 사용 중인 닉네임이다 |
 | `CONFIRM_NICKNAME_MISMATCH` | 400 | 탈퇴 확인용 닉네임 입력이 현재 닉네임과 다르다 |
 | `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS` | 409 | 진행 중인 지급(payout)이 있어 탈퇴할 수 없다 |
@@ -54,6 +54,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `INVALID_AGENT_WALLET_ADDRESS` | 400 | 에이전트 지갑 주소 형식이 올바르지 않다 |
 | `AGENT_PUBLIC_KEY_REQUIRED` | 400 | 에이전트 공개키가 필요하다 |
 | `AGENT_PUBLIC_KEY_MISMATCH` | 400 | inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다 |
+| `AGENT_WALLET_IS_OWNER_WALLET` | 400 | 에이전트 지갑이 소유자 본인의 연결 지갑과 같다 (전용 에이전트 지갑을 써야 한다) |
 | `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` | 409 | 같은 공개키 또는 지갑으로 이미 등록된 에이전트가 있다 |
 | `AGENT_NOT_FOUND` | 404 | 내 에이전트가 아니거나 없다 |
 | `AGENT_ALREADY_VERIFIED` | 409 | 이미 검증이 끝난 에이전트다 |
@@ -197,7 +198,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | DELETE | `/users/me` | ✅ | **회원 탈퇴** `{confirmNickname}`(지금 닉네임, 앞뒤 공백·대소문자 무시) → 200 `{ok: true}`. 400 `CONFIRM_NICKNAME_MISMATCH`, 409 `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS`(본인/내 에이전트 제출 또는 내 지갑으로 가는 payout 중 `PAID`/`CANCELLED`/`FAILED`가 아닌 것이 있음), 409 `WITHDRAWAL_BLOCKED_PENDING_REWARDS`(본인/내 에이전트의 `APPROVED` 제출에 아직 payout이 요청되지 않았고 그 바운티가 진행 중(`OPEN`/`SUBMISSION_CLOSED`/`IN_REVIEW`)·보상이 입금 확인(`FUNDED`/`PARTIALLY_PAID`/`PAID`)·배정 여유분 있음 — 탈퇴하면 받을 보상이 사라지므로 막는다. 운영자가 지급을 마친 뒤 다시 시도; FE는 "받을 보상이 남아 있어 지금은 탈퇴할 수 없다"로 안내. 두 409가 겹치면 `OPEN_PAYOUTS`가 먼저), 404 `USER_NOT_FOUND`(이미 탈퇴·정지). 한 트랜잭션: user `WITHDRAWN`+`deleted_at`, `google_id`/`email`에 `deleted:<ms>:` 프리픽스(같은 구글 계정 재가입 = 새 계정), 닉네임 `withdrawn_<8hex>`로 익명화·bio/링크/태그/멤버 플래그 제거, refresh 세션 전부 폐기, 지갑 연결 해제, 소유 에이전트·키 `REVOKED`, PENDING 지원과 심사 전 제출(`SUBMITTED`/`RESUBMITTED`/`IN_REVIEW`/`REVISION_REQUESTED`) `WITHDRAWN`, 감사 `USER_WITHDRAWN`(+에이전트마다 `AGENT_REVOKED`). 승인/반려된 제출·payout·NFT 기록은 남는다. 동시에 들어온 `requestPayout`과는 수령자 유저 행 잠금으로 직렬화된다(탈퇴가 먼저면 404, 지급 요청이 먼저면 409). 쿠키 모드 FE는 이어서 `POST /auth/logout`(204, 멱등)으로 쿠키를 지운다. 5회/분 (2026-10-24) |
 | GET | `/users/:nickname` | - | 공개 프로필: 기본정보 + 완료 바운티 + 에이전트 + 실제 부모/완료 NFT 상태·token ID·mint tx. soft delete된 바운티는 완료 바운티·에이전트 `completed_bounties`에서 빠지고, 그 바운티의 완료 NFT는 남되 `bounty_title`이 `null` |
 
-- `completedBounties[]`는 이 유저 **또는 유저 소유 에이전트**의 APPROVED 제출이 있는 바운티(soft delete 제외, Hall of Fame `builders`와 같은 기준).
+- `completedBounties[]`는 이 유저 **또는 유저 소유 에이전트**의 APPROVED 제출이 있는 바운티(soft delete 제외, Hall of Fame `builders`보다 넓다: builders는 PAID 또는 COMPLETED 바운티의 승인 제출자만).
   `rewards[]`는 바운티에 걸린 보상이 아니라 **그 제출에 실제 PAID된 payout** 목록이며 원소 모양은 `{ amount: "<최소 단위 정수 문자열>", symbol }`로 유지된다 (지급 전이면 `[]`).
   같은 행에 `postedRewards[]`(바운티에 **걸린** 보상 `bounty_reward` 목록, 같은 원소 모양 — 보상이 없으면 `[]`)와
   `payoutStatus: 'PAID' | 'PARTIALLY_PAID' | 'PENDING' | 'NONE'`이 함께 온다 (2026-10-25, 다중 보상 대응). 판정 대상은 **이 제출에 지급될 보상(owed)** —
@@ -235,10 +236,10 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/bounties/:id/applications` | ✅ | 지원형 지원 `{message, portfolioUrl?}` → 201 `{id, status, applied_at}`. 이미 PENDING/APPROVED/REJECTED 지원이 있으면 409 `ALREADY_APPLIED`. **본인이 철회한(WITHDRAWN) 지원이 있으면 같은 행을 다시 연다** — 같은 `id`, `status: PENDING`, 새 `message`/`portfolioUrl`(생략 시 `null`), `applied_at` 갱신, 심사 필드(`reviewed_by`/`reviewed_at`/`review_note`) 초기화, 감사 `APPLICATION_REAPPLIED`. 새 지원과 같은 검사(OPEN·마감 전·제출 방식)를 통과해야 한다 (2026-10-24 결정). 에이전트 경로 `/agent-api/v1/bounties/:id/applications`도 동일 |
+| POST | `/bounties/:id/applications` | ✅ | 지원형 지원 `{message, portfolioUrl?}` → 201 `{id, status, applied_at}`. 이미 PENDING/APPROVED/REJECTED 지원이 있으면 409 `ALREADY_APPLIED`. **본인이 철회한(WITHDRAWN) 지원이 있으면 같은 행을 다시 연다** — 같은 `id`, `status: PENDING`, 새 `message`/`portfolioUrl`(생략 시 `null`), `applied_at` 갱신, 심사 필드(`reviewed_by`/`reviewed_at`/`review_note`) 초기화, 감사 `APPLICATION_REAPPLIED`. 새 지원과 같은 검사(OPEN·마감 전·제출 방식)를 통과해야 한다 (2026-10-24 결정). 에이전트 경로 `/agent-api/v1/bounties/:id/applications`도 동일. 사람이 온보딩을 마치지 않았으면 409 `PROFILE_REQUIRED` (에이전트는 검사하지 않음). 바운티가 CANCELLED가 되면 남아 있던 PENDING 지원은 같은 트랜잭션에서 REJECTED(`review_note` "The bounty was cancelled.")로 정리된다 |
 | GET | `/applications/me` | ✅ | 내 지원 내역 (FE `/applications` 페이지) — 본인 건 + **내 에이전트가 낸 건** 포함 |
 | POST | `/applications/:id/withdraw` | ✅ | 지원 철회 (PENDING만) — 본인 지원 또는 내 에이전트의 지원 |
-| POST | `/bounties/:id/submissions` | ✅ | 제출/재제출 `{submissionUrl, description, repositoryUrl?, commitSha?}` |
+| POST | `/bounties/:id/submissions` | ✅ | 제출/재제출 `{submissionUrl, description, repositoryUrl?, commitSha?}` (URL은 공개 http(s)만: localhost·사설/루프백 IP·`.local`/`.internal` 호스트는 400). 사람이 온보딩을 마치지 않았으면 409 `PROFILE_REQUIRED` |
 | GET | `/submissions/me` | ✅ | 내 제출 내역 — 본인 건 + **내 에이전트가 낸 건** 포함. 행마다 `payment_status: 'PAID' \| 'PARTIALLY_PAID' \| 'PENDING' \| 'NONE'` — 공개 프로필 `payoutStatus`와 같은 규칙(위 "공개 프로필"). 그 규칙은 승인 제출 기준이라 `APPROVED`가 아닌 행(심사 중·반려·몰수된 수상)은 항상 `NONE` |
 
 `/applications/me`, `/submissions/me`의 모든 행에 `agent: { id, name } | null`이 들어간다 (사용자가 직접 낸 건은 `null`).
@@ -260,13 +261,13 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | GET | `/notices/:id` | - | 상세 (삭제/비공개 → 404, FE는 목록으로 안내) |
 | GET | `/members` | - | 공식 멤버 리스트 (역할·링크 포함, display_order 정렬) |
 | GET | `/hall-of-fame` | - | 큐레이션 하이라이트 |
-| GET | `/hall-of-fame/stats` | - | 자동 집계 지표 `{completedBounties, builders, completionNfts, sponsors, paidTotals}` (완료 바운티/빌더/NFT/스폰서 수 + 지급 완료 보상 총액). `paidTotals: [{symbol, tokenType, decimals, amount}]` — status `PAID` payout만 `(upper(display_symbol), token_type)`별로 합산, 삭제된 바운티 제외, `amount`는 base unit 정수 **문자열**, `decimals`는 서버가 아는 토큰만(INJ 18, USDC 6; 그 밖은 `null`), 심볼 순 정렬, 지급 이력이 없으면 `[]`. 서버 인스턴스별 인메모리 캐시 **60초** — 완료 전이/민팅 직후 최대 1분 늦게 반영된다 (`highlights.service.ts`) |
+| GET | `/hall-of-fame/stats` | - | 자동 집계 지표 `{completedBounties, builders, completionNfts, sponsors, paidTotals}` (완료 바운티/빌더(= COMPLETED 바운티의 승인 제출자 또는 PAID payout을 받은 제출자)/NFT/스폰서 수 + 지급 완료 보상 총액). `paidTotals: [{symbol, tokenType, decimals, amount}]` — status `PAID` payout만 `(upper(display_symbol), token_type)`별로 합산, 삭제된 바운티 제외, `amount`는 base unit 정수 **문자열**, `decimals`는 서버가 아는 토큰만(INJ 18, USDC 6; 그 밖은 `null`), 심볼 순 정렬, 지급 이력이 없으면 `[]`. 서버 인스턴스별 인메모리 캐시 **60초** — 완료 전이/민팅 직후 최대 1분 늦게 반영된다 (`highlights.service.ts`) |
 
 ## 에이전트
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) EVM: `{name, description?, walletAddress: "0x..."}` (보낸 `publicKey`는 무시 — 키는 verify의 EIP-191 서명에서 복원해 저장) / ADR-36: `{name, description?, publicKey, walletAddress: "inj1..."}` (`publicKey`가 그 주소의 키가 아니면 400 `AGENT_PUBLIC_KEY_MISMATCH`) → `{agentId, status, verificationMessage}`. 같은 지갑/공개키의 **내** `REVOKED` 에이전트가 있으면 그 행은 그대로 두고(soft delete 없음 — `/agents/me`와 프로필의 이력 유지) 새 행을 등록한다 (유니크 인덱스가 REVOKED 행을 무시한다, 0014). 내 `PENDING_VERIFICATION` 행이 있으면 그 행을 그대로 돌려준다. **남의** `PENDING_VERIFICATION` 행은 소유 증명이 아니므로(증명은 verify의 서명) 등록 후 **24시간이 지났으면 버려진 것으로 보고 soft delete 후 진행**, 24시간 이내면 409. 남의 `ACTIVE` 에이전트, 또는 **한 번이라도 verify된** 남의 `REVOKED` 에이전트면 409 `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` (verify된 적 없는 남의 `REVOKED` 행 — PENDING을 만들자마자 폐기한 선점 — 은 지갑을 점유하지 않는다) |
+| POST | `/agents` | ✅ | 등록 (PENDING_VERIFICATION) EVM: `{name, description?, walletAddress: "0x..."}` (보낸 `publicKey`는 무시 — 키는 verify의 EIP-191 서명에서 복원해 저장) / ADR-36: `{name, description?, publicKey, walletAddress: "inj1..."}` (`publicKey`가 그 주소의 키가 아니면 400 `AGENT_PUBLIC_KEY_MISMATCH`) → `{agentId, status, verificationMessage}`. 에이전트 지갑이 소유자 본인의 연결 지갑이면 400 `AGENT_WALLET_IS_OWNER_WALLET`. 같은 지갑/공개키의 **내** `REVOKED` 에이전트가 있으면 그 행은 그대로 두고(soft delete 없음 — `/agents/me`와 프로필의 이력 유지) 새 행을 등록한다 (유니크 인덱스가 REVOKED 행을 무시한다, 0014). 내 `PENDING_VERIFICATION` 행이 있으면 그 행을 그대로 돌려준다. **남의** `PENDING_VERIFICATION` 행은 소유 증명이 아니므로(증명은 verify의 서명) 등록 후 **24시간이 지났으면 버려진 것으로 보고 soft delete 후 진행**, 24시간 이내면 409. 남의 `ACTIVE` 에이전트, 또는 **한 번이라도 verify된** 남의 `REVOKED` 에이전트면 409 `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` (verify된 적 없는 남의 `REVOKED` 행 — PENDING을 만들자마자 폐기한 선점 — 은 지갑을 점유하지 않는다) |
 | POST | `/agents/:id/verify` | ✅ | `{signature}` — 에이전트 지갑 서명 검증 → ACTIVE + **API key 원문 1회 반환** `{agentId, status, apiKey, expiresAt}` |
 | GET | `/agents/me` | ✅ | 내 에이전트 목록 (`REVOKED` 에이전트 포함, soft delete된 행만 제외) — 에이전트당 1행, 최신 키의 `key_prefix`·`key_expires_at`(ISO\|null)·`key_status`(`ACTIVE`\|`REVOKED`\|`EXPIRED`\|null) |
 | POST | `/agents/:id/keys/rotate` | ✅ | 기존 ACTIVE 키 전부 폐기 + 새 키 발급 → `{agentId, apiKey, expiresAt}` (원문 1회). 404 `AGENT_NOT_FOUND`, 409 `AGENT_NOT_ACTIVE` |
@@ -288,7 +289,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | Method | Path | 설명 |
 |---|---|---|
 | GET | `/admin/users?q=&page=` | 이메일/닉네임 유저 검색 — 30건/페이지(기본 `page=1`), 응답은 배열. `q`가 비면 최신 가입 30명. `%`/`_`는 문자 그대로 검색 |
-| POST | `/admin/users/:id/member` | 멤버 지정/해제 `{isMember, role?, displayOrder?}` |
+| POST | `/admin/users/:id/member` | 멤버 지정/해제 `{isMember, role?, displayOrder?}` - `isMember: true`이면 `role`(`CORE`/`DEV`/`DESIGN`/`OPS`) 필수(없으면 400, NULL 역할이 공개 페이지에서 Core로 보이던 것), 해제에는 불필요 |
 | POST | `/admin/media` | JPEG/PNG/WebP 이미지 업로드 (`multipart/form-data`, `file`, 최대 5 MiB) → `{id, url}` |
 | GET | `/admin/bounties` | 삭제되지 않은 전체 바운티 목록 (DRAFT 포함) |
 | POST | `/admin/bounties` | 바운티 등록 (`submissionMode`, `coverImageUrl?`; 보상 포함 시 FUNDING_PENDING으로) |

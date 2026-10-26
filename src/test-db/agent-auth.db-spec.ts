@@ -7,7 +7,8 @@ import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';
 import { createDb, createUser } from './harness';
 
-jest.mock('@injectivelabs/sdk-ts', () => ({}));
+// sdk-ts is ESM-only: the e2e stub gives the real inj1 <-> 0x helpers (register compares the agent wallet with the owner's)
+jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
 jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
 
 /**

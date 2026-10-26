@@ -44,7 +44,7 @@ export const ERROR_CODES = {
 
   // ── 유저 / 탈퇴 ──
   USER_NOT_FOUND: { statuses: [404], ko: '대상 유저가 없다 (탈퇴 포함)' },
-  PROFILE_REQUIRED: { statuses: [409], ko: '프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다' },
+  PROFILE_REQUIRED: { statuses: [409], ko: '프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람은 바운티 지원·제출도 같은 코드로 막힌다' },
   NICKNAME_TAKEN: { statuses: [409], ko: '이미 사용 중인 닉네임이다' },
   CONFIRM_NICKNAME_MISMATCH: { statuses: [400], ko: '탈퇴 확인용 닉네임 입력이 현재 닉네임과 다르다' },
   WITHDRAWAL_BLOCKED_OPEN_PAYOUTS: { statuses: [409], ko: '진행 중인 지급(payout)이 있어 탈퇴할 수 없다' },

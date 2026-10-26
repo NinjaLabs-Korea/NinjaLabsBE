@@ -8,6 +8,9 @@ function serviceWith(query: jest.Mock, audit = { record: jest.fn() }) {
   return new ApplicationsService(createMockDb({ query, txQuery: query }).database, audit as unknown as AuditService);
 }
 
+/** assertOnboarded() lookup that a USER actor runs right after the submission-mode check (agents skip it) */
+const ONBOARDED = { rowCount: 1, rows: [{ done: true }] };
+
 describe('ApplicationsService submission modes', () => {
   it('rejects a browser user on an agent-only bounty', async () => {
     const query = jest.fn().mockResolvedValue({
@@ -49,21 +52,23 @@ describe('ApplicationsService re-application after withdrawal', () => {
     ['user', 'applicant_user_id', (s: ApplicationsService) => s.apply('bounty', 'user', 'again', 'https://p.example'), 'record'],
     ['agent', 'agent_id', (s: ApplicationsService) => s.applyAsAgent('bounty', 'agent', 'again', 'https://p.example'), 'recordAgentAction'],
   ] as const)('reopens the %s\'s own WITHDRAWN row: PENDING, new message/portfolio, review fields cleared, id kept, APPLICATION_REAPPLIED in the tx', async (kind, column, call, auditMethod) => {
-    const query = jest.fn()
-      .mockResolvedValueOnce(openBounty)
+    const o = kind === 'user' ? 1 : 0; // the person's onboarding lookup shifts every later call by one
+    const query = jest.fn().mockResolvedValueOnce(openBounty);
+    if (o) query.mockResolvedValueOnce(ONBOARDED);
+    query
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'app-1', status: 'WITHDRAWN' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'app-1', status: 'PENDING', applied_at: 'now' }] });
     const audit = { record: jest.fn(), recordAgentAction: jest.fn() };
     const service = serviceWith(query, audit);
 
     await expect(call(service)).resolves.toEqual({ id: 'app-1', status: 'PENDING', applied_at: 'now' });
-    expect(query.mock.calls[1][0]).toContain(`${column} = $2 FOR UPDATE`);
-    const [sql, params] = query.mock.calls[2];
+    expect(query.mock.calls[1 + o][0]).toContain(`${column} = $2 FOR UPDATE`);
+    const [sql, params] = query.mock.calls[2 + o];
     expect(sql).toContain("SET status = 'PENDING', message = $2, portfolio_url = $3, applied_at = now()");
     expect(sql).toContain('reviewed_by = NULL, reviewed_at = NULL, review_note = NULL');
     expect(sql).toContain("WHERE id = $1 AND status = 'WITHDRAWN'");
     expect(params).toEqual(['app-1', 'again', 'https://p.example']);
-    expect(query).toHaveBeenCalledTimes(3); // no INSERT
+    expect(query).toHaveBeenCalledTimes(3 + o); // no INSERT
     // the agent path has no user id: the row must carry actor_agent_id (recordAgentAction), not an anonymous record()
     const other = auditMethod === 'record' ? 'recordAgentAction' : 'record';
     expect(audit[auditMethod]).toHaveBeenCalledWith(kind, 'APPLICATION_REAPPLIED', 'bounty_application', 'app-1', expect.anything());
@@ -73,10 +78,11 @@ describe('ApplicationsService re-application after withdrawal', () => {
   it.each(['PENDING', 'APPROVED', 'REJECTED'])('keeps 409 ALREADY_APPLIED for an existing %s application', async (status) => {
     const query = jest.fn()
       .mockResolvedValueOnce(openBounty)
+      .mockResolvedValueOnce(ONBOARDED)
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'app-1', status }] });
     const audit = { record: jest.fn() };
     await expect(serviceWith(query, audit).apply('bounty', 'user', 'again')).rejects.toMatchObject({ message: 'ALREADY_APPLIED' });
-    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenCalledTimes(3);
     expect(audit.record).not.toHaveBeenCalled();
   });
 
@@ -155,7 +161,9 @@ describe('ApplicationsService apply rules', () => {
       ['AGENT', (s: ApplicationsService) => s.applyAsAgent('bounty', 'agent', 'hi')],
     ] as const) {
       const query = jest.fn()
-        .mockResolvedValueOnce(bountyRow({ submission_mode: mode }))
+        .mockResolvedValueOnce(bountyRow({ submission_mode: mode }));
+      if (mode === 'DIRECT') query.mockResolvedValueOnce(ONBOARDED); // only the person is checked
+      query
         .mockResolvedValueOnce({ rowCount: 0, rows: [] })
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
       await expect(call(serviceWith(query))).resolves.toEqual({ id: 'new', status: 'PENDING' });
@@ -165,18 +173,20 @@ describe('ApplicationsService apply rules', () => {
   it('inserts a first application for a user with the user column set and the agent column NULL, portfolio defaulting to NULL', async () => {
     const query = jest.fn()
       .mockResolvedValueOnce(bountyRow())
+      .mockResolvedValueOnce(ONBOARDED)
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
     const audit = { record: jest.fn() };
     await serviceWith(query, audit).apply('bounty', 'user', 'hello');
-    expect(query.mock.calls[1][0]).toContain('applicant_user_id = $2 FOR UPDATE');
-    expect(query.mock.calls[2][1]).toEqual(['bounty', 'user', null, 'hello', null]);
+    expect(query.mock.calls[2][0]).toContain('applicant_user_id = $2 FOR UPDATE');
+    expect(query.mock.calls[3][1]).toEqual(['bounty', 'user', null, 'hello', null]);
     expect(audit.record).not.toHaveBeenCalled(); // first applications are not audited, only re-applications
   });
 
   it('maps a unique violation on INSERT (a concurrent first application) to 409 ALREADY_APPLIED', async () => {
     const query = jest.fn()
       .mockResolvedValueOnce(bountyRow())
+      .mockResolvedValueOnce(ONBOARDED)
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_application_user' }));
     await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ status: 409, message: 'ALREADY_APPLIED' });
@@ -186,6 +196,7 @@ describe('ApplicationsService apply rules', () => {
     const boom = Object.assign(new Error('fk'), { code: '23503' });
     const query = jest.fn()
       .mockResolvedValueOnce(bountyRow())
+      .mockResolvedValueOnce(ONBOARDED)
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockRejectedValueOnce(boom);
     await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toBe(boom);
@@ -201,6 +212,7 @@ describe('ApplicationsService apply rules', () => {
       await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ message: 'APPLICATION_DEADLINE_PASSED' });
       const later = jest.fn()
         .mockResolvedValueOnce(bountyRow({ [field]: '2032-02-02T02:02:03.000Z', [other]: FUTURE }))
+        .mockResolvedValueOnce(ONBOARDED)
         .mockResolvedValueOnce({ rowCount: 0, rows: [] })
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
       await expect(serviceWith(later).apply('bounty', 'user', 'hi')).resolves.toEqual({ id: 'new', status: 'PENDING' });
@@ -213,5 +225,25 @@ describe('ApplicationsService apply rules', () => {
     const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
     const service = new ApplicationsService(createMockDb({ query }).database, { record: jest.fn() } as unknown as AuditService);
     await expect(service.withdraw('app', 'someone-else')).rejects.toMatchObject({ status: 404, message: 'APPLICATION_NOT_FOUND_OR_NOT_PENDING' });
+  });
+
+  it.each([
+    ['onboarding not completed', { rowCount: 1, rows: [{ done: false }] }],
+    ['the user row is gone', { rowCount: 0, rows: [] }],
+  ])('a person who has not finished onboarding (%s) is 409 PROFILE_REQUIRED, nothing is read or written afterwards', async (_label, onboarding) => {
+    const query = jest.fn().mockResolvedValueOnce(bountyRow()).mockResolvedValueOnce(onboarding);
+    await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1][0]).toContain('onboarding_completed_at IS NOT NULL AS done FROM "user" WHERE id = $1 AND deleted_at IS NULL');
+    expect(query.mock.calls[1][1]).toEqual(['user']);
+  });
+
+  it('an agent is not subject to the onboarding check (its owner signed in to register it)', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce(bountyRow({ submission_mode: 'AGENT' }))
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
+    await expect(serviceWith(query).applyAsAgent('bounty', 'agent', 'hi')).resolves.toEqual({ id: 'new', status: 'PENDING' });
+    expect(query.mock.calls.some(([sql]) => (sql as string).includes('onboarding_completed_at'))).toBe(false);
   });
 });

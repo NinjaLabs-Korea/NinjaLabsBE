@@ -57,6 +57,7 @@ export class SubmissionsService {
       const b = bounty.rows[0];
       if (!BountyStatusPolicy.isInProgress(b.status)) throw new BadRequestException('BOUNTY_NOT_OPEN');
       actor.assertAllowedBy(b.submission_mode);
+      await actor.assertOnboarded(tx);
 
       // 지원형: 승인된 지원서 필요
       let applicationId: string | null = null;

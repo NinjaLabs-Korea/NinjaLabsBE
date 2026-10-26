@@ -27,11 +27,13 @@ function setup(options: {
   verifyRow?: { status: string; public_key: string | null; wallet_address: string } | null;
   activateError?: unknown;
   ownerWallets?: string[];
+  onboarded?: boolean;
 } = {}) {
   const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
     if (sql.includes('FROM wallet WHERE user_id = $1 AND disconnected_at IS NULL')) {
       return { rowCount: (options.ownerWallets ?? []).length, rows: (options.ownerWallets ?? []).map((address) => ({ address })) };
     }
+    if (sql.includes('onboarding_completed_at IS NOT NULL AS done')) return { rowCount: 1, rows: [{ done: options.onboarded ?? true }] };
     if (sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')")) return { rowCount: 0, rows: [] };
     if (sql.includes('INSERT INTO agent (')) {
       if (options.insertError) throw options.insertError;
@@ -100,6 +102,14 @@ describe('AgentsService.register input validation', () => {
     expect((error as BadRequestException).message).toBe('AGENT_WALLET_IS_OWNER_WALLET');
     const lookup = txQuery.mock.calls.find(([sql]) => sql.includes('FROM wallet WHERE user_id = $1'))!;
     expect(lookup[1]).toEqual([ownerUserId]);
+  });
+
+  it('an owner who has not finished onboarding is 409 PROFILE_REQUIRED (a login is not an onboarding) - the INSERT is rolled back with the transaction', async () => {
+    const { service } = setup({ onboarded: false });
+    await expect(service.register(ownerUserId, 'bot', undefined, undefined, Wallet.createRandom().address)).rejects.toMatchObject({
+      status: 409,
+      message: 'PROFILE_REQUIRED',
+    });
   });
 
   it('a different dedicated wallet is fine even when the owner has a connected wallet', async () => {

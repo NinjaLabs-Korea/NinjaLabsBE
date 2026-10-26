@@ -184,7 +184,7 @@ describeDb('QA round fixes on a real database', () => {
   });
 
   it('a public profile exists only for users who finished onboarding (404 USER_NOT_FOUND otherwise)', async () => {
-    const users = new UsersService(db);
+    const users = new UsersService(db, new AuditService(db));
     const unfinished = await createUser(db, { onboarded: false });
     const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [unfinished])).rows[0].nickname;
     await expect(users.publicProfile(nickname)).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });

@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { UsersService } from '../users/users.service';
@@ -12,7 +13,7 @@ describeDb('users on a real database', () => {
 
   beforeAll(() => {
     db = createDb();
-    users = new UsersService(db);
+    users = new UsersService(db, new AuditService(db));
   });
   afterAll(async () => db.onApplicationShutdown());
 
@@ -261,5 +262,40 @@ describeDb('users on a real database', () => {
     await expect(users.completeOnboarding(userId)).resolves.toEqual({ ok: true });
     const second = (await db.query<{ at: Date }>(`SELECT onboarding_completed_at AS at FROM "user" WHERE id = $1`, [userId])).rows[0].at;
     expect(second.getTime()).toBe(first.getTime());
+  });
+
+  it('nickname uniqueness folds non-ASCII case independent of the database locale (C locale: CAFÉ and café are the same name)', async () => {
+    const tag = unique().slice(0, 6);
+    const [a, b, c, d] = await Promise.all([createUser(db, { onboarded: false }), createUser(db, { onboarded: false }), createUser(db, { onboarded: false }), createUser(db, { onboarded: false })]);
+    await users.completeProfile(a, `café${tag}`, 'bio', ['DEV']);
+    await expect(users.nicknameAvailable(`CAFÉ${tag}`)).resolves.toBe(false);
+    await expect(users.completeProfile(b, `CAFÉ${tag}`, 'bio', ['DEV'])).rejects.toMatchObject({ status: 409, message: 'NICKNAME_TAKEN' });
+    await users.completeProfile(c, `привет${tag}`, 'bio', ['DEV']);
+    await expect(users.completeProfile(d, `ПРИВЕТ${tag}`, 'bio', ['DEV'])).rejects.toMatchObject({ status: 409, message: 'NICKNAME_TAKEN' });
+    // the public profile lookup folds the same way (the upper-case link finds the lower-case member)
+    await db.query(`UPDATE "user" SET onboarding_completed_at = now() WHERE id = $1`, [a]);
+    await expect(users.publicProfile(`CAFÉ${tag}`)).resolves.toMatchObject({ id: a });
+  });
+
+  it('after the first profile save a nickname change is audited and then blocked for 24 hours; bio/tag edits and the first name choice are free', async () => {
+    const userId = await createUser(db, { onboarded: false });
+    const first = `First${unique().slice(0, 8)}`;
+    const second = `Second${unique().slice(0, 8)}`;
+    // onboarding: choosing the first real name (temporary name -> real name, step 2 -> 4) is not a "change"
+    await users.completeProfile(userId, first, 'bio', ['DEV']);
+    const rows = async () => (await db.query<{ before_data: { nickname: string }; after_data: { nickname: string } }>(
+      `SELECT before_data, after_data FROM audit_log WHERE action = 'USER_NICKNAME_CHANGED' AND entity_id = $1`, [userId])).rows;
+    expect(await rows()).toHaveLength(0);
+    // the first rename after that is allowed and recorded: who, from what, to what
+    await users.completeProfile(userId, second, 'bio', ['DEV']);
+    expect(await rows()).toEqual([{ before_data: { nickname: first }, after_data: { nickname: second } }]);
+    // bio/tags with the same nickname never count
+    await expect(users.completeProfile(userId, second, 'bio 2', ['DESIGN'])).resolves.toEqual({ ok: true });
+    // a second rename inside the cooldown is refused and nothing changes (the old name stays held)
+    await expect(users.completeProfile(userId, `${second}z`, 'bio', ['DEV'])).rejects.toMatchObject({ status: 409, message: 'NICKNAME_CHANGE_COOLDOWN' });
+    expect((await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [userId])).rows[0].nickname).toBe(second);
+    // after the cooldown it works again
+    await db.query(`UPDATE audit_log SET created_at = now() - interval '25 hours' WHERE action = 'USER_NICKNAME_CHANGED' AND entity_id = $1`, [userId]);
+    await expect(users.completeProfile(userId, `${second}z`, 'bio', ['DEV'])).resolves.toEqual({ ok: true });
   });
 });

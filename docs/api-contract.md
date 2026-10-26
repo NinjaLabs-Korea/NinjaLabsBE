@@ -42,6 +42,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `TURNSTILE_UNAVAILABLE` | 503 | Turnstile 검증 서버에 닿지 못했다 |
 | `USER_NOT_FOUND` | 404 | 대상 유저가 없다 (탈퇴 포함) |
 | `PROFILE_REQUIRED` | 409 | 프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람(과 그 사람이 소유한 에이전트)은 에이전트 등록·바운티 지원·제출도 같은 코드로 막힌다 |
+| `NICKNAME_CHANGE_COOLDOWN` | 409 | 닉네임을 이미 정한 유저가 24시간 안에 또 바꾸려 했다 (변경은 감사 USER_NICKNAME_CHANGED로 남고 마지막 변경 24시간 뒤에 다시 가능) |
 | `NICKNAME_TAKEN` | 409 | 이미 사용 중인 닉네임이다 |
 | `CONFIRM_NICKNAME_MISMATCH` | 400 | 탈퇴 확인용 닉네임 입력이 현재 닉네임과 다르다 |
 | `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS` | 409 | 진행 중인 지급(payout)이 있어 탈퇴할 수 없다 |

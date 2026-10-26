@@ -8,7 +8,7 @@ const body = (over: Record<string, unknown> = {}) => ({
 const NIL = '00000000-0000-4000-8000-000000000000';
 const HOUR = 3_600_000;
 
-// 기수 모집 + 공지 행사 날짜 — HTTP 경계: 인증/권한, 검증, 응답 모양, 경쟁, CSV
+// 기수 모집 + 공지 행사 날짜, HTTP 경계: 인증/권한, 검증, 응답 모양, 경쟁, CSV
 describeDb('cohort recruitment over HTTP (e2e)', () => {
   let e2e: E2eApp;
   let admin: Session;

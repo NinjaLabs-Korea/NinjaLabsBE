@@ -15,7 +15,7 @@ class ListNoticesQueryDto extends PaginationQueryDto {
 export class NoticesController {
   constructor(private readonly notices: NoticesService) {}
 
-  /** GET /notices?page=&pageSize=&category=&sort=eventDate — 공지/소식 목록 (공개) */
+  /** GET /notices?page=&pageSize=&category=&sort=eventDate: 공지/소식 목록 (공개) */
   @Throttle(PUBLIC_READ_IP_THROTTLE)
   @Get()
   list(@Query() query: ListNoticesQueryDto) {

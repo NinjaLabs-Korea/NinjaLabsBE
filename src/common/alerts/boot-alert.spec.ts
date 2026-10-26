@@ -18,7 +18,7 @@ describe('boot / migration failure alerts', () => {
     );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const body = JSON.parse(String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body));
-    expect(body.text).toBe('[NinjaLabs production] boot-failure: backend refused to start — MIGRATIONS_PENDING: run npm run migrate (missing: 0030_x.sql)');
+    expect(body.text).toBe('[NinjaLabs production] boot-failure: backend refused to start - MIGRATIONS_PENDING: run npm run migrate (missing: 0030_x.sql)');
     expect(log).not.toHaveBeenCalled();
   });
 
@@ -38,7 +38,7 @@ describe('boot / migration failure alerts', () => {
     await alertMigrationFailure({ OPS_ALERT_WEBHOOK_URL: WEBHOOK, RAILWAY_ENVIRONMENT_NAME: 'production' }, err);
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
     expect(body.content).toBe(
-      '[NinjaLabs production] migration-failure: npm run migrate failed at 0031_y.sql — deploy aborted, previous version keeps serving: relation "x" already exists',
+      '[NinjaLabs production] migration-failure: npm run migrate failed at 0031_y.sql - deploy aborted, previous version keeps serving: relation "x" already exists',
     );
 
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 500 }));
@@ -57,7 +57,7 @@ describe('boot / migration failure alerts', () => {
     await alertMigrationFailure({ OPS_ALERT_WEBHOOK_URL: WEBHOOK, RAILWAY_ENVIRONMENT_NAME: 'production' }, err);
     const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
     expect(body.content).toBe(
-      '[NinjaLabs production] migration-failure: npm run migrate failed — deploy aborted, previous version keeps serving: connect ECONNREFUSED ::1:5432; connect ECONNREFUSED 127.0.0.1:5432',
+      '[NinjaLabs production] migration-failure: npm run migrate failed - deploy aborted, previous version keeps serving: connect ECONNREFUSED ::1:5432; connect ECONNREFUSED 127.0.0.1:5432',
     );
   });
 
@@ -75,7 +75,7 @@ describe('boot / migration failure alerts', () => {
   });
 
   it('redactSecrets leaves ordinary text alone', () => {
-    expect(redactSecrets('3 payout(s) pending for over 48h — nft 1111-2222')).toBe('3 payout(s) pending for over 48h — nft 1111-2222');
+    expect(redactSecrets('3 payout(s) pending for over 48h - nft 1111-2222')).toBe('3 payout(s) pending for over 48h - nft 1111-2222');
   });
 
   it('redactSecrets hides URL credentials even when the password contains a slash', () => {

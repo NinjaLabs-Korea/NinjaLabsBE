@@ -36,17 +36,17 @@ export const PREVIEW_ORIGIN = 'https://ninjalabsfe-git-develop-team.vercel.app';
 
 export function e2eEnv(): Record<string, string> {
   const url = process.env[TEST_DB_URL_ENV];
-  if (!url) throw new Error(`${TEST_DB_URL_ENV} is not set — jest.e2e.config.js global-setup did not run`);
+  if (!url) throw new Error(`${TEST_DB_URL_ENV} is not set - jest.e2e.config.js global-setup did not run`);
   return {
     NODE_ENV: 'test',
     PORT: '0',
     DATABASE_URL: url,
     PGSSLMODE: process.env.TEST_PGSSLMODE ?? 'disable',
     DATABASE_CA_CERT: '',
-    DB_CONNECTION_TIMEOUT_MS: '', // 기본값(5000) — pool-timeouts.ts
+    DB_CONNECTION_TIMEOUT_MS: '', // 기본값(5000) - pool-timeouts.ts
     DB_STATEMENT_TIMEOUT_MS: '', // 기본값(15000)
     TRUST_PROXY: '1',
-    THROTTLER_STORAGE: 'memory', // 인스턴스별 in-memory — throttling 스펙의 버킷이 실행 간 DB에 남지 않게 (공유 저장소는 test-db throttler-storage.db-spec)
+    THROTTLER_STORAGE: 'memory', // 인스턴스별 in-memory - throttling 스펙의 버킷이 실행 간 DB에 남지 않게 (공유 저장소는 test-db throttler-storage.db-spec)
     CORS_ORIGINS: `${FE_ORIGIN},${PREVIEW_ORIGIN},https://ninjalabsfe-*-team.vercel.app`,
     AUTH_SUCCESS_REDIRECT: `${FE_ORIGIN}/`,
     AUTH_ALLOWED_REDIRECT_ORIGINS: `${PREVIEW_ORIGIN},https://ninjalabsfe-*-team.vercel.app`,
@@ -56,7 +56,7 @@ export function e2eEnv(): Record<string, string> {
     JWT_SECRET: E2E_SECRETS.JWT_SECRET,
     JWT_ACCESS_TTL: '15m',
     JWT_REFRESH_TTL: '14d',
-    LEGACY_ACCESS_TOKEN_CUTOFF: '', // 기본값(프로세스 시작 시각) — auth.e2e-spec이 그 경계를 검사한다
+    LEGACY_ACCESS_TOKEN_CUTOFF: '', // 기본값(프로세스 시작 시각) - auth.e2e-spec이 그 경계를 검사한다
     INJECTIVE_NETWORK: 'testnet',
     INJECTIVE_GRPC_ENDPOINT: '',
     NFT_CONTRACT_ADDRESS: 'inj1e2econtract',
@@ -64,9 +64,9 @@ export function e2eEnv(): Record<string, string> {
     REWARD_MULTISIG_ADDRESS: 'inj1e2emultisig',
     INJECTIVE_EVM_CHAIN_ID: '1439',
     USDC_EVM_CONTRACT_ADDRESS: '0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d',
-    OPS_ALERT_WEBHOOK_URL: '', // 운영 알림은 로그만 — 개발자 .env의 실제 웹훅으로 새지 않게 (외부 fetch는 FakeGoogle이 실패시킨다)
-    PAYOUT_ALLOW_SELF_APPROVAL: 'false', // 2인 규칙 기본값 — 결제 승인은 다른 운영자 세션으로 (bounty-lifecycle approver)
-    TURNSTILE_SECRET_KEY: '', // 기본은 봇 방지 꺼짐 — turnstile.e2e-spec만 startApp({ TURNSTILE_SECRET_KEY })로 켠다
+    OPS_ALERT_WEBHOOK_URL: '', // 운영 알림은 로그만 - 개발자 .env의 실제 웹훅으로 새지 않게 (외부 fetch는 FakeGoogle이 실패시킨다)
+    PAYOUT_ALLOW_SELF_APPROVAL: 'false', // 2인 규칙 기본값 - 결제 승인은 다른 운영자 세션으로 (bounty-lifecycle approver)
+    TURNSTILE_SECRET_KEY: '', // 기본은 봇 방지 꺼짐 - turnstile.e2e-spec만 startApp({ TURNSTILE_SECRET_KEY })로 켠다
   };
 }
 

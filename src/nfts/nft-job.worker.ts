@@ -145,14 +145,14 @@ export class NftJobWorker implements BeforeApplicationShutdown {
     const drained = await this.polling.stop();
     if (!drained) {
       this.logger.warn(
-        `shutdown: nft_job batch still running after ${SHUTDOWN_DRAIN_TIMEOUT_MS / 1000}s — its current job stays PROCESSING until the ${STALE_PROCESSING_INTERVAL} stale requeue`,
+        `shutdown: nft_job batch still running after ${SHUTDOWN_DRAIN_TIMEOUT_MS / 1000}s - its current job stays PROCESSING until the ${STALE_PROCESSING_INTERVAL} stale requeue`,
       );
     }
   }
 
   private async pollOnce() {
     await this.requeueStaleJobs();
-    if (this.polling.isStopping) return; // 종료 중 — 새로 선점하지 않는다
+    if (this.polling.isStopping) return; // 종료 중 - 새로 선점하지 않는다
 
     // 선점(claim)을 단일 문장으로 — autocommit에서도 SELECT ... FOR UPDATE SKIP LOCKED와
     // PROCESSING 전환이 같은 스냅샷/잠금 안에서 끝나므로 워커 다중 인스턴스에도 안전
@@ -240,7 +240,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       [job.id],
     );
     if (!owned.rowCount) {
-      this.logger.warn(`nft_job ${job.id} is no longer PROCESSING (requeued or claimed by another instance) — skipping`);
+      this.logger.warn(`nft_job ${job.id} is no longer PROCESSING (requeued or claimed by another instance) - skipping`);
       return;
     }
     if (!this.chain.isConfigured()) {
@@ -264,7 +264,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
         // 부모 NFT가 아직 준비되지 않은 ATTACH_CHILD — retry_count를 소모하지 않고 뒤로 미룬다 (성공으로 닫지 않는다: 멱등 키가 재큐잉을 막는다)
         await this.db.query(
           `UPDATE nft_job SET status = 'PENDING', scheduled_at = now() + interval '${ATTACH_DEFER_INTERVAL}',
-                  last_error = 'parent NFT not minted yet — attach deferred'
+                  last_error = 'parent NFT not minted yet - attach deferred'
             WHERE id = $1 AND status = 'PROCESSING'`,
           [job.id],
         );
@@ -276,7 +276,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
           WHERE id = $1 AND status = 'PROCESSING'`,
         [job.id],
       );
-      if (!done.rowCount) this.logger.warn(`nft_job ${job.id} finished but was no longer PROCESSING — result not recorded by this instance`);
+      if (!done.rowCount) this.logger.warn(`nft_job ${job.id} finished but was no longer PROCESSING - result not recorded by this instance`);
     } catch (err) {
       const message = this.sanitizeError(err);
       const exhausted = job.retry_count + 1 >= MAX_RETRY;
@@ -292,7 +292,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       );
       if (!recorded.rowCount) {
         // 다른 인스턴스가 이미 되가져간 잡 — 그쪽 결과가 유효하므로 retry_count도, nft 상태도 건드리지 않는다
-        this.logger.warn(`nft_job ${job.id} failed late but was no longer PROCESSING — ignoring: ${message}`);
+        this.logger.warn(`nft_job ${job.id} failed late but was no longer PROCESSING - ignoring: ${message}`);
         return;
       }
       if (exhausted) {
@@ -340,7 +340,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
                 WHERE id = $1`,
               [nft.id, nft.id, this.chain.contractAddress()],
             );
-            this.logger.warn(`nft ${nft.id} already minted on chain — recovered as MINTED without re-minting`);
+            this.logger.warn(`nft ${nft.id} already minted on chain - recovered as MINTED without re-minting`);
           } else {
             const txHash = await this.chain.mint(nft.id, nft.owner_address, nft.metadata_uri);
             await this.db.query(
@@ -363,7 +363,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
              WHERE nft_job.status = 'PENDING'`,
             [nft.id],
           );
-          if (queued.rowCount) this.logger.log(`parent nft ${nft.id} minted — queued ATTACH_CHILD for ${queued.rowCount} waiting child NFT(s)`);
+          if (queued.rowCount) this.logger.log(`parent nft ${nft.id} minted - queued ATTACH_CHILD for ${queued.rowCount} waiting child NFT(s)`);
           return 'done';
         }
         // 자식 NFT는 민팅 후 부모에 attach — 부모가 없거나 아직 MINTED/ATTACHED가 아니면 MINTED로 보류 (decisions.md).
@@ -391,7 +391,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
           [nft.id],
         );
         if (attached.rowCount) return 'done';
-        if (nft.status === 'MINTED' || nft.status === 'ATTACHING') return 'deferred'; // 부모 미준비 — 1시간 뒤 재시도
+        if (nft.status === 'MINTED' || nft.status === 'ATTACHING') return 'deferred'; // 부모 미준비 - 1시간 뒤 재시도
         throw new Error(`nft ${nft.id} cannot be attached in status ${nft.status}`);
       }
       default:

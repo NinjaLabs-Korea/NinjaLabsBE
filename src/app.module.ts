@@ -31,7 +31,7 @@ import { IpThrottlerGuard } from './common/throttler/ip-throttler.guard';
     // 저장소: THROTTLER_STORAGE=postgres(production 기본)면 레플리카 간 공유 pg 테이블, memory면 인스턴스별 (common/throttler/throttler-options.ts)
     throttlerModule([{ ttl: 60_000, limit: 120 }]),
     DatabaseModule,
-    AlertsModule, // 운영 알림 (OPS_ALERT_WEBHOOK_URL, 없으면 로그만) — 워커·예외 필터가 쓴다
+    AlertsModule, // 운영 알림 (OPS_ALERT_WEBHOOK_URL, 없으면 로그만) - 워커·예외 필터가 쓴다
     HealthModule,
     AuthModule,
     UsersModule,

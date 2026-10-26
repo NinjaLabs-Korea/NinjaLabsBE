@@ -80,7 +80,7 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
         const route = typeof req?.route?.path === 'string' ? req.route.path : '(unmatched route)';
         void this.alerts.notify(
           'http-5xx-burst',
-          `more than ${HTTP_5XX_BURST_THRESHOLD} 5xx responses in the last ${HTTP_5XX_BURST_WINDOW_MS / 60_000} min — latest: ` +
+          `more than ${HTTP_5XX_BURST_THRESHOLD} 5xx responses in the last ${HTTP_5XX_BURST_WINDOW_MS / 60_000} min - latest: ` +
             `${logSafe(req?.method ?? '-', 16)} ${logSafe(route, 100)} ${status} ${logSafe(name, 100)}`,
         );
       }

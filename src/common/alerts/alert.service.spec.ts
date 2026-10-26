@@ -84,7 +84,7 @@ describe('AlertService', () => {
     expect(sentBody(1).content).toBe('[NinjaLabs production] http-5xx-burst: burst (+2 similar suppressed in the last 30 min)');
   });
 
-  it('rate-limits per key — a different key is not suppressed', async () => {
+  it('rate-limits per key - a different key is not suppressed', async () => {
     const { alerts } = service();
     await alerts.notify('a', 'x');
     await alerts.notify('b', 'x');
@@ -105,9 +105,9 @@ describe('AlertService', () => {
     expect(fetchMock).toHaveBeenCalledTimes(6);
     const lines = warn.mock.calls.map(([line]) => String(line));
     expect(lines).toContain('ops alert webhook delivery failed for a: TypeError (attempt 1/2, retrying in 2s)');
-    expect(lines).toContain('ops alert webhook delivery failed for a: TypeError (attempt 2/2, giving up — the next occurrence will try again)');
-    expect(lines).toContain('ops alert webhook delivery failed for b: timeout after 5000ms (attempt 2/2, giving up — the next occurrence will try again)');
-    expect(lines).toContain('ops alert webhook delivery failed for c: HTTP 429 (attempt 2/2, giving up — the next occurrence will try again)');
+    expect(lines).toContain('ops alert webhook delivery failed for a: TypeError (attempt 2/2, giving up - the next occurrence will try again)');
+    expect(lines).toContain('ops alert webhook delivery failed for b: timeout after 5000ms (attempt 2/2, giving up - the next occurrence will try again)');
+    expect(lines).toContain('ops alert webhook delivery failed for c: HTTP 429 (attempt 2/2, giving up - the next occurrence will try again)');
     expect(lines.join('\n')).not.toContain('secret-webhook-token');
   });
 

@@ -35,7 +35,7 @@ export class RewardsService {
   ) {
     this.allowSelfApproval = allowsPayoutSelfApproval(config.get<string>(PAYOUT_ALLOW_SELF_APPROVAL_ENV));
     if (this.allowSelfApproval) {
-      this.logger.warn(`${PAYOUT_ALLOW_SELF_APPROVAL_ENV}=true — the requesting admin may approve their own payouts (two-person rule disabled; each self-approval is audited as PAYOUT_SELF_APPROVED)`);
+      this.logger.warn(`${PAYOUT_ALLOW_SELF_APPROVAL_ENV}=true - the requesting admin may approve their own payouts (two-person rule disabled; each self-approval is audited as PAYOUT_SELF_APPROVED)`);
     }
   }
 
@@ -161,7 +161,7 @@ export class RewardsService {
       );
       if (!r.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
       if (selfApproval) {
-        this.logger.warn(`payout ${payoutId}: approved by the admin who requested it (${PAYOUT_ALLOW_SELF_APPROVAL_ENV}=true) — audited as PAYOUT_SELF_APPROVED`);
+        this.logger.warn(`payout ${payoutId}: approved by the admin who requested it (${PAYOUT_ALLOW_SELF_APPROVAL_ENV}=true) - audited as PAYOUT_SELF_APPROVED`);
       }
       await this.audit.record(adminId, selfApproval ? 'PAYOUT_SELF_APPROVED' : 'PAYOUT_APPROVED', 'payout', payoutId, tx);
       return r.rows[0];
@@ -197,7 +197,7 @@ export class RewardsService {
       const asDeposit = await tx.query(`SELECT 1 FROM bounty_reward WHERE deposit_tx_hash = $1 LIMIT 1`, [hash]);
       if (asDeposit.rowCount || await this.isRecordedRefund(tx, hash)) throw new ConflictException('TX_HASH_ALREADY_USED');
       if (reuse.rows[0].same_bounty > 0) {
-        this.logger.log(`payout ${payoutId}: tx ${hash} is already recorded on ${reuse.rows[0].same_bounty} PAID payout(s) of the same bounty — multi-recipient send`);
+        this.logger.log(`payout ${payoutId}: tx ${hash} is already recorded on ${reuse.rows[0].same_bounty} PAID payout(s) of the same bounty - multi-recipient send`);
       }
       const payout = await tx.query<{
         id: string;

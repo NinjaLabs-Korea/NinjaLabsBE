@@ -30,7 +30,7 @@ export function trustProxyHops(env: BootstrapEnv): number {
   const raw = env.TRUST_PROXY?.trim();
   if (isProduction(env) && !raw) {
     logger.warn(
-      `TRUST_PROXY is not set — assuming ${DEFAULT_PRODUCTION_PROXY_HOPS} reverse-proxy hop in production (Railway/PaaS default). ` +
+      `TRUST_PROXY is not set - assuming ${DEFAULT_PRODUCTION_PROXY_HOPS} reverse-proxy hop in production (Railway/PaaS default). ` +
         'Set TRUST_PROXY explicitly to the number of proxies in front of this service to silence this warning.',
     );
     return DEFAULT_PRODUCTION_PROXY_HOPS;
@@ -39,7 +39,7 @@ export function trustProxyHops(env: BootstrapEnv): number {
   const valid = Number.isInteger(hops) && hops > 0;
   if (isProduction(env) && !valid) {
     throw new Error(
-      `FATAL: TRUST_PROXY=${JSON.stringify(env.TRUST_PROXY)} — must be an integer >= 1 in production (number of reverse-proxy hops, 1 on Railway), ` +
+      `FATAL: TRUST_PROXY=${JSON.stringify(env.TRUST_PROXY)} - must be an integer >= 1 in production (number of reverse-proxy hops, 1 on Railway), ` +
         'or unset to default to 1. With 0 X-Forwarded-For is ignored and every client shares the proxy IP for rate limiting and session IP logging.',
     );
   }
@@ -112,18 +112,18 @@ export function corsOriginsValue(env: BootstrapEnv): string {
   if (!isProduction(env)) return env.CORS_ORIGINS ?? LOCAL_FE_ORIGIN;
   const entries = (env.CORS_ORIGINS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean);
   if (entries.length === 0) {
-    throw new Error('FATAL: CORS_ORIGINS must be set in production (comma-separated FE origins, e.g. https://ninjalabsfe.vercel.app) — there is no localhost fallback in production');
+    throw new Error('FATAL: CORS_ORIGINS must be set in production (comma-separated FE origins, e.g. https://ninjalabsfe.vercel.app) - there is no localhost fallback in production');
   }
   const loopback = entries.filter(isLoopbackUrl);
   const kept = entries.filter((entry) => !isLoopbackUrl(entry));
   if (loopback.length > 0) {
     logger.error(
-      `CORS_ORIGINS contains loopback origin(s) ${loopback.map((entry) => JSON.stringify(entry)).join(', ')} — IGNORED in production ` +
+      `CORS_ORIGINS contains loopback origin(s) ${loopback.map((entry) => JSON.stringify(entry)).join(', ')} - IGNORED in production ` +
         '(any localhost page in any browser tab could call the production API with credentials). Remove them from the Railway variable; local FEs use a local BE.',
     );
   }
   if (kept.length === 0) {
-    throw new Error(`FATAL: CORS_ORIGINS=${JSON.stringify(env.CORS_ORIGINS)} lists only loopback origins — production needs the real FE origin(s)`);
+    throw new Error(`FATAL: CORS_ORIGINS=${JSON.stringify(env.CORS_ORIGINS)} lists only loopback origins - production needs the real FE origin(s)`);
   }
   return kept.join(',');
 }
@@ -136,7 +136,7 @@ export function corsOriginsValue(env: BootstrapEnv): string {
 export function requireUsableCorsOrigins(env: BootstrapEnv, size: number): void {
   if (isProduction(env) && size === 0) {
     throw new Error(
-      `FATAL: CORS_ORIGINS=${JSON.stringify(env.CORS_ORIGINS)} has no usable origin — entries must look like https://host[:port] ` +
+      `FATAL: CORS_ORIGINS=${JSON.stringify(env.CORS_ORIGINS)} has no usable origin - entries must look like https://host[:port] ` +
         '(scheme required; a wildcard on a shared hosting domain such as vercel.app is rejected). Every browser request from the FE would be blocked by CORS.',
     );
   }
@@ -159,7 +159,7 @@ export function warnIgnoredAuthRedirectOrigins(env: BootstrapEnv): void {
   const { ignored } = authRedirectOrigins(env);
   if (ignored.length === 0) return;
   logger.error(
-    `AUTH_ALLOWED_REDIRECT_ORIGINS contains loopback origin(s) ${ignored.map((entry) => JSON.stringify(entry)).join(', ')} — IGNORED in production ` +
+    `AUTH_ALLOWED_REDIRECT_ORIGINS contains loopback origin(s) ${ignored.map((entry) => JSON.stringify(entry)).join(', ')} - IGNORED in production ` +
       '(a login code could be delivered to any server running on the user\'s own machine). Remove them from the Railway variable.',
   );
 }
@@ -179,14 +179,14 @@ export function requireProductionAuthUrls(env: BootstrapEnv): void {
   if (!isProduction(env)) return;
   const missing = PRODUCTION_AUTH_KEYS.filter((key) => !env[key]?.trim());
   if (missing.length > 0) {
-    throw new Error(`FATAL: ${missing.join(', ')} must be set in production (public values in .railway/railway.ts — run \`railway config apply\`)`);
+    throw new Error(`FATAL: ${missing.join(', ')} must be set in production (public values in .railway/railway.ts - run \`railway config apply\`)`);
   }
   for (const key of PRODUCTION_AUTH_URL_KEYS) {
     const value = env[key]!.trim();
     // https만 — AUTH_SUCCESS_REDIRECT는 일회용 로그인 코드를 URL 프래그먼트로 받는 주소라 평문 http면 경로 위 누구나 코드를 볼 수 있고, Google은 localhost 밖의 http 콜백을 거부한다
     const isHttpsUrl = URL.canParse(value) && new URL(value).protocol === 'https:';
     if (!isHttpsUrl || isLoopbackUrl(value)) {
-      throw new Error(`FATAL: ${key}=${JSON.stringify(env[key])} — must be a public https URL in production (not http, not localhost/127.x)`);
+      throw new Error(`FATAL: ${key}=${JSON.stringify(env[key])} - must be a public https URL in production (not http, not localhost/127.x)`);
     }
   }
 }

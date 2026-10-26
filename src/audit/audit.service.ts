@@ -85,7 +85,7 @@ export class AuditService {
            LEFT JOIN "user" u ON u.id = a.actor_user_id
            LEFT JOIN agent ag ON ag.id = a.actor_agent_id
           ${where}
-          ORDER BY a.created_at DESC, a.id -- 한 트랜잭션의 감사 행은 created_at(now())이 같다 — 페이지 경계가 흔들리지 않게
+          ORDER BY a.created_at DESC, a.id -- 한 트랜잭션의 감사 행은 created_at(now())이 같다 - 페이지 경계가 흔들리지 않게
           LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, pageSize, offset],
       ),

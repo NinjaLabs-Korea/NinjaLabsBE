@@ -87,7 +87,7 @@ export class RewardTokenResolver implements OnModuleInit {
     const problem = rewardMultisigAddressProblem(raw);
     if (!problem) return;
     this.logger.error(
-      `REWARD_MULTISIG_ADDRESS${raw?.trim() ? `=${JSON.stringify(raw)}` : ''} ${problem} — required in production. ` +
+      `REWARD_MULTISIG_ADDRESS${raw?.trim() ? `=${JSON.stringify(raw)}` : ''} ${problem} - required in production. ` +
         (raw?.trim()
           ? 'New bounty rewards will show this address as the deposit address; fix the Railway variable before sponsors deposit (docs/runbook.md §1, §9).'
           : `New bounty rewards get custody_address ${PENDING_MULTISIG_SETUP} and sponsors have nowhere to deposit. Set it in the Railway dashboard (docs/runbook.md §1, §9).`),

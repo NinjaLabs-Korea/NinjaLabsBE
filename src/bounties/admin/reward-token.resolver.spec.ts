@@ -132,7 +132,7 @@ describe('rewardMultisigAddressProblem (REWARD_MULTISIG_ADDRESS shape)', () => {
   });
 });
 
-describe('RewardTokenResolver boot check (production only, logs — never refuses to boot)', () => {
+describe('RewardTokenResolver boot check (production only, logs - never refuses to boot)', () => {
   let error: jest.SpyInstance;
   beforeEach(() => {
     error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -149,10 +149,10 @@ describe('RewardTokenResolver boot check (production only, logs — never refuse
   it.each([undefined, ''])('logs an error in production when REWARD_MULTISIG_ADDRESS is %p (custody falls back to the placeholder)', (value) => {
     expect(() => resolverWith({ NODE_ENV: 'production', REWARD_MULTISIG_ADDRESS: value }).onModuleInit()).not.toThrow();
     expect(error).toHaveBeenCalledTimes(1);
-    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^REWARD_MULTISIG_ADDRESS is not set — required in production\. New bounty rewards get custody_address PENDING_MULTISIG_SETUP/));
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/^REWARD_MULTISIG_ADDRESS is not set - required in production\. New bounty rewards get custody_address PENDING_MULTISIG_SETUP/));
   });
 
-  it('logs an error in production naming a malformed value (the value is still used — the operator fixes it)', () => {
+  it('logs an error in production naming a malformed value (the value is still used - the operator fixes it)', () => {
     const resolver = resolverWith({ NODE_ENV: 'production', REWARD_MULTISIG_ADDRESS: 'inj1multisig' });
     expect(() => resolver.onModuleInit()).not.toThrow();
     expect(error).toHaveBeenCalledWith(expect.stringContaining('REWARD_MULTISIG_ADDRESS="inj1multisig" is not shaped like an Injective address'));

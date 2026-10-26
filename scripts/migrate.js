@@ -284,7 +284,7 @@ async function alertMigrationFailure(env, err) {
   const detail = errorText(err).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500);
   const result = await postOpsAlert(
     env.OPS_ALERT_WEBHOOK_URL,
-    `[NinjaLabs ${environment}] migration-failure: npm run migrate failed${err && err.file ? ` at ${err.file}` : ''} — deploy aborted, previous version keeps serving: ${detail}`,
+    `[NinjaLabs ${environment}] migration-failure: npm run migrate failed${err && err.file ? ` at ${err.file}` : ''} - deploy aborted, previous version keeps serving: ${detail}`,
   );
   if (!result.ok) console.error(`ops alert webhook unreachable for migration failure: ${result.reason}`);
 }

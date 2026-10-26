@@ -12,7 +12,7 @@ import { presentedRefreshToken } from './session-cookie';
  * sha256, exchange는 로그인 코드의 sha256으로 버킷을 나눈다. 자격 증명이 없는 요청(토큰 없는 refresh/logout, 문자열이 아닌 code의
  * exchange)은 이 한도를 건너뛴다(shouldSkip): IP로 떨어뜨리면 egress IP 하나를 나눠 쓰는 사용자들이 10/min을 공유한다. 그런 요청은 폐기할 세션도
  * 소비할 코드도 없고 DB 전에 400/401로 끝난다.
- IP 기준의 거친 한도는 전역 throttler(app.module.ts)가 이 라우트에도 건다 — 단 IP당 600/min으로 올려서(AUTH_PROXIED_ROUTE_IP_THROTTLE) — 토큰을 바꿔 가며 두드리는 것은
+ IP 기준의 거친 한도는 전역 throttler(app.module.ts)가 이 라우트에도 건다 - 단 IP당 600/min으로 올려서(AUTH_PROXIED_ROUTE_IP_THROTTLE) - 토큰을 바꿔 가며 두드리는 것은
  * 그쪽이 막는다(refresh 토큰 384비트·로그인 코드 256비트+PKCE라 추측 자체가 비현실적).
  * 원문 토큰은 키에 남기지 않는다(해시만 — 저장소 덤프/로그에서 쓸 수 없게).
  */

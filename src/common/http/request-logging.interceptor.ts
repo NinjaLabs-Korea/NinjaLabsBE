@@ -43,7 +43,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
           else res.once('finish', () => log(res.statusCode));
         },
         error: (caught: unknown) => {
-          const err = asHttpError(caught); // HttpExceptionFilter와 같은 판단 — 입력 탓 DB 오류는 400, DB 연결 타임아웃은 503
+          const err = asHttpError(caught); // HttpExceptionFilter와 같은 판단 - 입력 탓 DB 오류는 400, DB 연결 타임아웃은 503
           log(err instanceof HttpException ? err.getStatus() : 500);
         },
       }),

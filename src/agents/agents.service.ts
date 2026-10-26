@@ -65,7 +65,7 @@ export class AgentsService {
     if (!isEvm && !injectivePublicKeyMatchesAddress(normalizedAddress, publicKey!)) {
       throw new BadRequestException('AGENT_PUBLIC_KEY_MISMATCH');
     }
-    const storedPublicKey = isEvm ? null : canonicalPublicKeyBase64(publicKey!); // 위 일치 검사를 통과했으므로 33바이트 — 클라이언트가 보낸 문자열이 아니라 정규 표기를 저장한다
+    const storedPublicKey = isEvm ? null : canonicalPublicKeyBase64(publicKey!); // 위 일치 검사를 통과했으므로 33바이트 - 클라이언트가 보낸 문자열이 아니라 정규 표기를 저장한다
 
     try {
       // 같은 지갑/키를 점유한 행 확인(남의 버려진 PENDING은 soft delete)과 INSERT를 한 트랜잭션에서 — 유니크 위반이면 전체가 롤백되고 아래 catch로 간다

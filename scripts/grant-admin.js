@@ -32,10 +32,10 @@ async function findUserByEmail(runner, email, lock = false) {
     [email],
   );
   if (r.rowCount === 0) {
-    throw new OpsError('USER_NOT_FOUND', `no active user with email ${email} — the person must sign in with Google once first`);
+    throw new OpsError('USER_NOT_FOUND', `no active user with email ${email} - the person must sign in with Google once first`);
   }
   if (r.rowCount > 1) {
-    throw new OpsError('AMBIGUOUS_EMAIL', `${r.rowCount} active users match ${email} case-insensitively — fix the data before granting`);
+    throw new OpsError('AMBIGUOUS_EMAIL', `${r.rowCount} active users match ${email} case-insensitively - fix the data before granting`);
   }
   return r.rows[0];
 }
@@ -51,7 +51,7 @@ async function countOtherActiveAdmins(runner, userId) {
 }
 
 function lastAdminError(email) {
-  return new OpsError('LAST_ADMIN', `${email} is the last active admin — pass --force to leave the platform with no admin`);
+  return new OpsError('LAST_ADMIN', `${email} is the last active admin - pass --force to leave the platform with no admin`);
 }
 
 /**
@@ -118,11 +118,11 @@ async function run(argv, deps) {
     const user = await findUserByEmail(deps.pool, email);
     log(`user     ${user.id}  ${user.email}  nickname=${user.nickname}  status=${user.status}  is_admin=${user.is_admin}`);
     if (user.is_admin === grant) {
-      log(`no change — ${user.email} is already ${grant ? 'an admin' : 'not an admin'}`);
+      log(`no change - ${user.email} is already ${grant ? 'an admin' : 'not an admin'}`);
       return 0;
     }
     if (user.status !== 'ACTIVE') {
-      log(`warning  status is ${user.status} — AdminGuard only admits ACTIVE users, so the flag has no effect until the account is ACTIVE`);
+      log(`warning  status is ${user.status} - AdminGuard only admits ACTIVE users, so the flag has no effect until the account is ACTIVE`);
     }
     // 미리 보기에서도(그리고 확인을 묻기 전에) 마지막 운영자 회수를 알린다 — 실제 판정은 applyAdminChange가 잠금 아래에서 다시 한다
     if (!grant && !flags.force && (await countOtherActiveAdmins(deps.pool, user.id)) === 0) throw lastAdminError(user.email);
@@ -137,7 +137,7 @@ async function run(argv, deps) {
     }
     const result = await applyAdminChange(deps.pool, { email, grant, force: Boolean(flags.force) });
     if (!result.changed) {
-      log(`no change — state changed concurrently, ${result.user.email} is already is_admin=${grant}`);
+      log(`no change - state changed concurrently, ${result.user.email} is already is_admin=${grant}`);
       return 0;
     }
     log(`done     ${result.user.email} is_admin=${grant}. ${grant

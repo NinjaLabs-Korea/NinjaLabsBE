@@ -99,7 +99,7 @@ async function run(argv, deps) {
   const jobs = await findFailedJobs(deps.pool, ids);
   if (ids) {
     const found = new Set(jobs.map((job) => job.id));
-    for (const id of ids.filter((x) => !found.has(x))) log(`skip     ${id} — not found or not FAILED`);
+    for (const id of ids.filter((x) => !found.has(x))) log(`skip     ${id} - not found or not FAILED`);
   }
   if (!jobs.length) {
     log('nothing to requeue');

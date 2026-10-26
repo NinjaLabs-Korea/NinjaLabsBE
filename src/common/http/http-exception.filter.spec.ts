@@ -57,7 +57,7 @@ describe('HttpExceptionFilter', () => {
     expect(sent.getResponse()).toMatchObject({ message: 'INVALID_CHARACTER' });
   });
 
-  it('logs the sub-error messages when the database error has an empty message (dual-stack ECONNREFUSED AggregateError) — the 503 line must not end in a bare ": "', () => {
+  it('logs the sub-error messages when the database error has an empty message (dual-stack ECONNREFUSED AggregateError) - the 503 line must not end in a bare ": "', () => {
     const refused = Object.assign(new AggregateError([new Error('connect ECONNREFUSED ::1:5432'), new Error('connect ECONNREFUSED 127.0.0.1:5432')], ''), { code: 'ECONNREFUSED' });
     new HttpExceptionFilter().catch(refused, host);
     const [sent] = base.mock.calls[0] as [HttpException];
@@ -151,7 +151,7 @@ describe('HttpExceptionFilter', () => {
       expect(alerts.notify).toHaveBeenCalledTimes(1);
       const [key, message] = (alerts.notify.mock.calls as unknown as [string, string][])[0];
       expect(key).toBe('http-5xx-burst');
-      expect(message).toBe('more than 20 5xx responses in the last 5 min — latest: GET /bounties/:id 500 Error');
+      expect(message).toBe('more than 20 5xx responses in the last 5 min - latest: GET /bounties/:id 500 Error');
       expect(message).not.toContain('secret-slug');
       expect(message).not.toContain('a@b.co');
     });
@@ -172,7 +172,7 @@ describe('HttpExceptionFilter', () => {
   });
 });
 
-describe('HttpExceptionFilter — request context edge cases', () => {
+describe('HttpExceptionFilter - request context edge cases', () => {
   let error: jest.SpyInstance;
   beforeEach(() => {
     jest.spyOn(BaseExceptionFilter.prototype, 'catch').mockImplementation(() => undefined);
@@ -208,7 +208,7 @@ describe('HttpExceptionFilter — request context edge cases', () => {
 });
 
 /** 실제 BaseExceptionFilter 경로 — 기본 구현이 남기던 `ExceptionsHandler` error 로그가 없어야 한다 */
-describe('HttpExceptionFilter — unknown throwables (real Nest base filter)', () => {
+describe('HttpExceptionFilter - unknown throwables (real Nest base filter)', () => {
   const reply = jest.fn();
   const adapter = { isHeadersSent: jest.fn(() => false), reply, end: jest.fn() };
   const host = {
@@ -234,7 +234,7 @@ describe('HttpExceptionFilter — unknown throwables (real Nest base filter)', (
     expect(logged).toEqual([]);
   });
 
-  it('a 5xx logs exactly one line (this filter\'s, escaped) — the raw message never reaches ExceptionsHandler', () => {
+  it('a 5xx logs exactly one line (this filter\'s, escaped) - the raw message never reaches ExceptionsHandler', () => {
     new HttpExceptionFilter(adapter as never).catch(new Error('invalid input syntax: "x\n[Nest] 1 - ERROR [Fake] forged"'), host);
     expect(reply).toHaveBeenCalledWith({ res: true }, { statusCode: 500, message: 'Internal server error' }, 500);
     expect(logged).toHaveLength(1);

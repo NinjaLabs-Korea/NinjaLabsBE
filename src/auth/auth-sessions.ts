@@ -164,7 +164,7 @@ export class AuthSessions {
     for (let hops = 0; frontier.length; hops++) {
       if (hops >= MAX_REVOKE_CHAIN_HOPS) {
         this.logger.warn(
-          `revokeChain: session chain from ${hash.slice(0, 12)}… exceeds ${MAX_REVOKE_CHAIN_HOPS} hops — revoking every open session of user ${userId} instead`,
+          `revokeChain: session chain from ${hash.slice(0, 12)}… exceeds ${MAX_REVOKE_CHAIN_HOPS} hops - revoking every open session of user ${userId} instead`,
         );
         // 홉이 하나라도 있었으므로 userId는 정해져 있다 (frontier가 비어 있지 않다 = 직전 홉이 행을 돌려줬다)
         if (userId) await revokeAllSessionsOfUser(runner, userId);

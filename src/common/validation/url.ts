@@ -193,7 +193,7 @@ export function isSafeUrl(value: unknown): boolean {
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_URL_LENGTH) return false;
   if (CONTROL_CHARS.test(value)) return false;
   if (LENIENT_SITE_PATH.test(value)) return true;
-  if (BARE_HOST_URL.test(value)) return true; // 레거시 스킴 없는 값 — 실행 불가, 위 주석
+  if (BARE_HOST_URL.test(value)) return true; // 레거시 스킴 없는 값 - 실행 불가, 위 주석
   if (!HTTP_URL_PREFIX.test(value)) return false; // 다른 스킴·프로토콜 상대는 전부 여기서 끝난다
   // 절대 URL의 공백, authority(호스트 부분)의 역슬래시 거부 (위 주석의 규칙) — WHATWG URL은 `\`를 `/`로 읽어 `https://evil.com\.example.com`의
   // 호스트를 evil.com으로 보지만 다른 파서는 호스트에 포함시킨다(파서 차이). new URL()은 앞뒤 공백도 조용히 잘라 통과시켰다.

@@ -5,11 +5,15 @@ import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
  * `trim()`은 ASCII/일부 유니코드 공백만 지워서 U+200B(제로폭 공백) 같은 것만으로 된 문자열은 `@IsNotEmpty()`를 통과한다.
  * 닉네임 규칙(users/nickname.ts)이 이미 같은 이유로 한글 채움 문자를 거부한다 - 제목·이름 같은 표시용 필수 문자열은 이 검사를 쓴다.
  */
-const INVISIBLE = /[\p{Cf}\p{Cc}\p{Z}\u115F\u1160\u3164\uFFA0\u2800]/gu;
+const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}\p{Z}\p{Co}\p{Cn}\p{Cs}\uFFFC\u2800]/gu;
 
-/** 보이는 글자가 하나라도 있는가 */
+/**
+ * 보이는 글자가 하나라도 있는가. 유니코드 Default_Ignorable_Code_Point(결합 자소 결합자 U+034F, 크메르 U+17B4/17B5, 몽골 변이 선택자 U+180B-180F,
+ * U+FE0F, 소프트 하이픈, 한글 채움 문자 등), 개체 대체 문자 U+FFFC, 사용자 정의(Co)·미할당(Cn) 코드 포인트도 보이지 않는 문자로 본다.
+ * 결합 문자(\p{M})만 남은 값("́")도 기본 글자 없이는 화면에 글자로 그려지지 않으므로 보이는 글자가 아니다.
+ */
 export function hasVisibleText(value: unknown): boolean {
-  return typeof value === 'string' && value.replace(INVISIBLE, '').length > 0;
+  return typeof value === 'string' && /[^\p{M}]/u.test(value.replace(INVISIBLE, ''));
 }
 
 /** DTO 데코레이터 - 보이지 않는 문자만으로 된 값을 거부한다 (`@IsNotEmpty()`와 함께 쓴다) */

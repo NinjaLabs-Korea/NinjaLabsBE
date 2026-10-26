@@ -139,3 +139,13 @@ describe('confusable nicknames (look-alikes of reserved words and of existing na
     expect(await failedFields({ ...valid, nickname })).toEqual([]);
   });
 });
+
+describe('보이지 않는 결합 문자가 낀 닉네임 (기존 멤버·예약어 사칭)', () => {
+  it.each(['coreni\u034Fnja', 'Admi\u034Fn', 'builde\u17B4rone', 'coreninja\u034F', 'c\u034F\u034F\u034Foreninja', 'ni\u180Bnja'])('rejects %j everywhere', (nickname) => {
+    expect(NICKNAME.test(nickname)).toBe(false);
+    expect(isSavableNickname(nickname)).toBe(false);
+  });
+  it('still accepts a legitimate combining mark', () => {
+    expect(isSavableNickname('caf\u0065\u0301')).toBe(true);
+  });
+});

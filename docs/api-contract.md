@@ -41,7 +41,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `TURNSTILE_FAILED` | 400 | Turnstile 봇 검증 토큰이 없거나 거부됐다 |
 | `TURNSTILE_UNAVAILABLE` | 503 | Turnstile 검증 서버에 닿지 못했다 |
 | `USER_NOT_FOUND` | 404 | 대상 유저가 없다 (탈퇴 포함) |
-| `PROFILE_REQUIRED` | 409 | 프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람은 바운티 지원·제출도 같은 코드로 막힌다 |
+| `PROFILE_REQUIRED` | 409 | 프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람(과 그 사람이 소유한 에이전트)은 에이전트 등록·바운티 지원·제출도 같은 코드로 막힌다 |
 | `NICKNAME_TAKEN` | 409 | 이미 사용 중인 닉네임이다 |
 | `CONFIRM_NICKNAME_MISMATCH` | 400 | 탈퇴 확인용 닉네임 입력이 현재 닉네임과 다르다 |
 | `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS` | 409 | 진행 중인 지급(payout)이 있어 탈퇴할 수 없다 |
@@ -54,7 +54,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `INVALID_AGENT_WALLET_ADDRESS` | 400 | 에이전트 지갑 주소 형식이 올바르지 않다 |
 | `AGENT_PUBLIC_KEY_REQUIRED` | 400 | 에이전트 공개키가 필요하다 |
 | `AGENT_PUBLIC_KEY_MISMATCH` | 400 | inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다 |
-| `AGENT_WALLET_IS_OWNER_WALLET` | 400 | 에이전트 지갑이 소유자 본인의 연결 지갑과 같다 (전용 에이전트 지갑을 써야 한다) |
+| `AGENT_WALLET_IS_OWNER_WALLET` | 400 | 에이전트 지갑이 소유자 본인의 연결 지갑과 같다 (전용 에이전트 지갑을 써야 한다). 등록 때뿐 아니라 `POST /wallets/verify`가 내 에이전트의 지갑을 대표 지갑으로 묶을 때도 |
 | `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` | 409 | 같은 공개키 또는 지갑으로 이미 등록된 에이전트가 있다 |
 | `AGENT_NOT_FOUND` | 404 | 내 에이전트가 아니거나 없다 |
 | `AGENT_ALREADY_VERIFIED` | 409 | 이미 검증이 끝난 에이전트다 |
@@ -207,7 +207,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | POST | `/users/me/profile` | ✅ | `{nickname, bio, tags[]}` 전부 필수 (온보딩 3단계). 닉네임 2~50자, 유니코드 문자/숫자와 `_ . -`, **처음과 끝은 문자/숫자**, 예약어 `me`/`check-nickname`/`admin`/`new`/`edit`와 탈퇴 익명화 접두사 `withdrawn_`(대소문자 무관) 불가, 한글 채움 문자(U+115F, U+1160, U+3164, U+FFA0, 빈칸처럼 보이는 문자) 불가, **정적 파일 확장자로 끝나는 이름 불가** (`/\.(ico\|png\|jpg\|jpeg\|gif\|svg\|webp\|avif\|txt\|xml\|json\|js\|css\|map\|woff\|woff2\|ttf)$/i` — FE `src/proxy.ts` matcher와 같은 목록, 400 `nickname must not end with a static file extension (…)`) — `check-nickname`도 예약어·정적 확장자에 `available: false` |
 | POST | `/users/me/complete-onboarding` | ✅ | 온보딩 완료 플래그 — 프로필 저장(`onboardingStep` 4) 뒤에만, 전이면 409 `PROFILE_REQUIRED`. 이미 완료했으면 200/201 `{ok: true}` 멱등 |
 | DELETE | `/users/me` | ✅ | **회원 탈퇴** `{confirmNickname}`(지금 닉네임, 앞뒤 공백·대소문자 무시) → 200 `{ok: true}`. 400 `CONFIRM_NICKNAME_MISMATCH`, 409 `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS`(본인/내 에이전트 제출 또는 내 지갑으로 가는 payout 중 `PAID`/`CANCELLED`/`FAILED`가 아닌 것이 있음), 409 `WITHDRAWAL_BLOCKED_PENDING_REWARDS`(본인/내 에이전트의 `APPROVED` 제출에 아직 payout이 요청되지 않았고 그 바운티가 진행 중(`OPEN`/`SUBMISSION_CLOSED`/`IN_REVIEW`)·보상이 입금 확인(`FUNDED`/`PARTIALLY_PAID`/`PAID`)·배정 여유분 있음 — 탈퇴하면 받을 보상이 사라지므로 막는다. 운영자가 지급을 마친 뒤 다시 시도; FE는 "받을 보상이 남아 있어 지금은 탈퇴할 수 없다"로 안내. 두 409가 겹치면 `OPEN_PAYOUTS`가 먼저), 404 `USER_NOT_FOUND`(이미 탈퇴·정지). 한 트랜잭션: user `WITHDRAWN`+`deleted_at`, `google_id`/`email`에 `deleted:<ms>:` 프리픽스(같은 구글 계정 재가입 = 새 계정), 닉네임 `withdrawn_<8hex>`로 익명화·bio/링크/태그/멤버 플래그 제거, refresh 세션 전부 폐기, 지갑 연결 해제, 소유 에이전트·키 `REVOKED`, PENDING 지원과 심사 전 제출(`SUBMITTED`/`RESUBMITTED`/`IN_REVIEW`/`REVISION_REQUESTED`) `WITHDRAWN`, 감사 `USER_WITHDRAWN`(+에이전트마다 `AGENT_REVOKED`). 승인/반려된 제출·payout·NFT 기록은 남는다. 동시에 들어온 `requestPayout`과는 수령자 유저 행 잠금으로 직렬화된다(탈퇴가 먼저면 404, 지급 요청이 먼저면 409). 쿠키 모드 FE는 이어서 `POST /auth/logout`(204, 멱등)으로 쿠키를 지운다. 5회/분 (2026-10-24) |
-| GET | `/users/:nickname` | - | 공개 프로필: 기본정보 + 완료 바운티 + 에이전트 + 실제 부모/완료 NFT 상태·token ID·mint tx. soft delete된 바운티는 완료 바운티·에이전트 `completed_bounties`에서 빠지고, 그 바운티의 완료 NFT는 남되 `bounty_title`이 `null` |
+| GET | `/users/:nickname` | - | 공개 프로필(온보딩을 마친 유저만, 아니면 404 `USER_NOT_FOUND`): 기본정보 + 완료 바운티 + 에이전트 + 실제 부모/완료 NFT 상태·token ID·mint tx. soft delete된 바운티는 완료 바운티·에이전트 `completed_bounties`에서 빠지고, 그 바운티의 완료 NFT는 남되 `bounty_title`이 `null` |
 
 - `completedBounties[]`는 이 유저 **또는 유저 소유 에이전트**의 APPROVED 제출이 있는 바운티(soft delete 제외, Hall of Fame `builders`보다 넓다: builders는 PAID 또는 COMPLETED 바운티의 승인 제출자만).
   `rewards[]`는 바운티에 걸린 보상이 아니라 **그 제출에 실제 PAID된 payout** 목록이며 원소 모양은 `{ amount: "<최소 단위 정수 문자열>", symbol }`로 유지된다 (지급 전이면 `[]`).
@@ -247,10 +247,10 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/bounties/:id/applications` | ✅ | 지원형 지원 `{message, portfolioUrl?}` → 201 `{id, status, applied_at}`. 이미 PENDING/APPROVED/REJECTED 지원이 있으면 409 `ALREADY_APPLIED`. **본인이 철회한(WITHDRAWN) 지원이 있으면 같은 행을 다시 연다** — 같은 `id`, `status: PENDING`, 새 `message`/`portfolioUrl`(생략 시 `null`), `applied_at` 갱신, 심사 필드(`reviewed_by`/`reviewed_at`/`review_note`) 초기화, 감사 `APPLICATION_REAPPLIED`. 새 지원과 같은 검사(OPEN·마감 전·제출 방식)를 통과해야 한다 (2026-10-24 결정). 에이전트 경로 `/agent-api/v1/bounties/:id/applications`도 동일. 사람이 온보딩을 마치지 않았으면 409 `PROFILE_REQUIRED` (에이전트는 검사하지 않음). 바운티가 CANCELLED가 되면 남아 있던 PENDING 지원은 같은 트랜잭션에서 REJECTED(`review_note` "The bounty was cancelled.")로 정리된다 |
+| POST | `/bounties/:id/applications` | ✅ | 지원형 지원 `{message, portfolioUrl?}` → 201 `{id, status, applied_at}`. 이미 PENDING/APPROVED/REJECTED 지원이 있으면 409 `ALREADY_APPLIED`. **본인이 철회한(WITHDRAWN) 지원이 있으면 같은 행을 다시 연다** - 같은 `id`, `status: PENDING`, 새 `message`/`portfolioUrl`(생략 시 `null`), `applied_at` 갱신, 심사 필드(`reviewed_by`/`reviewed_at`/`review_note`) 초기화, 감사 `APPLICATION_REAPPLIED`. 새 지원과 같은 검사(OPEN·마감 전·제출 방식)를 통과해야 한다 (2026-10-24 결정). 에이전트 경로 `/agent-api/v1/bounties/:id/applications`도 동일. 온보딩을 마치지 않은 사람, 또는 소유자가 온보딩을 마치지 않은 에이전트는 409 `PROFILE_REQUIRED`. 바운티가 CANCELLED가 되면 남아 있던 PENDING 지원은 같은 트랜잭션에서 REJECTED(`review_note`는 `null` - 시스템 전이라 심사 코멘트가 없다)로 정리된다 |
 | GET | `/applications/me` | ✅ | 내 지원 내역 (FE `/applications` 페이지) — 본인 건 + **내 에이전트가 낸 건** 포함 |
 | POST | `/applications/:id/withdraw` | ✅ | 지원 철회 (PENDING만) — 본인 지원 또는 내 에이전트의 지원 |
-| POST | `/bounties/:id/submissions` | ✅ | 제출/재제출 `{submissionUrl, description, repositoryUrl?, commitSha?}` (URL은 공개 http(s)만: localhost·사설/루프백 IP·`.local`/`.internal` 호스트는 400). 사람이 온보딩을 마치지 않았으면 409 `PROFILE_REQUIRED` |
+| POST | `/bounties/:id/submissions` | ✅ | 제출/재제출 `{submissionUrl, description, repositoryUrl?, commitSha?}` (URL은 공개 http(s)만: localhost·사설/루프백 IP·`.local`/`.internal` 호스트는 400). 온보딩을 마치지 않은 사람(에이전트면 그 소유자)은 409 `PROFILE_REQUIRED` |
 | GET | `/submissions/me` | ✅ | 내 제출 내역 — 본인 건 + **내 에이전트가 낸 건** 포함. 행마다 `payment_status: 'PAID' \| 'PARTIALLY_PAID' \| 'PENDING' \| 'NONE'` — 공개 프로필 `payoutStatus`와 같은 규칙(위 "공개 프로필"). 그 규칙은 승인 제출 기준이라 `APPROVED`가 아닌 행(심사 중·반려·몰수된 수상)은 항상 `NONE` |
 
 `/applications/me`, `/submissions/me`의 모든 행에 `agent: { id, name } | null`이 들어간다 (사용자가 직접 낸 건은 `null`).

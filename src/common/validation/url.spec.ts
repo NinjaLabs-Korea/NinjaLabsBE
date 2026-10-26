@@ -1,4 +1,6 @@
-import { isHttpUrl, isMediaPath, isPublicHttpUrl, isSafeUrl, isSitePath } from './url';
+import 'reflect-metadata';
+import { validate } from 'class-validator';
+import { IsPublicHttpUrl, isHttpUrl, isMediaPath, isPublicHttpUrl, isSafeUrl, isSitePath } from './url';
 
 describe('URL field validators', () => {
   const mediaPath = '/media/11111111-1111-4111-8111-111111111111';
@@ -147,5 +149,17 @@ describe('isPublicHttpUrl (user-submitted links that reviewers and the public pr
     'javascript:alert(1)', 'ftp://example.com/x', 'https://user:pw@example.com/x', 42, null, undefined,
   ])('rejects %p', (value) => {
     expect(isPublicHttpUrl(value)).toBe(false);
+  });
+});
+
+describe('IsPublicHttpUrl failure message', () => {
+  class Dto {
+    @IsPublicHttpUrl() link!: string;
+  }
+  const messageFor = async (link: string) => Object.values((await validate(Object.assign(new Dto(), { link })))[0].constraints ?? {})[0];
+
+  it('names the length when the URL is valid but too long, and the public-link rule otherwise', async () => {
+    expect(await messageFor(`https://example.com/${'a'.repeat(3000)}`)).toBe('link must be at most 2048 characters');
+    expect(await messageFor('http://localhost:3000/x')).toBe('link must be a public http(s) URL (no localhost or private addresses)');
   });
 });

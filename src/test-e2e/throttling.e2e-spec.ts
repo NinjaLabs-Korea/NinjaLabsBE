@@ -211,4 +211,20 @@ describeDb('throttling over HTTP (e2e)', () => {
       expect((await e2e.get('/agent-api/v1/me', { token: 'nj_not-a-real-key-at-all' })).body.message).toBe('INVALID_AGENT_API_KEY');
     });
   });
+
+  // The browser navigates to these two routes (not fetch): a JSON 429 would be the page the user sees.
+  describe('browser-navigated Google routes', () => {
+    it.each([
+      ['/auth/google?codeChallenge=' + 'c'.repeat(43), '203.0.113.150'],
+      ['/auth/google/callback?error=access_denied', '203.0.113.151'],
+    ])('%s: the 21st call in a minute is a 302 to the FE callback with TOO_MANY_REQUESTS, not a JSON 429', async (path, ip) => {
+      const statuses = await burst(21, (i) => e2e.get(path, { ip }));
+      expect(statuses.slice(0, 20)).toEqual(Array(20).fill(302));
+      const throttled = await e2e.get(path, { ip });
+      expect(throttled.status).toBe(302);
+      expect(String(throttled.headers.location)).toMatch(/\/auth\/callback#error=TOO_MANY_REQUESTS$/);
+      expect(throttled.headers['retry-after']).toBe('60');
+      expect(throttled.headers['content-type'] ?? '').not.toContain('application/json');
+    });
+  });
 });

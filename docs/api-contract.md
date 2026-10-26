@@ -105,6 +105,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `PAYOUT_EXCEEDS_AVAILABLE_REWARD` | 400 | 지급액이 남은 보상 잔액을 넘는다 |
 | `PAYOUT_NOT_FOUND_OR_WRONG_STATUS` | 404 | 지급이 없거나 현재 상태에서 허용되지 않는 처리다 |
 | `PAYOUT_SELF_APPROVAL` | 403 | 지급 요청자 본인이 승인할 수 없다 (PAYOUT_ALLOW_SELF_APPROVAL로만 허용) |
+| `EVENT_DATE_ONLY_FOR_EVENT` | 400 | 행사 날짜(eventDate)는 EVENT 분류 공지에만 줄 수 있다 (생성만 거부, 수정은 EVENT 밖이면 조용히 비운다) |
 | `NOTICE_NOT_FOUND` | 404 | 공지가 없다 |
 | `COHORT_NOT_FOUND` | 404 | 기수가 없다 (DRAFT 기수는 지원자에게도 없는 것과 같다) |
 | `COHORT_NOT_ACCEPTING` | 409 | 지금 지원을 받지 않는 기수다 (OPEN이 아니거나 접수 기간 밖; 지원서 수정에도 같은 규칙) |

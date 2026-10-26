@@ -20,7 +20,7 @@ export class CreateNoticeDto {
   @IsOptional() @IsHttpUrlOrMediaPath() thumbnailUrl?: string;
   // 공개 공지가 여는 링크라 localhost·사설 IP·내부 호스트는 거부 (IsPublicHttpUrl). 수정은 완화 규칙을 유지한다: 저장된 레거시 값이 PATCH를 막지 않게
   @IsOptional() @IsPublicHttpUrl() externalUrl?: string;
-  /** 행사 날짜 (YYYY-MM-DD, 달력에 있는 날짜). 선택, EVENT 아닌 공지에도 저장은 된다 */
+  /** 행사 날짜 (YYYY-MM-DD, 달력에 있는 날짜). 선택, EVENT 공지만: 다른 분류와 함께 보내면 400 EVENT_DATE_ONLY_FOR_EVENT */
   @IsOptional() @IsCalendarDate() eventDate?: string | null;
   @IsOptional() @IsBoolean() publish?: boolean;
 }
@@ -35,7 +35,7 @@ export class UpdateNoticeDto {
   @IsOptionalNotNull() @IsIn(NOTICE_CATEGORIES) category?: string;
   @IsOptional() @IsSafeUrl() thumbnailUrl?: string;
   @IsOptional() @IsSafeUrl() externalUrl?: string;
-  /** null = 행사 날짜 지우기 */
+  /** null = 행사 날짜 지우기. EVENT가 아닌 분류의 공지에는 저장되지 않는다 (서비스가 비운다 - 400이 아니다) */
   @IsOptional() @IsCalendarDate() eventDate?: string | null;
   @IsOptionalNotNull() @IsBoolean() publish?: boolean;
 }

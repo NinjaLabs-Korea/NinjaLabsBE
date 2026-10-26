@@ -75,4 +75,23 @@ describeDb('notices publish/update on a real database', () => {
     await expect(admin.remove(id, adminId)).rejects.toMatchObject({ message: 'NOTICE_NOT_FOUND' });
     await expect(admin.update(id, { title: 'x' }, adminId)).rejects.toMatchObject({ message: 'NOTICE_NOT_FOUND' });
   });
+
+  it('an event date only lives on EVENT notices: create refuses others, update clears it when the notice is not (or stops being) EVENT', async () => {
+    const eventDate = async (id: string) => (await db.query<{ d: string | null }>(`SELECT event_date::text AS d FROM notice WHERE id = $1`, [id])).rows[0].d;
+    await expect(admin.create(adminId, { title: unique('n-'), body: 'b', category: 'OTHER', eventDate: '2026-11-11' })).rejects.toMatchObject({ message: 'EVENT_DATE_ONLY_FOR_EVENT' });
+    const { id } = await admin.create(adminId, { title: unique('n-'), body: 'b', category: 'EVENT', eventDate: '2026-11-11' });
+    expect(await eventDate(id)).toBe('2026-11-11');
+    // a date alone applies to the stored EVENT category
+    await admin.update(id, { eventDate: '2026-12-01' }, adminId);
+    expect(await eventDate(id)).toBe('2026-12-01');
+    // leaving EVENT clears the date even when the form re-sends it
+    await admin.update(id, { category: 'OTHER', eventDate: '2026-12-01' }, adminId);
+    expect(await eventDate(id)).toBeNull();
+    // a date sent without a category is ignored while the stored category is not EVENT
+    await admin.update(id, { eventDate: '2026-12-02', title: 'again' }, adminId);
+    expect(await eventDate(id)).toBeNull();
+    // back to EVENT with a date works
+    await admin.update(id, { category: 'EVENT', eventDate: '2026-12-03' }, adminId);
+    expect(await eventDate(id)).toBe('2026-12-03');
+  });
 });

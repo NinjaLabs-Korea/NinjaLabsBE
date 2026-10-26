@@ -122,6 +122,7 @@ export const ERROR_CODES = {
   PAYOUT_SELF_APPROVAL: { statuses: [403], ko: '지급 요청자 본인이 승인할 수 없다 (PAYOUT_ALLOW_SELF_APPROVAL로만 허용)' },
 
   // ── 콘텐츠 (notices / highlights / members / media / nfts) ──
+  EVENT_DATE_ONLY_FOR_EVENT: { statuses: [400], ko: '행사 날짜(eventDate)는 EVENT 분류 공지에만 줄 수 있다 (생성만 거부, 수정은 EVENT 밖이면 조용히 비운다)' },
   NOTICE_NOT_FOUND: { statuses: [404], ko: '공지가 없다' },
   // ── 기수 모집 (cohorts) ──
   COHORT_NOT_FOUND: { statuses: [404], ko: '기수가 없다 (DRAFT 기수는 지원자에게도 없는 것과 같다)' },

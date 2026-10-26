@@ -64,6 +64,28 @@ describe('NoticeAdminService update', () => {
     expect(params).toEqual([noticeId, 'b', 'EVENT', 'https://x.test', 'PUBLISHED']);
   });
 
+  it('create refuses an event date on a non-EVENT notice before touching the database; EVENT and no date pass', async () => {
+    const { db, query, service } = setup();
+    await expect(service.create(adminId, { title: 't', body: 'b', category: 'OTHER', eventDate: '2026-11-11' })).rejects.toMatchObject({ status: 400, message: 'EVENT_DATE_ONLY_FOR_EVENT' });
+    expect(db.tx).not.toHaveBeenCalled();
+    await service.create(adminId, { title: 't', body: 'b', category: 'OTHER', eventDate: null });
+    await service.create(adminId, { title: 't', body: 'b', category: 'EVENT', eventDate: '2026-11-11' });
+    expect(query.mock.calls.filter(([sql]) => (sql as string).startsWith('INSERT INTO notice'))).toHaveLength(2);
+  });
+
+  it('update keeps the event date only while the notice is EVENT: leaving EVENT clears it, a date without category applies only to a stored EVENT', async () => {
+    const { query, service } = setup();
+    await service.update(noticeId, { category: 'OTHER', eventDate: '2026-11-11' }, adminId);
+    expect(query.mock.calls[0][0]).toContain("UPDATE notice SET category = $2, event_date = NULL WHERE id = $1");
+    expect(query.mock.calls[0][1]).toEqual([noticeId, 'OTHER']);
+    await service.update(noticeId, { category: 'EVENT', eventDate: '2026-11-11' }, adminId);
+    expect(query.mock.calls[2][0]).toContain('category = $2, event_date = $3');
+    expect(query.mock.calls[2][1]).toEqual([noticeId, 'EVENT', '2026-11-11']);
+    await service.update(noticeId, { eventDate: '2026-11-11', publish: true }, adminId);
+    expect(query.mock.calls[4][0]).toContain("event_date = CASE WHEN category = 'EVENT' THEN $3::date ELSE NULL END");
+    expect(query.mock.calls[4][1]).toEqual([noticeId, 'PUBLISHED', '2026-11-11']);
+  });
+
   it.each([
     ['create', (s: NoticeAdminService) => s.create(adminId, { title: 't', body: 'b', category: 'EVENT', publish: true }), 'NOTICE_PUBLISHED'],
     ['update', (s: NoticeAdminService) => s.update(noticeId, { title: 't' }, adminId), 'NOTICE_UPDATED'],

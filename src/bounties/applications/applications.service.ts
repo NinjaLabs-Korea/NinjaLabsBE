@@ -48,14 +48,17 @@ export class ApplicationsService {
         [bountyId],
       );
       if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-      if (!bounty.rows[0].application_required) {
-        throw new BadRequestException('SUBMISSION_TYPE_BOUNTY'); // 제출형은 바로 제출
-      }
+      // 검사 순서가 응답을 정한다: 제출 방식(주체 허용) -> 상태 -> 지원 불필요 -> 마감. 방식이 먼저여야 DIRECT 바운티가 에이전트에게 항상
+      // DIRECT_SUBMISSION_REQUIRED로 답한다 - 지원이 필요 없는 DIRECT 바운티에 SUBMISSION_TYPE_BOUNTY("바로 제출하라")를 주면, 그대로 따른
+      // 에이전트가 제출에서 DIRECT_SUBMISSION_REQUIRED를 만난다. 상태도 지원 불필요보다 먼저: 열리지 않은 바운티에는 상태 오류가 맞다.
+      actor.assertAllowedBy(bounty.rows[0].submission_mode);
       if (bounty.rows[0].status !== BountyStatus.OPEN) {
         throw new BadRequestException('BOUNTY_NOT_OPEN');
       }
+      if (!bounty.rows[0].application_required) {
+        throw new BadRequestException('SUBMISSION_TYPE_BOUNTY'); // 제출형은 바로 제출
+      }
       if ([bounty.rows[0].submission_deadline, bounty.rows[0].application_deadline].some((date) => date && new Date(date).getTime() <= Date.now())) throw new BadRequestException('APPLICATION_DEADLINE_PASSED');
-      actor.assertAllowedBy(bounty.rows[0].submission_mode);
       await actor.assertOnboarded(tx);
 
       // 바운티 행 잠금(FOR UPDATE) 아래라 같은 주체의 동시 지원은 여기서 직렬화된다

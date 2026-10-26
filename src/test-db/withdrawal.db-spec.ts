@@ -85,6 +85,7 @@ describeDb('account withdrawal on a real database', () => {
     const builder = await auth.upsertGoogleUser(googleId, email);
     const nickname = unique('Wd_');
     await users.completeProfile(builder.id, nickname, 'bio', ['DEV']);
+    await users.completeOnboarding(builder.id); // applying needs a finished onboarding
     await db.query(`INSERT INTO user_link (user_id, link_type, url) VALUES ($1, 'GITHUB', 'https://github.com/x')`, [builder.id]);
     const wallet = await createPrimaryWallet(db, builder.id);
     const session = await auth.issueSession(builder.id, false);

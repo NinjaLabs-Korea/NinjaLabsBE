@@ -21,6 +21,19 @@ describe('bounty participation DTOs (user and agent surfaces share the same rule
     expect(await failedFields(cls, { message: '', portfolioUrl: 'javascript:alert(1)' })).toEqual(['message', 'portfolioUrl']);
   });
 
+  it.each([ApplyDto, AgentApplyDto])('%p: portfolioUrl must be public (no localhost / private addresses)', async (cls) => {
+    for (const portfolioUrl of ['http://localhost:3000/x', 'http://127.0.0.1/x', 'http://192.168.0.2/x', 'http://intranet/x']) {
+      expect(await failedFields(cls, { message: 'hi', portfolioUrl })).toEqual(['portfolioUrl']);
+    }
+  });
+
+  it.each([SubmitDto, AgentSubmitDto])('%p: submissionUrl and repositoryUrl must be public (no localhost / private addresses)', async (cls) => {
+    for (const url of ['http://localhost:3000/x', 'http://127.0.0.1/x', 'http://10.1.2.3/x', 'http://169.254.169.254/x']) {
+      expect(await failedFields(cls, { submissionUrl: url, description: 'd' })).toEqual(['submissionUrl']);
+      expect(await failedFields(cls, { submissionUrl: 'https://demo.app', description: 'd', repositoryUrl: url })).toEqual(['repositoryUrl']);
+    }
+  });
+
   it.each([ApplyDto, AgentApplyDto])('%p: a whitespace-only message is empty, and the stored message is trimmed', async (cls) => {
     expect(await failedFields(cls, { message: '   \n ' })).toEqual(['message']);
     expect(plainToInstance(cls, { message: '  hello  ' }).message).toBe('hello');

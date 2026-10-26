@@ -69,13 +69,17 @@ export function unique(prefix = ''): string {
   return `${prefix}${randomBytes(6).toString('hex')}`;
 }
 
-/** 테스트 유저 — 구글 로그인 직후 상태(onboarding_step 2) */
-export async function createUser(db: DatabaseService, options: { isAdmin?: boolean; nickname?: string } = {}): Promise<string> {
+/**
+ * 테스트 유저. 기본은 온보딩을 마친 상태(onboarding_step 4 + onboarding_completed_at) - 지원·제출은 온보딩을 마친 사람만 할 수 있다(409 PROFILE_REQUIRED).
+ * `onboarded: false`는 구글 로그인 직후 상태(onboarding_step 2, 임시 닉네임)다.
+ */
+export async function createUser(db: DatabaseService, options: { isAdmin?: boolean; nickname?: string; onboarded?: boolean } = {}): Promise<string> {
   const id = unique();
+  const onboarded = options.onboarded ?? true;
   const r = await db.query<{ id: string }>(
-    `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step, is_admin)
-     VALUES ($1, $2, $3, '', 2, $4) RETURNING id`,
-    [`google-${id}`, `${id}@example.test`, options.nickname ?? `user_${id.slice(0, 8)}`, options.isAdmin ?? false],
+    `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step, onboarding_completed_at, is_admin)
+     VALUES ($1, $2, $3, '', $5::int, CASE WHEN $5::int >= 4 THEN now() END, $4) RETURNING id`,
+    [`google-${id}`, `${id}@example.test`, options.nickname ?? `user_${id.slice(0, 8)}`, options.isAdmin ?? false, onboarded ? 4 : 2],
   );
   return r.rows[0].id;
 }

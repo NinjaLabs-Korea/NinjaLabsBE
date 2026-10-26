@@ -49,4 +49,17 @@ describe('notice admin DTOs', () => {
     expect(await failedFields(UpdateNoticeDto, { title: null, body: null, category: null, publish: null })).toEqual(['body', 'category', 'publish', 'title']);
     expect(await failedFields(UpdateNoticeDto, { summary: null, thumbnailUrl: null, externalUrl: null })).toEqual([]);
   });
+
+  it('stores a blank summary as null (create: NULL column, update: clears the summary) and trims a real one', () => {
+    expect(plainToInstance(CreateNoticeDto, { ...valid, summary: '   ' }).summary).toBeNull();
+    expect(plainToInstance(CreateNoticeDto, { ...valid, summary: '' }).summary).toBeNull();
+    expect(plainToInstance(CreateNoticeDto, { ...valid, summary: '  Hello  ' }).summary).toBe('Hello');
+    expect(plainToInstance(UpdateNoticeDto, { summary: ' \n ' }).summary).toBeNull();
+    expect(plainToInstance(UpdateNoticeDto, { title: 'T' }).summary).toBeUndefined(); // omitted stays untouched
+  });
+
+  it('a blank or null summary passes validation', async () => {
+    expect(await failedFields(CreateNoticeDto, { ...valid, summary: '   ' })).toEqual([]);
+    expect(await failedFields(UpdateNoticeDto, { summary: null })).toEqual([]);
+  });
 });

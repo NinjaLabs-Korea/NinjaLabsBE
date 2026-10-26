@@ -8,9 +8,16 @@ const failedFields = async (cls: new () => object, body: object) =>
 
 describe('admin display order validation', () => {
   it('requires member display order to be 1 or more when given', async () => {
-    expect(await failedFields(SetMemberDto, { isMember: true, displayOrder: 1 })).toEqual([]);
-    expect(await failedFields(SetMemberDto, { isMember: true })).toEqual([]);
-    expect(await failedFields(SetMemberDto, { isMember: true, displayOrder: -5 })).toEqual(['displayOrder']);
+    expect(await failedFields(SetMemberDto, { isMember: true, role: 'DEV', displayOrder: 1 })).toEqual([]);
+    expect(await failedFields(SetMemberDto, { isMember: true, role: 'DEV' })).toEqual([]);
+    expect(await failedFields(SetMemberDto, { isMember: true, role: 'DEV', displayOrder: -5 })).toEqual(['displayOrder']);
+  });
+
+  it('requires a role when making someone a member (no NULL role that the public page shows as Core), but not when removing one', async () => {
+    expect(await failedFields(SetMemberDto, { isMember: true })).toEqual(['role']);
+    expect(await failedFields(SetMemberDto, { isMember: true, role: 'BOSS' })).toEqual(['role']);
+    expect(await failedFields(SetMemberDto, { isMember: false })).toEqual([]);
+    expect(await failedFields(SetMemberDto, { isMember: false, role: 'OPS' })).toEqual([]);
   });
 
   it('requires highlight display order to be 0 or more', async () => {

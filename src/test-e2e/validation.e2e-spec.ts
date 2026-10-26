@@ -20,7 +20,7 @@ describeDb('validation over HTTP (e2e)', () => {
   beforeAll(async () => {
     e2e = await startApp();
     admin = await e2e.loginAdmin();
-    user = await e2e.login();
+    user = await e2e.loginOnboarded();
   });
   afterAll(async () => e2e?.close());
   const asAdmin = () => ({ token: admin.accessToken });

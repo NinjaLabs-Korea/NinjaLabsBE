@@ -259,7 +259,7 @@ describeDb('auth sessions on a real database', () => {
   });
 
   it('getMe reflects wallet and parent NFT state', async () => {
-    const userId = await createUser(db);
+    const userId = await createUser(db, { onboarded: false });
     await expect(auth.getMe(userId)).resolves.toMatchObject({ id: userId, wallet: null, nft: null, onboardingCompleted: false, tags: [] });
   });
 });

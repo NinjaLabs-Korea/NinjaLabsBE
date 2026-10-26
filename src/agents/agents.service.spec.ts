@@ -193,7 +193,7 @@ describe('AgentsService EVM registration', () => {
 
     // lookup (FOR UPDATE) → INSERT; uq_agent_wallet ignores REVOKED rows (0014), so nothing is retired
     const [lookup, insert] = registerQuery.mock.calls;
-    expect(registerQuery).toHaveBeenCalledTimes(2);
+    expect(registerQuery).toHaveBeenCalledTimes(3); // + the owner-wallet check after the INSERT
     expect(lookup[0]).toContain("status IN ('REVOKED', 'PENDING_VERIFICATION') AND deleted_at IS NULL");
     expect(lookup[0]).toContain('FOR UPDATE');
     expect(lookup[1]).toEqual([signer.address, null]);

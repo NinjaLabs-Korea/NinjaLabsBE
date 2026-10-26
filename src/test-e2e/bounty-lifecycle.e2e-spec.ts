@@ -42,7 +42,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
   const transition = (id: string, to: string) => e2e.post(`/admin/bounties/${id}/transition`, { to }, asAdmin);
 
   it('reward bounty: create (FUNDING_PENDING) → confirm deposit → OPEN → apply → approve → submit → APPROVE → payout requested/approved/paid (child mint job) → COMPLETED', async () => {
-    const builder = await e2e.login();
+    const builder = await e2e.loginOnboarded();
     const { nickname, walletAddress } = await e2e.onboard(builder);
     const form = bountyForm();
     const bountyId = await createBounty(form);
@@ -197,7 +197,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
   });
 
   it('an approved winner still owed blocks IN_REVIEW → OPEN (reopen) → CANCELLED with the same 400 body as the COMPLETED block (docs/decisions.md 2026-10-25)', async () => {
-    const builder = await e2e.login();
+    const builder = await e2e.loginOnboarded();
     await e2e.onboard(builder);
     const id = await createBounty(bountyForm({ intakeEnabled: false, reward: { amount: 1, currency: 'INJ' } }));
     const rewardId: string = (await e2e.get(`/admin/bounties/${id}/operations`, asAdmin)).body.rewards[0].id;
@@ -231,7 +231,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
   });
 
   it('a deposit tx hash is never accepted as a payout tx hash (and vice versa) → 409 TX_HASH_ALREADY_USED', async () => {
-    const builder = await e2e.login();
+    const builder = await e2e.loginOnboarded();
     await e2e.onboard(builder);
     const id = await createBounty(bountyForm({ intakeEnabled: false, reward: { amount: 1, currency: 'INJ' } }));
     const rewardId: string = (await e2e.get(`/admin/bounties/${id}/operations`, asAdmin)).body.rewards[0].id;
@@ -281,7 +281,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
   });
 
   it('payout over the posted amount is refused even when the sponsor over-deposited (400 PAYOUT_EXCEEDS_AVAILABLE_REWARD)', async () => {
-    const builder = await e2e.login();
+    const builder = await e2e.loginOnboarded();
     await e2e.onboard(builder);
     const id = await createBounty(bountyForm({ intakeEnabled: false, reward: { amount: 1, currency: 'INJ' } }));
     const rewardId: string = (await e2e.get(`/admin/bounties/${id}/operations`, asAdmin)).body.rewards[0].id;
@@ -329,7 +329,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
 
     const submissions: string[] = [];
     for (let i = 0; i < 3; i++) {
-      const user = await e2e.login();
+      const user = await e2e.loginOnboarded();
       const res = await e2e.post(`/bounties/${id}/submissions`, submitBody({ submissionUrl: `https://demo.example/${i}`, description: `entry ${i}` }), { token: user.accessToken });
       expect(res.status).toBe(201);
       submissions.push(res.body.id);
@@ -357,7 +357,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     }
 
     it('agents apply/submit with their key via /agent-api/v1; the owner sees those rows with `agent`, can withdraw them, and rotate/revoke keys', async () => {
-      const owner = await e2e.login();
+      const owner = await e2e.loginOnboarded();
       await e2e.onboard(owner);
       const id = await createBounty(bountyForm({ submissionMode: 'agent', reward: { amount: 0, currency: 'INJ' } }));
       expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
@@ -377,7 +377,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
 
       // the owner withdraws an agent's application
       expect((await e2e.post(`/applications/${appA.body.id}/withdraw`, undefined, { token: owner.accessToken })).body).toEqual({ id: appA.body.id, status: 'WITHDRAWN' });
-      const stranger = await e2e.login();
+      const stranger = await e2e.loginOnboarded();
       expect((await e2e.post(`/applications/${appB.body.id}/withdraw`, undefined, { token: stranger.accessToken })).status).toBe(404);
 
       expect((await e2e.post(`/admin/applications/${appB.body.id}/review`, { decision: 'APPROVED' }, asAdmin)).body.status).toBe('APPROVED');
@@ -405,7 +405,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     });
 
     it('an agent re-applies via /agent-api/v1 after its owner withdrew the application: same row reopened as PENDING', async () => {
-      const owner = await e2e.login();
+      const owner = await e2e.loginOnboarded();
       const id = await createBounty(bountyForm({ submissionMode: 'agent', reward: { amount: 0, currency: 'INJ' } }));
       expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
       const bot = await registerAgent(owner, 'gamma-bot');
@@ -426,7 +426,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
   });
 
   it('an agent whose owner is suspended or deleted can no longer use its API key (401 INVALID_AGENT_API_KEY)', async () => {
-    const owner = await e2e.login();
+    const owner = await e2e.loginOnboarded();
     const signer = Wallet.createRandom();
     const registered = await e2e.post('/agents', { name: 'orphan-bot', walletAddress: signer.address }, { token: owner.accessToken });
     const verified = await e2e.post(`/agents/${registered.body.agentId}/verify`, { signature: await signer.signMessage(registered.body.verificationMessage) }, { token: owner.accessToken });
@@ -446,7 +446,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
   });
 
   it('re-applying after withdrawal reopens the same application (201 PENDING, same id, review cleared, APPLICATION_REAPPLIED); PENDING stays 409; closed bounty refuses', async () => {
-    const builder = await e2e.login();
+    const builder = await e2e.loginOnboarded();
     const id = await createBounty(bountyForm({ reward: { amount: 0, currency: 'INJ' } }));
     expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
 
@@ -474,7 +474,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
   });
 
   it('NFT job console: GET /admin/nft-jobs lists FAILED jobs (paged); retry → PENDING with retry_count 0, nft restored, NFT_JOB_RETRIED; a second retry is 404', async () => {
-    const owner = await e2e.login();
+    const owner = await e2e.loginOnboarded();
     await e2e.onboard(owner);
     // the wallet verify queued the parent mint; force it into the worker's permanent-failure state
     const job = await e2e.db.query<{ id: string; nft_id: string }>(
@@ -509,7 +509,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
 
   describe('h. admin guard', () => {
     it('a non-admin gets 403 ADMIN_ONLY on every /admin route; no token is 401', async () => {
-      const user = await e2e.login();
+      const user = await e2e.loginOnboarded();
       for (const [method, path] of [['GET', '/admin/bounties'], ['GET', '/admin/users'], ['GET', '/admin/notices'], ['GET', '/admin/audit-logs'], ['POST', '/admin/payouts'], ['GET', '/admin/nft-jobs'], ['POST', `/admin/nft-jobs/${'1'.repeat(8)}-1111-4111-8111-111111111111/retry`]] as const) {
         const res = await e2e.request(method, path, { token: user.accessToken, json: method === 'POST' ? {} : undefined });
         expect(res.status).toBe(403);

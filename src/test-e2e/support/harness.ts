@@ -267,6 +267,16 @@ export class E2eApp {
     return { ...exchanged.body, userId: me.body.id, sub, email };
   }
 
+  /**
+   * 온보딩을 마친 일반 유저 - 지원·제출만 보는 스펙용 지름길. 프로필·지갑 흐름 전체는 `onboard()`가 HTTP로 거친다.
+   * 지원·제출은 온보딩 완료(onboarding_completed_at)를 요구한다(409 PROFILE_REQUIRED).
+   */
+  async loginOnboarded(): Promise<Session> {
+    const session = await this.login();
+    await this.db.query(`UPDATE "user" SET onboarding_step = 4, onboarding_completed_at = now() WHERE id = $1`, [session.userId]);
+    return session;
+  }
+
   trackTokens(body: { accessToken?: string; refreshToken?: string; apiKey?: string }) {
     for (const value of [body?.accessToken, body?.refreshToken, body?.apiKey]) if (value) this.secrets.add(value);
   }
@@ -287,6 +297,9 @@ export class E2eApp {
     if (profile.status !== 201) throw new Error(`profile → ${profile.status} ${profile.text}`);
     const signer = Wallet.createRandom();
     const walletAddress = await this.linkWallet(session, signer);
+    // 온보딩 완료 플래그 - 지원·제출은 이것을 마친 사람만 할 수 있다 (409 PROFILE_REQUIRED)
+    const done = await this.post('/users/me/complete-onboarding', undefined, { token: session.accessToken });
+    if (done.status !== 201) throw new Error(`complete-onboarding → ${done.status} ${done.text}`);
     return { nickname, signer, walletAddress };
   }
 

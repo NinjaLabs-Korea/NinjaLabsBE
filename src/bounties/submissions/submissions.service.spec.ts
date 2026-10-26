@@ -67,6 +67,7 @@ describe('SubmissionsService revisions after closing intake', () => {
   function setup(status: string, existingStatus?: string) {
     const query = jest.fn()
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ application_required: false, submission_mode: 'DIRECT', status, submission_deadline: '2000-01-01' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ done: true }] }) // the person's onboarding check
       .mockResolvedValueOnce({ rowCount: existingStatus ? 1 : 0, rows: existingStatus ? [{ id: 'sub', status: existingStatus, current_revision_no: 2 }] : [] })
       .mockResolvedValue({ rowCount: 1, rows: [] });
     const { database, db } = createMockDb({ txQuery: query });
@@ -75,9 +76,9 @@ describe('SubmissionsService revisions after closing intake', () => {
   it.each(['SUBMISSION_CLOSED', 'IN_REVIEW'])('allows requested revisions in %s after the deadline', async (status) => {
     const { service, query, db } = setup(status, 'REVISION_REQUESTED');
     await expect(service.submit('bounty', 'user', input)).resolves.toEqual({ id: 'sub', revisionNo: 3, status: 'RESUBMITTED' });
-    expect(query.mock.calls[2][0]).toContain('UPDATE bounty_submission');
-    expect(query.mock.calls[2][1]).toEqual(['sub', input.submissionUrl, input.description, null, null, 3]);
-    expect(query.mock.calls[3][0]).toContain('INSERT INTO submission_revision');
+    expect(query.mock.calls[3][0]).toContain('UPDATE bounty_submission');
+    expect(query.mock.calls[3][1]).toEqual(['sub', input.submissionUrl, input.description, null, null, 3]);
+    expect(query.mock.calls[4][0]).toContain('INSERT INTO submission_revision');
     expect(db.query).not.toHaveBeenCalled();
   });
   it.each([undefined, 'SUBMITTED', 'APPROVED'])('rejects closed-intake submission with status %s', async (status) => {
@@ -98,8 +99,9 @@ describe('SubmissionsService submit rules', () => {
    * Answers by statement shape. `existing` is the caller's current submission row (or none), `approvedApplication` the id of an
    * APPROVED application of this actor (or none) — the lookup itself must filter `status = 'APPROVED'`.
    */
-  function setup(bounty: Record<string, unknown> | null, options: { existing?: { status: string; current_revision_no: number }; approvedApplication?: string } = {}) {
+  function setup(bounty: Record<string, unknown> | null, options: { existing?: { status: string; current_revision_no: number }; approvedApplication?: string; onboarded?: boolean } = {}) {
     const query = jest.fn(async (sql: string, _params?: unknown[]) => {
+      if (sql.includes('onboarding_completed_at')) return { rowCount: 1, rows: [{ done: options.onboarded ?? true }] };
       if (sql.includes('FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE')) {
         return bounty ? { rowCount: 1, rows: [{ application_required: false, submission_mode: 'DIRECT', status: 'OPEN', submission_deadline: FUTURE, ...bounty }] } : { rowCount: 0, rows: [] };
       }
@@ -128,6 +130,16 @@ describe('SubmissionsService submit rules', () => {
     const { service, wrote } = setup({ status }, { existing: { status: 'REVISION_REQUESTED', current_revision_no: 1 } });
     await expect(service.submit('b', 'u', input)).rejects.toMatchObject({ message: 'BOUNTY_NOT_OPEN' });
     expect(wrote()).toBe(false);
+  });
+
+  it('a person who has not finished onboarding is 409 PROFILE_REQUIRED and nothing is written (agents are not checked)', async () => {
+    const blocked = setup({}, { onboarded: false });
+    await expect(blocked.service.submit('b', 'u', input)).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    expect(blocked.call('onboarding_completed_at')![1]).toEqual(['u']);
+    expect(blocked.wrote()).toBe(false);
+    const agent = setup({ submission_mode: 'AGENT' }, { onboarded: false });
+    await expect(agent.service.submitAsAgent('b', 'agent', input)).resolves.toEqual({ id: 'new-sub', revisionNo: 1, status: 'SUBMITTED' });
+    expect(agent.call('onboarding_completed_at')).toBeUndefined();
   });
 
   it('an agent on a DIRECT bounty is 400 DIRECT_SUBMISSION_REQUIRED', async () => {

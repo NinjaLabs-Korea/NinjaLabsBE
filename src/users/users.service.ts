@@ -94,7 +94,7 @@ export class UsersService {
     if (!user.rowCount) throw new NotFoundException('USER_NOT_FOUND');
     const u = user.rows[0];
 
-    // 본인 + 소유 에이전트의 APPROVED 제출 (highlights stats의 builders 기준과 동일), soft delete 바운티 제외.
+    // 본인 + 소유 에이전트의 APPROVED 제출 (공개 프로필은 승인 기준 그대로다. highlights stats의 builders는 지급됐거나 완료된 바운티의 승인 제출자만 센다), soft delete 바운티 제외.
     // rewards는 바운티에 걸린 보상이 아니라 이 제출에 실제 PAID된 payout 목록이다 (금액은 최소 단위 정수 문자열).
     // postedRewards는 바운티에 걸린 보상(bounty_reward) 목록(같은 원소 모양), payoutStatus는 /submissions/me의 payment_status와 같은 SQL
     // (rewards/payout-status.ts — 이 제출에 지급될 보상 기준 PAID / PARTIALLY_PAID / PENDING / NONE). FE가 "지급 대기"를 0 INJ와 구분해 보여준다.

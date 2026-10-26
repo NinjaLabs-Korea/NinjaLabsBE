@@ -249,7 +249,7 @@ describeDb('users on a real database', () => {
   });
 
   it('completeOnboarding stamps once and keeps the first completion time on repeat', async () => {
-    const userId = await createUser(db);
+    const userId = await createUser(db, { onboarded: false });
     // the profile (step 4) must be saved first: before that the flag stays unset
     await expect(users.completeOnboarding(userId)).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
     expect((await db.query(`SELECT 1 FROM "user" WHERE id = $1 AND onboarding_completed_at IS NOT NULL`, [userId])).rowCount).toBe(0);

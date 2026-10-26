@@ -44,7 +44,7 @@ export const ERROR_CODES = {
 
   // ── 유저 / 탈퇴 ──
   USER_NOT_FOUND: { statuses: [404], ko: '대상 유저가 없다 (탈퇴 포함)' },
-  PROFILE_REQUIRED: { statuses: [409], ko: '프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다' },
+  PROFILE_REQUIRED: { statuses: [409], ko: '프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람은 바운티 지원·제출도 같은 코드로 막힌다' },
   NICKNAME_TAKEN: { statuses: [409], ko: '이미 사용 중인 닉네임이다' },
   CONFIRM_NICKNAME_MISMATCH: { statuses: [400], ko: '탈퇴 확인용 닉네임 입력이 현재 닉네임과 다르다' },
   WITHDRAWAL_BLOCKED_OPEN_PAYOUTS: { statuses: [409], ko: '진행 중인 지급(payout)이 있어 탈퇴할 수 없다' },
@@ -61,6 +61,7 @@ export const ERROR_CODES = {
   INVALID_AGENT_WALLET_ADDRESS: { statuses: [400], ko: '에이전트 지갑 주소 형식이 올바르지 않다' },
   AGENT_PUBLIC_KEY_REQUIRED: { statuses: [400], ko: '에이전트 공개키가 필요하다' },
   AGENT_PUBLIC_KEY_MISMATCH: { statuses: [400], ko: 'inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다' },
+  AGENT_WALLET_IS_OWNER_WALLET: { statuses: [400], ko: '에이전트 지갑이 소유자 본인의 연결 지갑과 같다 (전용 에이전트 지갑을 써야 한다)' },
   AGENT_KEY_OR_WALLET_ALREADY_REGISTERED: { statuses: [409], ko: '같은 공개키 또는 지갑으로 이미 등록된 에이전트가 있다' },
   AGENT_NOT_FOUND: { statuses: [404], ko: '내 에이전트가 아니거나 없다' },
   AGENT_ALREADY_VERIFIED: { statuses: [409], ko: '이미 검증이 끝난 에이전트다' },

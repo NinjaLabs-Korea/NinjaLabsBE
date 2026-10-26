@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, 
 import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
-import { Trim } from '../common/validation/trim';
+import { NullIfBlank, Trim } from '../common/validation/trim';
 import { IsHttpUrl, IsHttpUrlOrMediaPath, IsSafeUrl } from '../common/validation/url';
 import { NoticeAdminService } from './notice-admin.service';
 import { MaxChars } from '../common/validation/max-chars';
@@ -12,7 +12,7 @@ const NOTICE_CATEGORIES = ['NINJALABS', 'INJECTIVE_ECOSYSTEM', 'EVENT', 'RECRUIT
 
 export class CreateNoticeDto {
   @Trim() @IsString() @IsNotEmpty() @MaxChars(200) title!: string;
-  @IsOptional() @IsString() @MaxLength(500) summary?: string;
+  @IsOptional() @NullIfBlank() @IsString() @MaxLength(500) summary?: string;
   @Trim() @IsString() @IsNotEmpty() @MaxLength(50_000) body!: string;
   @IsIn(NOTICE_CATEGORIES) category!: string;
   @IsOptional() @IsHttpUrlOrMediaPath() thumbnailUrl?: string;
@@ -25,7 +25,7 @@ export class CreateNoticeDto {
 // NOT NULL 컬럼(title/body/category)과 publish는 null을 400으로 막는다 (IsOptionalNotNull) — summary·URL은 nullable이라 null = 지우기.
 export class UpdateNoticeDto {
   @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxChars(200) title?: string;
-  @IsOptional() @IsString() @MaxLength(1000) summary?: string;
+  @IsOptional() @NullIfBlank() @IsString() @MaxLength(1000) summary?: string;
   @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(100_000) body?: string;
   @IsOptionalNotNull() @IsIn(NOTICE_CATEGORIES) category?: string;
   @IsOptional() @IsSafeUrl() thumbnailUrl?: string;

@@ -50,6 +50,8 @@ export class HighlightsService {
    * paidTotals 는 status = 'PAID' payout 만 더한다 — 토큰 단위가 서로 달라 bounty_reward 의 (심볼, 토큰 유형)별로 묶고 합을 base unit 문자열로 돌려준다.
    * sponsors 는 대소문자·앞뒤 공백만 다른 이름("Acme" / "acme ")을 한 후원사로 센다 — 운영자가 손으로 입력하는 값이라 표기가 흔들리고, paidTotals 의 심볼 병합(upper)과 같은 기준이다.
    * builders는 사람(submitter_user_id)과 에이전트(agent_id) 제출자를 모두 센다 (0005 chk_submission_actor: 둘 중 하나만 채워짐).
+   * "Builders rewarded"라는 공개 문구와 맞도록 승인(APPROVED)만으로는 세지 않는다: 완료(COMPLETED)된 바운티의 승인 제출자이거나 그 제출에 PAID payout이 있는 사람만.
+   * (승인은 됐지만 아직 아무것도 지급되지 않았고 바운티도 끝나지 않은 사람, 취소된 바운티의 미지급 승인자는 제외.)
    */
   async stats(): Promise<HallOfFameStats> {
     const now = Date.now();
@@ -100,7 +102,9 @@ export class HighlightsService {
            WHERE status = 'COMPLETED' AND deleted_at IS NULL) AS completed_bounties,
          (SELECT count(DISTINCT COALESCE(s.submitter_user_id, s.agent_id)) FROM bounty_submission s
             JOIN bounty b ON b.id = s.bounty_id
-           WHERE s.status = 'APPROVED' AND b.deleted_at IS NULL) AS builders,
+           WHERE s.status = 'APPROVED' AND b.deleted_at IS NULL
+             AND (b.status = 'COMPLETED'
+                  OR EXISTS (SELECT 1 FROM payout p WHERE p.submission_id = s.id AND p.status = 'PAID'))) AS builders,
          (SELECT count(*) FROM nft n
             JOIN bounty b ON b.id = n.bounty_id
            WHERE n.nft_type = 'BOUNTY_COMPLETION_CHILD'

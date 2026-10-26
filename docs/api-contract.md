@@ -68,6 +68,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `BOUNTY_NOT_OPEN` | 400 | 지원/제출을 받는 상태(OPEN 등)가 아니다 |
 | `BOUNTY_REVIEW_CLOSED` | 400 | 바운티가 이미 종료돼 심사·보상 처리를 할 수 없다 |
 | `BOUNTY_HAS_OPEN_FUNDS` | 409 | 미정산 보상·지급이 남아 있어 삭제할 수 없다 |
+| `APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE` | 400 | 지원 마감이 제출 마감보다 늦다 (생성·수정 모두, 같은 시각은 허용) |
 | `DEADLINE_IN_PAST` | 400 | 마감일을 과거로 바꿀 수 없다 |
 | `MAX_WINNERS_BELOW_APPROVED` | 400 | 이미 승인된 수보다 적게 최대 당선자 수를 줄일 수 없다 |
 | `INVALID_TRANSITION` | 400 | 허용되지 않는 상태 전이다 (실제 메시지는 INVALID_TRANSITION:<from>-><to>) |

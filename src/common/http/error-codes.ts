@@ -77,6 +77,7 @@ export const ERROR_CODES = {
   BOUNTY_NOT_OPEN: { statuses: [400], ko: '지원/제출을 받는 상태(OPEN 등)가 아니다' },
   BOUNTY_REVIEW_CLOSED: { statuses: [400], ko: '바운티가 이미 종료돼 심사·보상 처리를 할 수 없다' },
   BOUNTY_HAS_OPEN_FUNDS: { statuses: [409], ko: '미정산 보상·지급이 남아 있어 삭제할 수 없다' },
+  APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE: { statuses: [400], ko: '지원 마감이 제출 마감보다 늦다 (생성·수정 모두, 같은 시각은 허용)' },
   DEADLINE_IN_PAST: { statuses: [400], ko: '마감일을 과거로 바꿀 수 없다' },
   MAX_WINNERS_BELOW_APPROVED: { statuses: [400], ko: '이미 승인된 수보다 적게 최대 당선자 수를 줄일 수 없다' },
   INVALID_TRANSITION: { statuses: [400], ko: '허용되지 않는 상태 전이다 (실제 메시지는 INVALID_TRANSITION:<from>-><to>)' },

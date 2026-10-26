@@ -359,7 +359,7 @@ railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
   -v expected_nft_contract=<mainnet CW-721 inj1…>'
 ```
 - **blocker**(0행이어야 진행): `custody_placeholder`(열린 보상의 custody가 `PENDING_MULTISIG_SETUP`/잘못된 모양/새 멀티시그와 다름), `erc20_testnet_chain`(열린 ERC-20 보상이 1439 또는 다른 USDC), `payout_open`(끝나지 않은 payout), `nft_job_unfinished`(대기·진행·실패 잡 — 전환 후 메인넷에 민팅된다).
-- **review**: `reward_funded_on_testnet`(테스트넷 입금 — 메인넷 재입금 또는 환불/취소 결정), `nft_contracts`(테스트넷 컨트랙트의 NFT — 재민팅 여부), `active_admins`, `platform_settings`(표시용 — 서버 코드가 이 테이블을 읽지 않으므로 민팅 스위치가 아니다. 민팅을 멈추려면 `MASTER_WALLET_MNEMONIC`/`NFT_CONTRACT_ADDRESS` env, §7.6), `last_migration`.
+- **review**: `reward_funded_on_testnet`(테스트넷 입금 — 메인넷 재입금 또는 환불/취소 결정), `nft_contracts`(테스트넷 컨트랙트의 NFT — 재민팅 여부), `nickname_case_folding`(행이 나오면 DB `lc_ctype`이 비-ASCII 대문자를 못 접어 `Café`/`CAFÉ` 닉네임이 둘 다 가입된다 - UTF-8 로케일 DB인지 확인), `active_admins`, `platform_settings`(표시용 — 서버 코드가 이 테이블을 읽지 않으므로 민팅 스위치가 아니다. 민팅을 멈추려면 `MASTER_WALLET_MNEMONIC`/`NFT_CONTRACT_ADDRESS` env, §7.6), `last_migration`.
 - blocker 정리는 운영자 화면(바운티 취소, payout 완료 기록)으로 하고, 화면이 없는 것(잡 취소, 테스트 보상 정리)은 두 운영자 합의 하에 SQL + 감사 행으로 한다(§7.4의 형식).
 
 ### 8.2 env 변경

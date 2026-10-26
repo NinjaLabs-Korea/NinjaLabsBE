@@ -332,6 +332,12 @@ describeDb('ops scripts on a real database', () => {
       }, {});
     }
 
+    it('flags a database whose lower() does not fold non-ASCII capitals (nickname uniqueness depends on it) and is silent otherwise', async () => {
+      const folds = (await pool.query<{ ok: boolean }>(`SELECT lower('CAFÉ') = 'café' AS ok`)).rows[0].ok;
+      const rows = (await runPreflight()).nickname_case_folding ?? [];
+      expect(rows).toHaveLength(folds ? 0 : 1);
+    });
+
     it('wraps everything in a READ ONLY transaction that ends in ROLLBACK, and contains no write statements', () => {
       const list = statements({});
       expect(list[0]).toBe('BEGIN TRANSACTION READ ONLY');

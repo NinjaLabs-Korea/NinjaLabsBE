@@ -249,6 +249,25 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
     expect(txQuery.mock.calls[clear][1]).toEqual([signer.signingKey.compressedPublicKey, agentId]);
   });
 
+  it('the verification message lists English, Korean and Chinese plus the no-gas line, bound to the agent and the owner', () => {
+    const message = AgentsService.verificationMessage(agentId, ownerUserId);
+    expect(message).toContain('AI agent registration verification');
+    expect(message).toContain('AI 에이전트 등록 검증');
+    expect(message).toContain('AI 代理注册验证');
+    expect(message).toContain('costs no gas');
+    expect(message).toContain(`agentId: ${agentId}`);
+    expect(message).toContain(`owner: ${ownerUserId}`);
+  });
+
+  it('a pending agent whose owner signed the old Korean-only text still verifies; a signature over another agent does not', async () => {
+    const signer = Wallet.createRandom();
+    const legacy = ['NinjaLabs AI 에이전트 등록 검증', `agentId: ${agentId}`, `owner: ${ownerUserId}`, '이 서명은 트랜잭션을 발생시키지 않으며 가스비가 들지 않습니다.'].join('\n');
+    const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
+    await expect(service.verifyAndIssueKey(ownerUserId, agentId, await signer.signMessage(legacy))).resolves.toMatchObject({ status: 'ACTIVE' });
+    const other = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
+    await expect(other.service.verifyAndIssueKey(ownerUserId, agentId, await signer.signMessage(legacy.replace(agentId, 'other')))).rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
+  });
+
   it('an inj1 verify does not touch other rows (its key was checked against the address at register)', async () => {
     (verifyAdr36Signature as jest.Mock).mockReturnValueOnce(true);
     const { service, txQuery } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: INJ_PUBKEY, wallet_address: INJ_ADDRESS } });

@@ -180,6 +180,23 @@ export class AgentsService {
    * 다른 에이전트/유저로의 서명 재사용이 불가능하다.
    */
   static verificationMessage(agentId: string, ownerUserId: string): string {
+    // 소유자가 지갑 서명창에서 직접 읽는 문장이라 영어·한국어·중국어를 함께 싣는다 (지갑 소유권 challenge와 같은 형식 - wallets.service.ts createChallenge).
+    // 로케일을 모르는 BE가 한 언어만 고를 수 없다. agentId·owner 줄이 서명을 이 에이전트와 이 소유자에 묶는다.
+    return [
+      'NinjaLabs AI agent registration verification / NinjaLabs AI 에이전트 등록 검증 / NinjaLabs AI 代理注册验证',
+      `agentId: ${agentId}`,
+      `owner: ${ownerUserId}`,
+      'This signature does not send a transaction and costs no gas.',
+      '이 서명은 트랜잭션을 발생시키지 않으며 가스비가 들지 않습니다.',
+      '此签名不会发起交易，也不会产生 gas 费用。',
+    ].join('\n');
+  }
+
+  /**
+   * 한국어 한 가지였던 옛 문구. 문구가 바뀌기 전에 등록해 PENDING으로 남은 에이전트의 소유자는 이미 이 문구에 서명했을 수 있어
+   * verify가 두 문구를 모두 받는다 (둘 다 agentId와 owner에 묶여 있어 재사용 위험은 같다). PENDING은 24시간 안에 정리되므로 그 뒤 제거해도 된다.
+   */
+  private static legacyVerificationMessage(agentId: string, ownerUserId: string): string {
     return [
       'NinjaLabs AI 에이전트 등록 검증',
       `agentId: ${agentId}`,
@@ -217,13 +234,10 @@ export class AgentsService {
         throw new ConflictException('AGENT_NOT_PENDING');
       }
 
-      const message = AgentsService.verificationMessage(agentId, ownerUserId);
-      const verified = signatureSchemeFor(agent.wallet_address).verify({
-        address: agent.wallet_address,
-        message,
-        signature,
-        publicKey: agent.public_key,
-      });
+      const scheme = signatureSchemeFor(agent.wallet_address);
+      const verifyWith = (message: string) => scheme.verify({ address: agent.wallet_address, message, signature, publicKey: agent.public_key });
+      const verified = verifyWith(AgentsService.verificationMessage(agentId, ownerUserId))
+        ?? verifyWith(AgentsService.legacyVerificationMessage(agentId, ownerUserId));
       if (!verified) {
         throw new UnauthorizedException('INVALID_SIGNATURE');
       }

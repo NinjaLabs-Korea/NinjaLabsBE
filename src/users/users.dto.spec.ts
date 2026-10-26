@@ -13,6 +13,15 @@ const failedFields = async (body: object) =>
 const valid = { nickname: 'ninja_dev', bio: 'Builder', tags: ['DEV'] };
 
 describe('CompleteProfileDto', () => {
+  it.each(['\u200B\u200B\u200B', '\u3164\u3164', '\u2800\u2800', '\u00AD\u00AD', '\u202E'])('rejects invisible-only bio %j', async (bio) => {
+    expect(await failedFields({ ...valid, bio })).toEqual(['bio']);
+  });
+
+  it('rejects a bio containing a bidi override but keeps multi-line text', async () => {
+    expect(await failedFields({ ...valid, bio: 'trusted\u202Etop' })).toEqual(['bio']);
+    expect(await failedFields({ ...valid, bio: 'line one\nline two' })).toEqual([]);
+  });
+
   it('accepts unicode letters/digits with _ . - and trims surrounding whitespace', async () => {
     expect(await failedFields(valid)).toEqual([]);
     expect(await failedFields({ ...valid, nickname: '닌자.개발자-01' })).toEqual([]);

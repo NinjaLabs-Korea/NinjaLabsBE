@@ -1,11 +1,11 @@
 import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
 
 /**
- * 화면에 아무것도 그리지 않는 문자들: 제로폭 공백·방향 제어·BOM 등 서식 문자(Cf), 제어 문자(Cc), 공백류(Z*), 한글 채움 문자.
+ * 화면에 아무것도 그리지 않는 문자들: 제로폭 공백·방향 제어·BOM 등 서식 문자(Cf), 제어 문자(Cc), 공백류(Z*), 한글 채움 문자, 점자 빈칸(U+2800, 범주가 기호(So)라 \p{Z}에 안 걸린다).
  * `trim()`은 ASCII/일부 유니코드 공백만 지워서 U+200B(제로폭 공백) 같은 것만으로 된 문자열은 `@IsNotEmpty()`를 통과한다.
  * 닉네임 규칙(users/nickname.ts)이 이미 같은 이유로 한글 채움 문자를 거부한다 - 제목·이름 같은 표시용 필수 문자열은 이 검사를 쓴다.
  */
-const INVISIBLE = /[\p{Cf}\p{Cc}\p{Z}ᅟᅠㅤﾠ]/gu;
+const INVISIBLE = /[\p{Cf}\p{Cc}\p{Z}\u115F\u1160\u3164\uFFA0\u2800]/gu;
 
 /** 보이는 글자가 하나라도 있는가 */
 export function hasVisibleText(value: unknown): boolean {
@@ -44,6 +44,29 @@ export const IsPlainDisplayText = (options?: ValidationOptions) =>
       validator: {
         validate: (value) => isPlainDisplayText(value),
         defaultMessage: buildMessage((prefix) => `${prefix}$property must not contain control, line-break or bidirectional formatting characters`, options),
+      },
+    },
+    options,
+  );
+
+/**
+ * 글 순서를 뒤집는 방향 제어 문자: 임베딩/오버라이드(U+202A-202E)와 격리(U+2066-2069). RLO(U+202E) 하나가 뒤따르는 글을 거꾸로 그린다.
+ * 여러 줄 본문(자기소개 등)용 - 줄바꿈은 허용해야 하므로 IsPlainDisplayText를 못 쓴다. 아랍어·히브리어 본문이 쓰는 암묵 표식(U+200E/200F)은 허용한다.
+ */
+const BIDI_REORDERING = /[\u202A-\u202E\u2066-\u2069]/u;
+
+export function hasNoBidiOverride(value: unknown): boolean {
+  return typeof value === 'string' && !BIDI_REORDERING.test(value);
+}
+
+/** DTO 데코레이터 - 방향 임베딩/오버라이드/격리 문자를 거부한다 (여러 줄 본문용) */
+export const HasNoBidiOverride = (options?: ValidationOptions) =>
+  ValidateBy(
+    {
+      name: 'hasNoBidiOverride',
+      validator: {
+        validate: (value) => hasNoBidiOverride(value),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property must not contain bidirectional override characters`, options),
       },
     },
     options,

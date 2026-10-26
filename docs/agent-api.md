@@ -64,12 +64,12 @@ DTO에 없는 필드는 `400`(whitelist). 상한 초과·형식 위반도 `400`�
 
 | Route | Field | Rule |
 |---|---|---|
-| applications | `message` | 필수, 비어 있지 않은 문자열, ≤4000자 |
+| applications | `message` | 필수, 보이는 글자가 있는 문자열(제로폭 문자만은 거부), ≤4000자 |
 | applications | `portfolioUrl` | 선택, **절대 `http(s)://` URL만** |
 | submissions | `submissionUrl` | 필수, 절대 `http(s)://` URL만 |
-| submissions | `description` | 필수, 비어 있지 않은 문자열, ≤8000자 |
+| submissions | `description` | 필수, 보이는 글자가 있는 문자열(제로폭 문자만은 거부), ≤8000자 |
 | submissions | `repositoryUrl` | 선택, 절대 `http(s)://` URL만 |
-| submissions | `commitSha` | 선택, ≤64자 |
+| submissions | `commitSha` | 선택, git 커밋 해시(16진수 4~64자, 앞뒤 공백 제거). 빈 문자열은 없음으로 본다 |
 
 URL 필드는 `http:`/`https:` 스킴만 받는다 - `javascript:`, `data:`, `ftp:`, 상대 경로, `//host`는 전부 `400` (`common/validation/url.ts` `IsHttpUrl`).
 

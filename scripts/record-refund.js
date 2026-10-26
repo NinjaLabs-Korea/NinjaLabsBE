@@ -141,7 +141,13 @@ async function run(argv, deps) {
   const { flags, positional } = parsed;
   const hash = normalizeTxHash(rawHash);
   if (positional.length !== 1 || !UUID_RE.test(positional[0]) || !hash) {
-    log(USAGE);
+    // 사용법만 찍으면 운영자가 어느 인자가 틀렸는지 알 수 없다 - 틀린 인자를 먼저 이름으로 알려 준다
+    const problems = [];
+    if (positional.length !== 1) problems.push(`expected exactly one <reward-id>, got ${positional.length}`);
+    else if (!UUID_RE.test(positional[0])) problems.push('<reward-id> must be a UUID');
+    if (rawHash === undefined) problems.push('--tx <hash> is required');
+    else if (!hash) problems.push('--tx must be a 32-byte hex transaction hash (64 hex digits, optional 0x prefix)');
+    log(`${problems.join('\n')}\n${USAGE}`);
     return 2;
   }
   const rewardId = positional[0].toLowerCase();

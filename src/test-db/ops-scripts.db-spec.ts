@@ -657,6 +657,11 @@ describeDb('ops scripts on a real database', () => {
       expect((await invoke(recordRefund, ['00000000-0000-4000-8000-000000000000', '--tx', 'nope'])).code).toBe(2);
       expect((await invoke(recordRefund, ['00000000-0000-4000-8000-000000000000'])).code).toBe(2);
       expect((await invoke(recordRefund, ['00000000-0000-4000-8000-000000000000', '--tx', TX, '--nope'])).code).toBe(2);
+      // the operator is told which argument is wrong, not only the usage line
+      const ZERO = '00000000-0000-4000-8000-000000000000';
+      expect((await invoke(recordRefund, [ZERO, '--tx', 'abc', '--dry-run'])).out).toContain('--tx must be a 32-byte hex transaction hash');
+      expect((await invoke(recordRefund, [ZERO, '--dry-run'])).out).toContain('--tx <hash> is required');
+      expect((await invoke(recordRefund, ['not-a-uuid', '--tx', TX])).out).toContain('<reward-id> must be a UUID');
       const missing = await invoke(recordRefund, ['00000000-0000-4000-8000-000000000000', '--tx', TX, '--yes']);
       expect(missing.code).toBe(1);
       expect(missing.out).toContain('reward not found');
@@ -1068,6 +1073,11 @@ describeDb('ops scripts on a real database', () => {
       expect((await invoke(forfeitAward, [unique('x'), '--reason', 'x', '--admin', adminId, '--yes'])).code).toBe(2);
       expect((await invoke(forfeitAward, [submissionId, '--reason', 'x', '--admin', adminId, '--yes', '--nope'])).code).toBe(2);
       expect((await invoke(forfeitAward, [submissionId, '--admin', adminId, '--reason'])).code).toBe(2);
+      // the operator is told which argument is wrong (the 501st character of the reason, a blank reason, a non-uuid id), not only the usage line
+      expect((await invoke(forfeitAward, [submissionId, '--reason', 'x'.repeat(501), '--admin', adminId, '--dry-run'])).out).toContain('--reason must be 1 to 500 characters');
+      expect((await invoke(forfeitAward, [submissionId, '--reason', '   ', '--admin', adminId, '--dry-run'])).out).toContain('--reason must be 1 to 500 characters');
+      expect((await invoke(forfeitAward, ['not-a-uuid', '--reason', 'x', '--admin', adminId, '--dry-run'])).out).toContain('<submission-id> must be a UUID');
+      expect((await invoke(forfeitAward, [submissionId, '--reason', 'x', '--admin', 'nope', '--dry-run'])).out).toContain('--admin must be a user UUID');
       const declined = await forfeit(submissionId, adminId, []);
       expect(declined.code).toBe(1);
       expect(declined.out).toContain('aborted  nothing written');

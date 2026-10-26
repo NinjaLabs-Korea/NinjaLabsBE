@@ -1,9 +1,11 @@
-import { defineRailway, preserve, project, service } from "railway/iac";
+import { defineRailway, github, preserve, project, service } from "railway/iac";
 
 export const partial = "ninjalabsbe";
 
 export default defineRailway(() => {
   const web = service("ninjalabsbe", {
+    // 배포 소스(GitHub main 자동 배포)도 선언한다. 빠져 있으면 `railway config plan`이 소스 연결 해제를 변경으로 잡고, 그 상태로 apply하면 main 자동 배포가 끊긴다 (2026-10-26)
+    source: github("NinjaLabs-Korea/NinjaLabsBE", { branch: "main" }),
     start: "npm run start:prod",
     // 새 컨테이너가 뜨기 전에 supabase/migrations를 적용한다 — 새 코드가 옛 스키마 위에서 기동하면 SchemaGuard가 MIGRATIONS_PENDING으로 거부한다 (README "배포")
     preDeploy: "npm run migrate",

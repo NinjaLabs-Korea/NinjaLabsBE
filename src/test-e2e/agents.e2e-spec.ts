@@ -12,7 +12,7 @@ describeDb('agents over HTTP (e2e)', () => {
   let owner: Session;
   beforeAll(async () => {
     e2e = await startApp();
-    owner = await e2e.login();
+    owner = await e2e.loginOnboarded();
   });
   afterAll(async () => e2e?.close());
 
@@ -32,6 +32,17 @@ describeDb('agents over HTTP (e2e)', () => {
   }
 
   describe('POST /agents', () => {
+    it('an owner who has not finished onboarding cannot register an agent (409 PROFILE_REQUIRED); a zero-width-only name is 400', async () => {
+      const newbie = await e2e.login();
+      const body = { name: 'bot', walletAddress: Wallet.createRandom().address };
+      const blocked = await e2e.post('/agents', body, { token: newbie.accessToken });
+      expect(blocked.status).toBe(409);
+      expect(blocked.body.message).toBe('PROFILE_REQUIRED');
+      expect((await e2e.post('/agents', { ...body, name: '\u200B' }, { token: newbie.accessToken })).status).toBe(400);
+      await e2e.db.query(`UPDATE "user" SET onboarding_step = 4, onboarding_completed_at = now() WHERE id = $1`, [newbie.userId]);
+      expect((await e2e.post('/agents', body, { token: newbie.accessToken })).status).toBe(201);
+    });
+
     it('requires a session (401) and validates the body: missing/non-string wallet, empty or over-long name → 400 before the service', async () => {
       expect((await e2e.post('/agents', { name: 'x', walletAddress: Wallet.createRandom().address })).status).toBe(401);
 
@@ -73,7 +84,7 @@ describeDb('agents over HTTP (e2e)', () => {
       const again = await register(owner, signer, 'renamed');
       expect(again).toEqual(first);
 
-      const stranger = await e2e.login();
+      const stranger = await e2e.loginOnboarded();
       const taken = await e2e.post('/agents', { name: 'squat', walletAddress: signer.address }, { token: stranger.accessToken });
       expect(taken.status).toBe(409);
       expect(taken.body.message).toBe('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
@@ -110,7 +121,7 @@ describeDb('agents over HTTP (e2e)', () => {
       const missing = await e2e.post(`/agents/${agentId}/verify`, {}, { token: owner.accessToken });
       expect(missing.status).toBe(400);
 
-      const stranger = await e2e.login();
+      const stranger = await e2e.loginOnboarded();
       const foreign = await e2e.post(`/agents/${agentId}/verify`, { signature: await signer.signMessage(verificationMessage) }, { token: stranger.accessToken });
       expect(foreign.status).toBe(404);
       expect(foreign.body.message).toBe('AGENT_NOT_FOUND');
@@ -122,8 +133,8 @@ describeDb('agents over HTTP (e2e)', () => {
       (await e2e.db.query<{ public_key: string | null }>(`SELECT public_key FROM agent WHERE id = $1`, [agentId])).rows[0].public_key;
 
     it("EVM: an attacker registering their own 0x wallet with the victim's publicKey stores NULL — the victim's verify is 201, not a 500", async () => {
-      const attacker = await e2e.login();
-      const victim = await e2e.login();
+      const attacker = await e2e.loginOnboarded();
+      const victim = await e2e.loginOnboarded();
       const attackerWallet = Wallet.createRandom();
       const victimWallet = Wallet.createRandom();
 
@@ -146,8 +157,8 @@ describeDb('agents over HTTP (e2e)', () => {
     });
 
     it("EVM: a squat row stored before this fix (a PENDING 0x agent holding the victim's key) is cleared by the victim's verify → 201", async () => {
-      const attacker = await e2e.login();
-      const victim = await e2e.login();
+      const attacker = await e2e.loginOnboarded();
+      const victim = await e2e.loginOnboarded();
       const victimWallet = Wallet.createRandom();
       const legacy = await e2e.db.query<{ id: string }>(
         `INSERT INTO agent (owner_user_id, name, public_key, wallet_address) VALUES ($1, 'legacy-squat', $2, $3) RETURNING id`,
@@ -162,8 +173,8 @@ describeDb('agents over HTTP (e2e)', () => {
     });
 
     it('EVM: if the recovered key is held by an ACTIVE agent anyway (data drift), verify is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED and stays pending', async () => {
-      const other = await e2e.login();
-      const victim = await e2e.login();
+      const other = await e2e.loginOnboarded();
+      const victim = await e2e.loginOnboarded();
       const victimWallet = Wallet.createRandom();
       await e2e.db.query(
         `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at) VALUES ($1, 'drift', $2, $3, 'ACTIVE', now())`,
@@ -178,8 +189,8 @@ describeDb('agents over HTTP (e2e)', () => {
     });
 
     it("inj1: a publicKey that is not the wallet's own key is 400 AGENT_PUBLIC_KEY_MISMATCH, so the victim's own registration still goes through", async () => {
-      const attacker = await e2e.login();
-      const victim = await e2e.login();
+      const attacker = await e2e.loginOnboarded();
+      const victim = await e2e.loginOnboarded();
       const injKey = (signer: HDNodeWallet) => ({
         walletAddress: getInjectiveAddress(signer.address),
         publicKey: Buffer.from(signer.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64'),
@@ -198,7 +209,7 @@ describeDb('agents over HTTP (e2e)', () => {
     });
 
     it('inj1: the stored public key is the canonical spelling, not the (possibly padded with ignorable characters) string the client sent', async () => {
-      const bot = await e2e.login();
+      const bot = await e2e.loginOnboarded();
       const signer = Wallet.createRandom();
       const key = Buffer.from(signer.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64');
       const res = await e2e.post('/agents', { name: 'padded', walletAddress: getInjectiveAddress(signer.address), publicKey: `${key.slice(0, 20)}\n${key.slice(20).replace(/=+$/, '')}${'!'.repeat(20_000)}` }, { token: bot.accessToken });
@@ -225,7 +236,7 @@ describeDb('agents over HTTP (e2e)', () => {
     });
 
     it('GET /agents/me exposes only the key prefix of the current key — never the raw key or its hash', async () => {
-      const session = await e2e.login();
+      const session = await e2e.loginOnboarded();
       const { agentId, apiKey } = await activeAgent(session);
       const listed = await e2e.get('/agents/me', { token: session.accessToken });
       expect(listed.status).toBe(200);
@@ -270,7 +281,7 @@ describeDb('agents over HTTP (e2e)', () => {
       expect((await e2e.post('/agent-api/v1/bounties/00000000-0000-4000-8000-000000000000/applications', { message: 'hi' }, { token: owner.accessToken })).status).toBe(401);
     });
     it('the per-key budget (60/min) follows the agent, not the key: rotating does not reset it; failed auth does not spend it', async () => {
-      const session = await e2e.login();
+      const session = await e2e.loginOnboarded();
       const { agentId, apiKey } = await activeAgent(session);
       // bad-key calls are rejected by AgentApiGuard before the throttler and must not count against anyone
       for (let i = 0; i < 5; i++) expect((await e2e.get('/agent-api/v1/me', { token: `${apiKey.slice(0, 11)}${'z'.repeat(32)}` })).status).toBe(401);

@@ -218,6 +218,9 @@ describeDb('identity edge cases over HTTP (e2e)', () => {
       expect((await e2e.get(`/users/${nickname}`)).status).toBe(404);
       const next = await e2e.login();
       expect((await e2e.post('/users/me/profile', { nickname, bio: 'b', tags: ['DEV'] }, { token: next.accessToken })).status).toBe(201);
+      // saved but not finished: the public profile stays closed until onboarding is completed
+      expect((await e2e.get(`/users/${nickname}`)).status).toBe(404);
+      await e2e.db.query(`UPDATE "user" SET onboarding_step = 4, onboarding_completed_at = now() WHERE id = $1`, [next.userId]);
       expect((await e2e.get(`/users/${nickname}`)).body.id).toBe(next.userId);
     });
   });

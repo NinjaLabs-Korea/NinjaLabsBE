@@ -19,8 +19,8 @@ describeDb('public lists (members, hall of fame, notices) on a real database', (
   afterAll(async () => db.onApplicationShutdown());
 
   describe('MembersService.list', () => {
-    async function member(options: { order?: number | null; status?: string; deleted?: boolean; isMember?: boolean; role?: string } = {}) {
-      const id = await createUser(db);
+    async function member(options: { order?: number | null; status?: string; deleted?: boolean; isMember?: boolean; role?: string; onboarded?: boolean } = {}) {
+      const id = await createUser(db, { onboarded: options.onboarded });
       await db.query(
         `UPDATE "user" SET is_member = $2, member_role = $3, member_display_order = $4, status = $5,
                 deleted_at = CASE WHEN $6::boolean THEN now() ELSE NULL END WHERE id = $1`,
@@ -37,9 +37,11 @@ describeDb('public lists (members, hall of fame, notices) on a real database', (
       const withdrawn = await member({ order: 0, status: 'WITHDRAWN' });
       const deleted = await member({ order: 0, deleted: true });
       const notMember = await member({ order: 0, isMember: false });
+      // unfinished onboarding: the public profile is 404, so a card would link to a dead page (and the FE sitemap would list it)
+      const unfinished = await member({ order: 0, onboarded: false });
 
       const ids = (await new MembersService(db).list()).map((row) => (row as { id: string }).id);
-      for (const hidden of [suspended, withdrawn, deleted, notMember]) expect(ids).not.toContain(hidden);
+      for (const hidden of [suspended, withdrawn, deleted, notMember, unfinished]) expect(ids).not.toContain(hidden);
       const mine = ids.filter((id) => [first, second, unordered].includes(id));
       expect(mine).toEqual([first, second, unordered]);
       expect(ids.indexOf(unordered)).toBeGreaterThan(ids.indexOf(second));

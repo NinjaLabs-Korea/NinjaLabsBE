@@ -24,6 +24,8 @@ describe('MembersService.list (GET /members)', () => {
     expect(sql).toContain('u.is_member = true');
     expect(sql).toContain('u.deleted_at IS NULL');
     expect(sql).toContain(`u.status = 'ACTIVE'`);
+    // unfinished onboarding => the public profile is 404, so the card would link to a dead page
+    expect(sql).toContain('u.onboarding_completed_at IS NOT NULL');
     expect(params).toBeUndefined();
     for (const column of ['email', 'google_id', 'is_admin', 'status']) {
       expect(/SELECT([\s\S]*?)FROM/.exec(sql)![1]).not.toContain(column);

@@ -2,12 +2,13 @@ import { Body, Controller, Param, ParseUUIDPipe, Post, Req, UseGuards } from '@n
 import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { AdminGuard } from '../../auth/admin.guard';
 import { AuthedRequest } from '../../auth/authed-request';
+import { HasNoBidiOverride, NullIfInvisible } from '../../common/validation/visible-text';
 import { ApplicationReviewDecision, ApplicationStatusPolicy } from '../application-status';
 import { ApplicationReviewService } from './application-review.service';
 
 export class ReviewApplicationDto {
   @IsIn(ApplicationStatusPolicy.reviewDecisions()) decision!: ApplicationReviewDecision;
-  @IsOptional() @IsString() @MaxLength(2000) note?: string;
+  @IsOptional() @NullIfInvisible() @IsString() @MaxLength(2000) @HasNoBidiOverride() note?: string;
 }
 
 @Controller('admin/applications')

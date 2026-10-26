@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
 
 /**
@@ -71,6 +72,42 @@ export const HasNoBidiOverride = (options?: ValidationOptions) =>
       validator: {
         validate: (value) => hasNoBidiOverride(value),
         defaultMessage: buildMessage((prefix) => `${prefix}$property must not contain bidirectional override characters`, options),
+      },
+    },
+    options,
+  );
+
+/**
+ * 선택 입력용 변환 - 앞뒤 공백을 지우고, 보이는 글자가 없으면(빈 값, 공백, 제로폭 문자만) null로 바꾼다.
+ * `@IsOptional()`이 null을 통과시키므로 "없음"으로 취급된다: 심사 코멘트가 필수인 결정은 서비스가 400 `REVISION_COMMENT_REQUIRED`로 거부하고,
+ * 선택 요약은 NULL로 저장된다 (보이지 않는 요약이 빈 줄로 그려지지 않게).
+ */
+export const NullIfInvisible = () =>
+  Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return hasVisibleText(trimmed) ? trimmed : null;
+  });
+
+/**
+ * 몰수 표식 - scripts/forfeit-award.js가 심사 코멘트를 `forfeited: <사유>`로 시작해 남기고, 제출자 화면(FE `parseReviewComment`)이 이 접두사를
+ * "승인됐지만 수상이 몰수됨"으로 해석한다. 표식이 코멘트 본문 안에 있으므로 운영자가 API로 쓴 일반 반려 코멘트가 같은 접두사로 시작하면
+ * 제출자는 "승인됐지만 몰수"로 오해한다 -> API 심사 코멘트는 이 접두사로 시작할 수 없다 (대소문자·앞 공백 무관).
+ */
+const FORFEIT_MARKER = /^\s*forfeited\s*:/i;
+
+export function isForfeitMarker(value: unknown): boolean {
+  return typeof value === 'string' && FORFEIT_MARKER.test(value);
+}
+
+/** DTO 데코레이터 - `forfeited:`로 시작하는 심사 코멘트 거부 (null/undefined는 통과: IsOptional과 함께 쓴다) */
+export const IsNotForfeitMarker = (options?: ValidationOptions) =>
+  ValidateBy(
+    {
+      name: 'isNotForfeitMarker',
+      validator: {
+        validate: (value) => !isForfeitMarker(value),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property must not start with the reserved prefix "forfeited:" (it marks an award taken back by the ops script)`, options),
       },
     },
     options,

@@ -64,11 +64,15 @@ export class WalletsService {
   async createChallenge(userId: string, address: string) {
     const normalizedAddress = this.normalizeChallengeAddress(address);
     const nonce = randomBytes(16).toString('hex');
+    // 사용자가 지갑 서명창에서 직접 읽는 문장이라 영어·한국어·중국어를 함께 싣는다 (로케일을 모르는 BE가 한 언어만 고를 수 없다).
+    // 서명 검증은 DB에 저장된 이 문자열 그대로 하므로 문구를 바꿔도 이미 발급된 challenge에는 영향이 없다
     const message = [
-      'NinjaLabs 지갑 소유권 인증',
-      `주소: ${normalizedAddress}`,
+      'NinjaLabs wallet ownership verification / NinjaLabs 지갑 소유권 인증 / NinjaLabs 钱包所有权验证',
+      `Address / 주소 / 地址: ${normalizedAddress}`,
       `nonce: ${nonce}`,
+      'This signature does not send a transaction and costs no gas.',
       '이 서명은 트랜잭션을 발생시키지 않으며 가스비가 들지 않습니다.',
+      '此签名不会发起交易，也不会产生 gas 费用。',
     ].join('\n');
 
     // 같은 (user, wallet)의 미사용 challenge는 지우고 새로 발급 — 열린 challenge는 항상 최대 1개 (만료 행 정리는 MaintenanceService 크론).

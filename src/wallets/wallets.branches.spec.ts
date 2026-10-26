@@ -76,9 +76,9 @@ describe('WalletsService address normalization (challenge + verify share it)', (
   it('trims and canonicalizes: lowercase/whitespace 0x → EIP-55 checksum; inj1 → re-encoded inj1 — in the bound params and the signed message', async () => {
     const { service, txQuery } = setup();
     const a = await service.createChallenge(userId, `  ${evm.address.toLowerCase()}\n`);
-    expect(a.message).toContain(`주소: ${evm.address}`);
+    expect(a.message).toContain(`地址: ${evm.address}`);
     const b = await service.createChallenge(userId, ` ${inj} `);
-    expect(b.message).toContain(`주소: ${inj}`);
+    expect(b.message).toContain(`地址: ${inj}`);
     const locks = txQuery.mock.calls.filter(([sql]) => (sql as string).includes('pg_advisory_xact_lock')).map(([, params]) => params);
     expect(locks).toEqual([[userId, evm.address], [userId, inj]]);
   });
@@ -89,9 +89,15 @@ describe('WalletsService address normalization (challenge + verify share it)', (
     const second = await service.createChallenge(userId, evm.address);
     expect(first.nonce).toMatch(/^[0-9a-f]{32}$/);
     expect(first.nonce).not.toBe(second.nonce);
-    expect(first.message.split('\n')).toEqual([
-      'NinjaLabs 지갑 소유권 인증', `주소: ${evm.address}`, `nonce: ${first.nonce}`, '이 서명은 트랜잭션을 발생시키지 않으며 가스비가 들지 않습니다.',
-    ]);
+    const lines = first.message.split('\n');
+    expect(lines).toHaveLength(6);
+    expect(lines[1]).toBe(`Address / 주소 / 地址: ${evm.address}`);
+    expect(lines[2]).toBe(`nonce: ${first.nonce}`);
+    // every locale gets the no-gas reassurance in its own language, English first so the ASCII part is readable everywhere
+    expect(lines[3]).toBe('This signature does not send a transaction and costs no gas.');
+    expect(lines[4]).toContain('가스비가 들지 않습니다');
+    expect(lines[5]).toContain('gas');
+    expect(lines[0]).toContain('NinjaLabs wallet ownership verification');
   });
 });
 

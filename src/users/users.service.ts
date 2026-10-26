@@ -79,6 +79,7 @@ export class UsersService {
   /**
    * 공개 프로필 (로그인 불필요)
    * 기본 정보 + 완료 바운티 + 보유 에이전트/에이전트 완료 바운티
+   * 온보딩을 마친 유저만 공개한다 - 임시 닉네임(`user_xxxx`)·빈 프로필인 가입 중 계정의 id·가입일을 닉네임만 알면 읽을 수 있었다 (404 USER_NOT_FOUND).
    */
   async publicProfile(nickname: string) {
     const user = await this.db.query(
@@ -88,6 +89,7 @@ export class UsersService {
          LEFT JOIN user_tag t ON t.user_id = u.id
         WHERE lower(u.nickname) = lower($1)
           AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
+          AND u.onboarding_completed_at IS NOT NULL
         GROUP BY u.id`,
       [normalizeNickname(nickname)],
     );

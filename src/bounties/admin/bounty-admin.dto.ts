@@ -5,17 +5,19 @@ import {
 import { TOKEN_AMOUNT } from '../../common/validation/token-amount';
 import { IsTimestampString } from '../../common/validation/timestamp';
 import { Trim } from '../../common/validation/trim';
-import { HasVisibleText } from '../../common/validation/visible-text';
+import { HasNoBidiOverride, HasVisibleText, IsPlainDisplayText } from '../../common/validation/visible-text';
 import { IsHttpUrlOrMediaPath, IsSafeUrl } from '../../common/validation/url';
 import { BountyStatus } from '../bounty-status';
 import { RewardInput } from './reward-token.resolver';
 import { MaxChars } from '../../common/validation/max-chars';
-import { IsOptionalNotNull, MaxPgInt } from '../../common/validation/optional-not-null';
+import { IsOptionalNotNull } from '../../common/validation/optional-not-null';
 
 const CATEGORIES = ['DEV', 'DESIGN', 'CONTENT', 'OTHER'];
 const SUBMISSION_MODES = ['DIRECT', 'AGENT'];
 /** bounty_reward.token_type CHECK (0011) */
 const TOKEN_TYPES = ['NATIVE', 'CW20', 'ERC20'];
+/** 한 바운티의 최대 수상자 수 - 실제 운영 규모(수십 명)보다 넉넉한 상한. 그 위는 오타나 남용이다 */
+const MAX_WINNERS_LIMIT = 1000;
 
 /** 보상 입력 — RewardTokenResolver가 읽는 필드만 받는다. USDC는 서버가 env의 컨트랙트/체인으로 덮어쓴다 */
 export class RewardDto implements RewardInput {
@@ -30,16 +32,16 @@ export class RewardDto implements RewardInput {
 }
 
 export class CreateBountyDto {
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(200) title!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(100) sponsorName!: string;
-  @Trim() @IsString() @IsNotEmpty() @MaxLength(500) summary!: string;
-  @Trim() @IsString() @IsNotEmpty() @MaxLength(50_000) description!: string;
-  @Trim() @IsString() @IsNotEmpty() @MaxLength(20_000) requirements!: string;
-  @Trim() @IsString() @IsNotEmpty() @MaxLength(20_000) evaluationCriteria!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(200) title!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(100) sponsorName!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(500) summary!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(50_000) description!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(20_000) requirements!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(20_000) evaluationCriteria!: string;
   @IsIn(CATEGORIES) category!: string;
   @IsBoolean() applicationRequired!: boolean;
   @IsIn(SUBMISSION_MODES) submissionMode!: string;
-  @Type(() => Number) @IsInt() @Min(1) @MaxPgInt() maxWinners!: number;
+  @Type(() => Number) @IsInt() @Min(1) @Max(MAX_WINNERS_LIMIT) maxWinners!: number;
   @IsTimestampString() submissionDeadline!: string;
   @IsOptional() @IsTimestampString() applicationDeadline?: string;
   @IsOptional() @IsHttpUrlOrMediaPath() coverImageUrl?: string;
@@ -52,16 +54,16 @@ export class CreateBountyDto {
 // 모든 PATCH를 400으로 만들지 않게 한다 (common/validation/url.ts). VARCHAR 컬럼(title 200, sponsor_name 100)은 컬럼 상한 그대로 —
 // 완화는 "레거시 모양을 받는다"는 뜻이지 스키마를 넘는다는 뜻이 아니다. MaxChars는 Postgres와 같은 코드 포인트 단위로 센다 (common/validation/max-chars.ts).
 export class UpdateBountyDto {
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(200) title?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(100) sponsorName?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(1000) summary?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(100_000) description?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(40_000) requirements?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(40_000) evaluationCriteria?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(200) title?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(100) sponsorName?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(1000) summary?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(100_000) description?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(40_000) requirements?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(40_000) evaluationCriteria?: string;
   @IsOptionalNotNull() @IsIn(CATEGORIES) category?: string;
   @IsOptionalNotNull() @IsBoolean() applicationRequired?: boolean;
   @IsOptionalNotNull() @IsIn(SUBMISSION_MODES) submissionMode?: string;
-  @IsOptionalNotNull() @Type(() => Number) @IsInt() @Min(1) @MaxPgInt() maxWinners?: number;
+  @IsOptionalNotNull() @Type(() => Number) @IsInt() @Min(1) @Max(MAX_WINNERS_LIMIT) maxWinners?: number;
   @IsOptionalNotNull() @IsTimestampString() submissionDeadline?: string;
   @IsOptional() @IsTimestampString() applicationDeadline?: string | null;
   // null이면 커버 이미지 제거 (IsOptional은 null도 통과시킨다). 레거시 `/uploads/x.png` 같은 값도 통과 (IsSafeUrl)

@@ -296,17 +296,17 @@ describe('tx hash — adversarial table', () => {
 
 describe('token amount — adversarial table', () => {
   it.each([
-    ['1', true], ['10', true], ['1'.repeat(78), true], ['9'.repeat(78), true],
-    ['0', false], ['00', false], ['01', false], ['1'.repeat(79), false], ['-1', false], ['+1', false], ['1.0', false], ['1e18', false],
+    ['1', true], ['10', true], ['1'.repeat(30), true], ['9'.repeat(30), true], ['1'.repeat(31), false], ['1'.repeat(54), false],
+    ['0', false], ['00', false], ['01', false], ['1'.repeat(78), false], ['9'.repeat(78), false], ['-1', false], ['+1', false], ['1.0', false], ['1e18', false],
     ['0x10', false], [' 1', false], ['1 ', false], ['1\n', false], ['１', false], ['٣', false], ['1_000', false], ['1,000', false], ['', false],
   ])('%p → %p', (input, expected) => {
     expect(TOKEN_AMOUNT.test(input)).toBe(expected);
   });
 
-  it('accepted amounts are canonical integers that fit DECIMAL(78,0) (seed 19)', () => {
+  it('accepted amounts are canonical integers that fit the 30-digit cap (well inside DECIMAL(78,0)) (seed 19)', () => {
     const random = prng(19);
     const alphabet = ['0', '1', '9', '5', '00', '.', 'e', '-', ' '];
-    const max = 10n ** 78n - 1n;
+    const max = 10n ** 30n - 1n;
     for (let i = 0; i < 3000; i++) {
       const value = generate(random, alphabet, 90);
       if (!TOKEN_AMOUNT.test(value)) continue;

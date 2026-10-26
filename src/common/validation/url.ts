@@ -5,7 +5,7 @@ import { buildMessage, isURL, ValidateBy, ValidationOptions } from 'class-valida
  *
  *   IsHttpUrl()                외부 링크 (externalUrl, portfolioUrl, submissionUrl, repositoryUrl)
  *   IsPublicHttpUrl()          사용자가 내는 외부 링크(제출·지원 URL): IsHttpUrl + localhost·사설/루프백/링크로컬 IP·점 없는 내부 호스트 거부 (운영자·공개 프로필이 열어 볼 수 있어야 한다)
- *   IsHttpUrlOrMediaPath()     이미지 — `POST /admin/media`가 돌려주는 상대 경로 `/media/<uuid>`도 허용 (thumbnailUrl, imageUrl, coverImageUrl)
+ *   IsHttpUrlOrMediaPath()     이미지 — 공개 http(s) URL(IsPublicHttpUrl과 같은 호스트 규칙) 또는 `POST /admin/media`가 돌려주는 상대 경로 `/media/<uuid>` (thumbnailUrl, imageUrl, coverImageUrl)
  *   IsHttpUrlOrSitePath()      공개 http(s) URL(IsPublicHttpUrl과 같은 호스트 규칙) 또는 사이트 내부 라우트 `/bounties/<slug>` (highlight linkUrl). `//host` 같은 프로토콜 상대 URL은 거부
  *   IsSafeUrl()                **수정 DTO 전용 완화 규칙** — http(s) 절대 URL, `/` 하나로 시작하는 아무 경로, 스킴 없는 bare host (레거시 행 보호, 아래 참고)
  *
@@ -107,6 +107,19 @@ export function isSitePath(value: unknown): boolean {
   return path.split('/').slice(1).every((segment) => !isDotSegment(segment));
 }
 
+/** 이미지 필드의 엄격 규칙 (생성 DTO 검증과 수정 시 "바뀐 값" 검사가 같이 쓴다) */
+export function isPublicHttpUrlOrMediaPath(value: unknown): boolean {
+  return isPublicHttpUrl(value) || isMediaPath(value);
+}
+
+/**
+ * 수정 DTO는 완화 규칙(IsSafeUrl)이라 레거시 저장값을 되보내는 PATCH를 받는다. 그렇다고 수정이 엄격 규칙의 우회로가 되면 안 된다 -
+ * 저장값과 **다른** 새 값(null로 지우기 제외)은 생성과 같은 엄격 규칙을 통과해야 한다. 위반이면 true.
+ */
+export function changedUrlViolates(next: string | null | undefined, stored: string | null | undefined, strict: (value: unknown) => boolean): boolean {
+  return typeof next === 'string' && next !== stored && !strict(next);
+}
+
 export const IsHttpUrl = (options?: ValidationOptions) =>
   ValidateBy(
     {
@@ -140,8 +153,9 @@ export const IsHttpUrlOrMediaPath = (options?: ValidationOptions) =>
     {
       name: 'isHttpUrlOrMediaPath',
       validator: {
-        validate: (value) => isHttpUrl(value) || isMediaPath(value),
-        defaultMessage: buildMessage((prefix) => `${prefix}$property must be an http(s) URL or a /media/<uuid> path`, options),
+        // 이미지는 공개 페이지가 열고 Next 이미지 최적화가 서버에서 가져온다 - localhost·사설 IP·내부 호스트는 공지 externalUrl처럼 거부
+        validate: (value) => isPublicHttpUrl(value) || isMediaPath(value),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path`, options),
       },
     },
     options,

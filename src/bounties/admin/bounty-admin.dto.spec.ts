@@ -128,10 +128,11 @@ describe('TransitionBountyDto', () => {
     expect(await failedFields(UpdateBountyDto, { applicationDeadline: null, coverImageUrl: null })).toEqual([]);
   });
 
-  it('caps maxWinners at the Postgres INTEGER maximum and evmChainId at the largest safe integer', async () => {
+  it('caps maxWinners at 1000 (well under the Postgres INTEGER maximum) and evmChainId at the largest safe integer', async () => {
     expect(await failedFields(CreateBountyDto, { ...validCreate, maxWinners: 2_147_483_648 })).toEqual(['maxWinners']);
     expect(await failedFields(UpdateBountyDto, { maxWinners: 2_147_483_648 })).toEqual(['maxWinners']);
-    expect(await failedFields(UpdateBountyDto, { maxWinners: 2_147_483_647 })).toEqual([]);
+    expect(await failedFields(UpdateBountyDto, { maxWinners: 1001 })).toEqual(['maxWinners']);
+    expect(await failedFields(UpdateBountyDto, { maxWinners: 1000 })).toEqual([]);
     const reward = { tokenType: 'NATIVE', displaySymbol: 'INJ', amount: '1', evmChainId: 2 ** 60 };
     expect(await failedFields(CreateBountyDto, { ...validCreate, reward })).toEqual(['reward']);
   });
@@ -141,6 +142,36 @@ describe('bounty title and sponsor made of invisible characters', () => {
   it('rejects zero-width-only title / sponsorName on create and update', async () => {
     expect(await failedFields(CreateBountyDto, { ...validCreate, title: '\u200B\u200B', sponsorName: '\u200B' })).toEqual(['sponsorName', 'title']);
     expect(await failedFields(UpdateBountyDto, { title: '\u200B', sponsorName: '\u3164' })).toEqual(['sponsorName', 'title']);
-    expect(await failedFields(CreateBountyDto, { ...validCreate, title: 'Build\u200B' })).toEqual([]);
+    expect(await failedFields(CreateBountyDto, { ...validCreate, title: 'Build\u200B' })).toEqual(['title']); // a zero-width space inside a title is hidden spoofing material (IsPlainDisplayText)
+  });
+});
+
+describe('bounty text hygiene (title spoofing, invisible bodies, limits)', () => {
+  it.each(['Safe ‮txt.exe', 'a\u0007b', 'a\n\tb'])('rejects control or bidi characters in the title %j', async (title) => {
+    expect(await failedFields(CreateBountyDto, { ...validCreate, title })).toEqual(['title']);
+    expect(await failedFields(UpdateBountyDto, { title })).toEqual(['title']);
+  });
+  it('rejects an invisible-only or zero-width-padded sponsor name', async () => {
+    expect(await failedFields(CreateBountyDto, { ...validCreate, sponsorName: '​ a' })).toEqual(['sponsorName']);
+  });
+  it.each(['summary', 'description', 'requirements', 'evaluationCriteria'])('rejects an invisible-only %s on create and update', async (field) => {
+    expect(await failedFields(CreateBountyDto, { ...validCreate, [field]: '​' })).toEqual([field]);
+    expect(await failedFields(UpdateBountyDto, { [field]: '​​' })).toEqual([field]);
+    expect(await failedFields(UpdateBountyDto, { [field]: '͏͏' })).toEqual([field]);
+    expect(await failedFields(CreateBountyDto, { ...validCreate, [field]: 'x‮y' })).toEqual([field]);
+    expect(await failedFields(CreateBountyDto, { ...validCreate, [field]: 'line1\nline2' })).toEqual([]);
+  });
+  it('refuses a loopback or private cover URL on create (a public URL and a media path pass)', async () => {
+    for (const coverImageUrl of ['http://localhost/x.png', 'http://127.0.0.1/x.png', 'http://10.0.0.1/x.png']) {
+      expect(await failedFields(CreateBountyDto, { ...validCreate, coverImageUrl })).toEqual(['coverImageUrl']);
+    }
+    expect(await failedFields(CreateBountyDto, { ...validCreate, coverImageUrl: 'https://cdn.example.com/x.png' })).toEqual([]);
+    expect(await failedFields(CreateBountyDto, { ...validCreate, coverImageUrl: '/media/11111111-1111-4111-8111-111111111111' })).toEqual([]);
+  });
+  it('caps a reward amount at 30 digits and winners at 1000', async () => {
+    const reward = { tokenType: 'NATIVE', displaySymbol: 'INJ', amount: '9'.repeat(54) };
+    expect(await failedFields(CreateBountyDto, { ...validCreate, reward })).toEqual(['reward']);
+    expect(await failedFields(CreateBountyDto, { ...validCreate, reward: { ...reward, amount: '1'.repeat(30) } })).toEqual([]);
+    expect(await failedFields(CreateBountyDto, { ...validCreate, maxWinners: 100000 })).toEqual(['maxWinners']);
   });
 });

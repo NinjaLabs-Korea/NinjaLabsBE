@@ -15,7 +15,7 @@ import { requireGoogleClientSecret, requireProductionAuthUrls, warnIgnoredAuthRe
 import { throttlerModule } from '../common/throttler/throttler-options';
 
 /**
- * production 기동 조건 — JWT_SECRET(미설정/기본값 금지; 32바이트 미만은 기동하되 error 로그) / GOOGLE_CLIENT_SECRET /
+ * production 기동 조건: JWT_SECRET(미설정/기본값/32바이트 미만 금지) / GOOGLE_CLIENT_SECRET /
  * GOOGLE_CLIENT_ID / GOOGLE_CALLBACK_URL / AUTH_SUCCESS_REDIRECT(미설정·URL 아님·localhost 금지) 없이는 기동 거부.
  * 조용한 폴백은 전체 인증 무력화(또는 모든 로그인 실패)로 이어진다. common/bootstrap-checks.ts
  *

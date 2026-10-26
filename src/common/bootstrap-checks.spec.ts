@@ -67,11 +67,24 @@ describe('bootstrap environment checks', () => {
       expect(() => requireJwtSecret({ NODE_ENV: 'production', JWT_SECRET: value })).toThrow(/JWT_SECRET must be set to a random value in production/);
     });
 
-    it('boots in production with a secret shorter than 32 bytes but logs an error asking for rotation', () => {
-      const weak = 's'.repeat(31);
-      expect(requireJwtSecret({ NODE_ENV: 'production', JWT_SECRET: weak })).toBe(weak);
-      expect(error).toHaveBeenCalledTimes(1);
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('JWT_SECRET is only 31 bytes, below the required minimum of 32 bytes'));
+    it.each([
+      ['31 bytes', 's'.repeat(31)],
+      ['1 byte', 's'],
+      ['16 multibyte-free bytes', 'abcdefghijklmnop'],
+    ])('refuses to start in production when JWT_SECRET is %s, naming the 32 byte minimum', (_label, weak) => {
+      expect(() => requireJwtSecret({ NODE_ENV: 'production', JWT_SECRET: weak })).toThrow(
+        new RegExp(`^FATAL: JWT_SECRET is only ${weak.length} bytes, below the required minimum of 32 bytes`),
+      );
+    });
+
+    it('counts bytes, not characters: 11 three-byte characters (33 bytes) pass, 10 (30 bytes) do not', () => {
+      expect(requireJwtSecret({ NODE_ENV: 'production', JWT_SECRET: '비'.repeat(11) })).toBe('비'.repeat(11));
+      expect(() => requireJwtSecret({ NODE_ENV: 'production', JWT_SECRET: '비'.repeat(10) })).toThrow(/only 30 bytes/);
+    });
+
+    it('accepts exactly 32 bytes in production, and short secrets stay allowed outside production', () => {
+      expect(requireJwtSecret({ NODE_ENV: 'production', JWT_SECRET: 's'.repeat(32) })).toBe('s'.repeat(32));
+      expect(requireJwtSecret({ NODE_ENV: 'test', JWT_SECRET: 'short' })).toBe('short');
     });
   });
 

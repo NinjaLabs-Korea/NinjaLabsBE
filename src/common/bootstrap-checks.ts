@@ -4,9 +4,9 @@ import { Logger } from '@nestjs/common';
  * 부트스트랩 환경 검사 — main.ts / auth.module.ts / auth/jwt-secret.ts가 ConfigService에서 읽은 값을 넘긴다
  * (import 시점의 process.env는 ConfigModule이 .env를 읽기 전이므로 쓰지 않는다).
  *
- * production에서 **보안을 무력화하는** 값(JWT_SECRET 미설정/자리표시값, GOOGLE_CLIENT_SECRET 미설정, TRUST_PROXY=0/비정수)은
+ * production에서 **보안을 무력화하는** 값(JWT_SECRET 미설정/자리표시값/32바이트 미만, GOOGLE_CLIENT_SECRET 미설정, TRUST_PROXY=0/비정수)은
  * 조용히 폴백하지 않고 기동을 거부한다 (fail-fast). 반면 **빠뜨리기 쉽고 안전한 기본값이 있는** 것(TRUST_PROXY 미설정 → 1)과
- * **약하지만 동작은 하는** 것(JWT_SECRET 32바이트 미만)은 크래시 루프 대신 기동하면서 로그로 크게 알린다 —
+ * 크래시 루프 대신 기동하면서 로그로 크게 알린다:
  * 첫 배포에서 env 하나가 빠졌다고 서비스 전체가 재시작 루프에 빠지지 않도록 (docs/security.md, README "배포 순서").
  */
 export type BootstrapEnv = Record<string, string | undefined>;
@@ -52,7 +52,7 @@ const MIN_JWT_SECRET_BYTES = 32;
 /**
  * JWT_SECRET
  *   - production + 미설정/자리표시값: 기동 거부 (알려진 시크릿으로 서명하면 누구나 세션을 위조할 수 있다)
- *   - production + 32바이트 미만: 기동은 하되 error 로그 — 약한 시크릿은 교체 대상이지 크래시 루프 사유는 아니다
+ *   - production + 32바이트 미만: 기동 거부 (오프라인 무차별 대입으로 토큰을 위조할 수 있다. 운영 값이 32바이트 이상임을 2026-10-25에 확인)
  *   - 개발: 미설정/자리표시값이면 고정 dev 시크릿으로 폴백
  */
 export function requireJwtSecret(env: BootstrapEnv): string {
@@ -64,10 +64,11 @@ export function requireJwtSecret(env: BootstrapEnv): string {
     if (!usable) {
       throw new Error('FATAL: JWT_SECRET must be set to a random value in production (not the .env.example placeholder). Generate one with: openssl rand -base64 48');
     }
-    if (Buffer.byteLength(secret!, 'utf8') < MIN_JWT_SECRET_BYTES) {
-      logger.error(
-        `JWT_SECRET is only ${Buffer.byteLength(secret!, 'utf8')} bytes, below the required minimum of ${MIN_JWT_SECRET_BYTES} bytes: tokens signed with it can be brute-forced offline. ` +
-          'Booting anyway so the service stays up, but rotate it now (openssl rand -base64 48). A later release may refuse to boot. Rotating invalidates every access token and refresh grace copy.',
+    const bytes = Buffer.byteLength(secret!, 'utf8');
+    if (bytes < MIN_JWT_SECRET_BYTES) {
+      throw new Error(
+        `FATAL: JWT_SECRET is only ${bytes} bytes, below the required minimum of ${MIN_JWT_SECRET_BYTES} bytes in production: tokens signed with it can be brute-forced offline. ` +
+          'Generate one with: openssl rand -base64 48. Rotating invalidates every access token and refresh grace copy.',
       );
     }
     return secret!;

@@ -32,20 +32,15 @@ function dbTlsUnverifiedInProduction(env) {
   return env.NODE_ENV === 'production' && env.PGSSLMODE !== 'disable' && !(env.DATABASE_CA_CERT || '').trim();
 }
 const DB_TLS_UNVERIFIED_MESSAGE =
-  'DATABASE_CA_CERT is empty in production: the Postgres server certificate is NOT verified (rejectUnauthorized: false), so a network attacker between this service and the database can read and alter all traffic. ' +
-  'Set DATABASE_CA_CERT to the Supabase CA PEM now. A later release may refuse to boot without it.';
+  'FATAL: DATABASE_CA_CERT is empty in production: the Postgres server certificate would NOT be verified (rejectUnauthorized: false), so a network attacker between this service and the database could read and alter all traffic. ' +
+  'Set DATABASE_CA_CERT to the Supabase CA PEM (or PGSSLMODE=disable only for a Postgres without TLS).';
 
 /**
- * production에서 CA 없이 TLS를 쓰면 ERROR 로그 + 운영 알림 한 번: 마이그레이션은 막지 않는다 (배포를 멈추지 않기 위해). 절대 throw하지 않는다.
+ * production에서 CA 없이 TLS를 쓰면 throw: preDeploy에서 실패해 새 컨테이너가 뜨기 전에 배포가 멈춘다(구 버전 유지). 다른 환경은 아무것도 하지 않는다.
+ * 앱 쪽 검사는 src/common/database/database-ssl.ts assertDbTlsVerifiedInProduction.
  */
-async function warnUnverifiedDbTls(env, log = console.error) {
-  if (!dbTlsUnverifiedInProduction(env)) return;
-  log(`[error] migrate: ${DB_TLS_UNVERIFIED_MESSAGE}`);
-  const { postOpsAlert, webhookStatus } = require('./ops-alert');
-  if (webhookStatus(env.OPS_ALERT_WEBHOOK_URL) !== 'ok') return;
-  const environment = env.RAILWAY_ENVIRONMENT_NAME || env.NODE_ENV || 'development';
-  const result = await postOpsAlert(env.OPS_ALERT_WEBHOOK_URL, `[NinjaLabs ${environment}] db-tls-unverified: migrate: ${DB_TLS_UNVERIFIED_MESSAGE}`);
-  if (!result.ok) log(`ops alert webhook unreachable for db tls warning: ${result.reason}`);
+function assertDbTlsVerifiedInProduction(env) {
+  if (dbTlsUnverifiedInProduction(env)) throw new Error(DB_TLS_UNVERIFIED_MESSAGE);
 }
 
 /**
@@ -303,7 +298,13 @@ async function main() {
     console.error('DATABASE_URL is required');
     process.exit(1);
   }
-  await warnUnverifiedDbTls(process.env);
+  try {
+    assertDbTlsVerifiedInProduction(process.env);
+  } catch (err) {
+    console.error(errorText(err));
+    await alertMigrationFailure(process.env, err);
+    process.exit(1);
+  }
   const pool = new Pool({ connectionString: url, ssl: sslOptions(process.env), ...poolTimeoutOptions(process.env) });
   try {
     await applyMigrations(pool, { log: console.log });
@@ -317,6 +318,6 @@ async function main() {
   console.log('done');
 }
 
-module.exports = { DB_TLS_UNVERIFIED_MESSAGE, alertMigrationFailure, dbTlsUnverifiedInProduction, warnUnverifiedDbTls, applyMigrations, assertNoTransactionControl, findTransactionControl, migrationFiles, poolTimeoutOptions, sslOptions, MIGRATIONS_DIR, MIGRATION_LOCK_KEY };
+module.exports = { DB_TLS_UNVERIFIED_MESSAGE, alertMigrationFailure, assertDbTlsVerifiedInProduction, dbTlsUnverifiedInProduction, applyMigrations, assertNoTransactionControl, findTransactionControl, migrationFiles, poolTimeoutOptions, sslOptions, MIGRATIONS_DIR, MIGRATION_LOCK_KEY };
 
 if (require.main === module) main();

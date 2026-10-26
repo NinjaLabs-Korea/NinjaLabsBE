@@ -29,8 +29,8 @@
    | env | 확인 | 빠지면 |
    |---|---|---|
    | `DATABASE_URL` | Supabase 접속 문자열 — **`?sslmode=…` 등 `ssl*` 쿼리 파라미터를 붙이지 않는다**: pg는 접속 문자열의 값이 코드가 넘긴 `ssl` 옵션을 덮어써서(`pg/lib/connection-parameters.js`) `sslmode=require`면 `DATABASE_CA_CERT`가 무시돼 Supabase 인증서 검증이 실패하고, `sslmode=disable`/`no-verify`는 조용히 평문/무검증이 된다. TLS는 `DATABASE_CA_CERT`/`PGSSLMODE`로만 정한다 | preDeploy migrate 실패 → 배포 중단(구 버전 유지) |
-   | `DATABASE_CA_CERT` | Supabase CA PEM(`\n` 이스케이프 가능) | 기동 + **`error` 로그 1회 + 운영 알림(`db-tls-unverified`)**, TLS 서버 인증서 미검증: **`DATABASE_CA_CERT`를 설정해야 인증서 검증이 켜진다. 운영 전 필수로 넣는다.** 비어 있어도 지금은 기동을 막지 않지만, 이후 변경에서 이 error를 기동 거부로 바꿀 수 있다. `npm run migrate`(preDeploy)도 같은 error를 찍는다 |
-   | `JWT_SECRET` | `openssl rand -base64 48` | 미설정/자리표시값 → 기동 거부. 32바이트 미만 → 최소 32바이트를 밝히는 `error` 로그(기동은 한다, 이후 기동 거부로 바뀔 수 있으니 **Railway 값이 32바이트 이상인지 확인**) |
+   | `DATABASE_CA_CERT` | Supabase CA PEM(`\n` 이스케이프 가능) | production에서 비어 있고 `PGSSLMODE`가 `disable`이 아니면 **기동 거부** (`FATAL: DATABASE_CA_CERT is empty in production`, TLS 서버 인증서를 검증하지 않게 되므로). `npm run migrate`(preDeploy)도 같은 검사로 실패해 새 컨테이너가 뜨기 전에 배포가 멈춘다(구 버전 유지). 이 변수를 지우지 않는다 |
+   | `JWT_SECRET` | `openssl rand -base64 48` | 미설정/자리표시값 → 기동 거부. 32바이트 미만 → 기동 거부 (`FATAL: JWT_SECRET is only N bytes, below the required minimum of 32 bytes`: 값을 바꿀 때 32바이트 이상인지 확인) |
    | `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth 클라이언트 | 기동 거부 |
    | `MASTER_WALLET_MNEMONIC` | 민팅 전용 지갑 (§7.6) | 민팅 잡이 1시간씩 미뤄짐(`not configured`) |
    | `REWARD_MULTISIG_ADDRESS` | 멀티시그 주소 (§9) | 기동은 한다. **새 보상의 `custody_address`가 `PENDING_MULTISIG_SETUP`** — 스폰서가 입금할 곳이 없다. 미설정·빈 값·모양 불일치(`inj1` bech32 체크섬 / EVM `0x`)면 기동 로그에 `REWARD_MULTISIG_ADDRESS … required in production` **`error`** — 4번에서 이 줄이 보이면 바로 넣고 재배포. `railway.ts`는 `preserve()` 자리만 잡으므로 값은 대시보드/CLI로 넣는다 |
@@ -40,7 +40,7 @@
    | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile 시크릿 (`railway.ts` `preserve()`) — **FE `NEXT_PUBLIC_TURNSTILE_SITE_KEY` 배포 뒤** 넣는다 | 로그인 봇 방지 생략 + production 기동 시 `warn`. 순서가 바뀌면 모든 로그인이 `#error=TURNSTILE_FAILED`로 돌아온다 |
 
    공개 값(`NODE_ENV=production`, `TRUST_PROXY=1`, `THROTTLER_STORAGE=postgres`(레플리카 간 공유 rate limit — 0016), `CORS_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT`, `INJECTIVE_*`, `NFT_CONTRACT_ADDRESS`, `USDC_EVM_CONTRACT_ADDRESS`, `JWT_ACCESS_TTL=15m`, `JWT_REFRESH_TTL=14d`)은 `railway.ts`가 넣는다. 두 TTL은 형식(`<정수><단위>`)·범위(access 60초~60분, refresh 60초~90일)가 틀리면 **기동 거부**다 — 대시보드에서 단위 없는 `900` 같은 값으로 덮어쓰지 않는다. `CORS_ORIGINS`·`GOOGLE_CLIENT_ID`·`GOOGLE_CALLBACK_URL`·`AUTH_SUCCESS_REDIRECT`는 production에서 **비어 있으면 기동 거부**(예전엔 localhost로 조용히 폴백), `GOOGLE_CALLBACK_URL`·`AUTH_SUCCESS_REDIRECT`가 localhost/`127.x`이거나 `https://` URL이 아니어도(평문 `http://` 포함) 기동 거부, `CORS_ORIGINS`의 localhost 항목은 빠지고 `error` 로그 — **2번(`railway config apply`)을 이 배포보다 먼저** 해야 하는 이유가 하나 더 생겼다. 수동 배포라면 `NODE_ENV=production`이 빠지지 않았는지 본다 — 빠지면 기동 검사가 전부 꺼진다.
-4. **BE 배포** — `main` 머지 → Railway가 `npm run migrate` 후 새 컨테이너 기동. 로그에서 `apply 00xx_…`/`skip`, 그리고 `warn`/`error` 줄(특히 `DATABASE_CA_CERT`, `TRUST_PROXY`, `JWT_SECRET`, `REWARD_MULTISIG_ADDRESS`, `CORS_ORIGINS … IGNORED`)을 확인한다. `curl -fsS https://<BE>/health` → `{"status":"ok","db":"up"}`.
+4. **BE 배포**: `main` 머지 → Railway가 `npm run migrate` 후 새 컨테이너 기동. 로그에서 `apply 00xx_…`/`skip`, 그리고 `warn`/`error` 줄(특히 `TRUST_PROXY`, `REWARD_MULTISIG_ADDRESS`, `CORS_ORIGINS … IGNORED`; `DATABASE_CA_CERT`와 `JWT_SECRET`은 문제가 있으면 로그가 아니라 배포 실패/기동 거부 `FATAL`로 나타난다)을 확인한다. `curl -fsS https://<BE>/health` → `{"status":"ok","db":"up"}`.
 5. **Google OAuth** — 승인된 리디렉션 URI가 `GOOGLE_CALLBACK_URL`과 정확히 같은지, 동의 화면이 "In production"인지(§4).
 6. **FE 배포** — FE `develop` 머지(preview 확인) → 릴리스 PR `develop → main`(Vercel prod). FE `.env.production`의 `NINJA_API_BASE_URL`이 BE 주소, chain ID와 RPC URL이 같은 네트워크인지.
 7. **어드민 부트스트랩** (§3) → 운영자 로그인 → `/admin` 접근 확인.

@@ -1,6 +1,8 @@
+import { spawnSync } from 'child_process';
+import { join } from 'path';
 import { rootCertificates } from 'tls';
-import { DB_TLS_UNVERIFIED_MESSAGE as JS_MESSAGE, dbTlsUnverifiedInProduction as jsUnverified, sslOptions } from '../../../scripts/migrate';
-import { DB_TLS_UNVERIFIED_MESSAGE, databaseSslOptions, dbTlsUnverifiedInProduction } from './database-ssl';
+import { DB_TLS_UNVERIFIED_MESSAGE as JS_MESSAGE, assertDbTlsVerifiedInProduction as jsAssert, dbTlsUnverifiedInProduction as jsUnverified, sslOptions } from '../../../scripts/migrate';
+import { DB_TLS_UNVERIFIED_MESSAGE, assertDbTlsVerifiedInProduction, databaseSslOptions, dbTlsUnverifiedInProduction } from './database-ssl';
 
 describe('databaseSslOptions', () => {
   const pem = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----';
@@ -54,8 +56,39 @@ describe('databaseSslOptions', () => {
     expect(jsUnverified(env)).toBe(flagged);
   });
 
-  it('uses one message in TS and in migrate.js, naming the variable, the risk and the future refusal', () => {
+  it('uses one message in TS and in migrate.js, naming the variable and the risk', () => {
     expect(JS_MESSAGE).toBe(DB_TLS_UNVERIFIED_MESSAGE);
-    expect(DB_TLS_UNVERIFIED_MESSAGE).toMatch(/DATABASE_CA_CERT.*NOT verified.*attacker/s);
+    expect(DB_TLS_UNVERIFIED_MESSAGE).toMatch(/^FATAL: DATABASE_CA_CERT.*NOT be verified.*attacker/s);
+  });
+
+  it.each([
+    [{ NODE_ENV: 'production' }],
+    [{ NODE_ENV: 'production', PGSSLMODE: 'require', DATABASE_CA_CERT: '  ' }],
+  ])('refuses in production with TLS on and no CA, in TS and in migrate.js: %p', (env) => {
+    expect(() => assertDbTlsVerifiedInProduction(env)).toThrow(DB_TLS_UNVERIFIED_MESSAGE);
+    expect(() => jsAssert(env)).toThrow(DB_TLS_UNVERIFIED_MESSAGE);
+  });
+
+  it.each([
+    [{ NODE_ENV: 'production', DATABASE_CA_CERT: pem }],
+    [{ NODE_ENV: 'production', PGSSLMODE: 'disable' }],
+    [{ NODE_ENV: 'development' }],
+    [{ NODE_ENV: 'test' }],
+    [{}],
+  ])('does not refuse with a CA, with TLS off or outside production: %p', (env) => {
+    expect(() => assertDbTlsVerifiedInProduction(env)).not.toThrow();
+    expect(() => jsAssert(env)).not.toThrow();
+  });
+
+  it('npm run migrate exits 1 with the FATAL message before touching the database (preDeploy stops the deploy)', () => {
+    const result = spawnSync(process.execPath, [join(__dirname, '../../../scripts/migrate.js')], {
+      // 닿지 않는 주소: 검사가 연결보다 먼저라면 접속 시도 없이 바로 끝난다. DOTENV는 .env가 있어도 이 값들을 덮지 못한다
+      env: { PATH: process.env.PATH, NODE_ENV: 'production', DATABASE_URL: 'postgresql://u@127.0.0.1:1/x' },
+      encoding: 'utf8',
+      timeout: 15000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(DB_TLS_UNVERIFIED_MESSAGE);
+    expect(result.stdout).not.toContain('apply ');
   });
 });

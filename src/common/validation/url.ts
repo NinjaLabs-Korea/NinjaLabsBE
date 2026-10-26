@@ -6,7 +6,7 @@ import { buildMessage, isURL, ValidateBy, ValidationOptions } from 'class-valida
  *   IsHttpUrl()                외부 링크 (externalUrl, portfolioUrl, submissionUrl, repositoryUrl)
  *   IsPublicHttpUrl()          사용자가 내는 외부 링크(제출·지원 URL): IsHttpUrl + localhost·사설/루프백/링크로컬 IP·점 없는 내부 호스트 거부 (운영자·공개 프로필이 열어 볼 수 있어야 한다)
  *   IsHttpUrlOrMediaPath()     이미지 — `POST /admin/media`가 돌려주는 상대 경로 `/media/<uuid>`도 허용 (thumbnailUrl, imageUrl, coverImageUrl)
- *   IsHttpUrlOrSitePath()      사이트 내부 라우트 `/bounties/<slug>`도 허용 (highlight linkUrl). `//host` 같은 프로토콜 상대 URL은 거부
+ *   IsHttpUrlOrSitePath()      공개 http(s) URL(IsPublicHttpUrl과 같은 호스트 규칙) 또는 사이트 내부 라우트 `/bounties/<slug>` (highlight linkUrl). `//host` 같은 프로토콜 상대 URL은 거부
  *   IsSafeUrl()                **수정 DTO 전용 완화 규칙** — http(s) 절대 URL, `/` 하나로 시작하는 아무 경로, 스킴 없는 bare host (레거시 행 보호, 아래 참고)
  *
  * 사이트 경로는 FE 라우터와 리버스 프록시가 서로 다르게 정규화할 수 있는 입력을 전부 거부한다:
@@ -152,8 +152,9 @@ export const IsHttpUrlOrSitePath = (options?: ValidationOptions) =>
     {
       name: 'isHttpUrlOrSitePath',
       validator: {
-        validate: (value) => isHttpUrl(value) || isSitePath(value),
-        defaultMessage: buildMessage((prefix) => `${prefix}$property must be an http(s) URL or a site-relative path`, options),
+        // 하이라이트 링크는 공개 Hall of Fame이 연다 - localhost·사설 IP·내부 호스트는 공지 externalUrl처럼 거부
+        validate: (value) => isPublicHttpUrl(value) || isSitePath(value),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property must be a public http(s) URL (no localhost or private addresses) or a site-relative path`, options),
       },
     },
     options,

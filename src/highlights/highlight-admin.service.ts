@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { isForeignKeyViolation } from '../common/database/pg-errors';
+import { assertMediaPathExists } from '../common/validation/media-reference';
 
 /** 운영자용 Hall of Fame 하이라이트 관리 */
 @Injectable()
@@ -27,6 +28,7 @@ export class HighlightAdminService {
   }) {
     // 없는 bountyId는 FK(fk_highlight_bounty) 위반 → 400 BOUNTY_NOT_FOUND (예전엔 23503 500). 트랜잭션은 이미 롤백된 뒤다
     return this.db.tx(async (tx) => {
+      await assertMediaPathExists(tx, input.imageUrl);
       const r = await tx.query<{ id: string }>(
         `INSERT INTO platform_highlight
            (created_by, type, title, description, image_url, link_url, bounty_id, display_order, is_published, published_at)
@@ -71,6 +73,7 @@ export class HighlightAdminService {
       ...expressions,
     ].join(', ');
     return this.db.tx(async (tx) => {
+      await assertMediaPathExists(tx, input.imageUrl);
       const r = await tx.query(
         `UPDATE platform_highlight SET ${assignments} WHERE id = $1 RETURNING id, is_published`,
         [highlightId, ...fields.map(([, value]) => value)],

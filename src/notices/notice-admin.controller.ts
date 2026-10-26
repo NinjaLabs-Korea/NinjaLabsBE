@@ -15,7 +15,7 @@ const NOTICE_CATEGORIES = ['NINJALABS', 'INJECTIVE_ECOSYSTEM', 'EVENT', 'RECRUIT
 export class CreateNoticeDto {
   @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(200) title!: string;
   @IsOptional() @NullIfBlank() @IsString() @MaxLength(500) summary?: string;
-  @Trim() @IsString() @IsNotEmpty() @MaxLength(50_000) body!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxLength(50_000) body!: string;
   @IsIn(NOTICE_CATEGORIES) category!: string;
   @IsOptional() @IsHttpUrlOrMediaPath() thumbnailUrl?: string;
   // 공개 공지가 여는 링크라 localhost·사설 IP·내부 호스트는 거부 (IsPublicHttpUrl). 수정은 완화 규칙을 유지한다: 저장된 레거시 값이 PATCH를 막지 않게
@@ -31,7 +31,7 @@ export class CreateNoticeDto {
 export class UpdateNoticeDto {
   @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(200) title?: string;
   @IsOptional() @NullIfBlank() @IsString() @MaxLength(1000) summary?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(100_000) body?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxLength(100_000) body?: string;
   @IsOptionalNotNull() @IsIn(NOTICE_CATEGORIES) category?: string;
   @IsOptional() @IsSafeUrl() thumbnailUrl?: string;
   @IsOptional() @IsSafeUrl() externalUrl?: string;

@@ -87,3 +87,11 @@ describe('notice externalUrl on create', () => {
     expect(await failedFields(UpdateNoticeDto, { externalUrl: 'http://localhost/x' })).toEqual([]);
   });
 });
+
+describe('notice body visible text', () => {
+  it('rejects a body made only of zero-width characters (create and update) but not one with visible text', async () => {
+    expect(await failedFields(CreateNoticeDto, { ...valid, body: '​​' })).toEqual(['body']);
+    expect(await failedFields(UpdateNoticeDto, { body: '​ㅤ' })).toEqual(['body']);
+    expect(await failedFields(CreateNoticeDto, { ...valid, body: 'text​' })).toEqual([]);
+  });
+});

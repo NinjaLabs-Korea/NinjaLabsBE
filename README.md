@@ -127,13 +127,13 @@ production(`.railway/railway.ts`)의 `CORS_ORIGINS`에는 `http://localhost:3000
 | env | 결과 |
 |---|---|
 | `DATABASE_URL` | 없으면 `preDeploy`의 `npm run migrate`가 실패해 배포 중단 (구 버전 유지) |
-| `JWT_SECRET` | 미설정 또는 `.env.example` 자리표시값이면 **기동 거부**. 32바이트 미만이면 기동은 하되 최소 32바이트를 밝히는 `error` 로그: 즉시 교체(`openssl rand -base64 48`), 이후 기동 거부로 바뀔 수 있다. 서명/검증 알고리즘은 HS256으로 고정(`auth/jwt-algorithm.ts`) |
+| `JWT_SECRET` | 미설정 또는 `.env.example` 자리표시값이면 **기동 거부**. 32바이트 미만이어도 **기동 거부**(`openssl rand -base64 48`). 서명/검증 알고리즘은 HS256으로 고정(`auth/jwt-algorithm.ts`) |
 | `GOOGLE_CLIENT_SECRET` | 없으면 **기동 거부** (로그인이 어차피 전부 실패) |
 | `TRUST_PROXY` | 미설정/빈 값이면 **1로 보고 `warn`** (Railway는 항상 프록시 1홉 뒤). 명시적 `0`/비정수는 **기동 거부** — railway.ts가 `1`을 넣는다 |
 | `JWT_REFRESH_TTL` | 미설정이면 `14d`. 형식/범위(60초~90일)가 틀리면 기동 거부 |
 | `JWT_ACCESS_TTL` | 미설정이면 `15m`. `JWT_REFRESH_TTL`과 같은 문법(`<정수><단위>` — 단위 없는 `900`은 jsonwebtoken이 밀리초로 읽어 발급 즉시 만료되므로 거부), 범위 60초~60분. 틀리면 환경과 무관하게 **기동 거부** — railway.ts가 `15m`을 넣는다 |
 | `LEGACY_ACCESS_TOKEN_CUTOFF` | 선택. 미설정이면 프로세스 시작 시각 — 그 전에 발급된 `typ` 없는 구 access 토큰만 받는다(15분 뒤 자연 소멸). ISO 8601이 아니면 기동 거부. 2026-11-30 이후 코드와 함께 제거 |
-| `DATABASE_CA_CERT` | 비어 있으면 기동하되 `error` 1회 + 운영 알림 (TLS 인증서 미검증: 운영 전 설정, 이후 기동 거부로 바뀔 수 있음) |
+| `DATABASE_CA_CERT` | production에서 비어 있으면(`PGSSLMODE=disable` 제외) **기동 거부**, `npm run migrate`(preDeploy)도 실패해 배포가 멈춘다 (TLS 서버 인증서를 검증하지 않게 되므로) |
 | `DB_CONNECTION_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS` | 선택, 기본 `5000`/`15000` ms (잘못된 값은 기본값). 연결 수립·풀 대기 초과 → 그 요청 `503 DATABASE_UNAVAILABLE`, 문장 초과 → Postgres 취소(500). migrate/운영 스크립트는 연결 타임아웃만 쓰고 문장 타임아웃은 걸지 않는다 (`common/database/pool-timeouts.ts`) |
 | `THROTTLER_STORAGE` | 선택. 미설정이면 production은 `postgres`(레플리카 간 공유 rate limit 카운터, `throttler_storage` — 0016), 그 외는 `memory`(인스턴스별). `postgres`/`memory` 외의 값은 **기동 거부**. railway.ts가 `postgres`를 명시한다 — `memory`로 바꾸면 레플리카 N대에서 한도가 N배 (`docs/security.md`) |
 | `TURNSTILE_SECRET_KEY` | 선택. 설정하면 `GET /auth/google`이 Cloudflare Turnstile 토큰(`turnstileToken`)을 요구한다 (실패는 FE 콜백 `#error=TURNSTILE_FAILED` / `#error=TURNSTILE_UNAVAILABLE`로 302). 미설정이면 검사 생략 + production 기동 시 `warn`. **FE(`NEXT_PUBLIC_TURNSTILE_SITE_KEY`)를 먼저 배포**한 뒤 넣는다 — 순서가 바뀌면 모든 로그인이 400 |

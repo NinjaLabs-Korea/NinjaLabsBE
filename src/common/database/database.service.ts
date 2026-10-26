@@ -78,7 +78,7 @@ export class DatabaseService implements OnApplicationShutdown {
       DATABASE_CA_CERT: config.get<string>('DATABASE_CA_CERT'),
     };
     // production에서 CA 없이 TLS를 쓰면 서버 인증서 검증이 빠진다(MITM 취약): 기동을 거부한다 (main.ts의 catch가 FATAL 한 줄 + boot-failure 운영 알림).
-    // scripts/migrate.js(preDeploy)도 같은 검사를 하므로 보통은 새 컨테이너가 뜨기 전에 배포가 멈춘다 — docs/security.md "DB TLS 인증서 검증"
+    // scripts/migrate.js(preDeploy)도 같은 검사를 하므로 보통은 새 컨테이너가 뜨기 전에 배포가 멈춘다: docs/security.md "DB TLS 인증서 검증"
     assertDbTlsVerifiedInProduction({ NODE_ENV: config.get<string>('NODE_ENV'), ...ssl });
     this.pool = new Pool({
       connectionString: config.get<string>('DATABASE_URL'),

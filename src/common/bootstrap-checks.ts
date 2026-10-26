@@ -6,7 +6,7 @@ import { Logger } from '@nestjs/common';
  *
  * production에서 **보안을 무력화하는** 값(JWT_SECRET 미설정/자리표시값/32바이트 미만, GOOGLE_CLIENT_SECRET 미설정, TRUST_PROXY=0/비정수)은
  * 조용히 폴백하지 않고 기동을 거부한다 (fail-fast). 반면 **빠뜨리기 쉽고 안전한 기본값이 있는** 것(TRUST_PROXY 미설정 → 1)과
- * 크래시 루프 대신 기동하면서 로그로 크게 알린다 —
+ * 크래시 루프 대신 기동하면서 로그로 크게 알린다:
  * 첫 배포에서 env 하나가 빠졌다고 서비스 전체가 재시작 루프에 빠지지 않도록 (docs/security.md, README "배포 순서").
  */
 export type BootstrapEnv = Record<string, string | undefined>;

@@ -23,8 +23,18 @@ describe('RegisterAgentDto', () => {
 
 describe('RegisterAgentDto invisible names', () => {
   const wallet = { walletAddress: '0x1111111111111111111111111111111111111111' };
-  it('rejects a name made only of zero-width / filler characters but keeps a name with visible text', async () => {
+  it('rejects a name made only of zero-width / filler characters but keeps a name with visible text (zero-width characters are refused anywhere in a name)', async () => {
     for (const name of ['\u200B', '\u200B\u200B', ' \u2060\uFEFF ', '\u3164']) expect(await failedFields({ ...wallet, name })).toEqual(['name']);
-    expect(await failedFields({ ...wallet, name: 'bot\u200B' })).toEqual([]);
+    expect(await failedFields({ ...wallet, name: 'bot' })).toEqual([]);
+  });
+});
+
+describe('RegisterAgentDto control and bidi characters', () => {
+  const wallet = { walletAddress: '0x1111111111111111111111111111111111111111' };
+  it('rejects line breaks, tabs and bidirectional overrides that spoof the public profile, but keeps ordinary and emoji names', async () => {
+    for (const name of ['\u202ETrusted\u202C\nAdmin Bot', 'a\nb', '\u202Eevil', 'a\tb', 'a\u2028b', 'a\u200Fb', 'a\u2066b']) {
+      expect(await failedFields({ ...wallet, name })).toEqual(['name']);
+    }
+    for (const name of ['Trusted Admin Bot', '닌자 봇', 'bot-1_v2.0', '👩\u200D💻 coder']) expect(await failedFields({ ...wallet, name })).toEqual([]);
   });
 });

@@ -32,7 +32,7 @@ describe('AgentsService EVM registration', () => {
   function createService(pending: PendingRow[] = []) {
     const db = {
       query: jest.fn(withParamsCheck(async (sql: string, params?: unknown[]) => {
-        if (sql.includes('FROM agent') && sql.includes("status = 'PENDING_VERIFICATION' AND deleted_at IS NULL")) {
+        if (sql.includes('UPDATE agent SET name') && sql.includes("status = 'PENDING_VERIFICATION' AND deleted_at IS NULL")) {
           const byOwner = sql.includes('owner_user_id = $1 AND wallet_address = $2');
           const rows = pending.filter((row) => params!.includes(row.wallet_address) && (!byOwner || params![0] === row.owner_user_id));
           return { rowCount: rows.length, rows: rows.map(({ id }) => ({ id })) };
@@ -155,7 +155,9 @@ describe('AgentsService EVM registration', () => {
     expect(sql).toContain("status = 'PENDING_VERIFICATION' AND deleted_at IS NULL");
     // scoped to the caller: a pending row of another owner on the same wallet must not be handed out as "yours"
     expect(sql).toContain('WHERE owner_user_id = $1 AND wallet_address = $2');
-    expect(params).toEqual([ownerUserId, signer.address]);
+    // the retyped name / description win over the first registration's values (they used to be dropped silently)
+    expect(params).toEqual([ownerUserId, signer.address, 'market-agent', null]);
+    expect(sql).toContain('UPDATE agent SET name = $3, description = $4');
   });
 
   it.each([
@@ -177,7 +179,7 @@ describe('AgentsService EVM registration', () => {
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as ConflictException).message).toBe('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
     expect(db.query).toHaveBeenCalledTimes(1);
-    expect(db.query.mock.calls[0][1]).toEqual([ownerUserId, signer.address]);
+    expect(db.query.mock.calls[0][1]).toEqual([ownerUserId, signer.address, 'market-agent', null]);
   });
 
   it("keeps the caller's own REVOKED agent on the same wallet (no soft delete — its history stays visible) and registers a new one", async () => {

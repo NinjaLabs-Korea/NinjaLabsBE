@@ -218,7 +218,7 @@ describeDb('throttling over HTTP (e2e)', () => {
       ['/auth/google?codeChallenge=' + 'c'.repeat(43), '203.0.113.150'],
       ['/auth/google/callback?error=access_denied', '203.0.113.151'],
     ])('%s: the 21st call in a minute is a 302 to the FE callback with TOO_MANY_REQUESTS, not a JSON 429', async (path, ip) => {
-      const statuses = await burst(21, (i) => e2e.get(path, { ip }));
+      const statuses = await burst(21, () => e2e.get(path, { ip }));
       expect(statuses.slice(0, 20)).toEqual(Array(20).fill(302));
       const throttled = await e2e.get(path, { ip });
       expect(throttled.status).toBe(302);

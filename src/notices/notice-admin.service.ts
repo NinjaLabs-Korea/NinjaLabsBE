@@ -13,7 +13,8 @@ export class NoticeAdminService {
   async list() {
     const r = await this.db.query(
       `SELECT id, title, summary, body, category, thumbnail_url, external_url,
-              status, published_at, created_at
+              status, published_at, created_at,
+              event_date::text AS event_date
          FROM notice WHERE deleted_at IS NULL ORDER BY created_at DESC`,
     );
     return r.rows;
@@ -21,17 +22,17 @@ export class NoticeAdminService {
 
   async create(adminId: string, input: {
     title: string; summary?: string; body: string; category: string;
-    thumbnailUrl?: string; externalUrl?: string; publish?: boolean;
+    thumbnailUrl?: string; externalUrl?: string; eventDate?: string | null; publish?: boolean;
   }) {
     return this.db.tx(async (tx) => {
       const r = await tx.query<{ id: string }>(
-        `INSERT INTO notice (created_by, title, summary, body, category, thumbnail_url, external_url, status, published_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO notice (created_by, title, summary, body, category, thumbnail_url, external_url, status, published_at, event_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date)
          RETURNING id`,
         [adminId, input.title, input.summary ?? null, input.body, input.category,
          input.thumbnailUrl ?? null, input.externalUrl ?? null,
          input.publish ? 'PUBLISHED' : 'DRAFT',
-         input.publish ? new Date() : null],
+         input.publish ? new Date() : null, input.eventDate ?? null],
       );
       await this.audit.record(adminId, input.publish ? 'NOTICE_PUBLISHED' : 'NOTICE_CREATED', 'notice', r.rows[0].id, tx);
       return r.rows[0];
@@ -40,11 +41,12 @@ export class NoticeAdminService {
 
   async update(noticeId: string, input: {
     title?: string; summary?: string; body?: string; category?: string;
-    thumbnailUrl?: string; externalUrl?: string; publish?: boolean;
+    thumbnailUrl?: string; externalUrl?: string; eventDate?: string | null; publish?: boolean;
   }, adminId: string) {
     const fields: Array<[string, unknown]> = [
       ['title', input.title], ['summary', input.summary], ['body', input.body],
       ['category', input.category], ['thumbnail_url', input.thumbnailUrl], ['external_url', input.externalUrl],
+      ['event_date', input.eventDate],
     ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
     const expressions: string[] = [];
     if (input.publish !== undefined) {

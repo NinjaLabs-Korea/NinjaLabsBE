@@ -5,6 +5,7 @@ import { AuthedRequest } from '../auth/authed-request';
 import { NullIfBlank, Trim } from '../common/validation/trim';
 import { IsHttpUrl, IsHttpUrlOrMediaPath, IsSafeUrl } from '../common/validation/url';
 import { NoticeAdminService } from './notice-admin.service';
+import { IsCalendarDate } from '../common/validation/calendar-date';
 import { MaxChars } from '../common/validation/max-chars';
 import { IsOptionalNotNull } from '../common/validation/optional-not-null';
 
@@ -17,6 +18,8 @@ export class CreateNoticeDto {
   @IsIn(NOTICE_CATEGORIES) category!: string;
   @IsOptional() @IsHttpUrlOrMediaPath() thumbnailUrl?: string;
   @IsOptional() @IsHttpUrl() externalUrl?: string;
+  /** 행사 날짜 (YYYY-MM-DD, 달력에 있는 날짜). 선택, EVENT 아닌 공지에도 저장은 된다 */
+  @IsOptional() @IsCalendarDate() eventDate?: string | null;
   @IsOptional() @IsBoolean() publish?: boolean;
 }
 
@@ -30,6 +33,8 @@ export class UpdateNoticeDto {
   @IsOptionalNotNull() @IsIn(NOTICE_CATEGORIES) category?: string;
   @IsOptional() @IsSafeUrl() thumbnailUrl?: string;
   @IsOptional() @IsSafeUrl() externalUrl?: string;
+  /** null = 행사 날짜 지우기 */
+  @IsOptional() @IsCalendarDate() eventDate?: string | null;
   @IsOptionalNotNull() @IsBoolean() publish?: boolean;
 }
 

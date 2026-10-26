@@ -26,6 +26,9 @@ import { revokeActiveAgentKeys } from './agent-revocation';
  *   2. 주인 지갑 private key로 서명 → 서버가 public key로 검증
  *   3. 검증 성공 → agent ACTIVE + API key 발급 (원문 1회 노출, DB엔 해시만)
  */
+/** inj1 계정 주소(20바이트) 모양 - bech32 소문자 문자 집합 38자. 체크섬은 공개키↔주소 대조(injectivePublicKeyMatchesAddress)가 잡는다 */
+const INJ_ACCOUNT_ADDRESS = /^inj1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{38}$/;
+
 @Injectable()
 export class AgentsService {
   constructor(
@@ -44,10 +47,17 @@ export class AgentsService {
     if (isEvm && !isAddress(walletAddress.trim())) {
       throw new BadRequestException('INVALID_AGENT_WALLET_ADDRESS');
     }
-    if (!isEvm && (!walletAddress.trim().startsWith('inj1') || !publicKey)) {
+    // 주소부터 분류한다: 0x도 inj1도 아닌 값(`cosmos1…`)이 공개키 이야기("AGENT_PUBLIC_KEY_REQUIRED")를 듣지 않게.
+    // bech32는 전부 대문자도 유효한 같은 주소라 소문자로 접고(섞인 대소문자는 bech32가 아니다), 저장·비교는 소문자 한 가지로만 한다.
+    const trimmed = walletAddress.trim();
+    const inj1Address = trimmed === trimmed.toUpperCase() ? trimmed.toLowerCase() : trimmed;
+    if (!isEvm && !INJ_ACCOUNT_ADDRESS.test(inj1Address)) {
+      throw new BadRequestException('INVALID_AGENT_WALLET_ADDRESS');
+    }
+    if (!isEvm && !publicKey) {
       throw new BadRequestException('AGENT_PUBLIC_KEY_REQUIRED');
     }
-    const normalizedAddress = isEvm ? getAddress(walletAddress.trim()) : walletAddress.trim();
+    const normalizedAddress = isEvm ? getAddress(trimmed) : inj1Address;
     // 저장할 공개키 — 검증되지 않은 키는 uq_agent_public_key를 선점해 그 키 주인의 등록/verify를 막는 데 쓰일 수 있다.
     //   - EVM(0x): 클라이언트 값은 무시하고 NULL — 키는 verify 때 EIP-191 서명에서 복원한 것만 저장한다 (docs/agent-api.md:
     //     EVM은 publicKey를 보내지 않는다. 예전 클라이언트 호환을 위해 400 대신 무시)
@@ -192,8 +202,9 @@ export class AgentsService {
         status: string;
         public_key: string | null;
         wallet_address: string;
+        verified_at: Date | null;
       }>(
-        `SELECT status, public_key, wallet_address FROM agent
+        `SELECT status, public_key, wallet_address, verified_at FROM agent
           WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL
           FOR UPDATE`,
         [agentId, ownerUserId],
@@ -201,7 +212,8 @@ export class AgentsService {
       if (!r.rowCount) throw new NotFoundException('AGENT_NOT_FOUND');
       const agent = r.rows[0];
       if (agent.status !== 'PENDING_VERIFICATION') {
-        throw new ConflictException('AGENT_ALREADY_VERIFIED');
+        // 검증을 마친 적 있는 에이전트(ACTIVE, 또는 그 뒤 정지·폐기)만 "이미 검증됨"이다 - 검증 전에 폐기된 에이전트는 키를 받은 적이 없다
+        throw new ConflictException(agent.status === 'ACTIVE' || agent.verified_at ? 'AGENT_ALREADY_VERIFIED' : 'AGENT_NOT_PENDING');
       }
 
       const message = AgentsService.verificationMessage(agentId, ownerUserId);

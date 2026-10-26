@@ -52,13 +52,14 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `CHALLENGE_EXPIRED` | 400 | challenge가 만료됐거나 이미 사용됐다 |
 | `INVALID_SIGNATURE` | 401 | 서명 검증에 실패했다 (지갑 연결·에이전트 등록 공통) |
 | `WALLET_ALREADY_LINKED` | 409 | 이 주소가 이미 다른 계정에 연결됐거나, 내 대표 지갑이 이미 있다 (부분 유니크 인덱스 충돌) |
-| `INVALID_AGENT_WALLET_ADDRESS` | 400 | 에이전트 지갑 주소 형식이 올바르지 않다 |
+| `INVALID_AGENT_WALLET_ADDRESS` | 400 | 에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다) |
 | `AGENT_PUBLIC_KEY_REQUIRED` | 400 | 에이전트 공개키가 필요하다 |
 | `AGENT_PUBLIC_KEY_MISMATCH` | 400 | inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다 |
 | `AGENT_WALLET_IS_OWNER_WALLET` | 400 | 에이전트 지갑이 소유자 본인의 연결 지갑과 같다 (전용 에이전트 지갑을 써야 한다). 등록 때뿐 아니라 `POST /wallets/verify`가 내 에이전트의 지갑을 대표 지갑으로 묶을 때도 |
 | `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` | 409 | 같은 공개키 또는 지갑으로 이미 등록된 에이전트가 있다 |
 | `AGENT_NOT_FOUND` | 404 | 내 에이전트가 아니거나 없다 |
-| `AGENT_ALREADY_VERIFIED` | 409 | 이미 검증이 끝난 에이전트다 |
+| `AGENT_ALREADY_VERIFIED` | 409 | 이미 검증이 끝난 에이전트다 (ACTIVE이거나, 검증된 뒤 정지·폐기됐다) |
+| `AGENT_NOT_PENDING` | 409 | 검증 대기 상태가 아니고 검증된 적도 없는 에이전트다 (검증 전에 폐기됐다) - 새로 등록해야 한다 |
 | `AGENT_NOT_ACTIVE` | 409 | ACTIVE 상태가 아니어서 키 회전 등을 할 수 없다 |
 | `MISSING_AGENT_API_KEY` | 401 | Agent API 키 헤더가 없다 |
 | `INVALID_AGENT_API_KEY` | 401 | Agent API 키가 없거나 만료·폐기됐다 |

@@ -61,6 +61,8 @@ describeDb('agent lifecycle on a real database', () => {
     await expect(agents.revoke(ownerId, agentId)).resolves.toEqual({ agentId, status: 'REVOKED' }); // idempotent
     await expect(keys.authenticate(rotated.apiKey)).rejects.toMatchObject({ message: 'INVALID_AGENT_API_KEY' });
     await expect(agents.rotateKey(ownerId, agentId)).rejects.toMatchObject({ message: 'AGENT_NOT_ACTIVE' });
+    // verified once, then revoked: "already verified" is true
+    await expect(agents.verifyAndIssueKey(ownerId, agentId, await signer.signMessage(AgentsService.verificationMessage(agentId, ownerId)))).rejects.toMatchObject({ status: 409, message: 'AGENT_ALREADY_VERIFIED' });
     expect(await auditActions(db, 'agent', agentId)).toEqual(['AGENT_VERIFIED', 'AGENT_KEY_ROTATED', 'AGENT_REVOKED']);
 
     // re-register the same wallet: a NEW row; the REVOKED one is neither deleted nor hidden
@@ -75,6 +77,16 @@ describeDb('agent lifecycle on a real database', () => {
     expect(mine.map((agent: { id: string; status: string; key_status: string | null }) => [agent.id, agent.status, agent.key_status]))
       .toEqual([[agentId, 'REVOKED', 'REVOKED'], [again.agentId, 'ACTIVE', 'ACTIVE']]);
     await expect(keys.authenticate(again.apiKey)).resolves.toMatchObject({ agentId: again.agentId });
+  });
+
+  it('verify on an agent revoked before it was ever verified is 409 AGENT_NOT_PENDING (it never got a key), and issues no key', async () => {
+    const owner = await createUser(db);
+    const signer = Wallet.createRandom();
+    const registered = await agents.register(owner, 'never-verified', undefined, undefined, signer.address);
+    await agents.revoke(owner, registered.agentId);
+    const signature = await signer.signMessage(registered.verificationMessage);
+    await expect(agents.verifyAndIssueKey(owner, registered.agentId, signature)).rejects.toMatchObject({ status: 409, message: 'AGENT_NOT_PENDING' });
+    expect((await db.query(`SELECT 1 FROM agent_api_key WHERE agent_id = $1`, [registered.agentId])).rowCount).toBe(0);
   });
 
   it('a wallet held by another owner (REVOKED, ACTIVE or fresh PENDING) stays 409; an abandoned PENDING squat (>24h) is taken over', async () => {

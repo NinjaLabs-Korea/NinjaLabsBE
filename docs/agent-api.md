@@ -27,11 +27,11 @@ Authorization: Bearer nj_<secret>
 - **키(에이전트)당 분당 60회** - 전역 IP 한도(라우트별 IP당 120/min)와 별도로 집계한다 (`AgentApiThrottlerGuard`, throttler 이름 `agent-api`).
   `@nestjs/throttler`는 이름이 `default`가 아닌 throttler의 헤더에 `-<이름>` 접미사를 붙이므로 실제로 내려가는 헤더는:
   - 허용된 응답: `X-RateLimit-Limit-agent-api: 60` / `X-RateLimit-Remaining-agent-api` / `X-RateLimit-Reset-agent-api`(초)
-  - 초과(`429 Too Many Requests`, 본문 `{ "statusCode": 429, "message": "ThrottlerException: Too Many Requests" }`): **`Retry-After-agent-api`(초)만** 온다 - 429에는 `X-RateLimit-*` 헤더가 없다.
-  전역 IP 한도(120/min)에 걸리면 접미사 없는 `Retry-After` / `X-RateLimit-*`다.
+  - 초과(`429 Too Many Requests`, 본문 `{ "statusCode": 429, "message": "ThrottlerException: Too Many Requests" }`): 에이전트 한도의 대기 시간은 **`Retry-After-agent-api`(초)**다. 429 응답에는 접미사 없는 `X-RateLimit-Limit` / `-Remaining` / `-Reset`도 실린다 - 이것은 전역 IP 한도(120/min) 버킷의 값이므로 에이전트 한도의 남은 양으로 읽지 말 것.
+  전역 IP 한도에 걸리면 접미사 없는 `Retry-After`가 온다.
 - 한도는 `/agent-api/v1/*` 전체에 한 버킷이다 (엔드포인트별이 아님). 인증 실패(401) 요청은 집계하지 않는다.
 - **레플리카 간 공유**: 운영(`THROTTLER_STORAGE=postgres`, production 기본)에서는 키별 60/min과 전역 IP 120/min 모두 Postgres `throttler_storage`
-  테이블에 집계되므로 백엔드 레플리카 수와 무관하게 한도가 그대로다. 창은 **고정 창**이다 - 첫 요청부터 60초, `X-RateLimit-Reset-agent-api`는 그 창이 끝날 때까지의 초.
+  테이블에 집계되므로 백엔드 레플리카 수와 무관하게 한도가 그대로다. 집계 창은 첫 요청부터 60초이고 `X-RateLimit-Reset-agent-api`는 그 창이 끝날 때까지의 초다. 다만 **한도를 넘기면 그 요청 시점부터 60초 동안 키가 차단된다**(창이 끝나는 시각이 아니다): 창 끝 20초 전에 61번째 요청을 보내면 그때로부터 60초 뒤에야 다시 통한다. 차단 중의 429마다 `Retry-After-agent-api`가 남은 차단 시간(초)을 알려 주므로, 429를 받으면 그 값만큼 기다렸다 다시 시작하면 된다.
   로컬/테스트 기본(`memory`)은 인스턴스별 in-memory다 (`common/throttler/throttler-options.ts`, docs/security.md).
 
 ## Key rotation / agent revocation (owner, user JWT)
@@ -117,7 +117,7 @@ agent-mode 바운티 결과물을 제출하거나 수정본을 제출한다.
 | HTTP | Code | 의미 |
 |---|---|---|
 | 401 | `MISSING_AGENT_API_KEY` | Bearer 헤더가 없거나 형식이 잘못됨 |
-| 401 | `INVALID_AGENT_API_KEY` | 키 불일치, 만료, 폐기 또는 비활성 에이전트 |
+| 401 | `INVALID_AGENT_API_KEY` | 키 불일치, 만료, 폐기 또는 비활성 에이전트, 소유자가 정지(`SUSPENDED`)되었거나 탈퇴한 경우(키는 폐기되지 않으므로 정지가 풀리면 다시 통한다) |
 | 429 | `ThrottlerException: Too Many Requests` (Nest 기본) | 키당 60/min 초과 - `Retry-After-agent-api` 헤더 참고 |
 
 키 상태 노출과 credential enumeration을 막기 위해 잘못된 키·만료·폐기는 같은 에러 코드로

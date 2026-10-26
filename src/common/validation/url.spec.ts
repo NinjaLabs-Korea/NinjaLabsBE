@@ -1,4 +1,4 @@
-import { isHttpUrl, isMediaPath, isSafeUrl, isSitePath } from './url';
+import { isHttpUrl, isMediaPath, isPublicHttpUrl, isSafeUrl, isSitePath } from './url';
 
 describe('URL field validators', () => {
   const mediaPath = '/media/11111111-1111-4111-8111-111111111111';
@@ -126,5 +126,26 @@ describe('URL field validators', () => {
     ])('rejects %s: %p', (_label, value) => {
       expect(isSafeUrl(value)).toBe(false);
     });
+  });
+});
+
+describe('isPublicHttpUrl (user-submitted links that reviewers and the public profile must be able to open)', () => {
+  it.each([
+    'https://github.com/org/repo', 'http://example.com/x', 'https://sub.docs.example.co.uk/a?b=c#d', 'https://8.8.8.8/x', 'https://172.32.0.1/x',
+    'https://100.63.0.1/x', 'https://[2606:4700:4700::1111]/x',
+  ])('accepts %s', (value) => {
+    expect(isPublicHttpUrl(value)).toBe(true);
+  });
+
+  it.each([
+    'http://localhost:3000/x', 'http://LOCALHOST/x', 'http://localhost./x', 'http://app.localhost/x', 'http://127.0.0.1/x', 'http://127.1.2.3:8080/x',
+    'http://0.0.0.0/x', 'http://10.0.0.5/x', 'http://172.16.0.1/x', 'http://172.31.255.255/x', 'http://192.168.1.1/x', 'http://169.254.169.254/latest',
+    'http://100.64.0.1/x', 'http://198.18.0.1/x', 'http://224.0.0.1/x',
+    'http://2130706433/x', 'http://0x7f.0.0.1/x', 'http://017700000001/x', // WHATWG normalizes these to 127.0.0.1
+    'http://intranet/x', 'http://nas.local/x', 'http://svc.internal/x', 'http://router.lan/x',
+    'http://[::1]/x', 'http://[fe80::1]/x', 'http://[fd00::1]/x', 'http://[::ffff:127.0.0.1]/x',
+    'javascript:alert(1)', 'ftp://example.com/x', 'https://user:pw@example.com/x', 42, null, undefined,
+  ])('rejects %p', (value) => {
+    expect(isPublicHttpUrl(value)).toBe(false);
   });
 });

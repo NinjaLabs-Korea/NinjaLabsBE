@@ -4,6 +4,7 @@ import { buildMessage, isURL, ValidateBy, ValidationOptions } from 'class-valida
  * URL 입력 검증 — DTO 필드에 붙여 쓴다. 전부 http(s)만 허용한다 (`javascript:`/`data:` 차단).
  *
  *   IsHttpUrl()                외부 링크 (externalUrl, portfolioUrl, submissionUrl, repositoryUrl)
+ *   IsPublicHttpUrl()          사용자가 내는 외부 링크(제출·지원 URL): IsHttpUrl + localhost·사설/루프백/링크로컬 IP·점 없는 내부 호스트 거부 (운영자·공개 프로필이 열어 볼 수 있어야 한다)
  *   IsHttpUrlOrMediaPath()     이미지 — `POST /admin/media`가 돌려주는 상대 경로 `/media/<uuid>`도 허용 (thumbnailUrl, imageUrl, coverImageUrl)
  *   IsHttpUrlOrSitePath()      사이트 내부 라우트 `/bounties/<slug>`도 허용 (highlight linkUrl). `//host` 같은 프로토콜 상대 URL은 거부
  *   IsSafeUrl()                **수정 DTO 전용 완화 규칙** — http(s) 절대 URL, `/` 하나로 시작하는 아무 경로, 스킴 없는 bare host (레거시 행 보호, 아래 참고)
@@ -32,6 +33,45 @@ export function isHttpUrl(value: unknown): boolean {
   }
   if (url.username || url.password || !url.hostname) return false;
   return isURL(value, { protocols: ['http', 'https'], require_protocol: true, require_tld: false, disallow_auth: true });
+}
+
+const PRIVATE_HOST_SUFFIXES = ['.localhost', '.local', '.internal', '.localdomain', '.lan', '.home', '.corp', '.intranet'];
+
+function isPrivateIpv4(parts: number[]): boolean {
+  const [a, b, c] = parts;
+  return a === 0 || a === 10 || a === 127 || a >= 224
+    || (a === 100 && b >= 64 && b <= 127) // CGNAT
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 192 && b === 0 && c === 0)
+    || (a === 198 && (b === 18 || b === 19));
+}
+
+/**
+ * 인터넷에서 열 수 있는 호스트인가 (사용자 입력 링크용). WHATWG URL이 `2130706433`, `0x7f.1` 같은 IPv4 변형을 점-십진수로 정규화하므로 `url.hostname`을 본다.
+ * IPv6는 글로벌 유니캐스트(2000::/3)만 허용한다 (루프백·ULA·링크로컬·IPv4-mapped 전부 거부).
+ */
+export function isPublicHostname(rawHostname: string): boolean {
+  const host = rawHostname.toLowerCase().replace(/\.$/, '');
+  if (!host) return false;
+  if (host.startsWith('[')) return /^\[[23]/.test(host);
+  const octets = host.split('.');
+  if (octets.length === 4 && octets.every((part) => /^\d{1,3}$/.test(part))) {
+    const parts = octets.map(Number);
+    return parts.every((part) => part <= 255) && !isPrivateIpv4(parts);
+  }
+  if (host === 'localhost' || !host.includes('.')) return false;
+  return !PRIVATE_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
+}
+
+export function isPublicHttpUrl(value: unknown): boolean {
+  if (!isHttpUrl(value)) return false;
+  try {
+    return isPublicHostname(new URL(value as string).hostname);
+  } catch {
+    return false;
+  }
 }
 
 export function isMediaPath(value: unknown): boolean {
@@ -69,6 +109,18 @@ export const IsHttpUrl = (options?: ValidationOptions) =>
       validator: {
         validate: (value) => isHttpUrl(value),
         defaultMessage: buildMessage((prefix) => `${prefix}$property must be an http(s) URL`, options),
+      },
+    },
+    options,
+  );
+
+export const IsPublicHttpUrl = (options?: ValidationOptions) =>
+  ValidateBy(
+    {
+      name: 'isPublicHttpUrl',
+      validator: {
+        validate: (value) => isPublicHttpUrl(value),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property must be a public http(s) URL (no localhost or private addresses)`, options),
       },
     },
     options,

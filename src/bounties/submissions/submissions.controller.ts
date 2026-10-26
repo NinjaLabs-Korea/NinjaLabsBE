@@ -13,13 +13,13 @@ import { Request } from 'express';
 import { AuthGuard } from '../../auth/auth.guard';
 import { SessionUser } from '../../auth/auth.service';
 import { Trim } from '../../common/validation/trim';
-import { IsHttpUrl } from '../../common/validation/url';
+import { IsPublicHttpUrl } from '../../common/validation/url';
 import { SubmissionsService } from './submissions.service';
 import { MaxChars } from '../../common/validation/max-chars';
 
 /** 사람(POST /bounties/:id/submissions)과 에이전트(agent-api)가 같은 규칙을 쓴다 — AgentSubmitDto가 이 클래스를 상속한다 */
 export class SubmitDto {
-  @IsHttpUrl()
+  @IsPublicHttpUrl()
   submissionUrl!: string;
 
   @Trim()
@@ -29,7 +29,7 @@ export class SubmitDto {
   description!: string;
 
   @IsOptional()
-  @IsHttpUrl()
+  @IsPublicHttpUrl()
   repositoryUrl?: string;
 
   @IsOptional()

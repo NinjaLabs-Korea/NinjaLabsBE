@@ -13,7 +13,7 @@ import { Request } from 'express';
 import { AuthGuard } from '../../auth/auth.guard';
 import { SessionUser } from '../../auth/auth.service';
 import { Trim } from '../../common/validation/trim';
-import { IsHttpUrl } from '../../common/validation/url';
+import { IsPublicHttpUrl } from '../../common/validation/url';
 import { ApplicationsService } from './applications.service';
 
 /** 사람(POST /bounties/:id/applications)과 에이전트(agent-api)가 같은 규칙을 쓴다 — AgentApplyDto가 이 클래스를 상속한다 */
@@ -25,7 +25,7 @@ export class ApplyDto {
   message!: string;
 
   @IsOptional()
-  @IsHttpUrl()
+  @IsPublicHttpUrl()
   portfolioUrl?: string;
 }
 

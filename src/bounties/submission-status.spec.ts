@@ -46,7 +46,8 @@ describe('SubmissionStatusPolicy', () => {
       ['RESUBMITTED', 'REQUEST_REVISION', Y, Y],
       ['RESUBMITTED', 'APPROVE', Y, N],
       ['RESUBMITTED', 'REJECT', Y, N],
-      ['IN_REVIEW', 'START_REVIEW', Y, N],
+      // 이미 심사 중인 제출에 START_REVIEW를 또 보내면 바뀌는 게 없는데 심사 이력·감사 행만 쌓인다
+      ['IN_REVIEW', 'START_REVIEW', N, N],
       ['IN_REVIEW', 'REQUEST_REVISION', Y, Y],
       ['IN_REVIEW', 'APPROVE', Y, N],
       ['IN_REVIEW', 'REJECT', Y, N],

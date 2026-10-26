@@ -49,7 +49,7 @@ const STATUS_AFTER: Readonly<Record<SubmissionDecision, SubmissionStatus>> = {
   [SubmissionDecision.REJECT]: SubmissionStatus.REJECTED,
 };
 
-/** 심사 대기 — 네 결정 모두 받을 수 있는 상태 */
+/** 심사 대기 - 결정을 받을 수 있는 상태 (IN_REVIEW는 START_REVIEW만 제외, canReview 참고) */
 const AWAITING_REVIEW: readonly string[] = [
   SubmissionStatus.SUBMITTED,
   SubmissionStatus.RESUBMITTED,
@@ -80,9 +80,13 @@ export const SubmissionStatusPolicy = {
   /** 결정 후 제출 상태. 모르는 결정이면 undefined */
   statusAfter: (decision: string): SubmissionStatus | undefined =>
     STATUS_AFTER[decision as SubmissionDecision],
-  /** 현재 상태에서 이 결정을 내릴 수 있나 — 아니면 400 SUBMISSION_NOT_REVIEWABLE */
+  /**
+   * 현재 상태에서 이 결정을 내릴 수 있나 - 아니면 400 SUBMISSION_NOT_REVIEWABLE.
+   * 이미 IN_REVIEW인 제출에 START_REVIEW를 또 보내면 아무것도 바뀌지 않는데 심사 이력·감사 행만 쌓이므로 거부한다 (나머지 결정은 IN_REVIEW에서도 받는다).
+   */
   canReview: (status: string, decision: string): boolean =>
-    AWAITING_REVIEW.includes(status) || isAbandonedRevisionReject(status, decision),
+    (AWAITING_REVIEW.includes(status) && !(status === SubmissionStatus.IN_REVIEW && decision === SubmissionDecision.START_REVIEW)) ||
+    isAbandonedRevisionReject(status, decision),
   /** 코멘트(비어 있지 않은)가 필수인가 — 수정 요청, 그리고 버려진 리비전 반려. 아니면 400 REVISION_COMMENT_REQUIRED */
   requiresComment: (status: string, decision: string): boolean =>
     decision === SubmissionDecision.REQUEST_REVISION || isAbandonedRevisionReject(status, decision),

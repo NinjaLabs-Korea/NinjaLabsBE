@@ -87,3 +87,28 @@ describe('NoticeAdminService update', () => {
     expect(db.query).not.toHaveBeenCalled();
   });
 });
+
+describe('NoticeAdminService media thumbnail', () => {
+  const media = '/media/AAAAAAAA-1111-4111-8111-111111111111';
+  const setup = (found: boolean) => {
+    const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => (sql.includes('FROM media_asset') ? { rowCount: found ? 1 : 0, rows: found ? [{ x: 1 }] : [] } : { rowCount: 1, rows: [{ id: 'n', status: 'DRAFT' }] }));
+    const { database } = createMockDb({ txQuery });
+    return { txQuery, service: new NoticeAdminService(database, new AuditService(createMockDb().database)) };
+  };
+
+  it('a /media/<uuid> thumbnail that does not exist is 400 REFERENCE_NOT_FOUND and nothing is written (create and update)', async () => {
+    const { service, txQuery } = setup(false);
+    await expect(service.create('admin', { title: 't', body: 'b', category: 'OTHER', thumbnailUrl: media })).rejects.toMatchObject({ status: 400, message: 'REFERENCE_NOT_FOUND' });
+    await expect(service.update('11111111-1111-4111-8111-111111111111', { thumbnailUrl: media }, 'admin')).rejects.toMatchObject({ status: 400, message: 'REFERENCE_NOT_FOUND' });
+    expect(txQuery.mock.calls.some(([sql]) => /^\s*(INSERT|UPDATE)/.test(sql))).toBe(false);
+    expect(txQuery.mock.calls[0][1]).toEqual(['aaaaaaaa-1111-4111-8111-111111111111']);
+  });
+
+  it('an existing asset, an external URL and no thumbnail all pass; only the media path is looked up', async () => {
+    const { service, txQuery } = setup(true);
+    await service.create('admin', { title: 't', body: 'b', category: 'OTHER', thumbnailUrl: media });
+    await service.create('admin', { title: 't', body: 'b', category: 'OTHER', thumbnailUrl: 'https://cdn.example/x.png' });
+    await service.create('admin', { title: 't', body: 'b', category: 'OTHER' });
+    expect(txQuery.mock.calls.filter(([sql]) => sql.includes('FROM media_asset'))).toHaveLength(1);
+  });
+});

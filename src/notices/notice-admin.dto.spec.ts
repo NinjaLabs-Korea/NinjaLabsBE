@@ -77,3 +77,13 @@ describe('notice admin DTOs', () => {
     expect(await failedFields(UpdateNoticeDto, { summary: null })).toEqual([]);
   });
 });
+
+describe('notice externalUrl on create', () => {
+  it('rejects localhost / private hosts (a public notice must not link there) but keeps the lenient update rule', async () => {
+    for (const externalUrl of ['http://localhost/x', 'http://127.0.0.1/x', 'http://10.0.0.1/x', 'http://intranet/x']) {
+      expect(await failedFields(CreateNoticeDto, { ...valid, externalUrl })).toEqual(['externalUrl']);
+    }
+    expect(await failedFields(CreateNoticeDto, { ...valid, externalUrl: 'https://example.com/a' })).toEqual([]);
+    expect(await failedFields(UpdateNoticeDto, { externalUrl: 'http://localhost/x' })).toEqual([]);
+  });
+});

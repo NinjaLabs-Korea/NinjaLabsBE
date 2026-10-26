@@ -58,7 +58,8 @@ describe('WalletsService EVM verification', () => {
     expect(verifySqls[1]).toContain('UPDATE wallet_verification_challenge SET used_at = now()');
     expect(verifySqls[1]).toContain('WHERE id = $1 AND used_at IS NULL AND expires_at > now()');
     expect(verifySqls[1]).toContain('RETURNING id');
-    expect(verifySqls[2]).toContain('INSERT INTO wallet ');
+    expect(verifySqls[2]).toContain("FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED'");
+    expect(verifySqls[3]).toContain('INSERT INTO wallet ');
     const walletInsert = txQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO wallet '));
     expect(walletInsert?.[1]).toEqual([
       'user-id',

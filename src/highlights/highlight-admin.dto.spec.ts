@@ -53,7 +53,7 @@ describe('highlight admin DTOs: visible text, public links', () => {
   it('rejects a title or description made only of zero-width characters (create and update)', async () => {
     expect(await failedFields(CreateHighlightDto, { ...valid, title: '\u200B\u200B', description: '\u200B\u200B' })).toEqual(['description', 'title']);
     expect(await failedFields(UpdateHighlightDto, { title: '\u200B', description: '\u3164' })).toEqual(['description', 'title']);
-    expect(await failedFields(CreateHighlightDto, { ...valid, title: 'ok\u200B' })).toEqual([]);
+    expect(await failedFields(CreateHighlightDto, { ...valid, title: 'ok\u200B' })).toEqual(['title']);
   });
 
   it('create linkUrl must be a public http(s) URL or a site path: localhost and private hosts are refused', async () => {
@@ -62,5 +62,12 @@ describe('highlight admin DTOs: visible text, public links', () => {
     }
     expect(await failedFields(CreateHighlightDto, { ...valid, linkUrl: 'https://injective.com/blog' })).toEqual([]);
     expect(await failedFields(CreateHighlightDto, { ...valid, linkUrl: '/bounties/x' })).toEqual([]);
+  });
+});
+
+describe('highlight bidi hygiene', () => {
+  it('rejects bidi override in title and description', async () => {
+    expect(await failedFields(CreateHighlightDto, { ...valid, title: 'a‮b' })).toEqual(['title']);
+    expect(await failedFields(UpdateHighlightDto, { description: 'a‮b' })).toEqual(['description']);
   });
 });

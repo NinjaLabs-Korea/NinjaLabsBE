@@ -59,9 +59,27 @@ describe('NoticeAdminService update', () => {
   it('binds every provided column in declaration order ($2.. in the SET list) and nothing else', async () => {
     const { query, service } = setup();
     await service.update(noticeId, { body: 'b', category: 'EVENT', externalUrl: 'https://x.test', publish: true }, adminId);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = query.mock.calls.find(([text]) => String(text).startsWith('UPDATE notice'))!;
     expect(sql).toContain('UPDATE notice SET body = $2, category = $3, external_url = $4, status = $5, published_at = COALESCE(published_at, now()) WHERE id = $1 AND deleted_at IS NULL');
     expect(params).toEqual([noticeId, 'b', 'EVENT', 'https://x.test', 'PUBLISHED']);
+  });
+
+  describe('a PATCH cannot publish a localhost or private URL (the create rule applies to changed values)', () => {
+    function withStored(stored: { external_url: string | null; thumbnail_url: string | null }) {
+      const { query, service } = setup();
+      query.mockResolvedValueOnce({ rowCount: 1, rows: [stored] });
+      return { query, service };
+    }
+    it.each(['http://localhost:3000/x', 'http://10.0.0.1/x', 'http://127.0.0.1/x'])('rejects externalUrl %s', async (externalUrl) => {
+      const { query, service } = withStored({ external_url: 'https://ok.example/a', thumbnail_url: null });
+      await expect(service.update(noticeId, { externalUrl }, adminId)).rejects.toMatchObject({ status: 400 });
+      expect(query.mock.calls.some(([text]) => String(text).startsWith('UPDATE notice'))).toBe(false);
+    });
+    it('rejects a private thumbnailUrl but accepts a public one, a media path and an unchanged legacy value', async () => {
+      await expect(withStored({ external_url: null, thumbnail_url: null }).service.update(noticeId, { thumbnailUrl: 'http://localhost/t.png' }, adminId)).rejects.toMatchObject({ status: 400 });
+      await expect(withStored({ external_url: null, thumbnail_url: null }).service.update(noticeId, { thumbnailUrl: 'https://cdn.example.com/t.png' }, adminId)).resolves.toBeDefined();
+      await expect(withStored({ external_url: null, thumbnail_url: 'http://legacy.local/t.png' }).service.update(noticeId, { thumbnailUrl: 'http://legacy.local/t.png' }, adminId)).resolves.toBeDefined();
+    });
   });
 
   it('create refuses an event date on a non-EVENT notice before touching the database; EVENT and no date pass', async () => {
@@ -133,4 +151,5 @@ describe('NoticeAdminService media thumbnail', () => {
     await service.create('admin', { title: 't', body: 'b', category: 'OTHER' });
     expect(txQuery.mock.calls.filter(([sql]) => sql.includes('FROM media_asset'))).toHaveLength(1);
   });
+
 });

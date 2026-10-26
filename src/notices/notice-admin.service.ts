@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { assertMediaPathExists } from '../common/validation/media-reference';
+import { changedUrlViolates, isPublicHttpUrl, isPublicHttpUrlOrMediaPath } from '../common/validation/url';
 
 /** 운영자용 공지 관리 (초안 포함 전체 목록, 작성/수정/발행/삭제) */
 @Injectable()
@@ -84,6 +85,18 @@ export class NoticeAdminService {
     ].join(', ');
     return this.db.tx(async (tx) => {
       await assertMediaPathExists(tx, input.thumbnailUrl);
+      // 수정 DTO는 레거시 저장값을 되보내는 PATCH를 위해 완화 규칙이지만, 바뀐 URL은 생성과 같은 공개 호스트 규칙을 지켜야 한다 (localhost·사설 IP 우회 방지)
+      if (typeof input.externalUrl === 'string' || typeof input.thumbnailUrl === 'string') {
+        const stored = await tx.query<{ external_url: string | null; thumbnail_url: string | null }>(
+          `SELECT external_url, thumbnail_url FROM notice WHERE id = $1 AND deleted_at IS NULL`, [noticeId]);
+        if (!stored.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
+        if (changedUrlViolates(input.externalUrl, stored.rows[0].external_url, isPublicHttpUrl)) {
+          throw new BadRequestException(['externalUrl must be a public http(s) URL (no localhost or private addresses)']);
+        }
+        if (changedUrlViolates(input.thumbnailUrl, stored.rows[0].thumbnail_url, isPublicHttpUrlOrMediaPath)) {
+          throw new BadRequestException(['thumbnailUrl must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path']);
+        }
+      }
       const r = await tx.query(
         `UPDATE notice SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
         [noticeId, ...fields.map(([, value]) => value)],

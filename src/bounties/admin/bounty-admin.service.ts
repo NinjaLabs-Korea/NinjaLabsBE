@@ -2,7 +2,8 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardHoldsFundsSql, sqlStatusList } from '../../rewards/payout-status';
-import { BountyStatusPolicy } from '../bounty-status';
+import { ApplicationStatus } from '../application-status';
+import { BountyStatus, BountyStatusPolicy } from '../bounty-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { RewardInput, RewardTokenResolver } from './reward-token.resolver';
 
@@ -11,6 +12,9 @@ const DEADLINE_UNCHANGED_TOLERANCE_MS = 60_000;
 
 /** 운영자용 바운티 관리 — 등록/수정/삭제/상태 전이 (쓰기 명령). 운영 현황 조회는 BountyOperationsQuery.
  * 전이 가능 여부는 BountyStatusPolicy, 전이 차단 사유는 BountyLifecycleService가 결정한다. */
+/** 취소로 자동 반려된 지원서의 review_note (지원자에게 보인다) */
+const CANCELLED_APPLICATION_NOTE = 'The bounty was cancelled.';
+
 @Injectable()
 export class BountyAdminService {
   constructor(
@@ -198,6 +202,16 @@ export class BountyAdminService {
       const stamp = BountyStatusPolicy.stampColumnFor(to);
       const stampCol = stamp ? `, ${stamp} = COALESCE(${stamp}, now())` : '';
       await tx.query(`UPDATE bounty SET status = $2${stampCol} WHERE id = $1`, [bountyId, to]);
+      // 취소된 바운티에 PENDING 지원이 남으면 지원자에게 영영 "심사 중"으로 보이고 아무도 처리할 수 없다 -> 같은 트랜잭션에서 반려한다
+      // (APPROVED 지원은 기록으로 남기고, 철회 가능한 PENDING만 정리한다. 반려는 접수가 끝나도 허용되는 기존 규칙과 같은 상태 전이다)
+      if (to === BountyStatus.CANCELLED) {
+        await tx.query(
+          `UPDATE bounty_application
+              SET status = $2, reviewed_by = $3, reviewed_at = now(), review_note = $4
+            WHERE bounty_id = $1 AND status = $5`,
+          [bountyId, ApplicationStatus.REJECTED, adminId, CANCELLED_APPLICATION_NOTE, ApplicationStatus.PENDING],
+        );
+      }
       await this.audit.record(adminId, `BOUNTY_${to}`, 'bounty', bountyId, tx);
       return { id: bountyId, status: to };
     });

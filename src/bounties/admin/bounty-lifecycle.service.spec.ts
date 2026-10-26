@@ -173,6 +173,25 @@ describe('BountyAdminService.transition for every pair', () => {
     await expect(service.transition('b', 'CANCELLED', 'admin')).resolves.toEqual({ id: 'b', status: 'CANCELLED' });
   });
 
+  it('cancelling rejects the still-PENDING applications in the same transaction, after the status change and before the audit row', async () => {
+    const { service, query } = setup('OPEN', { pending: 2 });
+    await service.transition('b', 'CANCELLED', 'admin');
+    const statements = query.mock.calls.map(([sql]) => sql as string);
+    const statusAt = statements.findIndex((sql) => sql.startsWith('UPDATE bounty SET status'));
+    const rejectAt = statements.findIndex((sql) => sql.startsWith('UPDATE bounty_application'));
+    expect(rejectAt).toBeGreaterThan(statusAt);
+    expect(rejectAt).toBeLessThan(statements.findIndex((sql) => sql.includes('audit_log')));
+    expect(query.mock.calls[rejectAt][0]).toContain('WHERE bounty_id = $1 AND status = $5');
+    expect(query.mock.calls[rejectAt][1]).toEqual(['b', 'REJECTED', 'admin', 'The bounty was cancelled.', 'PENDING']);
+  });
+
+  it.each(['SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED'])('only cancelling touches applications (a transition to %s does not)', async (to) => {
+    const from = { SUBMISSION_CLOSED: 'OPEN', IN_REVIEW: 'SUBMISSION_CLOSED', COMPLETED: 'IN_REVIEW' }[to]!;
+    const { service, query } = setup(from);
+    await service.transition('b', to, 'admin');
+    expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty_application'))).toBe(false);
+  });
+
   it.each([{ unpaid: 1 }, { unawarded: 1 }])('cancelling (after a reopen) is refused while an approved winner is still owed %j — 400 UNPAID_WINNERS sentence, row untouched', async (counts) => {
     const { service, query } = setup('OPEN', counts);
     await expect(service.transition('b', 'CANCELLED', 'admin')).rejects.toMatchObject({

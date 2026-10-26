@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { getInjectiveAddress } from '@injectivelabs/sdk-ts';
 import { getAddress, isAddress } from 'ethers';
 import { AuditService } from '../audit/audit.service';
 import { canonicalPublicKeyBase64 } from '../common/crypto/canonical-public-key';
@@ -59,12 +60,15 @@ export class AgentsService {
       // 같은 지갑/키를 점유한 행 확인(남의 버려진 PENDING은 soft delete)과 INSERT를 한 트랜잭션에서 — 유니크 위반이면 전체가 롤백되고 아래 catch로 간다
       const r = await this.db.tx(async (tx) => {
         await this.retireReusableAgents(tx, ownerUserId, storedPublicKey, normalizedAddress);
-        return tx.query<{ id: string }>(
+        const inserted = await tx.query<{ id: string }>(
           `INSERT INTO agent (owner_user_id, name, description, public_key, wallet_address)
            VALUES ($1, $2, $3, $4, $5)
            RETURNING id`,
           [ownerUserId, name, description ?? null, storedPublicKey, normalizedAddress],
         );
+        // 본인 지갑 검사는 INSERT 뒤에 한다: 던지면 이 트랜잭션 전체(위의 버려진 행 정리 포함)가 롤백된다
+        await this.assertNotOwnerWallet(tx, ownerUserId, isEvm ? getInjectiveAddress(normalizedAddress) : normalizedAddress);
+        return inserted;
       });
       return {
         agentId: r.rows[0].id,
@@ -108,6 +112,20 @@ export class AgentsService {
    *     24시간 이내면 서명 제출 중일 수 있어 409
    *   - 내 PENDING 행은 건드리지 않는다 — INSERT가 유니크 위반으로 실패하고 register()가 그 행을 그대로 돌려준다
    */
+  /**
+   * 에이전트 지갑은 소유자 본인의 연결 지갑과 달라야 한다 (등록 화면·skill.md의 "must differ from your own wallet" 규칙의 서버 쪽 집행).
+   * 지갑 테이블은 inj1 표기로 저장하므로 0x 주소는 inj1로 바꿔 비교한다. 연결 해제된 지갑은 본인 지갑이 아니다.
+   */
+  private async assertNotOwnerWallet(tx: Pick<DatabaseService, 'query'>, ownerUserId: string, injectiveAddress: string): Promise<void> {
+    const own = await tx.query<{ address: string }>(
+      `SELECT address FROM wallet WHERE user_id = $1 AND disconnected_at IS NULL`,
+      [ownerUserId],
+    );
+    if (own.rows.some((row) => row.address.toLowerCase() === injectiveAddress.toLowerCase())) {
+      throw new BadRequestException('AGENT_WALLET_IS_OWNER_WALLET');
+    }
+  }
+
   private async retireReusableAgents(
     tx: QueryRunner,
     ownerUserId: string,

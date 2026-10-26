@@ -26,8 +26,12 @@ function setup(options: {
   pendingAfterConflict?: boolean;
   verifyRow?: { status: string; public_key: string | null; wallet_address: string } | null;
   activateError?: unknown;
+  ownerWallets?: string[];
 } = {}) {
   const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
+    if (sql.includes('FROM wallet WHERE user_id = $1 AND disconnected_at IS NULL')) {
+      return { rowCount: (options.ownerWallets ?? []).length, rows: (options.ownerWallets ?? []).map((address) => ({ address })) };
+    }
     if (sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')")) return { rowCount: 0, rows: [] };
     if (sql.includes('INSERT INTO agent (')) {
       if (options.insertError) throw options.insertError;
@@ -82,6 +86,25 @@ describe('AgentsService.register input validation', () => {
     });
     expect(txQuery.mock.calls[0][1]).toEqual([INJ_ADDRESS, INJ_PUBKEY]);
     expect(txQuery.mock.calls[1][1]).toEqual([ownerUserId, 'bot', 'desc', INJ_PUBKEY, INJ_ADDRESS]);
+  });
+
+  it.each([
+    ['the same inj1 address', () => ({ wallet: INJ_ADDRESS, owner: INJ_ADDRESS })],
+    ['the 0x form of the same account (wallets are stored as inj1)', () => { const signer = Wallet.createRandom(); return { wallet: signer.address, owner: getInjectiveAddress(signer.address) }; }],
+    ['the same address in another letter case', () => ({ wallet: INJ_ADDRESS, owner: INJ_ADDRESS.toUpperCase() })],
+  ])('refuses to register %s as the owner\'s own connected wallet (400 AGENT_WALLET_IS_OWNER_WALLET) and rolls the transaction back', async (_label, pick) => {
+    const { wallet, owner } = pick();
+    const { service, txQuery } = setup({ ownerWallets: [owner] });
+    const error = await service.register(ownerUserId, 'bot', undefined, wallet === INJ_ADDRESS ? INJ_PUBKEY : undefined, wallet).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).message).toBe('AGENT_WALLET_IS_OWNER_WALLET');
+    const lookup = txQuery.mock.calls.find(([sql]) => sql.includes('FROM wallet WHERE user_id = $1'))!;
+    expect(lookup[1]).toEqual([ownerUserId]);
+  });
+
+  it('a different dedicated wallet is fine even when the owner has a connected wallet', async () => {
+    const { service } = setup({ ownerWallets: [getInjectiveAddress(Wallet.createRandom().address)] });
+    await expect(service.register(ownerUserId, 'bot', undefined, undefined, Wallet.createRandom().address)).resolves.toMatchObject({ agentId });
   });
 
   it('an EVM wallet ignores a client publicKey: NULL is stored and the key is not used for the occupancy check (it comes from the signature at verify)', async () => {

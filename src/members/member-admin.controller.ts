@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 import { MAX_PAGE } from '../common/pagination.dto';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
@@ -13,7 +13,9 @@ export class SetMemberDto {
   @IsBoolean()
   isMember!: boolean;
 
-  @IsOptional()
+  // 멤버로 지정할 때는 역할이 필수다 - 없으면 member_role NULL로 저장돼 공개 멤버 페이지가 Core로 잘못 분류한다.
+  // 해제(isMember false)에는 역할을 보내지 않아도 된다 (보내도 무시하고 NULL로 지운다)
+  @ValidateIf((dto: SetMemberDto) => dto.isMember === true || dto.role !== undefined)
   @IsIn(['CORE', 'DEV', 'DESIGN', 'OPS'])
   role?: string;
 

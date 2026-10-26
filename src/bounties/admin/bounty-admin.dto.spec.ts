@@ -136,3 +136,11 @@ describe('TransitionBountyDto', () => {
     expect(await failedFields(CreateBountyDto, { ...validCreate, reward })).toEqual(['reward']);
   });
 });
+
+describe('bounty title and sponsor made of invisible characters', () => {
+  it('rejects zero-width-only title / sponsorName on create and update', async () => {
+    expect(await failedFields(CreateBountyDto, { ...validCreate, title: '\u200B\u200B', sponsorName: '\u200B' })).toEqual(['sponsorName', 'title']);
+    expect(await failedFields(UpdateBountyDto, { title: '\u200B', sponsorName: '\u3164' })).toEqual(['sponsorName', 'title']);
+    expect(await failedFields(CreateBountyDto, { ...validCreate, title: 'Build\u200B' })).toEqual([]);
+  });
+});

@@ -19,7 +19,7 @@ describeDb('onboarding over HTTP (e2e)', () => {
     const challenge = await e2e.post('/wallets/challenge', { address: signer.address }, { token: session.accessToken });
     expect(challenge.status).toBe(201);
     expect(Object.keys(challenge.body).sort()).toEqual(['expires_at', 'id', 'message', 'nonce']);
-    expect(challenge.body.message).toContain(`주소: ${signer.address}`);
+    expect(challenge.body.message).toContain(`地址: ${signer.address}`);
     expect(challenge.body.message).toContain(`nonce: ${challenge.body.nonce}`);
     expect(new Date(challenge.body.expires_at).getTime() - Date.now()).toBeGreaterThan(4 * 60_000);
 

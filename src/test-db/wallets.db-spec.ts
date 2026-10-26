@@ -34,7 +34,7 @@ describeDb('wallet challenge/verify on a real database', () => {
     const userId = await createUser(db, { onboarded: false });
     const signer = Wallet.createRandom();
     const challenge = await wallets.createChallenge(userId, signer.address.toLowerCase());
-    expect(challenge.message).toContain(`주소: ${signer.address}`);
+    expect(challenge.message).toContain(`地址: ${signer.address}`);
     expect(challenge.message).toContain(`nonce: ${challenge.nonce}`);
 
     const signature = await signer.signMessage(challenge.message);

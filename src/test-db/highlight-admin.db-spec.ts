@@ -36,4 +36,14 @@ describeDb('highlight publish on a real database', () => {
     await admin.update(id, { publish: true }, adminId);
     expect((await publishedAt(id))!.getTime()).toBeGreaterThan(first.getTime());
   });
+
+  it('refuses a /media image that has no media_asset row (create and update) and accepts one that exists; external URLs are not checked', async () => {
+    const missing = '/media/00000000-0000-4000-8000-000000000000';
+    await expect(admin.create(adminId, { type: 'PARTNERSHIP', title: unique('hl-'), description: 'd', imageUrl: missing })).rejects.toMatchObject({ status: 400, message: 'REFERENCE_NOT_FOUND' });
+    const { id } = await admin.create(adminId, { type: 'OTHER', title: unique('hl-'), description: 'd', imageUrl: 'https://cdn.example.com/a.png' });
+    await expect(admin.update(id, { imageUrl: missing }, adminId)).rejects.toMatchObject({ status: 400, message: 'REFERENCE_NOT_FOUND' });
+    const asset = await db.query<{ id: string }>(
+      `INSERT INTO media_asset (created_by, file_name, mime_type, file_size, sha256, data) VALUES ($1, 'a.png', 'image/png', 1, repeat('0', 64), '\\x00') RETURNING id`, [adminId]);
+    await expect(admin.update(id, { imageUrl: `/media/${asset.rows[0].id}` }, adminId)).resolves.toMatchObject({ id });
+  });
 });

@@ -13,7 +13,7 @@ describe('HighlightsService stats', () => {
   ];
   const expected = { completedBounties: 2, builders: 3, completionNfts: 4, sponsors: 1, paidTotals };
 
-  const isPaidQuery = (sql: string) => sql.includes('FROM payout');
+  const isPaidQuery = (sql: string) => sql.includes('sum(p.amount)');
 
   function setup(paid: unknown[] = paidRows) {
     const query = jest.fn(async (sql: string, _params?: unknown[]) =>
@@ -30,7 +30,7 @@ describe('HighlightsService stats', () => {
     const { countsSql, paidSql, service } = setup();
     await expect(service.stats()).resolves.toEqual(expected);
 
-    const subqueries = countsSql()[0].split(/\(SELECT/).slice(1);
+    const subqueries = countsSql()[0].split(/\(SELECT count\(/).slice(1); // the four top-level counts (the builders EXISTS has its own nested SELECT)
     expect(subqueries).toHaveLength(4);
     for (const subquery of subqueries) expect(subquery).toMatch(/deleted_at IS NULL/);
     expect(paidSql()[0]).toMatch(/b\.deleted_at IS NULL/);
@@ -43,6 +43,16 @@ describe('HighlightsService stats', () => {
     const sql = countsSql()[0];
     expect(sql).toContain('count(DISTINCT COALESCE(s.submitter_user_id, s.agent_id))');
     expect(sql).not.toContain('count(DISTINCT s.submitter_user_id)');
+  });
+
+  it('counts a builder only when the bounty is COMPLETED or the submission has a PAID payout (public label: Builders rewarded)', async () => {
+    const { countsSql, service } = setup();
+    await service.stats();
+
+    const builders = countsSql()[0].split(/\(SELECT count\(/)[2];
+    expect(builders).toContain("s.status = 'APPROVED'");
+    expect(builders).toContain("b.status = 'COMPLETED'");
+    expect(builders).toContain("EXISTS (SELECT 1 FROM payout p WHERE p.submission_id = s.id AND p.status = 'PAID')");
   });
 
   it('sums only PAID payouts, grouped per token, joining bounty_reward for the token metadata', async () => {

@@ -41,7 +41,7 @@ describe('HighlightsService.list (GET /hall-of-fame)', () => {
 
   it('GET /hall-of-fame/stats goes through the cached stats()', async () => {
     // two reads: the counts row and the per-token PAID totals (FROM payout)
-    const query = jest.fn(async (sql: string, _params?: unknown[]) => (sql.includes('FROM payout')
+    const query = jest.fn(async (sql: string, _params?: unknown[]) => (sql.includes('sum(p.amount)')
       ? { rowCount: 1, rows: [{ symbol: 'INJ', token_type: 'NATIVE', amount: '5' }] }
       : { rowCount: 1, rows: [{ completed_bounties: '3', builders: '2', completion_nfts: '1', sponsors: '4' }] }));
     const db = createMockDb({ query }).database;

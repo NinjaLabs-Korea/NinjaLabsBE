@@ -1,7 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
-import { isMediaPath } from '../common/validation/url';
+import { assertMediaPathExists } from '../common/validation/media-reference';
 
 /** 운영자용 공지 관리 (초안 포함 전체 목록, 작성/수정/발행/삭제) */
 @Injectable()
@@ -21,22 +21,12 @@ export class NoticeAdminService {
     return r.rows;
   }
 
-  /**
-   * 썸네일이 `/media/<uuid>` 경로면 그 에셋이 실제로 있어야 한다 - 없는 경로를 저장하면 공개 공지가 깨진 이미지를 그린다.
-   * 없으면 400 REFERENCE_NOT_FOUND (다른 FK 없는 참조와 같은 코드). http(s) URL은 외부라 확인하지 않는다.
-   */
-  private async assertMediaExists(tx: Pick<DatabaseService, 'query'>, thumbnailUrl: string | undefined): Promise<void> {
-    if (!thumbnailUrl || !isMediaPath(thumbnailUrl)) return;
-    const found = await tx.query<{ x: number }>(`SELECT 1 AS x FROM media_asset WHERE id = $1`, [thumbnailUrl.slice('/media/'.length).toLowerCase()]);
-    if (!found.rowCount) throw new BadRequestException('REFERENCE_NOT_FOUND');
-  }
-
   async create(adminId: string, input: {
     title: string; summary?: string; body: string; category: string;
     thumbnailUrl?: string; externalUrl?: string; eventDate?: string | null; publish?: boolean;
   }) {
     return this.db.tx(async (tx) => {
-      await this.assertMediaExists(tx, input.thumbnailUrl);
+      await assertMediaPathExists(tx, input.thumbnailUrl);
       const r = await tx.query<{ id: string }>(
         `INSERT INTO notice (created_by, title, summary, body, category, thumbnail_url, external_url, status, published_at, event_date)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date)
@@ -78,7 +68,7 @@ export class NoticeAdminService {
       ...expressions,
     ].join(', ');
     return this.db.tx(async (tx) => {
-      await this.assertMediaExists(tx, input.thumbnailUrl);
+      await assertMediaPathExists(tx, input.thumbnailUrl);
       const r = await tx.query(
         `UPDATE notice SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
         [noticeId, ...fields.map(([, value]) => value)],

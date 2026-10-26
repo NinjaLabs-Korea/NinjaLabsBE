@@ -28,7 +28,7 @@ describe('CompleteProfileDto', () => {
     expect(isSavableNickname(decomposed)).toBe(true);
   });
 
-  it.each(['a', 'n'.repeat(51), 'ninja dev', 'ninja@dev', 'ninja/dev', 'ninja<b>', '   ', '​​', 'ㅤㅤ', 'ninjaㅤdev', 'ninja\u115F', '\u1160ninja', '\uFFA0\uFFA0'])(
+  it.each(['a', 'n'.repeat(51), 'ninja dev', 'ninja@dev', 'ninja/dev', 'ninja<b>', '   ', '​​', 'ㅤㅤ', 'ninjaㅤdev', 'ninja\u115F', '\u1160ninja', '\uFFA0\uFFA0', '\u0301ab', 'a\u0301\u0301\u0301\u0301\u0301b', 'ab.\u0301', 'ab\uFE0F', '\u0663\uFE0F', 'a-\u0301b'])(
     'rejects nickname %p (length 2..50, no whitespace or symbols beyond _ . -)',
     async (nickname) => {
       expect(await failedFields({ ...valid, nickname })).toEqual(['nickname']);
@@ -42,7 +42,7 @@ describe('CompleteProfileDto', () => {
     },
   );
 
-  it.each(['a.b', 'a-b', 'a_b', 'ninja-dev', 'n.i.n.j.a', '닌자.개발자', '01', 'me2', 'admin1', 'newbie', 'edits', 'withdrawn', 'withdrawn-1', 'unwithdrawn_1'])(
+  it.each(['a.b', 'a-b', 'a_b', 'ninja-dev', 'n.i.n.j.a', '닌자.개발자', 'हिन्दी', 'ไทยแลนด์', 'café', 'ไทย-dev', '01', 'me2', 'admin1', 'newbie', 'edits', 'withdrawn', 'withdrawn-1', 'unwithdrawn_1'])(
     'accepts nickname %p (letters/digits at both ends)',
     async (nickname) => {
       expect(await failedFields({ ...valid, nickname })).toEqual([]);

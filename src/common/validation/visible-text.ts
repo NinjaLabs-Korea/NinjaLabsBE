@@ -24,3 +24,27 @@ export const HasVisibleText = (options?: ValidationOptions) =>
     },
     options,
   );
+
+/**
+ * 표시 이름에 들어가면 안 되는 문자: 줄바꿈·탭 등 제어 문자(Cc), 줄/문단 구분자(U+2028/2029), 방향 제어(U+200E/200F, U+202A-202E, U+2066-2069),
+ * 제로폭 공백(U+200B)·워드 조이너(U+2060)·BOM(U+FEFF). RLO(U+202E)는 "Trusted Admin Bot"을 거꾸로 그리고 개행은 가짜 두 번째 줄을 만든다.
+ * 이모지/인도계 문자가 쓰는 ZWJ(U+200D)·ZWNJ(U+200C)는 허용한다.
+ */
+const DISPLAY_NAME_FORBIDDEN = /[\p{Cc}\u2028\u2029\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/u;
+
+export function isPlainDisplayText(value: unknown): boolean {
+  return typeof value === 'string' && !DISPLAY_NAME_FORBIDDEN.test(value);
+}
+
+/** DTO 데코레이터 - 한 줄 표시 이름에서 제어·방향 제어 문자를 거부한다 (`@Trim()` 뒤에 둔다: 앞뒤 공백은 이미 지워진다) */
+export const IsPlainDisplayText = (options?: ValidationOptions) =>
+  ValidateBy(
+    {
+      name: 'isPlainDisplayText',
+      validator: {
+        validate: (value) => isPlainDisplayText(value),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property must not contain control, line-break or bidirectional formatting characters`, options),
+      },
+    },
+    options,
+  );

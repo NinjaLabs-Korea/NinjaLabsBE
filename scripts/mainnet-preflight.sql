@@ -98,4 +98,11 @@ SELECT 'last_migration' AS check, m.name, m.applied_at
  ORDER BY m.name DESC
  LIMIT 1;
 
+-- [review] 10. 닉네임 대소문자 유일성이 DB 로케일에 의존한다: uq_user_nickname_active는 UNIQUE (lower(nickname))이고 lower()는 DB의 lc_ctype을 따른다.
+--   C 로케일이면 ASCII만 접혀 `Café`와 `CAFÉ`, `Привет`와 `привет`이 둘 다 가입된다. 행이 나오면(= 비-ASCII 대문자가 안 접힘) lc_ctype을 확인하고,
+--   UTF-8 로케일 DB(예: en_US.UTF-8)로 옮기거나 닉네임 유일성을 앱에서 접는 마이그레이션을 계획한다. 0행이면 정상.
+SELECT 'nickname_case_folding' AS check, current_setting('lc_ctype') AS lc_ctype, lower('CAFÉ') AS lower_of_cafe_upper
+  FROM (SELECT 1) AS probe
+ WHERE lower('CAFÉ') <> 'café';
+
 ROLLBACK;

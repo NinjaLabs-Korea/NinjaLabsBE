@@ -141,7 +141,7 @@ describeDb('identity edge cases over HTTP (e2e)', () => {
       const inj = getInjectiveAddress(Wallet.createRandom().address);
       const challenge = await e2e.post('/wallets/challenge', { address: inj }, { token: session.accessToken });
       expect(challenge.status).toBe(201);
-      expect(challenge.body.message).toContain(`주소: ${inj}`);
+      expect(challenge.body.message).toContain(`地址: ${inj}`);
 
       const noKey = await e2e.post('/wallets/verify', { address: inj, signature: Buffer.alloc(64).toString('base64') }, { token: session.accessToken });
       expect(noKey.status).toBe(401);

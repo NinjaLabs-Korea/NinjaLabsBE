@@ -37,11 +37,11 @@ describe('AuditService.list', () => {
     await expect(service.list({ page: 3, entityType: 'bounty', entityId: 'e' })).resolves.toEqual({
       items: [{ id: 'a' }], page: 3, pageSize: 30, total: 61,
     });
-    const [listSql, listParams] = query.mock.calls.find(([sql]) => sql.includes('ORDER BY created_at DESC'))!;
-    expect(listSql).toContain('WHERE entity_type = $1 AND entity_id = $2');
+    const [listSql, listParams] = query.mock.calls.find(([sql]) => sql.includes('ORDER BY a.created_at DESC'))!;
+    expect(listSql).toContain('WHERE a.entity_type = $1 AND a.entity_id = $2');
     expect(listParams).toEqual(['bounty', 'e', 30, 60]);
     const [countSql, countParams] = query.mock.calls.find(([sql]) => sql.includes('count(*)'))!;
-    expect(countSql).toContain('WHERE entity_type = $1 AND entity_id = $2');
+    expect(countSql).toContain('WHERE a.entity_type = $1 AND a.entity_id = $2');
     expect(countParams).toEqual(['bounty', 'e']);
   });
 
@@ -56,8 +56,8 @@ describe('AuditService.list', () => {
   it('numbers the placeholders after a single filter so LIMIT/OFFSET follow it ($2/$3)', async () => {
     const { query, service } = setup();
     await service.list({ page: 2, entityId: 'e' });
-    const [listSql, listParams] = query.mock.calls.find(([sql]) => sql.includes('ORDER BY created_at DESC'))!;
-    expect(listSql).toContain('WHERE entity_id = $1');
+    const [listSql, listParams] = query.mock.calls.find(([sql]) => sql.includes('ORDER BY a.created_at DESC'))!;
+    expect(listSql).toContain('WHERE a.entity_id = $1');
     expect(listSql).toContain('LIMIT $2 OFFSET $3');
     expect(listParams).toEqual(['e', 30, 30]);
   });

@@ -12,6 +12,7 @@ import {
   Req,
   Res,
   UnauthorizedException,
+  UseFilters,
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -30,7 +31,8 @@ import { AuthGuard } from './auth.guard';
 import { AuthService, SessionUser } from './auth.service';
 import { clearRefreshCookie, isCookieMode, readRefreshCookie, setRefreshCookie } from './session-cookie';
 import { OriginAllowlist } from '../common/origin-allowlist';
-import { authSuccessRedirectUrl, feRedirectAllowlist } from './fe-origins';
+import { feRedirectAllowlist, resolveFeRedirect } from './fe-origins';
+import { BrowserNavigationThrottleFilter } from './browser-throttle.filter';
 import { TurnstileVerifier } from './turnstile.verifier';
 
 /**
@@ -73,19 +75,8 @@ export class AuthController {
   private redirectAllowlist?: OriginAllowlist;
 
   private authSuccessRedirect(requested?: string): string {
-    const fallback = authSuccessRedirectUrl(this.config);
-    // 기본값이 URL이 아니면 returnTo도 받지 않는다
-    if (!requested || !URL.canParse(fallback)) return fallback;
-
-    try {
-      // 기본 리다이렉트 오리진 + AUTH_ALLOWED_REDIRECT_ORIGINS (정확한 오리진 또는 `*` 와일드카드 1개) — fe-origins.ts
-      const allowedOrigins = (this.redirectAllowlist ??= feRedirectAllowlist(this.config));
-      const requestedUrl = new URL(requested);
-      if (!allowedOrigins.allows(requestedUrl.origin)) return fallback;
-      return `${requestedUrl.origin}/`;
-    } catch {
-      return fallback;
-    }
+    // 기본 리다이렉트 오리진 + AUTH_ALLOWED_REDIRECT_ORIGINS (정확한 오리진 또는 `*` 와일드카드 1개) - fe-origins.ts
+    return resolveFeRedirect(this.config, (this.redirectAllowlist ??= feRedirectAllowlist(this.config)), requested);
   }
 
   /**
@@ -94,6 +85,7 @@ export class AuthController {
    * 없음/거절 400 TURNSTILE_FAILED, Cloudflare 불통 503 TURNSTILE_UNAVAILABLE (turnstile.verifier.ts). state 발급 전에 검사한다.
    */
   @Get('google')
+  @UseFilters(BrowserNavigationThrottleFilter)
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   async googleRedirect(
     @Query('trace') traceId: string | undefined,
@@ -138,6 +130,7 @@ export class AuthController {
   @Get('google/callback')
   @Header('Cache-Control', 'no-store')
   @Header('Referrer-Policy', 'no-referrer')
+  @UseFilters(BrowserNavigationThrottleFilter)
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   async googleCallback(
     @Query('code') code: string | undefined,

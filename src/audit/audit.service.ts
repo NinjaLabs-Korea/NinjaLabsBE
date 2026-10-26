@@ -58,7 +58,11 @@ export class AuditService {
     );
   }
 
-  /** 운영자 조회 — 최신순, 30건/페이지. 필터는 파라미터 바인딩으로만 조립한다 */
+  /**
+   * 운영자 조회 - 최신순, 30건/페이지. 필터는 파라미터 바인딩으로만 조립한다.
+   * 사람이 읽을 수 있게 행위자 닉네임(`actor_nickname`, 에이전트면 `actor_agent_name`)과 `before_data`/`after_data`(금액·해시·변경 내용)를 함께 준다 -
+   * 2인 승인 규칙의 '누가 요청, 누가 승인'과 지급 분쟁 절차(runbook 7.4)가 UUID 한 줄로는 읽히지 않는다. 운영자 전용 엔드포인트다.
+   */
   async list(filter: { page: number; entityType?: string; entityId?: string }) {
     const pageSize = AUDIT_LOG_PAGE_SIZE;
     const offset = (filter.page - 1) * pageSize;
@@ -66,22 +70,26 @@ export class AuditService {
     const params: unknown[] = [];
     if (filter.entityType) {
       params.push(filter.entityType);
-      conds.push(`entity_type = $${params.length}`);
+      conds.push(`a.entity_type = $${params.length}`);
     }
     if (filter.entityId) {
       params.push(filter.entityId);
-      conds.push(`entity_id = $${params.length}`);
+      conds.push(`a.entity_id = $${params.length}`);
     }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
     const [items, total] = await Promise.all([
       this.db.query(
-        `SELECT id, actor_user_id, actor_agent_id, action, entity_type, entity_id, created_at
-           FROM audit_log ${where}
-          ORDER BY created_at DESC, id -- 한 트랜잭션의 감사 행은 created_at(now())이 같다 — 페이지 경계가 흔들리지 않게
+        `SELECT a.id, a.actor_user_id, a.actor_agent_id, a.action, a.entity_type, a.entity_id, a.created_at,
+                u.nickname AS actor_nickname, ag.name AS actor_agent_name, a.before_data, a.after_data
+           FROM audit_log a
+           LEFT JOIN "user" u ON u.id = a.actor_user_id
+           LEFT JOIN agent ag ON ag.id = a.actor_agent_id
+          ${where}
+          ORDER BY a.created_at DESC, a.id -- 한 트랜잭션의 감사 행은 created_at(now())이 같다 — 페이지 경계가 흔들리지 않게
           LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, pageSize, offset],
       ),
-      this.db.query<{ total: number }>(`SELECT count(*)::int AS total FROM audit_log ${where}`, params),
+      this.db.query<{ total: number }>(`SELECT count(*)::int AS total FROM audit_log a ${where}`, params),
     ]);
     return { items: items.rows, page: filter.page, pageSize, total: total.rows[0].total };
   }

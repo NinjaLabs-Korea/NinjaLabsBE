@@ -31,3 +31,20 @@ export function feRedirectAllowlist(config: Pick<ConfigService, 'get'>): OriginA
   });
   return new OriginAllowlist([...successOrigin, ...kept]);
 }
+
+/**
+ * `returnTo`로 요청된 FE 주소를 허용 목록으로 검증해 `<origin>/`로 돌려준다. 기본값이 URL이 아니거나 허용되지 않으면 기본 FE.
+ * `GET /auth/google` 컨트롤러와 브라우저 이동 라우트의 429 필터(browser-throttle.filter.ts)가 같은 규칙을 쓴다.
+ */
+export function resolveFeRedirect(config: Pick<ConfigService, 'get'>, allowlist: OriginAllowlist, requested?: string): string {
+  const fallback = authSuccessRedirectUrl(config);
+  // 기본값이 URL이 아니면 returnTo도 받지 않는다
+  if (!requested || !URL.canParse(fallback)) return fallback;
+  try {
+    const requestedUrl = new URL(requested);
+    if (!allowlist.allows(requestedUrl.origin)) return fallback;
+    return `${requestedUrl.origin}/`;
+  } catch {
+    return fallback;
+  }
+}

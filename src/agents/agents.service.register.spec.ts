@@ -146,7 +146,15 @@ describe('AgentsService.register input validation', () => {
     const error = await service.register(ownerUserId, 'bot', undefined, undefined, signer.address).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as Error).message).toBe('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
-    expect(query.mock.calls[0][1]).toEqual([ownerUserId, signer.address]);
+    expect(query.mock.calls[0][1]).toEqual([ownerUserId, signer.address, 'bot', null]);
+  });
+
+  it('re-registering the same pending wallet applies the new name and description to the existing row and returns its id', async () => {
+    const signer = Wallet.createRandom();
+    const { service, query } = setup({ insertError: Object.assign(new Error('dup'), { code: '23505' }), pendingAfterConflict: true });
+    await expect(service.register(ownerUserId, 'Renamed Bot', 'new description', undefined, signer.address)).resolves.toMatchObject({ agentId: 'own-pending', status: 'PENDING_VERIFICATION' });
+    expect(query.mock.calls[0][0]).toContain('UPDATE agent SET name = $3, description = $4');
+    expect(query.mock.calls[0][1]).toEqual([ownerUserId, signer.address, 'Renamed Bot', 'new description']);
   });
 
   it('rethrows non-unique database errors unchanged (no pending lookup, no 409 mask)', async () => {

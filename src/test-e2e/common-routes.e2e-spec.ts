@@ -51,7 +51,9 @@ describeDb('common routes over HTTP (e2e)', () => {
       expect(res.body).toMatchObject({ page: 1, pageSize: 30, total: 1 });
       expect(res.body.items).toHaveLength(1);
       expect(res.body.items[0]).toMatchObject({ action: 'NOTICE_PUBLISHED', entity_type: 'notice', entity_id: id, actor_user_id: admin.userId });
-      expect(Object.keys(res.body.items[0]).sort()).toEqual(['action', 'actor_agent_id', 'actor_user_id', 'created_at', 'entity_id', 'entity_type', 'id']);
+      // the actor is readable (nickname / agent name) and the change data is returned, not only a UUID
+      expect(res.body.items[0].actor_nickname).toEqual(expect.any(String));
+      expect(Object.keys(res.body.items[0]).sort()).toEqual(['action', 'actor_agent_id', 'actor_agent_name', 'actor_nickname', 'actor_user_id', 'after_data', 'before_data', 'created_at', 'entity_id', 'entity_type', 'id']);
     });
 
     it.each([

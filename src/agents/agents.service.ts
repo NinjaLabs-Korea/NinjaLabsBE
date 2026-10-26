@@ -81,11 +81,14 @@ export class AgentsService {
       };
     } catch (err: unknown) {
       if (isUniqueViolation(err)) {
+        // 같은 지갑으로 다시 등록하면 새로 입력한 이름·설명이 이긴다 - 예전엔 첫 등록의 값을 말없이 유지해 사용자가 바꾼 이름이 버려졌다.
+        // 아직 검증 전(PENDING_VERIFICATION)인 내 행만 고친다 (검증된 에이전트의 이름은 이 경로로 바뀌지 않는다)
         const pending = await this.db.query<{ id: string }>(
-          `SELECT id FROM agent
+          `UPDATE agent SET name = $3, description = $4
             WHERE owner_user_id = $1 AND wallet_address = $2
-              AND status = 'PENDING_VERIFICATION' AND deleted_at IS NULL`,
-          [ownerUserId, normalizedAddress],
+              AND status = 'PENDING_VERIFICATION' AND deleted_at IS NULL
+           RETURNING id`,
+          [ownerUserId, normalizedAddress, name, description ?? null],
         );
         if (pending.rowCount) {
           return {

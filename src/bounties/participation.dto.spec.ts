@@ -64,3 +64,24 @@ describe('bounty participation DTOs (user and agent surfaces share the same rule
     expect(await failedFields(ReviewSubmissionDto, { decision: 'APPROVE', revisionNo: null })).toEqual(['revisionNo']);
   });
 });
+
+describe('participation DTOs: invisible text and commit hash', () => {
+  it.each([ApplyDto, AgentApplyDto])('%p: a message made only of zero-width / filler characters is rejected like a blank one', async (cls) => {
+    for (const message of ['\u200B', '\u200B\u200B\u3164', '\u2060\u2063']) expect(await failedFields(cls, { message })).toEqual(['message']);
+    expect(await failedFields(cls, { message: 'hi\u200B' })).toEqual([]);
+  });
+
+  it.each([SubmitDto, AgentSubmitDto])('%p: a description made only of invisible characters is rejected', async (cls) => {
+    for (const description of ['\u200B', '\u200B\u2063', '\u3164']) {
+      expect(await failedFields(cls, { submissionUrl: 'https://demo.app', description })).toEqual(['description']);
+    }
+  });
+
+  it.each([SubmitDto, AgentSubmitDto])('%p: commitSha must be a 4..64 digit hex hash (empty and absent are fine, spaces are trimmed)', async (cls) => {
+    const base = { submissionUrl: 'https://demo.app', description: 'd' };
+    for (const commitSha of ['abc123', 'deadbeef', 'A'.repeat(40), 'f'.repeat(64), '', '  abc123  ']) expect(await failedFields(cls, { ...base, commitSha })).toEqual([]);
+    for (const commitSha of ['zz zz', 'abc', 'g'.repeat(40), 'f'.repeat(65), 'abc 123', 'abc\n123']) expect(await failedFields(cls, { ...base, commitSha })).toEqual(['commitSha']);
+    expect(await failedFields(cls, base)).toEqual([]);
+    expect(plainToInstance(cls, { ...base, commitSha: '  abc123 ' }).commitSha).toBe('abc123');
+  });
+});

@@ -24,7 +24,7 @@
  */
 const { OpsError, UUID_RE, extractValueOptions, parseArgs, promptYes, runCli } = require('./ops-cli');
 
-const USAGE = 'usage: node scripts/forfeit-award.js <submission-id> --reason <text> --admin <admin-user-id> [--dry-run] [--yes]';
+const USAGE = 'usage: node scripts/forfeit-award.js <submission-id> --reason <text (1-500 chars)> --admin <admin-user-id> [--dry-run] [--yes]';
 /** src/bounties/bounty-status.ts IN_PROGRESS의 사본 — 심사(SubmissionReviewService)가 받는 바운티 상태와 같다 (forfeit-award.spec.ts가 대조) */
 const FORFEITABLE_BOUNTY_STATUSES = ['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'];
 const ACTION = 'SUBMISSION_AWARD_FORFEITED';
@@ -145,7 +145,15 @@ async function run(argv, deps) {
   const { flags, positional } = parsed;
   const reason = normalizeReason(values.reason);
   if (positional.length !== 1 || !UUID_RE.test(positional[0]) || !reason || !values.admin || !UUID_RE.test(values.admin)) {
-    log(USAGE);
+    // 사용법만 찍으면 운영자가 어느 인자가 틀렸는지 알 수 없다 - 틀린 인자를 먼저 이름으로 알려 준다
+    const problems = [];
+    if (positional.length !== 1) problems.push(`expected exactly one <submission-id>, got ${positional.length}`);
+    else if (!UUID_RE.test(positional[0])) problems.push('<submission-id> must be a UUID');
+    if (values.reason === undefined) problems.push('--reason <text> is required');
+    else if (!reason) problems.push(`--reason must be 1 to ${REASON_MAX} characters after trimming (got ${values.reason.trim().length})`);
+    if (values.admin === undefined) problems.push('--admin <admin-user-id> is required');
+    else if (!UUID_RE.test(values.admin)) problems.push('--admin must be a user UUID');
+    log(`${problems.join('\n')}\n${USAGE}`);
     return 2;
   }
   const submissionId = positional[0].toLowerCase();

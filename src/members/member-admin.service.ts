@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 
@@ -37,6 +37,16 @@ export class MemberAdminService {
   /** 멤버 지정/해제 + 역할/노출순서 — 변경과 감사 로그를 한 트랜잭션으로 */
   async setMember(userId: string, isMember: boolean, role?: string, displayOrder?: number, adminId?: string) {
     return this.db.tx(async (tx) => {
+      // 지정만 막는다(해제는 언제나 가능): 온보딩을 마치지 않은 유저는 임시 닉네임·빈 프로필이고 공개 프로필(/users/:nickname)도 404라
+      // 멤버 카드의 Profile 링크가 죽고 사이트맵에 404 URL이 실린다. 409 PROFILE_REQUIRED(지원·제출과 같은 코드)
+      if (isMember) {
+        const state = await tx.query<{ done: boolean }>(
+          `SELECT onboarding_completed_at IS NOT NULL AS done FROM "user" WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+          [userId],
+        );
+        if (!state.rowCount) throw new NotFoundException('USER_NOT_FOUND');
+        if (!state.rows[0].done) throw new ConflictException('PROFILE_REQUIRED');
+      }
       const r = await tx.query(
         `UPDATE "user"
             SET is_member = $2::boolean,

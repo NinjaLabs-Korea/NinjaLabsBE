@@ -48,3 +48,19 @@ describe('highlight admin DTOs', () => {
     expect(await failedFields(UpdateHighlightDto, { displayOrder: 2_147_483_648 })).toEqual(['displayOrder']);
   });
 });
+
+describe('highlight admin DTOs: visible text, public links', () => {
+  it('rejects a title or description made only of zero-width characters (create and update)', async () => {
+    expect(await failedFields(CreateHighlightDto, { ...valid, title: '\u200B\u200B', description: '\u200B\u200B' })).toEqual(['description', 'title']);
+    expect(await failedFields(UpdateHighlightDto, { title: '\u200B', description: '\u3164' })).toEqual(['description', 'title']);
+    expect(await failedFields(CreateHighlightDto, { ...valid, title: 'ok\u200B' })).toEqual([]);
+  });
+
+  it('create linkUrl must be a public http(s) URL or a site path: localhost and private hosts are refused', async () => {
+    for (const linkUrl of ['http://localhost:3000/x', 'http://10.0.0.1/x', 'http://127.0.0.1/x', 'http://intranet/x']) {
+      expect(await failedFields(CreateHighlightDto, { ...valid, linkUrl })).toEqual(['linkUrl']);
+    }
+    expect(await failedFields(CreateHighlightDto, { ...valid, linkUrl: 'https://injective.com/blog' })).toEqual([]);
+    expect(await failedFields(CreateHighlightDto, { ...valid, linkUrl: '/bounties/x' })).toEqual([]);
+  });
+});

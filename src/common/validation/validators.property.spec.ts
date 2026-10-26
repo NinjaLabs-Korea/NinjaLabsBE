@@ -178,7 +178,7 @@ describe('nickname — adversarial table', () => {
     ['😀😀', false], // emoji is neither \p{L} nor \p{N}
     ['❤\ufe0f❤\ufe0f', false], // U+FE0F is a mark, not allowed
     ['ninja\u0301', true], // composes to á under NFC
-    ['ninj\u0301', false], // no precomposed form: the combining mark stays and ends the nickname
+    ['ninj\u0301', true], // no precomposed form: the combining mark stays; marks may end a nickname (Hindi / Thai words end in a vowel sign)
     ['a b', false],
     ['a\u200bb', false], // zero-width space
     ['a\u202eb', false], // bidi override

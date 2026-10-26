@@ -122,8 +122,10 @@ describeDb('agent lifecycle on a real database', () => {
     const stranger = await createUser(db);
     const signer = Wallet.createRandom();
     const first = await agents.register(owner, 'bot', undefined, undefined, signer.address);
-    const second = await agents.register(owner, 'bot-renamed', undefined, undefined, signer.address);
+    const second = await agents.register(owner, 'bot-renamed', 'new description', undefined, signer.address);
     expect(second).toEqual({ agentId: first.agentId, status: 'PENDING_VERIFICATION', verificationMessage: first.verificationMessage });
+    // the retyped name / description replace the first registration's values instead of being dropped silently
+    expect((await db.query(`SELECT name, description FROM agent WHERE id = $1`, [first.agentId])).rows[0]).toEqual({ name: 'bot-renamed', description: 'new description' });
     await expect(agents.verifyAndIssueKey(stranger, first.agentId, '0x00')).rejects.toMatchObject({ message: 'AGENT_NOT_FOUND' });
     await expect(agents.rotateKey(stranger, first.agentId)).rejects.toMatchObject({ message: 'AGENT_NOT_FOUND' });
     await expect(agents.revoke(stranger, first.agentId)).rejects.toMatchObject({ message: 'AGENT_NOT_FOUND' });

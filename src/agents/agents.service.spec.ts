@@ -51,7 +51,7 @@ describe('AgentsService EVM registration', () => {
   type OccupiedRow = { id: string; owner_user_id: string; status?: string; verified?: boolean; abandoned?: boolean };
 
   /** register() tx: occupied-row lookup (REVOKED / PENDING on the same wallet or key) → INSERT. `revoked` rows are what the FOR UPDATE lookup returns. */
-  function registerTxQuery(options: { revoked?: OccupiedRow[]; insert?: unknown } = {}) {
+  function registerTxQuery(options: { revoked?: OccupiedRow[]; insert?: unknown; onboarded?: boolean } = {}) {
     return jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
       if (sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION') AND deleted_at IS NULL")) {
         const rows = (options.revoked ?? []).map((row) => ({ status: 'REVOKED', verified: true, abandoned: false, ...row }));
@@ -61,6 +61,7 @@ describe('AgentsService EVM registration', () => {
         if (options.insert instanceof Error || (options.insert as { code?: string })?.code) throw options.insert;
         return { rowCount: 1, rows: [{ id: agentId }] };
       }
+      if (sql.includes('onboarding_completed_at IS NOT NULL AS done')) return { rowCount: 1, rows: [{ done: options.onboarded ?? true }] };
       return { rowCount: 1, rows: [] };
     }));
   }
@@ -193,7 +194,7 @@ describe('AgentsService EVM registration', () => {
 
     // lookup (FOR UPDATE) → INSERT; uq_agent_wallet ignores REVOKED rows (0014), so nothing is retired
     const [lookup, insert] = registerQuery.mock.calls;
-    expect(registerQuery).toHaveBeenCalledTimes(3); // + the owner-wallet check after the INSERT
+    expect(registerQuery).toHaveBeenCalledTimes(4); // + the owner-wallet check and the owner onboarding check after the INSERT
     expect(lookup[0]).toContain("status IN ('REVOKED', 'PENDING_VERIFICATION') AND deleted_at IS NULL");
     expect(lookup[0]).toContain('FOR UPDATE');
     expect(lookup[1]).toEqual([signer.address, null]);
@@ -216,6 +217,15 @@ describe('AgentsService EVM registration', () => {
     ).rejects.toMatchObject({ message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
     expect(registerQuery).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it('an owner who has not finished onboarding cannot register an agent (409 PROFILE_REQUIRED, the transaction is rolled back)', async () => {
+    const { db, service } = createService();
+    const registerQuery = registerTxQuery({ onboarded: false });
+    db.tx.mockImplementation(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
+      callback({ query: registerQuery }));
+    await expect(service.register(ownerUserId, 'bot', undefined, undefined, Wallet.createRandom().address))
+      .rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
   });
 
   it("does not let another owner's never-verified REVOKED agent (a PENDING squat revoked on the spot) block the wallet", async () => {

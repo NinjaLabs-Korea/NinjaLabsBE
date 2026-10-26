@@ -185,7 +185,7 @@ describeDb('throttling over HTTP (e2e)', () => {
     }
 
     it('the 61st call in a minute with one key is 429 with only Retry-After-agent-api; the budget is per key, not per IP', async () => {
-      const owner = await e2e.login();
+      const owner = await e2e.loginOnboarded();
       const key = await agentKey(owner);
       const other = await agentKey(owner);
       // different client IPs every call: the per-IP global limit cannot be what trips

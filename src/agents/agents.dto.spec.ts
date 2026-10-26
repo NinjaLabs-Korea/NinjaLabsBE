@@ -20,3 +20,11 @@ describe('RegisterAgentDto', () => {
     expect(plainToInstance(RegisterAgentDto, { ...wallet, name: '  bot  ' }).name).toBe('bot');
   });
 });
+
+describe('RegisterAgentDto invisible names', () => {
+  const wallet = { walletAddress: '0x1111111111111111111111111111111111111111' };
+  it('rejects a name made only of zero-width / filler characters but keeps a name with visible text', async () => {
+    for (const name of ['\u200B', '\u200B\u200B', ' \u2060\uFEFF ', '\u3164']) expect(await failedFields({ ...wallet, name })).toEqual(['name']);
+    expect(await failedFields({ ...wallet, name: 'bot\u200B' })).toEqual([]);
+  });
+});

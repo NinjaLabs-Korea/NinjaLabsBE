@@ -27,6 +27,7 @@ describe('SubmissionsService submission modes', () => {
         rowCount: 1,
         rows: [{ application_required: false, submission_mode: 'AGENT', status: 'OPEN', submission_deadline: '2099-01-01' }],
       })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ done: true }] }) // the agent's owner finished onboarding
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'submission' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [] });
@@ -35,8 +36,8 @@ describe('SubmissionsService submission modes', () => {
     await expect(service.submitAsAgent('bounty', 'agent', input)).resolves.toEqual({
       id: 'submission', revisionNo: 1, status: 'SUBMITTED',
     });
-    expect(query.mock.calls[2][1].slice(0, 4)).toEqual(['bounty', null, null, 'agent']);
-    expect(query.mock.calls[3][1].slice(-2)).toEqual([null, 'agent']);
+    expect(query.mock.calls[3][1].slice(0, 4)).toEqual(['bounty', null, null, 'agent']);
+    expect(query.mock.calls[4][1].slice(-2)).toEqual([null, 'agent']);
     expect(db.query).not.toHaveBeenCalled();
   });
 });
@@ -132,14 +133,17 @@ describe('SubmissionsService submit rules', () => {
     expect(wrote()).toBe(false);
   });
 
-  it('a person who has not finished onboarding is 409 PROFILE_REQUIRED and nothing is written (agents are not checked)', async () => {
+  it('a person, or the owner of an agent, who has not finished onboarding is 409 PROFILE_REQUIRED and nothing is written', async () => {
     const blocked = setup({}, { onboarded: false });
     await expect(blocked.service.submit('b', 'u', input)).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
     expect(blocked.call('onboarding_completed_at')![1]).toEqual(['u']);
     expect(blocked.wrote()).toBe(false);
     const agent = setup({ submission_mode: 'AGENT' }, { onboarded: false });
-    await expect(agent.service.submitAsAgent('b', 'agent', input)).resolves.toEqual({ id: 'new-sub', revisionNo: 1, status: 'SUBMITTED' });
-    expect(agent.call('onboarding_completed_at')).toBeUndefined();
+    await expect(agent.service.submitAsAgent('b', 'agent', input)).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    expect(agent.call('onboarding_completed_at')![1]).toEqual(['agent']);
+    expect(agent.wrote()).toBe(false);
+    const done = setup({ submission_mode: 'AGENT' });
+    await expect(done.service.submitAsAgent('b', 'agent', input)).resolves.toEqual({ id: 'new-sub', revisionNo: 1, status: 'SUBMITTED' });
   });
 
   it('an agent on a DIRECT bounty is 400 DIRECT_SUBMISSION_REQUIRED', async () => {

@@ -18,6 +18,7 @@ const userId = '11111111-1111-4111-8111-111111111111';
 /** A tiny in-memory wallet_verification_challenge + wallet store behind the tx client, so tests assert on what was persisted */
 function setup() {
   const challenges: Array<{ id: string; wallet_address: string; message: string; used: boolean }> = [];
+  const agents: string[] = []; // wallet addresses of the user's live agents
   const wallets: Array<{ user_id: string; address: string; public_key: string | null }> = [];
   const txQuery = jest.fn(async (sql: string, params?: unknown[]) => {
     const p = params ?? [];
@@ -37,6 +38,7 @@ function setup() {
       if (row) row.used = true;
       return { rowCount: row ? 1 : 0, rows: row ? [{ id: row.id }] : [] };
     }
+    if (sql.includes('FROM agent WHERE owner_user_id = $1')) return { rowCount: agents.length, rows: agents.map((wallet_address) => ({ wallet_address })) };
     if (sql.includes('INSERT INTO wallet ')) {
       wallets.push({ user_id: p[0] as string, address: p[1] as string, public_key: p[2] as string | null });
       return { rowCount: 1, rows: [{ id: 'wallet-id' }] };
@@ -47,7 +49,7 @@ function setup() {
   const query = jest.fn(async () => ({ rowCount: wallets.length, rows: wallets.length ? [{ id: 'wallet-id', chain: 'INJECTIVE', address: wallets[0].address }] : [] }));
   const { database, db } = createMockDb({ query, txQuery });
   const nfts = { enqueueParentMintInTransaction: jest.fn(async () => ({ nftId: 'nft' })) };
-  return { service: new WalletsService(database, nfts as never), db, txQuery, challenges, wallets, nfts };
+  return { service: new WalletsService(database, nfts as never), db, txQuery, challenges, wallets, agents, nfts };
 }
 
 beforeEach(() => adr36.mockReset().mockReturnValue(false));
@@ -168,6 +170,30 @@ describe('WalletsService.verifySignature — EIP-191 (0x…)', () => {
     await service.verifySignature(userId, signer.address, await signer.signMessage(challenge.message), forgedKey);
     expect(wallets[0].public_key).toBe(signer.signingKey.compressedPublicKey);
     expect(wallets[0].public_key).not.toBe(forgedKey);
+  });
+});
+
+describe('WalletsService.verifySignature - the owner\'s own agent wallet', () => {
+  it('refuses to link a wallet that one of the user\'s live agents uses (400 AGENT_WALLET_IS_OWNER_WALLET), in either stored form, and consumes nothing', async () => {
+    const signer = Wallet.createRandom();
+    for (const stored of [signer.address, getInjectiveAddress(signer.address)]) {
+      const { service, agents, wallets, nfts } = setup();
+      agents.push(stored);
+      const challenge = await service.createChallenge(userId, signer.address);
+      await expect(service.verifySignature(userId, signer.address, await signer.signMessage(challenge.message)))
+        .rejects.toMatchObject({ status: 400, message: 'AGENT_WALLET_IS_OWNER_WALLET' });
+      expect(wallets).toEqual([]);
+      expect(nfts.enqueueParentMintInTransaction).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an agent on a different wallet does not get in the way', async () => {
+    const signer = Wallet.createRandom();
+    const { service, agents, wallets } = setup();
+    agents.push(Wallet.createRandom().address);
+    const challenge = await service.createChallenge(userId, signer.address);
+    await service.verifySignature(userId, signer.address, await signer.signMessage(challenge.message));
+    expect(wallets).toHaveLength(1);
   });
 });
 

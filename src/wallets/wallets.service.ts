@@ -51,6 +51,16 @@ export class WalletsService {
     }
   }
 
+  /** 에이전트 지갑(0x 또는 inj1로 저장)이 이 inj1 주소와 같은 계정인가 */
+  private sameAccount(agentWallet: string, injectiveAddress: string): boolean {
+    try {
+      const inj = isEvmAddress(agentWallet) ? getInjectiveAddress(agentWallet) : agentWallet;
+      return inj.toLowerCase() === injectiveAddress.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+
   async createChallenge(userId: string, address: string) {
     const normalizedAddress = this.normalizeChallengeAddress(address);
     const nonce = randomBytes(16).toString('hex');
@@ -125,6 +135,15 @@ export class WalletsService {
           [challengeId],
         );
         if (!consumed.rowCount) throw new BadRequestException('CHALLENGE_EXPIRED');
+        // 내 (폐기·삭제되지 않은) 에이전트의 지갑을 내 대표 지갑으로 묶을 수 없다: 에이전트 등록의 AGENT_WALLET_IS_OWNER_WALLET 규칙의 반대 방향
+        // (보상은 소유자 지갑으로 나가므로 같은 주소면 소유자와 에이전트가 구분되지 않는다). 던지면 위의 challenge 소비도 롤백된다
+        const agents = await tx.query<{ wallet_address: string }>(
+          `SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED' AND deleted_at IS NULL`,
+          [userId],
+        );
+        if (agents.rows.some((row) => this.sameAccount(row.wallet_address, injectiveAddress))) {
+          throw new BadRequestException('AGENT_WALLET_IS_OWNER_WALLET');
+        }
         const w = await tx.query<{ id: string }>(
           `INSERT INTO wallet (user_id, chain, address, public_key, is_primary, verified_at)
            VALUES ($1, 'INJECTIVE', $2, $3, true, now())

@@ -31,15 +31,16 @@ describe('ApplicationsService submission modes', () => {
         rowCount: 1,
         rows: [{ application_required: true, submission_mode: 'AGENT', status: 'OPEN' }],
       })
+      .mockResolvedValueOnce(ONBOARDED) // the agent's owner is checked
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'application', status: 'PENDING' }] });
     const service = serviceWith(query);
 
     await service.applyAsAgent('bounty', 'agent', 'hello', 'https://example.com');
 
-    expect(query.mock.calls[1][0]).toContain('agent_id = $2 FOR UPDATE');
-    expect(query.mock.calls[1][1]).toEqual(['bounty', 'agent']);
-    expect(query.mock.calls[2][1]).toEqual([
+    expect(query.mock.calls[2][0]).toContain('agent_id = $2 FOR UPDATE');
+    expect(query.mock.calls[2][1]).toEqual(['bounty', 'agent']);
+    expect(query.mock.calls[3][1]).toEqual([
       'bounty', null, 'agent', 'hello', 'https://example.com',
     ]);
   });
@@ -52,9 +53,9 @@ describe('ApplicationsService re-application after withdrawal', () => {
     ['user', 'applicant_user_id', (s: ApplicationsService) => s.apply('bounty', 'user', 'again', 'https://p.example'), 'record'],
     ['agent', 'agent_id', (s: ApplicationsService) => s.applyAsAgent('bounty', 'agent', 'again', 'https://p.example'), 'recordAgentAction'],
   ] as const)('reopens the %s\'s own WITHDRAWN row: PENDING, new message/portfolio, review fields cleared, id kept, APPLICATION_REAPPLIED in the tx', async (kind, column, call, auditMethod) => {
-    const o = kind === 'user' ? 1 : 0; // the person's onboarding lookup shifts every later call by one
+    const o = 1; // the onboarding lookup (the person, or the agent's owner) shifts every later call by one
     const query = jest.fn().mockResolvedValueOnce(openBounty);
-    if (o) query.mockResolvedValueOnce(ONBOARDED);
+    query.mockResolvedValueOnce(ONBOARDED);
     query
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'app-1', status: 'WITHDRAWN' }] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'app-1', status: 'PENDING', applied_at: 'now' }] });
@@ -162,7 +163,7 @@ describe('ApplicationsService apply rules', () => {
     ] as const) {
       const query = jest.fn()
         .mockResolvedValueOnce(bountyRow({ submission_mode: mode }));
-      if (mode === 'DIRECT') query.mockResolvedValueOnce(ONBOARDED); // only the person is checked
+      query.mockResolvedValueOnce(ONBOARDED);
       query
         .mockResolvedValueOnce({ rowCount: 0, rows: [] })
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
@@ -238,12 +239,14 @@ describe('ApplicationsService apply rules', () => {
     expect(query.mock.calls[1][1]).toEqual(['user']);
   });
 
-  it('an agent is not subject to the onboarding check (its owner signed in to register it)', async () => {
-    const query = jest.fn()
-      .mockResolvedValueOnce(bountyRow({ submission_mode: 'AGENT' }))
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
-    await expect(serviceWith(query).applyAsAgent('bounty', 'agent', 'hi')).resolves.toEqual({ id: 'new', status: 'PENDING' });
-    expect(query.mock.calls.some(([sql]) => (sql as string).includes('onboarding_completed_at'))).toBe(false);
+  it.each([
+    ['onboarding not completed', { rowCount: 1, rows: [{ done: false }] }],
+    ['the owner row is gone', { rowCount: 0, rows: [] }],
+  ])('an agent follows its owner: %s is 409 PROFILE_REQUIRED and nothing is written (a login is not an onboarding)', async (_label, onboarding) => {
+    const query = jest.fn().mockResolvedValueOnce(bountyRow({ submission_mode: 'AGENT' })).mockResolvedValueOnce(onboarding);
+    await expect(serviceWith(query).applyAsAgent('bounty', 'agent', 'hi')).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1][0]).toContain('JOIN "user" u ON u.id = a.owner_user_id');
+    expect(query.mock.calls[1][1]).toEqual(['agent']);
   });
 });

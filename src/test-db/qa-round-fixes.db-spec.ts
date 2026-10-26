@@ -6,7 +6,9 @@ import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.servi
 import { RewardTokenResolver } from '../bounties/admin/reward-token.resolver';
 import { ApplicationReviewService } from '../bounties/applications/application-review.service';
 import { ApplicationsService } from '../bounties/applications/applications.service';
+import { SubmissionReviewService } from '../bounties/submissions/submission-review.service';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
+import { UsersService } from '../users/users.service';
 import { DatabaseService } from '../common/database/database.service';
 import { HighlightsService } from '../highlights/highlights.service';
 import { describeDb } from './describe-db';
@@ -46,7 +48,7 @@ describeDb('QA round fixes on a real database', () => {
     return id;
   }
 
-  it('cancelling a bounty rejects its PENDING applications (with a note), keeps APPROVED/WITHDRAWN ones, and records the reviewer', async () => {
+  it('cancelling a bounty rejects its PENDING applications (without a reviewer note), keeps APPROVED/WITHDRAWN ones, and records the reviewer', async () => {
     const bountyId = await openBounty(true);
     const [pendingUser, approvedUser, withdrawnUser] = [await createUser(db), await createUser(db), await createUser(db)];
     const pending = await applications.apply(bountyId, pendingUser, 'p');
@@ -64,7 +66,7 @@ describeDb('QA round fixes on a real database', () => {
       `SELECT id, status, reviewed_by, review_note, reviewed_at FROM bounty_application WHERE id = ANY($1::uuid[])`,
       [[pending.id, approved.id, withdrawn.id, other.id]]);
     const byId = Object.fromEntries(rows.rows.map((row) => [row.id, row]));
-    expect(byId[pending.id]).toMatchObject({ status: 'REJECTED', reviewed_by: adminId, review_note: 'The bounty was cancelled.' });
+    expect(byId[pending.id]).toMatchObject({ status: 'REJECTED', reviewed_by: adminId, review_note: null }); // a system transition: no English reviewer note
     expect(byId[pending.id].reviewed_at).toBeInstanceOf(Date);
     expect(byId[approved.id].status).toBe('APPROVED');
     expect(byId[withdrawn.id].status).toBe('WITHDRAWN');
@@ -148,5 +150,60 @@ describeDb('QA round fixes on a real database', () => {
     const freed = Wallet.createRandom();
     await db.query(`INSERT INTO wallet (user_id, chain, address, is_primary, verified_at, disconnected_at) VALUES ($1, 'INJECTIVE', $2, false, now(), now())`, [owner, getInjectiveAddress(freed.address)]);
     await expect(agents.register(owner, 'freed', undefined, undefined, freed.address)).resolves.toMatchObject({ status: 'PENDING_VERIFICATION' });
+  });
+
+  it('an agent follows its owner onboarding: an unfinished owner cannot register, and a legacy agent of one cannot apply or submit (409 PROFILE_REQUIRED, no rows)', async () => {
+    const agents = new AgentsService(db, new AuditService(db));
+    const newbie = await createUser(db, { onboarded: false });
+    await expect(agents.register(newbie, 'bot', undefined, undefined, Wallet.createRandom().address)).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    expect((await db.query(`SELECT 1 FROM agent WHERE owner_user_id = $1`, [newbie])).rowCount).toBe(0);
+
+    // an agent that exists already (registered before the gate) is blocked at apply / submit through its owner
+    const agentId = (await db.query<{ id: string }>(
+      `INSERT INTO agent (owner_user_id, name, wallet_address, status, verified_at) VALUES ($1, 'legacy', $2, 'ACTIVE', now()) RETURNING id`,
+      [newbie, Wallet.createRandom().address])).rows[0].id;
+    const agentBounty = async (applicationRequired: boolean) => {
+      const { id } = await bounties.create(adminId, {
+        title: unique('qa-agent-'), sponsorName: 'S', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
+        category: 'DEV', applicationRequired, submissionMode: 'AGENT', maxWinners: 1,
+        submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      });
+      await bounties.transition(id, 'OPEN', adminId);
+      return id;
+    };
+    const applyBounty = await agentBounty(true);
+    const directBounty = await agentBounty(false);
+    await expect(applications.applyAsAgent(applyBounty, agentId, 'hi')).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    await expect(submissions.submitAsAgent(directBounty, agentId, { submissionUrl: 'https://example.com/z', description: 'd' }))
+      .rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    expect((await db.query(`SELECT 1 FROM bounty_application WHERE agent_id = $1 UNION ALL SELECT 1 FROM bounty_submission WHERE agent_id = $1`, [agentId])).rowCount).toBe(0);
+
+    await db.query(`UPDATE "user" SET onboarding_step = 4, onboarding_completed_at = now() WHERE id = $1`, [newbie]);
+    await expect(applications.applyAsAgent(applyBounty, agentId, 'hi')).resolves.toMatchObject({ status: 'PENDING' });
+    await expect(submissions.submitAsAgent(directBounty, agentId, { submissionUrl: 'https://example.com/z', description: 'd' })).resolves.toMatchObject({ status: 'SUBMITTED' });
+  });
+
+  it('a public profile exists only for users who finished onboarding (404 USER_NOT_FOUND otherwise)', async () => {
+    const users = new UsersService(db);
+    const unfinished = await createUser(db, { onboarded: false });
+    const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [unfinished])).rows[0].nickname;
+    await expect(users.publicProfile(nickname)).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
+    await db.query(`UPDATE "user" SET onboarding_step = 4, onboarding_completed_at = now() WHERE id = $1`, [unfinished]);
+    await expect(users.publicProfile(nickname)).resolves.toMatchObject({ nickname });
+  });
+
+  it('a second START_REVIEW on a submission already IN_REVIEW is 400 SUBMISSION_NOT_REVIEWABLE and writes no review or audit row', async () => {
+    const review = new SubmissionReviewService(db, new AuditService(db));
+    const bountyId = await openBounty(false);
+    const submitter = await createUser(db);
+    const { id: submissionId } = await submissions.submit(bountyId, submitter, { submissionUrl: 'https://example.com/r', description: 'd' });
+    await expect(review.review(submissionId, 'START_REVIEW', undefined, adminId)).resolves.toMatchObject({ status: 'IN_REVIEW' });
+    await expect(review.review(submissionId, 'START_REVIEW', undefined, adminId)).rejects.toMatchObject({ status: 400, message: 'SUBMISSION_NOT_REVIEWABLE' });
+    const counts = await db.query<{ reviews: string; audits: string }>(
+      `SELECT (SELECT count(*) FROM submission_review WHERE submission_id = $1) AS reviews,
+              (SELECT count(*) FROM audit_log WHERE entity_id = $1 AND action = 'SUBMISSION_START_REVIEW') AS audits`, [submissionId]);
+    expect(counts.rows[0]).toEqual({ reviews: '1', audits: '1' });
+    // the other decisions still work from IN_REVIEW
+    await expect(review.review(submissionId, 'REJECT', 'no', adminId)).resolves.toMatchObject({ status: 'REJECTED' });
   });
 });

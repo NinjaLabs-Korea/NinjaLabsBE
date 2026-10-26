@@ -14,6 +14,7 @@ import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { SessionUser } from '../auth/auth.service';
 import { Trim } from '../common/validation/trim';
+import { HasVisibleText } from '../common/validation/visible-text';
 import { AgentsService } from './agents.service';
 import { MaxChars } from '../common/validation/max-chars';
 
@@ -22,6 +23,7 @@ export class RegisterAgentDto {
   @Trim()
   @IsString()
   @IsNotEmpty()
+  @HasVisibleText() // U+200B 같은 보이지 않는 문자만으로 된 이름 거부 (빈 카드·"registered as <blank>")
   @MaxChars(100) // VARCHAR(100)
   name!: string;
 

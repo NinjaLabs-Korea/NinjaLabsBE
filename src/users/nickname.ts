@@ -6,12 +6,14 @@ import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
  *   - 유니코드 문자/숫자와 `_ . -`만, 공백 불가
  *   - 처음과 끝은 문자/숫자 (`.ninja`, `ninja-`, `...`, `--` 불가 → 경로 세그먼트 `.`/`..`·구분자 혼동 방지)
  *   - 한글 채움 문자(U+115F, U+1160, U+3164, U+FFA0)는 불가 — 범주가 문자(Lo)라 정규식을 통과하지만 화면에는 빈칸으로 그려져 "보이지 않는 이름"이 된다
+ *   - 전각/반각 문자(U+FF00 블록)와 수학용 영숫자(U+1D400 블록)는 불가 - `ａｄｍｉｎ`처럼 NFKC로 라틴 글자가 되는 모양만 같은 문자로 예약어·기존 이름을 사칭한다
+ *   - 라틴 글자와 키릴/그리스 글자를 한 이름에 섞는 것은 불가 (`аdmin`의 키릴 а, `buіlderone`의 키릴 і 같은 혼합 문자 동형이의어)
  *   - 길이 2~50 (DTO의 @Length)
  *   - 라우트와 충돌하는 예약어(`me`, `check-nickname`, `admin`, `new`, `edit`)는 대소문자 무관 거부
  *   - 탈퇴 익명화 이름의 접두사 `withdrawn_`(대소문자 무관)도 거부 — 남은 제출/payout 기록에 표시되는 탈퇴자 이름을 사칭하지 못하게
  *   - 정적 파일 확장자(`.png`, `.json`, … — STATIC_FILE_EXTENSIONS)로 끝나는 이름 거부 (대소문자 무관)
  */
-export const NICKNAME = /^(?!.*[\u115F\u1160\u3164\uFFA0])[\p{L}\p{N}][\p{L}\p{N}_.-]*[\p{L}\p{N}]$/u;
+export const NICKNAME = /^(?!.*[\u115F\u1160\u3164\uFFA0\uFF00-\uFFEF\u{1D400}-\u{1D7FF}])(?!(?=.*[A-Za-z\u00C0-\u024F])(?=.*[\p{Script=Cyrillic}\p{Script=Greek}]))[\p{L}\p{N}][\p{L}\p{N}_.-]*[\p{L}\p{N}]$/u;
 
 export const RESERVED_NICKNAMES: readonly string[] = ['me', 'check-nickname', 'admin', 'new', 'edit'];
 
@@ -41,9 +43,23 @@ export function endsWithStaticFileExtension(value: unknown): boolean {
   return typeof value === 'string' && STATIC_FILE_SUFFIX.test(value.trim());
 }
 
+/**
+ * 라틴 글자와 모양이 같은 키릴/그리스 글자 -> 라틴. 혼합 문자 이름은 NICKNAME이 이미 막지만, 전부 키릴/그리스로만 쓴 예약어 닮은꼴은 이 접기로 잡는다.
+ * 전체 confusables 표가 아니라 소문자 동형 글자만 (예약어 비교용) - 기존 사용자 이름과의 동형 충돌은 혼합 문자 금지로 막는다.
+ */
+const CONFUSABLE_TO_LATIN: Readonly<Record<string, string>> = {
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y', 'і': 'i', 'ј': 'j', 'ѕ': 's', 'ԁ': 'd', 'ԛ': 'q', 'ԝ': 'w', 'һ': 'h', 'ո': 'n',
+  'α': 'a', 'ο': 'o', 'ρ': 'p', 'ν': 'v', 'ι': 'i', 'κ': 'k', 'τ': 't', 'χ': 'x', 'υ': 'u',
+};
+
+/** 예약어 비교용 골격 - NFKC(전각 -> 반각 등) + 소문자 + 키릴/그리스 동형 글자를 라틴으로 */
+function nicknameSkeleton(value: string): string {
+  return [...value.trim().normalize('NFKC').toLowerCase()].map((char) => CONFUSABLE_TO_LATIN[char] ?? char).join('');
+}
+
 export function isReservedNickname(value: unknown): boolean {
   if (typeof value !== 'string') return false;
-  const normalized = value.trim().toLowerCase();
+  const normalized = nicknameSkeleton(value);
   return RESERVED_NICKNAMES.includes(normalized) || normalized.startsWith(WITHDRAWN_NICKNAME_PREFIX);
 }
 

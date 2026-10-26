@@ -53,7 +53,8 @@ describeDb('validation over HTTP (e2e)', () => {
     });
 
     it('notices: create (published) with thumbnail/external URL, update clearing both with null, toggling publish', async () => {
-      const post = { slug: '', title: 'Launch', bodyMarkdown: '# Hello\n'.repeat(50), category: 'EVENT', status: 'published' as const, thumbnail: '/media/00000000-0000-4000-8000-000000000000', externalUrl: 'https://ninjalabs.xyz/launch' };
+      await e2e.db.query(`INSERT INTO media_asset (id, created_by, file_name, mime_type, file_size, sha256, data) VALUES ('12345678-0000-4000-8000-0000000000aa', $1, 'a.png', 'image/png', 1, repeat('0', 64), '\\x00')`, [admin.userId]);
+      const post = { slug: '', title: 'Launch', bodyMarkdown: '# Hello\n'.repeat(50), category: 'EVENT', status: 'published' as const, thumbnail: '/media/12345678-0000-4000-8000-0000000000aa', externalUrl: 'https://ninjalabs.xyz/launch' };
       const created = await e2e.post('/admin/notices', saveAdminPostBody(post, true), asAdmin());
       expect(created.status).toBe(201);
       expect(created.body).toEqual({ id: expect.stringMatching(UUID) });
@@ -65,6 +66,14 @@ describeDb('validation over HTTP (e2e)', () => {
       expect(row).toMatchObject({ thumbnail_url: null, external_url: null, status: 'PUBLISHED' });
       const draft = await e2e.patch(`/admin/notices/${id}`, saveAdminPostBody({ ...post, slug: id }, false, { publish: false }), asAdmin());
       expect(draft.body).toEqual({ id, status: 'DRAFT' });
+    });
+
+    it('notices: a localhost external link or a /media thumbnail that does not exist is 400', async () => {
+      const base = { slug: '', title: 'Bad', bodyMarkdown: 'body', category: 'EVENT', status: 'published' as const, thumbnail: null, externalUrl: null };
+      expect((await e2e.post('/admin/notices', saveAdminPostBody({ ...base, externalUrl: 'http://localhost/x' }, true), asAdmin())).status).toBe(400);
+      const missing = await e2e.post('/admin/notices', saveAdminPostBody({ ...base, thumbnail: '/media/99999999-9999-4999-8999-999999999999' }, true), asAdmin());
+      expect(missing.status).toBe(400);
+      expect(missing.body.message).toBe('REFERENCE_NOT_FOUND');
     });
 
     it('highlights: create with null image and a site-path link, update with typeChanged', async () => {

@@ -5,6 +5,7 @@ import {
 import { TOKEN_AMOUNT } from '../../common/validation/token-amount';
 import { IsTimestampString } from '../../common/validation/timestamp';
 import { Trim } from '../../common/validation/trim';
+import { HasVisibleText } from '../../common/validation/visible-text';
 import { IsHttpUrlOrMediaPath, IsSafeUrl } from '../../common/validation/url';
 import { BountyStatus } from '../bounty-status';
 import { RewardInput } from './reward-token.resolver';
@@ -29,8 +30,8 @@ export class RewardDto implements RewardInput {
 }
 
 export class CreateBountyDto {
-  @Trim() @IsString() @IsNotEmpty() @MaxChars(200) title!: string;
-  @Trim() @IsString() @IsNotEmpty() @MaxChars(100) sponsorName!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(200) title!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(100) sponsorName!: string;
   @Trim() @IsString() @IsNotEmpty() @MaxLength(500) summary!: string;
   @Trim() @IsString() @IsNotEmpty() @MaxLength(50_000) description!: string;
   @Trim() @IsString() @IsNotEmpty() @MaxLength(20_000) requirements!: string;
@@ -51,8 +52,8 @@ export class CreateBountyDto {
 // 모든 PATCH를 400으로 만들지 않게 한다 (common/validation/url.ts). VARCHAR 컬럼(title 200, sponsor_name 100)은 컬럼 상한 그대로 —
 // 완화는 "레거시 모양을 받는다"는 뜻이지 스키마를 넘는다는 뜻이 아니다. MaxChars는 Postgres와 같은 코드 포인트 단위로 센다 (common/validation/max-chars.ts).
 export class UpdateBountyDto {
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxChars(200) title?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxChars(100) sponsorName?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(200) title?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(100) sponsorName?: string;
   @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(1000) summary?: string;
   @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(100_000) description?: string;
   @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxLength(40_000) requirements?: string;

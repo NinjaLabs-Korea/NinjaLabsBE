@@ -65,6 +65,11 @@ export function isPublicHostname(rawHostname: string): boolean {
   return !PRIVATE_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix));
 }
 
+/** 문자열이고 길이 상한(MAX_URL_LENGTH)을 넘는가 - 검증 실패 메시지를 고르는 데만 쓴다 */
+function isTooLongUrl(value: unknown): boolean {
+  return typeof value === 'string' && value.length > MAX_URL_LENGTH;
+}
+
 export function isPublicHttpUrl(value: unknown): boolean {
   if (!isHttpUrl(value)) return false;
   try {
@@ -120,7 +125,11 @@ export const IsPublicHttpUrl = (options?: ValidationOptions) =>
       name: 'isPublicHttpUrl',
       validator: {
         validate: (value) => isPublicHttpUrl(value),
-        defaultMessage: buildMessage((prefix) => `${prefix}$property must be a public http(s) URL (no localhost or private addresses)`, options),
+        // 너무 긴 URL은 "공개 URL이어야 한다"가 아니라 길이 문제로 알려 준다 (FE가 긴 링크와 localhost 링크를 구분해 안내할 수 있게)
+        defaultMessage: (args) =>
+          isTooLongUrl(args?.value)
+            ? `${args?.property} must be at most ${MAX_URL_LENGTH} characters`
+            : buildMessage((prefix) => `${prefix}$property must be a public http(s) URL (no localhost or private addresses)`, options)(args),
       },
     },
     options,

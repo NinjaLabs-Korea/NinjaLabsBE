@@ -14,6 +14,7 @@ import { injectivePublicKeyMatchesAddress } from '../common/crypto/injective-pub
 import { isEvmAddress, signatureSchemeFor } from '../common/crypto/wallet-signature';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
+import { BountyActor } from '../bounties/bounty-actor';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 import { revokeActiveAgentKeys } from './agent-revocation';
 
@@ -68,6 +69,8 @@ export class AgentsService {
         );
         // 본인 지갑 검사는 INSERT 뒤에 한다: 던지면 이 트랜잭션 전체(위의 버려진 행 정리 포함)가 롤백된다
         await this.assertNotOwnerWallet(tx, ownerUserId, isEvm ? getInjectiveAddress(normalizedAddress) : normalizedAddress);
+        // 온보딩을 마치지 않은 소유자는 에이전트를 만들 수 없다 (409 PROFILE_REQUIRED, 사람의 지원·제출과 같은 규칙). 던지면 위 INSERT도 롤백된다
+        await BountyActor.user(ownerUserId).assertOnboarded(tx);
         return inserted;
       });
       return {

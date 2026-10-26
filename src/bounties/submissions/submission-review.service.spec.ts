@@ -97,7 +97,7 @@ describe('SubmissionReviewService decisions', () => {
   // reviewable statuses × decisions — REVISION_REQUESTED only accepts REJECT (closing an abandoned revision), finalized ones nothing
   const DECISIONS = ['START_REVIEW', 'REQUEST_REVISION', 'APPROVE', 'REJECT'];
   const matrix: Array<[string, string, boolean]> = [];
-  for (const status of ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW']) for (const d of DECISIONS) matrix.push([status, d, true]);
+  for (const status of ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW']) for (const d of DECISIONS) matrix.push([status, d, !(status === 'IN_REVIEW' && d === 'START_REVIEW')]);
   for (const d of DECISIONS) matrix.push(['REVISION_REQUESTED', d, d === 'REJECT']);
   for (const status of ['APPROVED', 'REJECTED', 'WITHDRAWN']) for (const d of DECISIONS) matrix.push([status, d, false]);
 

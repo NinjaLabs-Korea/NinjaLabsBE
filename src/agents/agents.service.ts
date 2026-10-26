@@ -213,7 +213,8 @@ export class AgentsService {
       const agent = r.rows[0];
       if (agent.status !== 'PENDING_VERIFICATION') {
         // 검증을 마친 적 있는 에이전트(ACTIVE, 또는 그 뒤 정지·폐기)만 "이미 검증됨"이다 - 검증 전에 폐기된 에이전트는 키를 받은 적이 없다
-        throw new ConflictException(agent.status === 'ACTIVE' || agent.verified_at ? 'AGENT_ALREADY_VERIFIED' : 'AGENT_NOT_PENDING');
+        if (agent.status === 'ACTIVE' || agent.verified_at) throw new ConflictException('AGENT_ALREADY_VERIFIED');
+        throw new ConflictException('AGENT_NOT_PENDING');
       }
 
       const message = AgentsService.verificationMessage(agentId, ownerUserId);

@@ -1,9 +1,8 @@
-import { Injectable, Logger, OnApplicationShutdown, Optional } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
-import { AlertService } from '../alerts/alert.service';
 import { errorText } from '../logging/log-safe';
-import { DB_TLS_UNVERIFIED_MESSAGE, databaseSslOptions, dbTlsUnverifiedInProduction } from './database-ssl';
+import { assertDbTlsVerifiedInProduction, databaseSslOptions } from './database-ssl';
 import { databaseTimeoutOptions } from './pool-timeouts';
 
 /** DatabaseService와 트랜잭션 클라이언트(PoolClient)를 함께 받는 최소 쿼리 인터페이스 */
@@ -73,17 +72,14 @@ export class DatabaseService implements OnApplicationShutdown {
   private static readonly logger = new Logger(DatabaseService.name);
   private readonly pool: Pool;
 
-  constructor(config: ConfigService, @Optional() alerts?: AlertService) {
+  constructor(config: ConfigService) {
     const ssl = {
       PGSSLMODE: config.get<string>('PGSSLMODE'),
       DATABASE_CA_CERT: config.get<string>('DATABASE_CA_CERT'),
     };
-    // production에서 CA 없이 TLS를 쓰면 서버 인증서 검증이 빠진다(MITM 취약). 운영 Railway에 CA가 들어 있는지 이 코드만으로는 알 수 없고
-    // 머지가 곧 배포라 기동은 막지 않는다: 대신 부팅 시 한 번 ERROR로 크게 알리고 운영 알림도 보낸다 (docs/security.md "DB TLS 인증서 검증")
-    if (dbTlsUnverifiedInProduction({ NODE_ENV: config.get<string>('NODE_ENV'), ...ssl })) {
-      DatabaseService.logger.error(DB_TLS_UNVERIFIED_MESSAGE);
-      void alerts?.notify('db-tls-unverified', DB_TLS_UNVERIFIED_MESSAGE);
-    }
+    // production에서 CA 없이 TLS를 쓰면 서버 인증서 검증이 빠진다(MITM 취약): 기동을 거부한다 (main.ts의 catch가 FATAL 한 줄 + boot-failure 운영 알림).
+    // scripts/migrate.js(preDeploy)도 같은 검사를 하므로 보통은 새 컨테이너가 뜨기 전에 배포가 멈춘다 — docs/security.md "DB TLS 인증서 검증"
+    assertDbTlsVerifiedInProduction({ NODE_ENV: config.get<string>('NODE_ENV'), ...ssl });
     this.pool = new Pool({
       connectionString: config.get<string>('DATABASE_URL'),
       max: 10,

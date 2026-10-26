@@ -9,6 +9,20 @@ const failedFields = async (cls: new () => object, body: object) =>
 const valid = { title: 'Launch', body: 'We shipped.', category: 'NINJALABS' };
 const mediaPath = '/media/11111111-1111-4111-8111-111111111111';
 
+describe('notice eventDate', () => {
+  it('accepts real calendar dates and null (clears on update)', async () => {
+    expect(await failedFields(CreateNoticeDto, { ...valid, eventDate: '2026-10-26' })).toEqual([]);
+    expect(await failedFields(CreateNoticeDto, { ...valid, eventDate: '2028-02-29' })).toEqual([]);
+    expect(await failedFields(UpdateNoticeDto, { eventDate: null })).toEqual([]);
+  });
+  it('rejects impossible or malformed dates', async () => {
+    for (const eventDate of ['2026-02-30', '2026-13-01', '2026-10-26T10:00:00Z', 'tomorrow', '26-10-26', 20261026]) {
+      expect(await failedFields(CreateNoticeDto, { ...valid, eventDate })).toEqual(['eventDate']);
+      expect(await failedFields(UpdateNoticeDto, { eventDate })).toEqual(['eventDate']);
+    }
+  });
+});
+
 describe('notice admin DTOs', () => {
   it('accepts a complete notice with media-path thumbnail and external http(s) link', async () => {
     expect(await failedFields(CreateNoticeDto, { ...valid, summary: 's', thumbnailUrl: mediaPath, externalUrl: 'https://x.com/a', publish: true })).toEqual([]);

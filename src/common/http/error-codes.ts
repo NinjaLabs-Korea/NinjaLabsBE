@@ -120,6 +120,18 @@ export const ERROR_CODES = {
 
   // ── 콘텐츠 (notices / highlights / members / media / nfts) ──
   NOTICE_NOT_FOUND: { statuses: [404], ko: '공지가 없다' },
+  // ── 기수 모집 (cohorts) ──
+  COHORT_NOT_FOUND: { statuses: [404], ko: '기수가 없다 (DRAFT 기수는 지원자에게도 없는 것과 같다)' },
+  COHORT_NOT_ACCEPTING: { statuses: [409], ko: '지금 지원을 받지 않는 기수다 (OPEN이 아니거나 접수 기간 밖; 지원서 수정에도 같은 규칙)' },
+  COHORT_ALREADY_APPLIED: { statuses: [409], ko: '이 기수에 이미 지원했다 (철회한 지원만 같은 행을 다시 열어 재지원)' },
+  COHORT_APPLICATION_NOT_FOUND: { statuses: [404], ko: '기수 지원서가 없거나 내 것이 아니다 (남의 지원서도 같은 404)' },
+  COHORT_APPLICATION_NOT_SUBMITTED: { statuses: [409], ko: 'SUBMITTED가 아니라 수정·철회할 수 없다 (이미 심사됨/철회됨)' },
+  COHORT_APPLICATION_WITHDRAWN: { statuses: [409], ko: '철회된 지원서라 심사할 수 없다' },
+  COHORT_OTHER_DETAIL_REQUIRED: { statuses: [400], ko: '활동 유형 또는 관심 분야에 OTHER를 골랐는데 상세(activityTypeOther/interestOther)가 비었다' },
+  COHORT_INVALID_WINDOW: { statuses: [400], ko: '접수 종료(closesAt)가 시작(opensAt)보다 늦지 않다' },
+  COHORT_INVALID_TRANSITION: { statuses: [400], ko: '허용되지 않는 기수 상태 전이다 (DRAFT->OPEN->CLOSED, CLOSED->OPEN만)' },
+  COHORT_ALREADY_OPEN: { statuses: [409], ko: '다른 기수가 이미 OPEN이다 (동시에 열린 기수는 하나)' },
+  COHORT_HAS_APPLICATIONS: { statuses: [409], ko: '지원서가 있는 기수는 삭제할 수 없다 (철회 포함)' },
   HIGHLIGHT_NOT_FOUND: { statuses: [404], ko: '하이라이트가 없다' },
   NFT_JOB_NOT_FOUND_OR_NOT_FAILED: { statuses: [404], ko: 'NFT 작업이 없거나 FAILED가 아니라 재시도할 수 없다' },
   MEDIA_FILE_REQUIRED: { statuses: [400], ko: '업로드 파일이 없다' },

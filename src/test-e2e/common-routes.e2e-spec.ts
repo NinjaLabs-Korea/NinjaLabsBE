@@ -77,7 +77,7 @@ describeDb('common routes over HTTP (e2e)', () => {
       const published = await e2e.get(`/notices/${id}`);
       expect(published.status).toBe(200);
       expect(published.body).toMatchObject({ id, title: 'Draft first', body: 'body', category: 'EVENT' });
-      expect(Object.keys(published.body).sort()).toEqual(['body', 'category', 'external_url', 'id', 'published_at', 'summary', 'thumbnail_url', 'title']);
+      expect(Object.keys(published.body).sort()).toEqual(['body', 'category', 'event_date', 'external_url', 'id', 'published_at', 'summary', 'thumbnail_url', 'title']);
     });
 
     it('GET /notices defaults to page 1 / pageSize 10 and filters by category', async () => {

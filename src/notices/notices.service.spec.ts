@@ -13,6 +13,22 @@ function setup(rows: unknown[] = [], count = '0') {
 const listCall = (query: jest.Mock) => query.mock.calls.find(([sql]) => sql.includes('LIMIT'))!;
 const countCall = (query: jest.Mock) => query.mock.calls.find(([sql]) => sql.includes('count(*)'))!;
 
+describe('NoticesService.list sort', () => {
+  it('orders by published_at as before when sort is omitted', async () => {
+    const { query, service } = setup();
+    await service.list(1, 10, 'EVENT');
+    expect(listCall(query)[0]).toMatch(/ORDER BY published_at DESC, created_at DESC, id/);
+    expect(listCall(query)[0]).not.toContain('event_date DESC');
+  });
+
+  it('sort=eventDate lists by event_date desc with undated notices last, then the usual tiebreakers', async () => {
+    const { query, service } = setup();
+    await service.list(1, 10, 'EVENT', 'eventDate');
+    expect(listCall(query)[0]).toMatch(/ORDER BY event_date DESC NULLS LAST, published_at DESC, created_at DESC, id/);
+    expect(listCall(query)[1]).toEqual([10, 0, 'EVENT']);
+  });
+});
+
 describe('NoticesService.list', () => {
   it('returns { items, page, pageSize, total } with total parsed from the bigint string count', async () => {
     const { service } = setup([{ id: 'n1' }, { id: 'n2' }], '42');
@@ -72,7 +88,7 @@ describe('NoticesService.list', () => {
     const { query, service } = setup();
     await service.list();
     const columns = /SELECT([\s\S]*?)FROM/.exec(listCall(query)[0])![1].split(',').map((c) => c.trim());
-    expect(columns).toEqual(['id', 'title', 'summary', 'category', 'thumbnail_url', 'external_url', 'published_at']);
+    expect(columns).toEqual(['id', 'title', 'summary', 'category', 'thumbnail_url', 'external_url', 'published_at', 'event_date::text AS event_date']);
   });
 });
 

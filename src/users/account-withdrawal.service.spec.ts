@@ -61,6 +61,8 @@ describe('AccountWithdrawalService', () => {
     expect(submissionUpdate[1]).toEqual([userId, ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
     expect(submissionUpdate[0]).toContain('owner_user_id = $1');
     expect(sqls.some((sql) => sql.includes(`UPDATE bounty_application SET status = 'WITHDRAWN'`) && sql.includes(`status = 'PENDING'`))).toBe(true);
+    const cohortUpdate = calls.find(([sql]) => sql.includes('UPDATE cohort_application'))!;
+    expect(cohortUpdate[1]).toEqual([userId, 'WITHDRAWN', 'SUBMITTED']); // 행은 지우지 않고 SUBMITTED만 철회
     expect(record.mock.calls).toEqual([
       [userId, 'AGENT_REVOKED', 'agent', 'a1', tx],
       [userId, 'AGENT_REVOKED', 'agent', 'a2', tx],
@@ -69,13 +71,13 @@ describe('AccountWithdrawalService', () => {
     expect(forgetUserStatus).toHaveBeenCalledWith(userId);
   });
 
-  it('keeps the write order: user row, links/tags, sessions, wallets, agents, keys, submissions, applications', async () => {
+  it('keeps the write order: user row, links/tags, sessions, wallets, agents, keys, submissions, applications, cohort applications', async () => {
     const { service, calls } = setup({ agents: ['a1'] });
     await service.withdraw(userId, 'Ryan');
     const writes = calls.map(([sql]) => sql).filter((sql) => /^\s*(UPDATE|DELETE)/.test(sql));
     const tables = writes.map((sql) => /^\s*(?:UPDATE|DELETE FROM)\s+("?\w+"?)/.exec(sql)![1]);
     expect(tables).toEqual([
-      '"user"', 'user_link', 'user_tag', 'auth_session', 'wallet', 'agent', 'agent_api_key', 'bounty_submission', 'bounty_application',
+      '"user"', 'user_link', 'user_tag', 'auth_session', 'wallet', 'agent', 'agent_api_key', 'bounty_submission', 'bounty_application', 'cohort_application',
     ]);
   });
 

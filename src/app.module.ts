@@ -9,6 +9,7 @@ import { UsersModule } from './users/users.module';
 import { WalletsModule } from './wallets/wallets.module';
 import { MembersModule } from './members/members.module';
 import { NoticesModule } from './notices/notices.module';
+import { CohortsModule } from './cohorts/cohorts.module';
 import { HighlightsModule } from './highlights/highlights.module';
 import { BountiesModule } from './bounties/bounties.module';
 import { RewardsModule } from './rewards/rewards.module';
@@ -37,6 +38,7 @@ import { IpThrottlerGuard } from './common/throttler/ip-throttler.guard';
     WalletsModule,
     MembersModule,
     NoticesModule,
+    CohortsModule,
     HighlightsModule,
     BountiesModule,
     RewardsModule,

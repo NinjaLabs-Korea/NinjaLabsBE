@@ -20,12 +20,14 @@ const SUBMISSION_STATUS = '(?:SUBMITTED|RESUBMITTED|IN_REVIEW|REVISION_REQUESTED
 const PAYOUT_STATUS = '(?:REQUESTED|AWAITING_MULTISIG_APPROVAL|APPROVED|BROADCASTING|PAID|FAILED|CANCELLED)';
 /** bounty.status 전체 (bounties/bounty-status.ts BountyStatus) */
 const BOUNTY_STATUS = '(?:DRAFT|FUNDING_PENDING|OPEN|SUBMISSION_CLOSED|IN_REVIEW|COMPLETED|CANCELLED)';
+/** cohort_application.status (cohorts/cohort-status.ts CohortApplicationStatus) */
+const COHORT_APPLICATION_STATUS = '(?:SUBMITTED|ACCEPTED|REJECTED|WITHDRAWN)';
 const setLiteral = (status: string) => new RegExp(`(?:\\[|\\bIN\\s*\\()\\s*'${status}'\\s*,\\s*'${status}'`, 'i');
-const SET_LITERALS = [setLiteral(SUBMISSION_STATUS), setLiteral(PAYOUT_STATUS), setLiteral(BOUNTY_STATUS)];
+const SET_LITERALS = [setLiteral(SUBMISSION_STATUS), setLiteral(PAYOUT_STATUS), setLiteral(BOUNTY_STATUS), setLiteral(COHORT_APPLICATION_STATUS)];
 /** 배정 상한식 사본 — rewardCapSql()을 쓴다 */
 const CAP_LITERAL = /LEAST\(\s*(?:\w+\.)?amount\s*,\s*(?:\w+\.)?deposited_amount\s*\)/i;
 /** 규칙의 출처 파일 — 여기서만 리터럴 집합을 쓴다 */
-const POLICY_FILES = ['bounties/bounty-status.ts', 'bounties/submission-status.ts', 'bounties/application-status.ts', 'rewards/payout-status.ts'];
+const POLICY_FILES = ['bounties/bounty-status.ts', 'bounties/submission-status.ts', 'bounties/application-status.ts', 'rewards/payout-status.ts', 'cohorts/cohort-status.ts'];
 
 /** src 아래 비-스펙 .ts 파일 (sql-param-casts.spec.ts와 같은 기준 — 스펙 파일을 import하면 그 테스트가 여기서도 돌아 따로 둔다) */
 function listSourceFiles(dir: string, out: string[] = []): string[] {
@@ -70,6 +72,11 @@ describe('submission/application/payout/bounty status sets come from the policy 
     expect(findStatusSetLiterals(`AND b.status NOT IN ('DRAFT', 'FUNDING_PENDING')`)).toEqual([1]);
     expect(findStatusSetLiterals(`const conds = [\`b.deleted_at IS NULL\`, \`b.status NOT IN ('DRAFT','FUNDING_PENDING')\`];`)).toEqual([1]);
     expect(findStatusSetLiterals(`WHERE status IN ('OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW')`)).toEqual([1]);
+  });
+
+  it('flags cohort application status sets written outside cohorts/cohort-status.ts', () => {
+    expect(findStatusSetLiterals(`@IsIn(['ACCEPTED', 'REJECTED']) decision!: string;`)).toEqual([1]);
+    expect(findStatusSetLiterals(`WHERE status IN ('SUBMITTED','ACCEPTED')`)).toEqual([1]);
   });
 
   it('allows single-value comparisons, other domains\' sets and comments', () => {

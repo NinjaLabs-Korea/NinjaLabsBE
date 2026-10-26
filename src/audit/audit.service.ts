@@ -3,6 +3,9 @@ import { DatabaseService, QueryRunner } from '../common/database/database.servic
 
 export const AUDIT_LOG_PAGE_SIZE = 30;
 
+/** 결정이 바뀐 감사 행에 남기는 이전/이후 값 (예: 기수 지원서 심사 결정 변경). 개인정보·시크릿을 넣지 않는다 */
+export type AuditChange = { before?: Record<string, unknown>; after?: Record<string, unknown> };
+
 /**
  * 감사 로그 기록의 단일 진입점.
  * 트랜잭션 안에서 호출할 때는 runner로 tx를 넘겨 같은 트랜잭션에 기록한다.
@@ -17,11 +20,23 @@ export class AuditService {
     entityType: string,
     entityId: string,
     runner: QueryRunner = this.db,
+    change?: AuditChange,
   ): Promise<void> {
+    // before/after 가 없으면 예전과 같은 문장 그대로 (대부분의 호출)
+    if (!change) {
+      await runner.query(
+        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id)
+         VALUES ($1, $2, $3, $4)`,
+        [actorId ?? null, action, entityType, entityId],
+      );
+      return;
+    }
     await runner.query(
-      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id)
-       VALUES ($1, $2, $3, $4)`,
-      [actorId ?? null, action, entityType, entityId],
+      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, before_data, after_data)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
+      [actorId ?? null, action, entityType, entityId,
+       change.before === undefined ? null : JSON.stringify(change.before),
+       change.after === undefined ? null : JSON.stringify(change.after)],
     );
   }
 

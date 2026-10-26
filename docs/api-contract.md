@@ -103,6 +103,17 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `PAYOUT_NOT_FOUND_OR_WRONG_STATUS` | 404 | 지급이 없거나 현재 상태에서 허용되지 않는 처리다 |
 | `PAYOUT_SELF_APPROVAL` | 403 | 지급 요청자 본인이 승인할 수 없다 (PAYOUT_ALLOW_SELF_APPROVAL로만 허용) |
 | `NOTICE_NOT_FOUND` | 404 | 공지가 없다 |
+| `COHORT_NOT_FOUND` | 404 | 기수가 없다 (DRAFT 기수는 지원자에게도 없는 것과 같다) |
+| `COHORT_NOT_ACCEPTING` | 409 | 지금 지원을 받지 않는 기수다 (OPEN이 아니거나 접수 기간 밖; 지원서 수정에도 같은 규칙) |
+| `COHORT_ALREADY_APPLIED` | 409 | 이 기수에 이미 지원했다 (철회한 지원만 같은 행을 다시 열어 재지원) |
+| `COHORT_APPLICATION_NOT_FOUND` | 404 | 기수 지원서가 없거나 내 것이 아니다 (남의 지원서도 같은 404) |
+| `COHORT_APPLICATION_NOT_SUBMITTED` | 409 | SUBMITTED가 아니라 수정·철회할 수 없다 (이미 심사됨/철회됨) |
+| `COHORT_APPLICATION_WITHDRAWN` | 409 | 철회된 지원서라 심사할 수 없다 |
+| `COHORT_OTHER_DETAIL_REQUIRED` | 400 | 활동 유형 또는 관심 분야에 OTHER를 골랐는데 상세(activityTypeOther/interestOther)가 비었다 |
+| `COHORT_INVALID_WINDOW` | 400 | 접수 종료(closesAt)가 시작(opensAt)보다 늦지 않다 |
+| `COHORT_INVALID_TRANSITION` | 400 | 허용되지 않는 기수 상태 전이다 (DRAFT->OPEN->CLOSED, CLOSED->OPEN만) |
+| `COHORT_ALREADY_OPEN` | 409 | 다른 기수가 이미 OPEN이다 (동시에 열린 기수는 하나) |
+| `COHORT_HAS_APPLICATIONS` | 409 | 지원서가 있는 기수는 삭제할 수 없다 (철회 포함) |
 | `HIGHLIGHT_NOT_FOUND` | 404 | 하이라이트가 없다 |
 | `NFT_JOB_NOT_FOUND_OR_NOT_FAILED` | 404 | NFT 작업이 없거나 FAILED가 아니라 재시도할 수 없다 |
 | `MEDIA_FILE_REQUIRED` | 400 | 업로드 파일이 없다 |
@@ -257,11 +268,35 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| GET | `/notices?page=&category=` | - | 공지/소식 목록 |
-| GET | `/notices/:id` | - | 상세 (삭제/비공개 → 404, FE는 목록으로 안내) |
+| GET | `/notices?page=&pageSize=&category=&sort=` | - | 공지/소식 목록. 항목에 `event_date`(`YYYY-MM-DD` 또는 `null`, 행사 날짜). `sort` 생략 = 발행 시각 최신순(기존). `sort=eventDate` = 행사 날짜 최신순, 날짜 없는 공지는 뒤(그 안은 발행순). 그 밖의 `sort` 값은 400 (2026-10-26) |
+| GET | `/notices/:id` | - | 상세 (삭제/비공개 → 404, FE는 목록으로 안내). `event_date` 포함 |
+| GET | `/cohorts/current` | - | 지금 열린(OPEN) 기수 `{id, name, description, opensAt, closesAt, acceptingApplications}` 또는 본문이 JSON `null`(200). `acceptingApplications` = OPEN이고 지금이 `[opensAt, closesAt]` 안(비어 있는 쪽은 제한 없음). 공개 GET 600/min |
 | GET | `/members` | - | 공식 멤버 리스트 (역할·링크 포함, display_order 정렬) |
 | GET | `/hall-of-fame` | - | 큐레이션 하이라이트 |
 | GET | `/hall-of-fame/stats` | - | 자동 집계 지표 `{completedBounties, builders, completionNfts, sponsors, paidTotals}` (완료 바운티/빌더(= COMPLETED 바운티의 승인 제출자 또는 PAID payout을 받은 제출자)/NFT/스폰서 수 + 지급 완료 보상 총액). `paidTotals: [{symbol, tokenType, decimals, amount}]` — status `PAID` payout만 `(upper(display_symbol), token_type)`별로 합산, 삭제된 바운티 제외, `amount`는 base unit 정수 **문자열**, `decimals`는 서버가 아는 토큰만(INJ 18, USDC 6; 그 밖은 `null`), 심볼 순 정렬, 지급 이력이 없으면 `[]`. 서버 인스턴스별 인메모리 캐시 **60초** — 완료 전이/민팅 직후 최대 1분 늦게 반영된다 (`highlights.service.ts`) |
+
+## 기수 모집 (cohorts, 2026-10-26)
+
+합격(`ACCEPTED`)은 멤버 지정이 아니다. 운영자가 멤버 관리(`POST /admin/users/:id/member`)에서 따로 지정한다. 필드는 camelCase, 날짜는 ISO 8601.
+지원서 입력(`POST /cohorts/:id/applications`, `PATCH`는 모두 선택): `displayName`(≤60), `telegram`(≤40, `@name`/`name`/`https://t.me/name` 모두 받아 `@name`으로 저장; 영문 시작 5~32자), `twitter`(`@name`/`https://x.com/name`; 1~15자), `web3Experience` `LT_1Y|Y1_3|GT_3Y`, `activityType` `DEVELOPER|CONTENT_CREATOR|KOL|COMMUNITY_MARKETING|RESEARCHER|BIZDEV|STUDENT|OTHER`, `activityTypeOther`(≤60, OTHER일 때 필수, 아니면 버림), `interestAreas`(비어 있지 않은 집합, `DEVELOPER|CONTENT_CREATOR|KOL|COMMUNITY_MARKETING|RESEARCHER|BIZDEV|OTHER`, 중복 제거), `interestOther`(≤60, 집합에 OTHER가 있을 때 필수), `intro`(1~1000자, 공백만 불가). 알 수 없는 필드는 400.
+
+| Method | Path | Auth | 설명 |
+|---|---|---|---|
+| POST | `/cohorts/:id/applications` | ✅ | 지원 → 201 지원자용 지원서(아래). 온보딩 미완료 409 `PROFILE_REQUIRED`, 기수 없음/DRAFT 404 `COHORT_NOT_FOUND`, 접수 중 아님 409 `COHORT_NOT_ACCEPTING`, 이미 지원 409 `COHORT_ALREADY_APPLIED`(동시 요청도 정확히 하나만 201), OTHER 상세 누락 400 `COHORT_OTHER_DETAIL_REQUIRED`. **철회한(WITHDRAWN) 지원이 있으면 같은 행을 다시 열어** 같은 `id`, `SUBMITTED`, 심사 필드 초기화(감사 `COHORT_APPLICATION_REAPPLIED`). 10/min |
+| GET | `/cohorts/applications/me` | ✅ | 내 지원 내역(최신순 배열). 항목: `id, cohortId, cohort{id,name,status,acceptingApplications}, status, displayName, telegram, twitter, web3Experience, activityType, activityTypeOther, interestAreas, interestOther, intro, reviewedAt, editable, withdrawable, createdAt, updatedAt`. **`reviewNote`·심사자는 내려보내지 않는다**(운영자 내부 메모; 결과는 `status`로만 알린다) |
+| PATCH | `/cohorts/applications/:id` | ✅ | 본인 지원서 수정(보낸 필드만; 기존 값과 합쳐 OTHER 규칙을 다시 검사). `SUBMITTED`가 아니면 409 `COHORT_APPLICATION_NOT_SUBMITTED`, 기수가 접수 중이 아니면 409 `COHORT_NOT_ACCEPTING`, 없거나 남의 것이면 404 `COHORT_APPLICATION_NOT_FOUND`. 10/min |
+| POST | `/cohorts/applications/:id/withdraw` | ✅ | 본인 철회 `SUBMITTED -> WITHDRAWN`(기수가 마감됐어도 가능). 409 `COHORT_APPLICATION_NOT_SUBMITTED`, 404. 10/min |
+| GET | `/admin/cohorts` | 🔐 | 전체 기수 배열(최신순). 항목: `id, name, description, status, opensAt, closesAt, acceptingApplications, applicationCounts{SUBMITTED,ACCEPTED,REJECTED,WITHDRAWN,total}, allowedTransitions, createdBy, createdAt, updatedAt` |
+| POST | `/admin/cohorts` | 🔐 | 생성(항상 DRAFT) `{name≤60, description?, opensAt?, closesAt?}` → 위 항목. `closesAt <= opensAt`이면 400 `COHORT_INVALID_WINDOW`. 감사 `COHORT_CREATED` |
+| GET | `/admin/cohorts/:id` | 🔐 | 기수 하나(위 항목). 404 `COHORT_NOT_FOUND` |
+| PATCH | `/admin/cohorts/:id` | 🔐 | 수정(보낸 필드만; description·opensAt·closesAt은 null로 지움). 감사 `COHORT_UPDATED` |
+| DELETE | `/admin/cohorts/:id` | 🔐 | 삭제 → `{id}`. 지원서가 하나라도(철회 포함) 있으면 409 `COHORT_HAS_APPLICATIONS`. 감사 `COHORT_DELETED` |
+| POST | `/admin/cohorts/:id/transition` | 🔐 | `{to: 'OPEN'|'CLOSED'}` → 기수. `DRAFT->OPEN->CLOSED`, `CLOSED->OPEN`(재오픈)만, 그 밖은 400 `COHORT_INVALID_TRANSITION`. OPEN은 다른 OPEN 기수가 없을 때만 409 `COHORT_ALREADY_OPEN`(부분 유니크 인덱스가 동시 경쟁도 막음). 감사 `COHORT_OPENED`/`COHORT_CLOSED`/`COHORT_REOPENED` |
+| GET | `/admin/cohorts/:id/applications?status=&activityType=&interestArea=&q=&page=&pageSize=` | 🔐 | `{items, page, pageSize(기본 30, 최대 50), total}`, 최신순 + `id` tiebreaker. `q`는 이름·텔레그램·트위터·닉네임·이메일 부분 일치(≤320). 항목: 지원서 필드 + `status, reviewNote, reviewedBy, reviewedAt, user{id,nickname,email}` |
+| GET | `/admin/cohorts/:id/applications.csv?...` | 🔐 | 같은 필터, 페이지 없이 전부. `text/csv; charset=utf-8`, UTF-8 BOM, 모든 셀 큰따옴표, CRLF. `= + - @`(와 탭/CR)로 시작하는 셀은 `'` 접두사로 수식 주입 차단. 헤더: `id, applied_at, status, display_name, nickname, email, telegram, twitter, web3_experience, activity_type, activity_type_other, interest_areas(;로 연결), interest_other, intro, review_note, reviewed_at`. `telegram`/`twitter`는 `@` 없이 내보낸다 |
+| POST | `/admin/cohort-applications/:id/review` | 🔐 | `{decision: 'ACCEPTED'|'REJECTED', note?≤2000}` → 운영자용 지원서. `SUBMITTED` 뿐 아니라 이미 결정된 것의 **결정 변경**도 허용(메모는 결정마다 새로; 안 보내면 지워짐). 철회됨 409 `COHORT_APPLICATION_WITHDRAWN`, 404. 감사 `COHORT_APPLICATION_ACCEPTED`/`_REJECTED`에 `before_data`/`after_data`(`{status}`) 기록 |
+
+회원 탈퇴(`DELETE /users/me`)는 같은 트랜잭션에서 `SUBMITTED` 기수 지원서를 `WITHDRAWN`으로 바꾼다. 행은 이력으로 남는다(`ACCEPTED`/`REJECTED`도 그대로).
 
 ## 에이전트
 

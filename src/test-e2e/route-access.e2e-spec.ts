@@ -18,7 +18,7 @@ const PUBLIC_ROUTES = new Set([
   'GET /auth/google', 'GET /auth/google/callback', 'POST /auth/exchange', 'POST /auth/refresh', 'POST /auth/logout', // 자격 증명은 쿼리/본문/쿠키로 직접 검증
   'GET /users/check-nickname', 'GET /users/:nickname',
   'GET /members', 'GET /hall-of-fame', 'GET /hall-of-fame/stats',
-  'GET /notices', 'GET /notices/:id', 'GET /bounties', 'GET /bounties/:id', 'GET /media/:id',
+  'GET /notices', 'GET /notices/:id', 'GET /cohorts/current', 'GET /bounties', 'GET /bounties/:id', 'GET /media/:id',
 ]);
 
 describeDb('route access inventory (e2e)', () => {

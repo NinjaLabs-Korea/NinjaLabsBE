@@ -41,6 +41,22 @@ describe('RewardTokenResolver', () => {
     expect(codeOf(() => configured().resolve(reward))).toBe(code);
   });
 
+  it.each([
+    [{ tokenType: 'NATIVE', tokenDenom: 'usdt', displaySymbol: 'INJ' }],
+    [{ tokenType: 'NATIVE', tokenDenom: 'peggy0xdAC17F958D2ee523a2206206994597C13D831ec7', displaySymbol: 'USDT' }],
+    [{ tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'USDT' }],
+    [{ tokenType: 'CW20', tokenContractAddress: 'inj1cw20', displaySymbol: 'INJ' }],
+    [{ tokenType: 'ERC20', tokenContractAddress: '0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d', evmChainId: 1776, displaySymbol: 'inj' }],
+  ])('refuses a symbol that disagrees with its token (an INJ label on a 6-decimal denom renders the wrong amount) %j', (reward) => {
+    expect(codeOf(() => configured().resolve({ ...reward, amount: '1000' }))).toBe('REWARD_SYMBOL_DENOM_MISMATCH');
+  });
+
+  it('normalizes the native INJ spelling (denom and symbol, any case) to inj / INJ and does not mutate the input', () => {
+    const input = { tokenType: 'NATIVE', tokenDenom: 'INJ', displaySymbol: 'inj', amount: '1' };
+    expect(configured().resolve(input)).toEqual({ tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount: '1' });
+    expect(input).toEqual({ tokenType: 'NATIVE', tokenDenom: 'INJ', displaySymbol: 'inj', amount: '1' });
+  });
+
   it('drops metadata that does not belong to the token type (a NATIVE reward never carries a contract or chain)', () => {
     expect(configured().resolve({ tokenType: 'NATIVE', tokenDenom: 'inj', tokenContractAddress: '0xevil', evmChainId: 1776, displaySymbol: 'INJ', amount: '1' }))
       .toEqual({ tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount: '1' });

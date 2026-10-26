@@ -72,6 +72,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `DEADLINE_IN_PAST` | 400 | 마감일을 과거로 바꿀 수 없다 |
 | `MAX_WINNERS_BELOW_APPROVED` | 400 | 이미 승인된 수보다 적게 최대 당선자 수를 줄일 수 없다 |
 | `INVALID_TRANSITION` | 400 | 허용되지 않는 상태 전이다 (실제 메시지는 INVALID_TRANSITION:<from>-><to>) |
+| `REWARD_SYMBOL_DENOM_MISMATCH` | 400 | 보상 표시 심볼이 토큰과 맞지 않거나 지원하지 않는 네이티브 토큰이다 (NATIVE는 denom inj + 심볼 INJ만, INJ 심볼은 NATIVE inj만; 대소문자는 정규화) |
 | `REWARD_TOKEN_DENOM_REQUIRED` | 400 | 보상 토큰 denom이 필요하다 |
 | `REWARD_TOKEN_CONTRACT_REQUIRED` | 400 | 보상 토큰 컨트랙트 주소가 필요하다 |
 | `REWARD_EVM_METADATA_REQUIRED` | 400 | EVM 보상 토큰의 메타데이터(컨트랙트·체인)가 필요하다 |

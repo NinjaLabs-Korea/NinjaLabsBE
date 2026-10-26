@@ -244,7 +244,7 @@ describeDb('public reads over HTTP (e2e)', () => {
 
     expect((await e2e.patch(`/admin/notices/${id}`, saveAdminPostBody({ ...post, slug: id }, false, { publish: true }), asAdmin())).body).toEqual({ id, status: 'PUBLISHED' });
     const first = await listed();
-    expect(Object.keys(first).sort()).toEqual(['category', 'external_url', 'id', 'published_at', 'summary', 'thumbnail_url', 'title']);
+    expect(Object.keys(first).sort()).toEqual(['category', 'event_date', 'external_url', 'id', 'published_at', 'summary', 'thumbnail_url', 'title']);
     expect(first).toMatchObject({ title: post.title, summary: 'Body', category: 'NINJALABS', external_url: 'https://injective.com', thumbnail_url: null });
 
     await new Promise((resolve) => setTimeout(resolve, 20));

@@ -13,6 +13,7 @@ import { Request } from 'express';
 import { AuthGuard } from '../../auth/auth.guard';
 import { SessionUser } from '../../auth/auth.service';
 import { Trim } from '../../common/validation/trim';
+import { HasVisibleText } from '../../common/validation/visible-text';
 import { IsPublicHttpUrl } from '../../common/validation/url';
 import { ApplicationsService } from './applications.service';
 
@@ -21,6 +22,7 @@ export class ApplyDto {
   @Trim()
   @IsString()
   @IsNotEmpty()
+  @HasVisibleText() // 제로폭 문자만으로 된 지원 메시지는 검토자에게 빈 화면이다
   @MaxLength(4000)
   message!: string;
 

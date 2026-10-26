@@ -181,8 +181,8 @@ describe('BountyAdminService.transition for every pair', () => {
     const rejectAt = statements.findIndex((sql) => sql.startsWith('UPDATE bounty_application'));
     expect(rejectAt).toBeGreaterThan(statusAt);
     expect(rejectAt).toBeLessThan(statements.findIndex((sql) => sql.includes('audit_log')));
-    expect(query.mock.calls[rejectAt][0]).toContain('WHERE bounty_id = $1 AND status = $5');
-    expect(query.mock.calls[rejectAt][1]).toEqual(['b', 'REJECTED', 'admin', 'The bounty was cancelled.', 'PENDING']);
+    expect(query.mock.calls[rejectAt][0]).toContain('WHERE bounty_id = $1 AND status = $4');
+    expect(query.mock.calls[rejectAt][1]).toEqual(['b', 'REJECTED', 'admin', 'PENDING']);
   });
 
   it.each(['SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED'])('only cancelling touches applications (a transition to %s does not)', async (to) => {

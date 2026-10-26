@@ -4,6 +4,7 @@ import { DatabaseService } from '../../common/database/database.service';
 import { OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardHoldsFundsSql, sqlStatusList } from '../../rewards/payout-status';
 import { ApplicationStatus } from '../application-status';
 import { BountyStatus, BountyStatusPolicy } from '../bounty-status';
+import { SubmissionDecision, SubmissionStatus, SubmissionStatusPolicy } from '../submission-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { RewardInput, RewardTokenResolver } from './reward-token.resolver';
 
@@ -223,6 +224,20 @@ export class BountyAdminService {
               SET status = $2, reviewed_by = $3, reviewed_at = now(), review_note = NULL
             WHERE bounty_id = $1 AND status = $4`,
           [bountyId, ApplicationStatus.REJECTED, adminId, ApplicationStatus.PENDING],
+        );
+        // 미결 제출(심사 대기, 심사 중, 수정 요청)도 같다: 취소 뒤에는 BOUNTY_REVIEW_CLOSED로 운영자가 닫을 수 없고 제출자는 영영 "제출됨"으로 본다.
+        // 같은 트랜잭션에서 반려하고 현재 리비전에 심사 이력(코멘트 없음, 바운티 상태가 이유)을 남긴다. 승인된 수상은 UNPAID_WINNERS가 이미 막고, 지급이 끝난 승인은 기록으로 둔다.
+        await tx.query(
+          `WITH closed AS (
+             UPDATE bounty_submission SET status = $2, reviewed_at = now()
+              WHERE bounty_id = $1 AND status = ANY($4::text[])
+              RETURNING id, current_revision_no)
+           INSERT INTO submission_review (submission_id, revision_id, reviewer_id, decision, comment)
+           SELECT c.id,
+                  (SELECT sr.id FROM submission_revision sr WHERE sr.submission_id = c.id AND sr.revision_no = c.current_revision_no),
+                  $3::uuid, $5, NULL
+             FROM closed c`,
+          [bountyId, SubmissionStatus.REJECTED, adminId, SubmissionStatusPolicy.unresolvedStatuses(), SubmissionDecision.REJECT],
         );
       }
       await this.audit.record(adminId, `BOUNTY_${to}`, 'bounty', bountyId, tx);

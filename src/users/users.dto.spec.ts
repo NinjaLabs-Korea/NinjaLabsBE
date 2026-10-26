@@ -110,3 +110,23 @@ describe('isSavableNickname (GET /users/check-nickname answers "available" only 
     expect(await failedFields({ ...valid, tags: 'DEV' })).toEqual(['tags']);
   });
 });
+
+describe('confusable nicknames (look-alikes of reserved words and of existing names)', () => {
+  it.each([
+    ['fullwidth admin', 'ａｄｍｉｎ'], ['fullwidth Me', 'Ｍｅ'], ['fullwidth new', 'ｎｅｗ'], ['fullwidth withdrawn_ prefix', 'Ｗｉｔｈｄｒａｗｎ_abc'], ['fullwidth ab', 'ａｂ'],
+    ['Cyrillic a in admin', 'аdmin'], ['Cyrillic i in builderone', 'buіlderone'], ['Greek o in admin', 'admіn'.replace('і', 'ο')],
+    ['mathematical bold admin', '𝐚𝐝𝐦𝐢𝐧'],
+  ])('rejects %s (%p) in the DTO and in check-nickname', async (_label, nickname) => {
+    expect(await failedFields({ ...valid, nickname })).toEqual(['nickname']);
+    expect(isSavableNickname(nickname)).toBe(false);
+  });
+
+  it('folds a fully Cyrillic look-alike of a reserved word (no Latin letter left to trip the mixed-script rule)', () => {
+    expect(isReservedNickname('аdmіn')).toBe(true); // Cyrillic а + і folded to a + i
+    expect(isReservedNickname('ｍｅ')).toBe(true);
+  });
+
+  it.each(['ninja_dev', '닌자.개발자-01', 'Привет', 'Ελληνικά', 'dev한글', 'ㅋㅋㅋ'])('still accepts the single-script name %p', async (nickname) => {
+    expect(await failedFields({ ...valid, nickname })).toEqual([]);
+  });
+});

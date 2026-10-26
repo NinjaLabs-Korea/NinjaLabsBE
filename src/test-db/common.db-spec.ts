@@ -135,8 +135,8 @@ describeDb('common plumbing on a real database', () => {
     expect(pgCode(await db.query('SELECT $1::int', [PG_INT_MAX + 1]).catch((err: unknown) => err))).toBe('22003');
   });
 
-  it('TOKEN_AMOUNT accepts exactly what DECIMAL(78,0) stores without rounding', async () => {
-    for (const value of ['1', '9'.repeat(78), `1${'0'.repeat(77)}`]) {
+  it('TOKEN_AMOUNT (30 digits) accepts only what DECIMAL(78,0) stores without rounding', async () => {
+    for (const value of ['1', '9'.repeat(30), `1${'0'.repeat(29)}`]) {
       expect(TOKEN_AMOUNT.test(value)).toBe(true);
       const r = await db.query<{ v: string }>('SELECT $1::numeric(78,0)::text AS v', [value]);
       expect(r.rows[0].v).toBe(value);

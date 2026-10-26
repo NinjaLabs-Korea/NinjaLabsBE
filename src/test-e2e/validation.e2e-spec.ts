@@ -205,7 +205,7 @@ describeDb('validation over HTTP (e2e)', () => {
 
       const tooBig = 2_147_483_648;
       expect((await e2e.post('/admin/highlights', { ...item, displayOrder: tooBig }, asAdmin())).body).toEqual(badRequest(['displayOrder must not be greater than 2147483647']));
-      expect((await e2e.patch(`/admin/bounties/${bounty}`, { maxWinners: tooBig }, asAdmin())).body).toEqual(badRequest(['maxWinners must not be greater than 2147483647']));
+      expect((await e2e.patch(`/admin/bounties/${bounty}`, { maxWinners: tooBig }, asAdmin())).body).toEqual(badRequest(['maxWinners must not be greater than 1000']));
       expect((await e2e.post('/admin/bounties', { ...saveAdminBountyBody(bountyForm(), true), maxWinners: tooBig }, asAdmin())).status).toBe(400);
       expect((await e2e.post(`/admin/users/${user.userId}/member`, { isMember: true, role: 'CORE', displayOrder: tooBig }, asAdmin())).body)
         .toEqual(badRequest(['displayOrder must not be greater than 2147483647']));
@@ -236,7 +236,7 @@ describeDb('validation over HTTP (e2e)', () => {
       expect((await e2e.get('/users/a%00b')).body).toEqual(nul);
       expect((await e2e.get('/bounties?category=%00')).body).toEqual(nul);
       expect((await e2e.post('/users/me/profile', { nickname: 'nulprobe', bio: 'a\u0000b', tags: ['DEV'] }, { token: user.accessToken })).body).toEqual(nul);
-      expect((await e2e.post('/admin/notices', { title: 'a\u0000b', body: 'b', category: 'OTHER' }, asAdmin())).body).toEqual(nul);
+      expect((await e2e.post('/admin/notices', { title: 'ok', body: 'a\u0000b', category: 'OTHER' }, asAdmin())).body).toEqual(nul);
       expect(e2e.linesFor('HTTP')).toEqual(expect.arrayContaining([expect.stringMatching(/^GET \/users\/a%00b 400 \d+ms rid=[0-9a-f-]{36}$/)]));
       expect(e2e.linesFor('HttpException').filter((line) => line.includes('0x00'))).toEqual([]);
     });
@@ -294,7 +294,7 @@ describeDb('validation over HTTP (e2e)', () => {
       const resent = await e2e.patch(`/admin/bounties/${id}`, saveAdminBountyBody(bountyForm({ slug: id, title: 'edited', deadline: row.submission_deadline, coverImage: row.cover_image_url }), false), asAdmin());
       expect(resent.status).toBe(200);
       expect((await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ coverImage: '/uploads/legacy-cover.png' }), true), asAdmin())).body)
-        .toEqual(badRequest(['coverImageUrl must be an http(s) URL or a /media/<uuid> path']));
+        .toEqual(badRequest(['coverImageUrl must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path']));
     });
 
     it('legacy bare-host URL (no scheme) stored before the strict rule: UPDATE resends it and passes (lenient), CREATE rejects it', async () => {
@@ -304,7 +304,7 @@ describeDb('validation over HTTP (e2e)', () => {
       const resent = await e2e.patch(`/admin/bounties/${id}`, saveAdminBountyBody(bountyForm({ slug: id, title: 'edited legacy', deadline: row.submission_deadline, coverImage: row.cover_image_url }), false), asAdmin());
       expect(resent.status).toBe(200);
       expect((await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ coverImage: 'cdn.ninjalabs.xyz/covers/a.png' }), true), asAdmin())).body)
-        .toEqual(badRequest(['coverImageUrl must be an http(s) URL or a /media/<uuid> path']));
+        .toEqual(badRequest(['coverImageUrl must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path']));
 
       const notice = (await e2e.post('/admin/notices', saveAdminPostBody({ slug: '', title: 'n', bodyMarkdown: 'b', category: 'OTHER', status: 'draft', thumbnail: null, externalUrl: null }, true), asAdmin())).body.id;
       await e2e.db.query(`UPDATE notice SET external_url = 'www.injective.com/blog', thumbnail_url = 'img.example/t.png' WHERE id = $1`, [notice]);

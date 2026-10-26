@@ -269,7 +269,7 @@ describeDb('ops scripts on a real database', () => {
 
       const again = await invoke(requeueNftJobs, [a.jobId, '--yes']);
       expect(again.code).toBe(1);
-      expect(again.out).toContain(`skip     ${a.jobId} — not found or not FAILED`);
+      expect(again.out).toContain(`skip     ${a.jobId} - not found or not FAILED`);
       expect((await invoke(requeueNftJobs, ['--all', '--yes'])).out).toContain('nothing to requeue');
     });
 

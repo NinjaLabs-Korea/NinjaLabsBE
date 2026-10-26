@@ -281,7 +281,7 @@ describeDb('nft_job worker on a real database', () => {
     const before = Date.now();
     await worker.poll();
     const deferred = await attachJob(child.nftId);
-    expect(deferred).toMatchObject({ status: 'PENDING', retry_count: 0, last_error: 'parent NFT not minted yet — attach deferred', processed_at: null });
+    expect(deferred).toMatchObject({ status: 'PENDING', retry_count: 0, last_error: 'parent NFT not minted yet - attach deferred', processed_at: null });
     expect(deferred.scheduled_at.getTime() - before).toBeGreaterThan(55 * 60_000);
     expect((await nftRow(child.nftId)).status).toBe('MINTED');
 

@@ -17,7 +17,7 @@ export async function alertBootFailure(
     const url = env.OPS_ALERT_WEBHOOK_URL;
     if (webhookStatus(url) !== 'ok') return;
     const environment = env.RAILWAY_ENVIRONMENT_NAME || env.NODE_ENV || 'development';
-    const text = `[NinjaLabs ${logSafe(environment, 40)}] boot-failure: backend refused to start — ${logSafe(message, 1000)}`;
+    const text = `[NinjaLabs ${logSafe(environment, 40)}] boot-failure: backend refused to start - ${logSafe(message, 1000)}`;
     const result = await postOpsAlert(url!, text, { fetchImpl });
     if (!result.ok) log(`ops alert webhook unreachable for boot failure: ${result.reason}`);
   } catch {

@@ -45,6 +45,7 @@ export const ERROR_CODES = {
   // ── 유저 / 탈퇴 ──
   USER_NOT_FOUND: { statuses: [404], ko: '대상 유저가 없다 (탈퇴 포함)' },
   PROFILE_REQUIRED: { statuses: [409], ko: '프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람(과 그 사람이 소유한 에이전트)은 에이전트 등록·바운티 지원·제출도 같은 코드로 막힌다' },
+  NICKNAME_CHANGE_COOLDOWN: { statuses: [409], ko: '닉네임을 이미 정한 유저가 24시간 안에 또 바꾸려 했다 (변경은 감사 USER_NICKNAME_CHANGED로 남고 마지막 변경 24시간 뒤에 다시 가능)' },
   NICKNAME_TAKEN: { statuses: [409], ko: '이미 사용 중인 닉네임이다' },
   CONFIRM_NICKNAME_MISMATCH: { statuses: [400], ko: '탈퇴 확인용 닉네임 입력이 현재 닉네임과 다르다' },
   WITHDRAWAL_BLOCKED_OPEN_PAYOUTS: { statuses: [409], ko: '진행 중인 지급(payout)이 있어 탈퇴할 수 없다' },
@@ -58,13 +59,14 @@ export const ERROR_CODES = {
   WALLET_ALREADY_LINKED: { statuses: [409], ko: '이 주소가 이미 다른 계정에 연결됐거나, 내 대표 지갑이 이미 있다 (부분 유니크 인덱스 충돌)' },
 
   // ── 에이전트 ──
-  INVALID_AGENT_WALLET_ADDRESS: { statuses: [400], ko: '에이전트 지갑 주소 형식이 올바르지 않다' },
+  INVALID_AGENT_WALLET_ADDRESS: { statuses: [400], ko: '에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다)' },
   AGENT_PUBLIC_KEY_REQUIRED: { statuses: [400], ko: '에이전트 공개키가 필요하다' },
   AGENT_PUBLIC_KEY_MISMATCH: { statuses: [400], ko: 'inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다' },
   AGENT_WALLET_IS_OWNER_WALLET: { statuses: [400], ko: '에이전트 지갑이 소유자 본인의 연결 지갑과 같다 (전용 에이전트 지갑을 써야 한다). 등록 때뿐 아니라 `POST /wallets/verify`가 내 에이전트의 지갑을 대표 지갑으로 묶을 때도' },
   AGENT_KEY_OR_WALLET_ALREADY_REGISTERED: { statuses: [409], ko: '같은 공개키 또는 지갑으로 이미 등록된 에이전트가 있다' },
   AGENT_NOT_FOUND: { statuses: [404], ko: '내 에이전트가 아니거나 없다' },
-  AGENT_ALREADY_VERIFIED: { statuses: [409], ko: '이미 검증이 끝난 에이전트다' },
+  AGENT_ALREADY_VERIFIED: { statuses: [409], ko: '이미 검증이 끝난 에이전트다 (ACTIVE이거나, 검증된 뒤 정지·폐기됐다)' },
+  AGENT_NOT_PENDING: { statuses: [409], ko: '검증 대기 상태가 아니고 검증된 적도 없는 에이전트다 (검증 전에 폐기됐다) - 새로 등록해야 한다' },
   AGENT_NOT_ACTIVE: { statuses: [409], ko: 'ACTIVE 상태가 아니어서 키 회전 등을 할 수 없다' },
   MISSING_AGENT_API_KEY: { statuses: [401], ko: 'Agent API 키 헤더가 없다' },
   INVALID_AGENT_API_KEY: { statuses: [401], ko: 'Agent API 키가 없거나 만료·폐기됐다' },
@@ -76,9 +78,11 @@ export const ERROR_CODES = {
   BOUNTY_NOT_OPEN: { statuses: [400], ko: '지원/제출을 받는 상태(OPEN 등)가 아니다' },
   BOUNTY_REVIEW_CLOSED: { statuses: [400], ko: '바운티가 이미 종료돼 심사·보상 처리를 할 수 없다' },
   BOUNTY_HAS_OPEN_FUNDS: { statuses: [409], ko: '미정산 보상·지급이 남아 있어 삭제할 수 없다' },
+  APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE: { statuses: [400], ko: '지원 마감이 제출 마감보다 늦다 (생성·수정 모두, 같은 시각은 허용)' },
   DEADLINE_IN_PAST: { statuses: [400], ko: '마감일을 과거로 바꿀 수 없다' },
   MAX_WINNERS_BELOW_APPROVED: { statuses: [400], ko: '이미 승인된 수보다 적게 최대 당선자 수를 줄일 수 없다' },
   INVALID_TRANSITION: { statuses: [400], ko: '허용되지 않는 상태 전이다 (실제 메시지는 INVALID_TRANSITION:<from>-><to>)' },
+  REWARD_SYMBOL_DENOM_MISMATCH: { statuses: [400], ko: '보상 표시 심볼이 토큰과 맞지 않거나 지원하지 않는 네이티브 토큰이다 (NATIVE는 denom inj + 심볼 INJ만, INJ 심볼은 NATIVE inj만; 대소문자는 정규화)' },
   REWARD_TOKEN_DENOM_REQUIRED: { statuses: [400], ko: '보상 토큰 denom이 필요하다' },
   REWARD_TOKEN_CONTRACT_REQUIRED: { statuses: [400], ko: '보상 토큰 컨트랙트 주소가 필요하다' },
   REWARD_EVM_METADATA_REQUIRED: { statuses: [400], ko: 'EVM 보상 토큰의 메타데이터(컨트랙트·체인)가 필요하다' },
@@ -119,6 +123,7 @@ export const ERROR_CODES = {
   PAYOUT_SELF_APPROVAL: { statuses: [403], ko: '지급 요청자 본인이 승인할 수 없다 (PAYOUT_ALLOW_SELF_APPROVAL로만 허용)' },
 
   // ── 콘텐츠 (notices / highlights / members / media / nfts) ──
+  EVENT_DATE_ONLY_FOR_EVENT: { statuses: [400], ko: '행사 날짜(eventDate)는 EVENT 분류 공지에만 줄 수 있다 (생성만 거부, 수정은 EVENT 밖이면 조용히 비운다)' },
   NOTICE_NOT_FOUND: { statuses: [404], ko: '공지가 없다' },
   // ── 기수 모집 (cohorts) ──
   COHORT_NOT_FOUND: { statuses: [404], ko: '기수가 없다 (DRAFT 기수는 지원자에게도 없는 것과 같다)' },

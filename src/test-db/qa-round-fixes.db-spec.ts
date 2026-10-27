@@ -48,6 +48,30 @@ describeDb('QA round fixes on a real database', () => {
     return id;
   }
 
+  it('cancelling a bounty rejects unresolved submissions (SUBMITTED, IN_REVIEW, REVISION_REQUESTED) with a review row, and leaves APPROVED and other bounties alone', async () => {
+    const bountyId = await openBounty(false);
+    const review = new SubmissionReviewService(db, new AuditService(db));
+    const users = [await createUser(db), await createUser(db), await createUser(db), await createUser(db)];
+    const sent = [];
+    for (const userId of users) sent.push(await submissions.submit(bountyId, userId, { submissionUrl: 'https://x.test/w', description: 'work' }));
+    await review.review(sent[1].id, 'START_REVIEW', undefined, adminId);
+    await review.review(sent[2].id, 'REQUEST_REVISION', 'please fix', adminId);
+    await review.review(sent[3].id, 'APPROVE', undefined, adminId);
+    const otherBounty = await openBounty(false);
+    const other = await submissions.submit(otherBounty, users[0], { submissionUrl: 'https://x.test/o', description: 'other' });
+    await bounties.transition(bountyId, 'CANCELLED', adminId);
+
+    const rows = await db.query<{ id: string; status: string }>(`SELECT id, status FROM bounty_submission WHERE id = ANY($1::uuid[])`, [[...sent.map((x) => x.id), other.id]]);
+    const status = Object.fromEntries(rows.rows.map((row) => [row.id, row.status]));
+    expect([sent[0], sent[1], sent[2]].map((x) => status[x.id])).toEqual(['REJECTED', 'REJECTED', 'REJECTED']);
+    expect(status[sent[3].id]).toBe('APPROVED');
+    expect(status[other.id]).toBe('SUBMITTED');
+    const reviews = await db.query<{ submission_id: string; decision: string; comment: string | null; reviewer_id: string; revision_id: string | null }>(
+      `SELECT submission_id, decision, comment, reviewer_id, revision_id FROM submission_review WHERE submission_id = ANY($1::uuid[]) AND decision = 'REJECT'`, [sent.map((x) => x.id)]);
+    expect(reviews.rows.map((row) => row.submission_id).sort()).toEqual([sent[0].id, sent[1].id, sent[2].id].sort());
+    expect(reviews.rows.every((row) => row.comment === null && row.reviewer_id === adminId && row.revision_id !== null)).toBe(true);
+  });
+
   it('cancelling a bounty rejects its PENDING applications (without a reviewer note), keeps APPROVED/WITHDRAWN ones, and records the reviewer', async () => {
     const bountyId = await openBounty(true);
     const [pendingUser, approvedUser, withdrawnUser] = [await createUser(db), await createUser(db), await createUser(db)];
@@ -184,7 +208,7 @@ describeDb('QA round fixes on a real database', () => {
   });
 
   it('a public profile exists only for users who finished onboarding (404 USER_NOT_FOUND otherwise)', async () => {
-    const users = new UsersService(db);
+    const users = new UsersService(db, new AuditService(db));
     const unfinished = await createUser(db, { onboarded: false });
     const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [unfinished])).rows[0].nickname;
     await expect(users.publicProfile(nickname)).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });

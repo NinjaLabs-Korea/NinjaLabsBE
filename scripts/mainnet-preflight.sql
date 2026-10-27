@@ -98,11 +98,17 @@ SELECT 'last_migration' AS check, m.name, m.applied_at
  ORDER BY m.name DESC
  LIMIT 1;
 
--- [review] 10. 닉네임 대소문자 유일성이 DB 로케일에 의존한다: uq_user_nickname_active는 UNIQUE (lower(nickname))이고 lower()는 DB의 lc_ctype을 따른다.
---   C 로케일이면 ASCII만 접혀 `Café`와 `CAFÉ`, `Привет`와 `привет`이 둘 다 가입된다. 행이 나오면(= 비-ASCII 대문자가 안 접힘) lc_ctype을 확인하고,
---   UTF-8 로케일 DB(예: en_US.UTF-8)로 옮기거나 닉네임 유일성을 앱에서 접는 마이그레이션을 계획한다. 0행이면 정상.
-SELECT 'nickname_case_folding' AS check, current_setting('lc_ctype') AS lc_ctype, lower('CAFÉ') AS lower_of_cafe_upper
+-- [review] 10. 0019 이전 닉네임 유일성은 lower(nickname)이었고 lower()는 DB lc_ctype을 따랐다 (C 로케일이면 `Café`/`CAFÉ`가 둘 다 가입됨).
+--   0019부터 인덱스와 앱 조회가 lower(nickname COLLATE "und-x-icu")라 로케일과 무관하다. ICU collation이 없으면 0019가 실패한다 (0행이면 사용 가능).
+SELECT 'nickname_icu_collation_missing' AS check
   FROM (SELECT 1) AS probe
- WHERE lower('CAFÉ') <> 'café';
+ WHERE NOT EXISTS (SELECT 1 FROM pg_collation WHERE collname = 'und-x-icu');
+
+-- [review] 11. 0019 적용 전: 활성 계정 사이에 새 접힘 식으로 충돌하는 닉네임 쌍. 행이 나오면 0019의 유니크 인덱스가 만들어지지 않는다 - 해당 유저에게 연락해 이름을 바꾸게 한 뒤 배포한다. 0행이면 정상.
+SELECT 'nickname_fold_collision' AS check, lower(nickname COLLATE "und-x-icu") AS folded, count(*) AS accounts, array_agg(nickname ORDER BY nickname) AS nicknames
+  FROM "user"
+ WHERE deleted_at IS NULL
+ GROUP BY lower(nickname COLLATE "und-x-icu")
+HAVING count(*) > 1;
 
 ROLLBACK;

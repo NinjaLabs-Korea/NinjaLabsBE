@@ -35,7 +35,7 @@ describe('bootstrap environment checks', () => {
     it.each([undefined, '', '   '])('defaults to 1 hop with a warning in production when TRUST_PROXY is %p (Railway is always behind one proxy)', (value) => {
       expect(trustProxyHops({ NODE_ENV: 'production', TRUST_PROXY: value })).toBe(1);
       expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('TRUST_PROXY is not set — assuming 1 reverse-proxy hop in production'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('TRUST_PROXY is not set - assuming 1 reverse-proxy hop in production'));
     });
 
     it.each(['0', 'abc', '-1', '1.5'])('still refuses to start in production when TRUST_PROXY is explicitly %p', (value) => {
@@ -121,7 +121,7 @@ describe('bootstrap environment checks', () => {
       expect(corsOriginsValue({ NODE_ENV: 'production', CORS_ORIGINS: 'https://ninjalabsfe.vercel.app,http://localhost:3000,http://127.0.0.1:3001,http://app.localhost' }))
         .toBe('https://ninjalabsfe.vercel.app');
       expect(error).toHaveBeenCalledTimes(1);
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('"http://localhost:3000", "http://127.0.0.1:3001", "http://app.localhost" — IGNORED in production'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('"http://localhost:3000", "http://127.0.0.1:3001", "http://app.localhost" - IGNORED in production'));
     });
 
     it('refuses to start in production when every entry is loopback', () => {

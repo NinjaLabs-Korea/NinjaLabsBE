@@ -4,11 +4,19 @@ import { DatabaseService } from '../../common/database/database.service';
 import { OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardHoldsFundsSql, sqlStatusList } from '../../rewards/payout-status';
 import { ApplicationStatus } from '../application-status';
 import { BountyStatus, BountyStatusPolicy } from '../bounty-status';
+import { SubmissionDecision, SubmissionStatus, SubmissionStatusPolicy } from '../submission-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
+import { assertMediaPathExists } from '../../common/validation/media-reference';
 import { RewardInput, RewardTokenResolver } from './reward-token.resolver';
 
 /** 저장된 마감과 이 차이 미만이면 "바꾸지 않은 값" — FE의 datetime-local 입력은 초/밀리초를 보존하지 못한다 */
 const DEADLINE_UNCHANGED_TOLERANCE_MS = 60_000;
+
+/** 지원 마감은 제출 마감보다 늦을 수 없다 - 제출이 끝난 뒤의 지원은 의미가 없다 (같은 시각과 1분 미만 차이는 허용: FE가 datetime-local로 왕복시키며 제출 마감의 초를 잃는다). 지원 마감이 없으면 통과 */
+function assertApplicationDeadlineNotAfterSubmission(submission: string | Date, application: string | Date | null | undefined): void {
+  if (application == null) return;
+  if (new Date(application).getTime() - new Date(submission).getTime() >= DEADLINE_UNCHANGED_TOLERANCE_MS) throw new BadRequestException('APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE');
+}
 
 /** 운영자용 바운티 관리 — 등록/수정/삭제/상태 전이 (쓰기 명령). 운영 현황 조회는 BountyOperationsQuery.
  * 전이 가능 여부는 BountyStatusPolicy, 전이 차단 사유는 BountyLifecycleService가 결정한다. */
@@ -51,8 +59,10 @@ export class BountyAdminService {
     for (const deadline of [input.submissionDeadline, input.applicationDeadline]) {
       if (deadline && !(new Date(deadline).getTime() > Date.now())) throw new BadRequestException('DEADLINE_IN_PAST');
     }
+    assertApplicationDeadlineNotAfterSubmission(input.submissionDeadline, input.applicationDeadline);
     const reward = this.rewardTokens.resolve(input.reward);
     return this.db.tx(async (tx) => {
+      await assertMediaPathExists(tx, input.coverImageUrl);
       const b = await tx.query<{ id: string }>(
         `INSERT INTO bounty
            (created_by, sponsor_name, title, summary, description, requirements,
@@ -112,6 +122,7 @@ export class BountyAdminService {
     const values = fields.map(([, value]) => value);
     const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
     return this.db.tx(async (tx) => {
+      await assertMediaPathExists(tx, input.coverImageUrl); // 없는 /media/<id>를 저장하면 공개 카드가 깨진 이미지를 그린다
       // 승인 수 확인과 max_winners 변경 사이에 APPROVE가 끼어들지 않도록 바운티 행을 잠근다 (심사도 같은 행을 잠근다)
       const cur = await tx.query<{ id: string; status: string; submission_deadline: string | Date; application_deadline: string | Date | null }>(
         `SELECT id, status, submission_deadline, application_deadline FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
@@ -132,6 +143,13 @@ export class BountyAdminService {
           const unchanged = stored !== null && Math.abs(next - new Date(stored).getTime()) < DEADLINE_UNCHANGED_TOLERANCE_MS;
           if (!unchanged && !(next > Date.now())) throw new BadRequestException('DEADLINE_IN_PAST');
         }
+      }
+      // 두 마감 중 하나라도 건드리면 (새 값 ?? 저장된 값)의 쌍으로 순서를 검사한다 - 마감과 무관한 수정은 옛 데이터의 뒤집힌 쌍에도 막히지 않는다
+      if (input.submissionDeadline !== undefined || input.applicationDeadline !== undefined) {
+        assertApplicationDeadlineNotAfterSubmission(
+          input.submissionDeadline ?? cur.rows[0].submission_deadline,
+          input.applicationDeadline === undefined ? cur.rows[0].application_deadline : input.applicationDeadline,
+        );
       }
       if (input.maxWinners !== undefined) {
         const approved = await tx.query<{ count: string }>(
@@ -209,6 +227,20 @@ export class BountyAdminService {
               SET status = $2, reviewed_by = $3, reviewed_at = now(), review_note = NULL
             WHERE bounty_id = $1 AND status = $4`,
           [bountyId, ApplicationStatus.REJECTED, adminId, ApplicationStatus.PENDING],
+        );
+        // 미결 제출(심사 대기, 심사 중, 수정 요청)도 같다: 취소 뒤에는 BOUNTY_REVIEW_CLOSED로 운영자가 닫을 수 없고 제출자는 영영 "제출됨"으로 본다.
+        // 같은 트랜잭션에서 반려하고 현재 리비전에 심사 이력(코멘트 없음, 바운티 상태가 이유)을 남긴다. 승인된 수상은 UNPAID_WINNERS가 이미 막고, 지급이 끝난 승인은 기록으로 둔다.
+        await tx.query(
+          `WITH closed AS (
+             UPDATE bounty_submission SET status = $2, reviewed_at = now()
+              WHERE bounty_id = $1 AND status = ANY($4::text[])
+              RETURNING id, current_revision_no)
+           INSERT INTO submission_review (submission_id, revision_id, reviewer_id, decision, comment)
+           SELECT c.id,
+                  (SELECT sr.id FROM submission_revision sr WHERE sr.submission_id = c.id AND sr.revision_no = c.current_revision_no),
+                  $3::uuid, $5, NULL
+             FROM closed c`,
+          [bountyId, SubmissionStatus.REJECTED, adminId, SubmissionStatusPolicy.unresolvedStatuses(), SubmissionDecision.REJECT],
         );
       }
       await this.audit.record(adminId, `BOUNTY_${to}`, 'bounty', bountyId, tx);

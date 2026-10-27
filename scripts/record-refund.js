@@ -68,7 +68,7 @@ function refusalReason(reward, refundedAmount) {
   if (!reward) return 'reward not found';
   if (reward.bounty_status !== 'CANCELLED') return `bounty is ${reward.bounty_status}, not CANCELLED`;
   if (!REFUNDABLE.includes(reward.reward_status)) return `reward is ${reward.reward_status}, expected one of ${REFUNDABLE.join('/')}`;
-  if (reward.open_payouts > 0) return `${reward.open_payouts} payout(s) are still open (not ${TERMINAL_PAYOUT_STATUSES.join('/')}) — cancel or finish them first`;
+  if (reward.open_payouts > 0) return `${reward.open_payouts} payout(s) are still open (not ${TERMINAL_PAYOUT_STATUSES.join('/')}) - cancel or finish them first`;
   if (reward.deposited_amount === null || refundedAmount === null || !(Number(refundedAmount) > 0)) {
     return 'nothing to refund (deposited amount minus PAID payouts is not positive)';
   }
@@ -155,7 +155,7 @@ async function run(argv, deps) {
   const { reward, refundedAmount } = await inspectReward(deps.pool, rewardId);
   const reason = refusalReason(reward, refundedAmount) || (await hashInUse(deps.pool, hash));
   if (reason) {
-    log(`refused  ${rewardId} — ${reason}`);
+    log(`refused  ${rewardId} - ${reason}`);
     return 1;
   }
   log(`reward   ${rewardId}  bounty=${reward.bounty_id} (${reward.bounty_status})  status=${reward.reward_status}  deposited=${reward.deposited_amount}  paid=${reward.paid_total}`);
@@ -174,7 +174,7 @@ async function run(argv, deps) {
     return 0;
   } catch (err) {
     if (err instanceof OpsError) {
-      log(`refused  ${rewardId} — ${err.message}`);
+      log(`refused  ${rewardId} - ${err.message}`);
       return 1;
     }
     throw err;

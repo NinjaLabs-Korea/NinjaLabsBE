@@ -73,7 +73,7 @@ export function accessTtlSeconds(raw: string | undefined): number {
   const match = REFRESH_TTL.exec(ttl);
   if (!match) {
     throw new Error(
-      `JWT_ACCESS_TTL must be "<integer> <unit>" with unit s/m/h or their long forms (e.g. 15m, 900s, 1h) — a bare number is read as milliseconds by jsonwebtoken, got "${ttl}"`,
+      `JWT_ACCESS_TTL must be "<integer> <unit>" with unit s/m/h or their long forms (e.g. 15m, 900s, 1h) - a bare number is read as milliseconds by jsonwebtoken, got "${ttl}"`,
     );
   }
   const seconds = Number(match[1]) * REFRESH_TTL_SECONDS[REFRESH_TTL_UNITS[match[2]]];

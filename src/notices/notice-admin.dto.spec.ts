@@ -95,3 +95,16 @@ describe('notice body visible text', () => {
     expect(await failedFields(CreateNoticeDto, { ...valid, body: 'text​' })).toEqual([]);
   });
 });
+
+describe('notice and highlight text hygiene', () => {
+  it('rejects bidi override in a title and treats an invisible-only summary as blank (null)', async () => {
+    expect(await failedFields(CreateNoticeDto, { ...valid, title: 'a‮b' })).toEqual(['title']);
+    expect(await failedFields(UpdateNoticeDto, { title: 'a‮b' })).toEqual(['title']);
+    expect(await failedFields(CreateNoticeDto, { ...valid, summary: 'x‮y' })).toEqual(['summary']);
+    for (const summary of ['​​', '͏', '   ']) {
+      expect(plainToInstance(CreateNoticeDto, { ...valid, summary }).summary).toBeNull();
+      expect(plainToInstance(UpdateNoticeDto, { summary }).summary).toBeNull();
+    }
+    expect(plainToInstance(CreateNoticeDto, { ...valid, summary: '  hi  ' }).summary).toBe('hi');
+  });
+});

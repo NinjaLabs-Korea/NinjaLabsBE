@@ -8,7 +8,7 @@ export default async function globalTeardown(): Promise<void> {
   const name = process.env[TEST_DB_NAME_ENV];
   if (!adminUrl || !name) return;
   if (process.env.KEEP_TEST_DB) {
-    process.stdout.write(`[test:db] KEEP_TEST_DB set — leaving database ${name} in place\n`);
+    process.stdout.write(`[test:db] KEEP_TEST_DB set - leaving database ${name} in place\n`);
     return;
   }
   const admin = new Pool({ connectionString: adminUrl, ssl: sslOptions(testSslEnv()), max: 1 });

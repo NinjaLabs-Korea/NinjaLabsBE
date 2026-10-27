@@ -14,7 +14,7 @@ export function statusCheckValues(table: string): string[] {
   for (const file of files) {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     const altered = new RegExp(`ALTER\\s+TABLE\\s+${table}\\b[^;]*\\bstatus\\b[^;]*\\bCHECK\\b`, 'i');
-    if (altered.test(sql)) throw new Error(`${file} alters ${table}.status CHECK — teach statusCheckValues() to follow it`);
+    if (altered.test(sql)) throw new Error(`${file} alters ${table}.status CHECK - teach statusCheckValues() to follow it`);
     const create = new RegExp(`CREATE\\s+TABLE\\s+${table}\\s*\\(([\\s\\S]*?)\\n\\);`, 'i').exec(sql);
     if (!create) continue;
     const check = /\bstatus\b[^,]*?CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)/i.exec(create[1]);

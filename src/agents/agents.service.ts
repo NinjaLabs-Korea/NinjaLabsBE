@@ -26,6 +26,9 @@ import { revokeActiveAgentKeys } from './agent-revocation';
  *   2. 주인 지갑 private key로 서명 → 서버가 public key로 검증
  *   3. 검증 성공 → agent ACTIVE + API key 발급 (원문 1회 노출, DB엔 해시만)
  */
+/** inj1 계정 주소(20바이트) 모양 - bech32 소문자 문자 집합 38자. 체크섬은 공개키↔주소 대조(injectivePublicKeyMatchesAddress)가 잡는다 */
+const INJ_ACCOUNT_ADDRESS = /^inj1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{38}$/;
+
 @Injectable()
 export class AgentsService {
   constructor(
@@ -44,10 +47,17 @@ export class AgentsService {
     if (isEvm && !isAddress(walletAddress.trim())) {
       throw new BadRequestException('INVALID_AGENT_WALLET_ADDRESS');
     }
-    if (!isEvm && (!walletAddress.trim().startsWith('inj1') || !publicKey)) {
+    // 주소부터 분류한다: 0x도 inj1도 아닌 값(`cosmos1…`)이 공개키 이야기("AGENT_PUBLIC_KEY_REQUIRED")를 듣지 않게.
+    // bech32는 전부 대문자도 유효한 같은 주소라 소문자로 접고(섞인 대소문자는 bech32가 아니다), 저장·비교는 소문자 한 가지로만 한다.
+    const trimmed = walletAddress.trim();
+    const inj1Address = trimmed === trimmed.toUpperCase() ? trimmed.toLowerCase() : trimmed;
+    if (!isEvm && !INJ_ACCOUNT_ADDRESS.test(inj1Address)) {
+      throw new BadRequestException('INVALID_AGENT_WALLET_ADDRESS');
+    }
+    if (!isEvm && !publicKey) {
       throw new BadRequestException('AGENT_PUBLIC_KEY_REQUIRED');
     }
-    const normalizedAddress = isEvm ? getAddress(walletAddress.trim()) : walletAddress.trim();
+    const normalizedAddress = isEvm ? getAddress(trimmed) : inj1Address;
     // 저장할 공개키 — 검증되지 않은 키는 uq_agent_public_key를 선점해 그 키 주인의 등록/verify를 막는 데 쓰일 수 있다.
     //   - EVM(0x): 클라이언트 값은 무시하고 NULL — 키는 verify 때 EIP-191 서명에서 복원한 것만 저장한다 (docs/agent-api.md:
     //     EVM은 publicKey를 보내지 않는다. 예전 클라이언트 호환을 위해 400 대신 무시)
@@ -55,7 +65,7 @@ export class AgentsService {
     if (!isEvm && !injectivePublicKeyMatchesAddress(normalizedAddress, publicKey!)) {
       throw new BadRequestException('AGENT_PUBLIC_KEY_MISMATCH');
     }
-    const storedPublicKey = isEvm ? null : canonicalPublicKeyBase64(publicKey!); // 위 일치 검사를 통과했으므로 33바이트 — 클라이언트가 보낸 문자열이 아니라 정규 표기를 저장한다
+    const storedPublicKey = isEvm ? null : canonicalPublicKeyBase64(publicKey!); // 위 일치 검사를 통과했으므로 33바이트 - 클라이언트가 보낸 문자열이 아니라 정규 표기를 저장한다
 
     try {
       // 같은 지갑/키를 점유한 행 확인(남의 버려진 PENDING은 soft delete)과 INSERT를 한 트랜잭션에서 — 유니크 위반이면 전체가 롤백되고 아래 catch로 간다
@@ -170,6 +180,23 @@ export class AgentsService {
    * 다른 에이전트/유저로의 서명 재사용이 불가능하다.
    */
   static verificationMessage(agentId: string, ownerUserId: string): string {
+    // 소유자가 지갑 서명창에서 직접 읽는 문장이라 영어·한국어·중국어를 함께 싣는다 (지갑 소유권 challenge와 같은 형식 - wallets.service.ts createChallenge).
+    // 로케일을 모르는 BE가 한 언어만 고를 수 없다. agentId·owner 줄이 서명을 이 에이전트와 이 소유자에 묶는다.
+    return [
+      'NinjaLabs AI agent registration verification / NinjaLabs AI 에이전트 등록 검증 / NinjaLabs AI 代理注册验证',
+      `agentId: ${agentId}`,
+      `owner: ${ownerUserId}`,
+      'This signature does not send a transaction and costs no gas.',
+      '이 서명은 트랜잭션을 발생시키지 않으며 가스비가 들지 않습니다.',
+      '此签名不会发起交易，也不会产生 gas 费用。',
+    ].join('\n');
+  }
+
+  /**
+   * 한국어 한 가지였던 옛 문구. 문구가 바뀌기 전에 등록해 PENDING으로 남은 에이전트의 소유자는 이미 이 문구에 서명했을 수 있어
+   * verify가 두 문구를 모두 받는다 (둘 다 agentId와 owner에 묶여 있어 재사용 위험은 같다). PENDING은 24시간 안에 정리되므로 그 뒤 제거해도 된다.
+   */
+  private static legacyVerificationMessage(agentId: string, ownerUserId: string): string {
     return [
       'NinjaLabs AI 에이전트 등록 검증',
       `agentId: ${agentId}`,
@@ -192,8 +219,9 @@ export class AgentsService {
         status: string;
         public_key: string | null;
         wallet_address: string;
+        verified_at: Date | null;
       }>(
-        `SELECT status, public_key, wallet_address FROM agent
+        `SELECT status, public_key, wallet_address, verified_at FROM agent
           WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL
           FOR UPDATE`,
         [agentId, ownerUserId],
@@ -201,16 +229,15 @@ export class AgentsService {
       if (!r.rowCount) throw new NotFoundException('AGENT_NOT_FOUND');
       const agent = r.rows[0];
       if (agent.status !== 'PENDING_VERIFICATION') {
-        throw new ConflictException('AGENT_ALREADY_VERIFIED');
+        // 검증을 마친 적 있는 에이전트(ACTIVE, 또는 그 뒤 정지·폐기)만 "이미 검증됨"이다 - 검증 전에 폐기된 에이전트는 키를 받은 적이 없다
+        if (agent.status === 'ACTIVE' || agent.verified_at) throw new ConflictException('AGENT_ALREADY_VERIFIED');
+        throw new ConflictException('AGENT_NOT_PENDING');
       }
 
-      const message = AgentsService.verificationMessage(agentId, ownerUserId);
-      const verified = signatureSchemeFor(agent.wallet_address).verify({
-        address: agent.wallet_address,
-        message,
-        signature,
-        publicKey: agent.public_key,
-      });
+      const scheme = signatureSchemeFor(agent.wallet_address);
+      const verifyWith = (message: string) => scheme.verify({ address: agent.wallet_address, message, signature, publicKey: agent.public_key });
+      const verified = verifyWith(AgentsService.verificationMessage(agentId, ownerUserId))
+        ?? verifyWith(AgentsService.legacyVerificationMessage(agentId, ownerUserId));
       if (!verified) {
         throw new UnauthorizedException('INVALID_SIGNATURE');
       }

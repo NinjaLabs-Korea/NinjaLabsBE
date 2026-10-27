@@ -25,6 +25,7 @@ import { requestIdOf } from '../common/http/request-id';
 import { PUBLIC_READ_IP_THROTTLE } from '../common/throttler/public-read-throttle';
 import { MaxChars } from '../common/validation/max-chars';
 import { Trim } from '../common/validation/trim';
+import { HasNoBidiOverride, HasVisibleText } from '../common/validation/visible-text';
 import { AccountWithdrawalService } from './account-withdrawal.service';
 import { IsNotReservedNickname, IsNotStaticFileNickname, NICKNAME, NormalizeNickname, NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH } from './nickname';
 import { UsersService } from './users.service';
@@ -45,6 +46,8 @@ export class CompleteProfileDto {
   @Trim()
   @IsString()
   @IsNotEmpty()
+  @HasVisibleText() // 제로폭·한글 채움·점자 빈칸·소프트 하이픈만으로 된 자기소개는 빈 프로필이다
+  @HasNoBidiOverride() // RLO 하나가 뒤따르는 글 순서를 뒤집는다
   @MaxLength(1000)
   bio!: string;
 

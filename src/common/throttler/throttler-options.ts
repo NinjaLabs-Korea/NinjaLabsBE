@@ -16,7 +16,7 @@ export function throttlerStorageMode(env: BootstrapEnv): ThrottlerStorageMode {
   const raw = env.THROTTLER_STORAGE?.trim().toLowerCase();
   if (!raw) return isProduction(env) ? 'postgres' : 'memory';
   if (raw === 'postgres' || raw === 'memory') return raw;
-  throw new Error(`FATAL: THROTTLER_STORAGE=${JSON.stringify(env.THROTTLER_STORAGE)} — must be "postgres" or "memory" (or unset: postgres in production, memory elsewhere)`);
+  throw new Error(`FATAL: THROTTLER_STORAGE=${JSON.stringify(env.THROTTLER_STORAGE)} - must be "postgres" or "memory" (or unset: postgres in production, memory elsewhere)`);
 }
 
 /** memory면 배열(모듈마다 기본 in-memory 저장소), postgres면 공유 PgThrottlerStorage */

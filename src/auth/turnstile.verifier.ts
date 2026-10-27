@@ -53,7 +53,7 @@ export class TurnstileVerifier implements OnModuleInit {
   onModuleInit() {
     if (!this.secret() && isProduction({ NODE_ENV: this.config.get<string>('NODE_ENV') })) {
       this.logger.warn(
-        'TURNSTILE_SECRET_KEY is not set — GET /auth/google accepts sign-ins without a Cloudflare Turnstile check. ' +
+        'TURNSTILE_SECRET_KEY is not set - GET /auth/google accepts sign-ins without a Cloudflare Turnstile check. ' +
           'Set it (and NEXT_PUBLIC_TURNSTILE_SITE_KEY on the FE) to enable bot protection.',
       );
     }

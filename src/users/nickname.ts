@@ -6,6 +6,7 @@ import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
  *   - 유니코드 문자/숫자와 `_ . -`만, 공백 불가. 결합 문자(\p{M}: 힌디어 모음 기호·비라마, 태국어 성조·모음 기호, 악센트)는 글자 뒤에 연속 3개까지 허용 (없으면 `हिन्दी`·`ไทยแลนด์`를 쓸 수 없다)
  *   - 처음은 문자/숫자, 끝은 문자/숫자/결합 문자 (`.ninja`, `ninja-`, `...`, `--` 불가 → 경로 세그먼트 `.`/`..`·구분자 혼동 방지)
  *   - 한글 채움 문자(U+115F, U+1160, U+3164, U+FFA0)는 불가 — 범주가 문자(Lo)라 정규식을 통과하지만 화면에는 빈칸으로 그려져 "보이지 않는 이름"이 된다
+ *   - 화면에 그려지지 않는 Default_Ignorable_Code_Point(결합 자소 결합자 U+034F, 크메르 U+17B4/17B5, 몽골 변이 선택자 U+180B-180F 등)는 불가 - \p{M}이라 결합 문자 허용으로 열리지만 `coreni<U+034F>nja`가 `coreninja`와 똑같이 보여 기존 멤버·예약어를 사칭하고, 예약어 골격·`lower(nickname)` 유일성은 이 문자를 지우지 않는다
  *   - 변이 선택자(\p{Variation_Selector}, U+FE00-FE0F 등)는 불가 - \p{M}이라 결합 문자 허용으로 열리지만 이모지 꾸밈용이고 보이지 않는다 (MaxChars도 U+FE0F를 길이에서 뺀다)
  *   - 전각/반각 문자(U+FF00 블록)와 수학용 영숫자(U+1D400 블록)는 불가 - `ａｄｍｉｎ`처럼 NFKC로 라틴 글자가 되는 모양만 같은 문자로 예약어·기존 이름을 사칭한다
  *   - 라틴 글자와 키릴/그리스 글자를 한 이름에 섞는 것은 불가 (`аdmin`의 키릴 а, `buіlderone`의 키릴 і 같은 혼합 문자 동형이의어)
@@ -14,7 +15,7 @@ import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
  *   - 탈퇴 익명화 이름의 접두사 `withdrawn_`(대소문자 무관)도 거부 — 남은 제출/payout 기록에 표시되는 탈퇴자 이름을 사칭하지 못하게
  *   - 정적 파일 확장자(`.png`, `.json`, … — STATIC_FILE_EXTENSIONS)로 끝나는 이름 거부 (대소문자 무관)
  */
-export const NICKNAME = /^(?!.*[\u115F\u1160\u3164\uFFA0\p{Variation_Selector}\uFF00-\uFFEF\u{1D400}-\u{1D7FF}])(?!(?=.*[A-Za-z\u00C0-\u024F])(?=.*[\p{Script=Cyrillic}\p{Script=Greek}]))(?!.*\p{M}{4})(?!.*[_.-]\p{M})[\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*[\p{L}\p{N}\p{M}]$/u;
+export const NICKNAME = /^(?!.*[\p{Default_Ignorable_Code_Point}\u115F\u1160\u3164\uFFA0\p{Variation_Selector}\uFF00-\uFFEF\u{1D400}-\u{1D7FF}])(?!(?=.*[A-Za-z\u00C0-\u024F])(?=.*[\p{Script=Cyrillic}\p{Script=Greek}]))(?!.*\p{M}{4})(?!.*[_.-]\p{M})[\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*[\p{L}\p{N}\p{M}]$/u;
 
 export const RESERVED_NICKNAMES: readonly string[] = ['me', 'check-nickname', 'admin', 'new', 'edit'];
 

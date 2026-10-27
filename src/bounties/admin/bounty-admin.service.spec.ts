@@ -159,6 +159,23 @@ describe('BountyAdminService update safeguards', () => {
       .update(bountyId, { applicationDeadline: past }, adminId)).rejects.toMatchObject({ message: 'DEADLINE_IN_PAST' });
   });
 
+  it('rejects an application deadline after the submission deadline on update (new pair, or one side moved against the stored other)', async () => {
+    const later = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    const { service, query } = setup();
+    await expect(service.update(bountyId, { submissionDeadline: future, applicationDeadline: later }, adminId))
+      .rejects.toMatchObject({ status: 400, message: 'APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE' });
+    // only the application side moves: compared with the stored submission deadline
+    await expect(service.update(bountyId, { applicationDeadline: later }, adminId)).rejects.toMatchObject({ message: 'APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE' });
+    // only the submission side moves earlier than the stored application deadline
+    const stored = { submission_deadline: later, application_deadline: later };
+    await expect(setup({ stored }).service.update(bountyId, { submissionDeadline: future }, adminId)).rejects.toMatchObject({ message: 'APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE' });
+    expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty'))).toBe(false);
+    // equal, earlier, cleared, or an edit that touches no deadline are fine (an old inverted row stays editable)
+    await expect(setup().service.update(bountyId, { submissionDeadline: future, applicationDeadline: future }, adminId)).resolves.toBeDefined();
+    await expect(setup({ stored }).service.update(bountyId, { applicationDeadline: null, submissionDeadline: future }, adminId)).resolves.toBeDefined();
+    await expect(setup({ stored: { submission_deadline: future, application_deadline: later } }).service.update(bountyId, { title: 'Edited' }, adminId)).resolves.toBeDefined();
+  });
+
   it('accepts future deadlines and clearing applicationDeadline with null', async () => {
     const { service, query } = setup();
     await service.update(bountyId, { submissionDeadline: future, applicationDeadline: null }, adminId);

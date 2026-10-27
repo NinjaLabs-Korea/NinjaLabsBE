@@ -442,7 +442,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     /** /submissions/me payment_status 와 GET /users/:nickname completedBounties[].payoutStatus — 둘 다 payoutStatusSql */
     async function shownStatus(who: { userId: string; nickname: string; submissionId: string }) {
       const mine = (await submissions.mySubmissions(who.userId)).find((row) => row.id === who.submissionId);
-      const profile = await new UsersService(db).publicProfile(who.nickname);
+      const profile = await new UsersService(db, new AuditService(db)).publicProfile(who.nickname);
       return { me: mine?.payment_status, profile: profile.completedBounties.map((row: { payoutStatus: string }) => row.payoutStatus) };
     }
 

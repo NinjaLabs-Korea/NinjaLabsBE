@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { assertMediaPathExists } from '../common/validation/media-reference';
+import { changedUrlViolates, isPublicHttpUrl, isPublicHttpUrlOrMediaPath } from '../common/validation/url';
 
 /** 운영자용 공지 관리 (초안 포함 전체 목록, 작성/수정/발행/삭제) */
 @Injectable()
@@ -25,6 +26,8 @@ export class NoticeAdminService {
     title: string; summary?: string; body: string; category: string;
     thumbnailUrl?: string; externalUrl?: string; eventDate?: string | null; publish?: boolean;
   }) {
+    // 행사 날짜는 EVENT 공지만의 것이다 - 다른 분류에 붙으면 공개 목록이 "Event date"를 그 카드에 그린다 (수정은 조용히 비운다: update 참고)
+    if (input.eventDate != null && input.category !== 'EVENT') throw new BadRequestException('EVENT_DATE_ONLY_FOR_EVENT');
     return this.db.tx(async (tx) => {
       await assertMediaPathExists(tx, input.thumbnailUrl);
       const r = await tx.query<{ id: string }>(
@@ -48,7 +51,6 @@ export class NoticeAdminService {
     const fields: Array<[string, unknown]> = [
       ['title', input.title], ['summary', input.summary], ['body', input.body],
       ['category', input.category], ['thumbnail_url', input.thumbnailUrl], ['external_url', input.externalUrl],
-      ['event_date', input.eventDate],
     ].filter((entry) => entry[1] !== undefined) as Array<[string, unknown]>;
     const expressions: string[] = [];
     if (input.publish !== undefined) {
@@ -57,6 +59,18 @@ export class NoticeAdminService {
       if (input.publish) expressions.push('published_at = COALESCE(published_at, now())');
       else fields.push(['published_at', null]);
     }
+    // 행사 날짜는 EVENT 공지에만 남는다. 수정은 400 대신 조용히 맞춘다 - FE 수정 폼은 저장된 값을 그대로 되보내서, 400이면 날짜가 붙어 있던 옛 공지를 고칠 수 없다.
+    //  - 분류를 EVENT 밖으로 바꾸면(또는 EVENT 아닌 분류로 저장하면) 날짜를 비운다
+    //  - 분류를 안 보내고 날짜만 보내면 저장된 분류가 EVENT일 때만 반영한다 (CASE)
+    if (input.category !== undefined && input.category !== 'EVENT') {
+      expressions.push('event_date = NULL');
+    } else if (input.eventDate !== undefined) {
+      if (input.category === undefined && input.eventDate !== null) {
+        fields.push(['event_date_if_event', input.eventDate]);
+      } else {
+        fields.push(['event_date', input.eventDate]);
+      }
+    }
     if (!fields.length) {
       // 바꿀 게 없는 PATCH도 없는/삭제된 공지는 404 — 존재하지 않는 id에 200 `{ id }`를 돌려주지 않는다
       const exists = await this.db.query(`SELECT 1 FROM notice WHERE id = $1 AND deleted_at IS NULL`, [noticeId]);
@@ -64,11 +78,25 @@ export class NoticeAdminService {
       return { id: noticeId };
     }
     const assignments = [
-      ...fields.map(([column], index) => `${column} = $${index + 2}`),
+      ...fields.map(([column], index) => (column === 'event_date_if_event'
+        ? `event_date = CASE WHEN category = 'EVENT' THEN $${index + 2}::date ELSE NULL END`
+        : `${column} = $${index + 2}`)),
       ...expressions,
     ].join(', ');
     return this.db.tx(async (tx) => {
       await assertMediaPathExists(tx, input.thumbnailUrl);
+      // 수정 DTO는 레거시 저장값을 되보내는 PATCH를 위해 완화 규칙이지만, 바뀐 URL은 생성과 같은 공개 호스트 규칙을 지켜야 한다 (localhost·사설 IP 우회 방지)
+      if (typeof input.externalUrl === 'string' || typeof input.thumbnailUrl === 'string') {
+        const stored = await tx.query<{ external_url: string | null; thumbnail_url: string | null }>(
+          `SELECT external_url, thumbnail_url FROM notice WHERE id = $1 AND deleted_at IS NULL`, [noticeId]);
+        if (!stored.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
+        if (changedUrlViolates(input.externalUrl, stored.rows[0].external_url, isPublicHttpUrl)) {
+          throw new BadRequestException(['externalUrl must be a public http(s) URL (no localhost or private addresses)']);
+        }
+        if (changedUrlViolates(input.thumbnailUrl, stored.rows[0].thumbnail_url, isPublicHttpUrlOrMediaPath)) {
+          throw new BadRequestException(['thumbnailUrl must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path']);
+        }
+      }
       const r = await tx.query(
         `UPDATE notice SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,
         [noticeId, ...fields.map(([, value]) => value)],

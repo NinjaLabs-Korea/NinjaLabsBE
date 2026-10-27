@@ -18,6 +18,14 @@ const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 /** Injective EVM 메인넷(1776) / 테스트넷(1439) */
 const INJECTIVE_EVM_CHAIN_IDS = [1439, 1776];
 
+/**
+ * 보상으로 받는 네이티브 토큰은 INJ(denom `inj`, 18자리)뿐이다. 심볼은 화면·집계·FE 소수 자릿수 표(INJ 18, USDC 6)의 열쇠라
+ * denom과 어긋나면 6자리 토큰이 18자리로 그려지고 (`<0.000001 INJ`), 소문자 `inj`는 표에 없어 입금 확인이 막힌다.
+ * 그래서 심볼은 denom에서 정해지고, 어긋난 입력은 거부한다. 새 자산을 지원할 때는 FE `TOKEN_DECIMALS`와 함께 여기에 추가한다.
+ */
+const NATIVE_INJ_DENOM = 'inj';
+const INJ_SYMBOL = 'INJ';
+
 /** REWARD_MULTISIG_ADDRESS 미설정 시 custody_address 자리표시값 — scripts/mainnet-preflight.sql이 이 값을 blocker로 찾는다 */
 export const PENDING_MULTISIG_SETUP = 'PENDING_MULTISIG_SETUP';
 
@@ -79,7 +87,7 @@ export class RewardTokenResolver implements OnModuleInit {
     const problem = rewardMultisigAddressProblem(raw);
     if (!problem) return;
     this.logger.error(
-      `REWARD_MULTISIG_ADDRESS${raw?.trim() ? `=${JSON.stringify(raw)}` : ''} ${problem} — required in production. ` +
+      `REWARD_MULTISIG_ADDRESS${raw?.trim() ? `=${JSON.stringify(raw)}` : ''} ${problem} - required in production. ` +
         (raw?.trim()
           ? 'New bounty rewards will show this address as the deposit address; fix the Railway variable before sponsors deposit (docs/runbook.md §1, §9).'
           : `New bounty rewards get custody_address ${PENDING_MULTISIG_SETUP} and sponsors have nowhere to deposit. Set it in the Railway dashboard (docs/runbook.md §1, §9).`),
@@ -88,10 +96,20 @@ export class RewardTokenResolver implements OnModuleInit {
 
   resolve(input: RewardInput | undefined): RewardInput | undefined {
     if (!input) return undefined;
-    const reward = input.displaySymbol.toUpperCase() === 'USDC' ? this.usdc(input) : input;
+    const reward: RewardInput = input.displaySymbol.toUpperCase() === 'USDC' ? this.usdc(input) : { ...input };
 
     if (reward.tokenType === 'NATIVE' && !reward.tokenDenom) {
       throw new BadRequestException('REWARD_TOKEN_DENOM_REQUIRED');
+    }
+    const symbol = reward.displaySymbol.toUpperCase();
+    if (reward.tokenType === 'NATIVE') {
+      // 지원하는 네이티브 자산은 inj뿐 - 다른 denom(peggy USDT 등)은 FE가 소수 자릿수를 몰라 금액을 못 읽는다. denom·심볼은 정규 표기로 저장한다
+      if (reward.tokenDenom!.toLowerCase() !== NATIVE_INJ_DENOM || symbol !== INJ_SYMBOL) throw new BadRequestException('REWARD_SYMBOL_DENOM_MISMATCH');
+      reward.tokenDenom = NATIVE_INJ_DENOM;
+      reward.displaySymbol = INJ_SYMBOL;
+    } else if (symbol === INJ_SYMBOL) {
+      // INJ 표기는 네이티브 inj만 쓴다 (CW20/ERC20에 INJ 이름을 붙여 18자리로 읽히게 하지 않는다)
+      throw new BadRequestException('REWARD_SYMBOL_DENOM_MISMATCH');
     }
     if (reward.tokenType === 'CW20' && !reward.tokenContractAddress) {
       throw new BadRequestException('REWARD_TOKEN_CONTRACT_REQUIRED');

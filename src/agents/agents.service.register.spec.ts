@@ -24,7 +24,7 @@ const { address: INJ_ADDRESS, publicKey: INJ_PUBKEY } = injKey();
 function setup(options: {
   insertError?: unknown;
   pendingAfterConflict?: boolean;
-  verifyRow?: { status: string; public_key: string | null; wallet_address: string } | null;
+  verifyRow?: { status: string; public_key: string | null; wallet_address: string; verified_at?: Date | null } | null;
   activateError?: unknown;
   ownerWallets?: string[];
   onboarded?: boolean;
@@ -39,7 +39,7 @@ function setup(options: {
       if (options.insertError) throw options.insertError;
       return { rowCount: 1, rows: [{ id: agentId }] };
     }
-    if (sql.includes('SELECT status, public_key, wallet_address FROM agent')) {
+    if (sql.includes('SELECT status, public_key, wallet_address, verified_at FROM agent')) {
       const row = options.verifyRow;
       return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
     }
@@ -66,17 +66,29 @@ describe('AgentsService.register input validation', () => {
     expect(db.tx).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['an inj1 wallet without a public key', INJ_ADDRESS, undefined],
-    ['an address that is neither 0x nor inj1', 'cosmos1qy352eufqy352eufqy352eufqy352euf0abc', INJ_PUBKEY],
-    ['an upper-case INJ1 prefix', INJ_ADDRESS.toUpperCase(), INJ_PUBKEY],
-  ])('rejects %s with 400 AGENT_PUBLIC_KEY_REQUIRED', async (_label, address, publicKey) => {
+  it('rejects an inj1 wallet without a public key with 400 AGENT_PUBLIC_KEY_REQUIRED', async () => {
     const { service, db } = setup();
-    await expect(service.register(ownerUserId, 'bot', undefined, publicKey, address)).rejects.toMatchObject({
-      status: 400,
-      message: 'AGENT_PUBLIC_KEY_REQUIRED',
-    });
+    await expect(service.register(ownerUserId, 'bot', undefined, undefined, INJ_ADDRESS)).rejects.toMatchObject({ status: 400, message: 'AGENT_PUBLIC_KEY_REQUIRED' });
     expect(db.tx).not.toHaveBeenCalled();
+  });
+
+  // the address is classified first: a wrong address is named as such even when a (valid) public key was sent
+  it.each([
+    ['an address that is neither 0x nor inj1', 'cosmos1qy352eufqy352eufqy352eufqy352euf0abc'],
+    ['cosmos1abc', 'cosmos1abc'],
+    ['a mixed-case inj1 address (bech32 is all lower or all upper)', `${INJ_ADDRESS.slice(0, 10)}${INJ_ADDRESS.slice(10).toUpperCase()}`],
+    ['a too short inj1 address', INJ_ADDRESS.slice(0, 20)],
+    ['an inj1 contract-length address', `${INJ_ADDRESS}qqqqqqqqqqqqqqqqqqqq`],
+  ])('rejects %s with 400 INVALID_AGENT_WALLET_ADDRESS even with a public key', async (_label, address) => {
+    const { service, db } = setup();
+    await expect(service.register(ownerUserId, 'bot', undefined, INJ_PUBKEY, address)).rejects.toMatchObject({ status: 400, message: 'INVALID_AGENT_WALLET_ADDRESS' });
+    expect(db.tx).not.toHaveBeenCalled();
+  });
+
+  it('an all-upper-case INJ1 address is folded to lower case and registered like the lower-case one', async () => {
+    const { service, txQuery } = setup();
+    await expect(service.register(ownerUserId, 'bot', undefined, INJ_PUBKEY, INJ_ADDRESS.toUpperCase())).resolves.toMatchObject({ agentId, status: 'PENDING_VERIFICATION' });
+    expect(txQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO agent ('))![1]).toContain(INJ_ADDRESS);
   });
 
   it('trims an inj1 address, stores it unchanged otherwise, and binds the public key to both the occupancy check and the INSERT', async () => {
@@ -176,9 +188,17 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
     expect(txQuery).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['ACTIVE', 'REVOKED', 'SUSPENDED'])('409 AGENT_ALREADY_VERIFIED for a %s agent, issuing no key', async (status) => {
-    const { service, txQuery } = setup({ verifyRow: { status, public_key: null, wallet_address: Wallet.createRandom().address } });
+  it.each([
+    ['ACTIVE', null], ['REVOKED', new Date()], ['SUSPENDED', new Date()],
+  ])('409 AGENT_ALREADY_VERIFIED for a %s agent that was verified, issuing no key', async (status, verified_at) => {
+    const { service, txQuery } = setup({ verifyRow: { status, public_key: null, wallet_address: Wallet.createRandom().address, verified_at } });
     await expect(service.verifyAndIssueKey(ownerUserId, agentId, '0xsig')).rejects.toMatchObject({ status: 409, message: 'AGENT_ALREADY_VERIFIED' });
+    expect(txQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO agent_api_key'))).toBe(false);
+  });
+
+  it.each(['REVOKED', 'SUSPENDED'])('409 AGENT_NOT_PENDING (not "already verified") for a %s agent that never verified, issuing no key', async (status) => {
+    const { service, txQuery } = setup({ verifyRow: { status, public_key: null, wallet_address: Wallet.createRandom().address, verified_at: null } });
+    await expect(service.verifyAndIssueKey(ownerUserId, agentId, '0xsig')).rejects.toMatchObject({ status: 409, message: 'AGENT_NOT_PENDING' });
     expect(txQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO agent_api_key'))).toBe(false);
   });
 
@@ -227,6 +247,25 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
     expect(statements[clear]).toContain("status = 'PENDING_VERIFICATION'");
     expect(statements[clear]).toContain("wallet_address ILIKE '0x%'");
     expect(txQuery.mock.calls[clear][1]).toEqual([signer.signingKey.compressedPublicKey, agentId]);
+  });
+
+  it('the verification message lists English, Korean and Chinese plus the no-gas line, bound to the agent and the owner', () => {
+    const message = AgentsService.verificationMessage(agentId, ownerUserId);
+    expect(message).toContain('AI agent registration verification');
+    expect(message).toContain('AI 에이전트 등록 검증');
+    expect(message).toContain('AI 代理注册验证');
+    expect(message).toContain('costs no gas');
+    expect(message).toContain(`agentId: ${agentId}`);
+    expect(message).toContain(`owner: ${ownerUserId}`);
+  });
+
+  it('a pending agent whose owner signed the old Korean-only text still verifies; a signature over another agent does not', async () => {
+    const signer = Wallet.createRandom();
+    const legacy = ['NinjaLabs AI 에이전트 등록 검증', `agentId: ${agentId}`, `owner: ${ownerUserId}`, '이 서명은 트랜잭션을 발생시키지 않으며 가스비가 들지 않습니다.'].join('\n');
+    const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
+    await expect(service.verifyAndIssueKey(ownerUserId, agentId, await signer.signMessage(legacy))).resolves.toMatchObject({ status: 'ACTIVE' });
+    const other = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
+    await expect(other.service.verifyAndIssueKey(ownerUserId, agentId, await signer.signMessage(legacy.replace(agentId, 'other')))).rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
   });
 
   it('an inj1 verify does not touch other rows (its key was checked against the address at register)', async () => {

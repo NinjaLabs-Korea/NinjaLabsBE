@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, 
 import { Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 import { Trim } from '../common/validation/trim';
-import { HasVisibleText } from '../common/validation/visible-text';
+import { HasNoBidiOverride, HasVisibleText, IsPlainDisplayText } from '../common/validation/visible-text';
 import { IsHttpUrlOrMediaPath, IsHttpUrlOrSitePath, IsSafeUrl } from '../common/validation/url';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
@@ -14,8 +14,8 @@ const HIGHLIGHT_TYPES = ['MILESTONE', 'FEATURED_BOUNTY', 'PROJECT', 'PARTNERSHIP
 
 export class CreateHighlightDto {
   @IsIn(HIGHLIGHT_TYPES) type!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(200) title!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxLength(2000) description!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(200) title!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(2000) description!: string;
   @IsOptional() @IsHttpUrlOrMediaPath() imageUrl?: string;
   // FE 내부 라우트(`/bounties/<slug>`)도 링크로 쓴다
   @IsOptional() @IsHttpUrlOrSitePath() linkUrl?: string;
@@ -29,8 +29,8 @@ export class CreateHighlightDto {
 // NOT NULL 컬럼(type/title/description/display_order)과 publish는 null을 400으로 막는다 (IsOptionalNotNull) — URL은 nullable이라 null = 지우기.
 export class UpdateHighlightDto {
   @IsOptionalNotNull() @IsIn(HIGHLIGHT_TYPES) type?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxChars(200) title?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @MaxLength(4000) description?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(200) title?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(4000) description?: string;
   @IsOptional() @IsSafeUrl() imageUrl?: string;
   @IsOptional() @IsSafeUrl() linkUrl?: string;
   @IsOptionalNotNull() @Type(() => Number) @IsInt() @Min(0) @MaxPgInt() displayOrder?: number;

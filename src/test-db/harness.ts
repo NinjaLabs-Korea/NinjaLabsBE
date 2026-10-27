@@ -27,7 +27,7 @@ export function testDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string | 
   const url = env.TEST_DATABASE_URL;
   if (!url && env.CI === 'true') {
     throw new Error(
-      'TEST_DATABASE_URL is not set while CI=true — the real-database suite must RUN in CI, not skip. ' +
+      'TEST_DATABASE_URL is not set while CI=true - the real-database suite must RUN in CI, not skip. ' +
         'Set TEST_DATABASE_URL on the db-tests job (see .github/workflows/ci.yml).',
     );
   }
@@ -45,7 +45,7 @@ export function testSslEnv(): { PGSSLMODE: string; DATABASE_CA_CERT: string | un
  */
 export function testConfig(overrides: Record<string, string | undefined> = {}): ConfigService {
   const url = process.env[TEST_DB_URL_ENV];
-  if (!url) throw new Error(`${TEST_DB_URL_ENV} is not set — jest.db.config.js global-setup did not run`);
+  if (!url) throw new Error(`${TEST_DB_URL_ENV} is not set - jest.db.config.js global-setup did not run`);
   const values: Record<string, string | undefined> = {
     NODE_ENV: 'test',
     DATABASE_URL: url,

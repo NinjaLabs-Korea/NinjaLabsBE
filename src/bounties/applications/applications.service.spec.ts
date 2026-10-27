@@ -250,3 +250,23 @@ describe('ApplicationsService apply rules', () => {
     expect(query.mock.calls[1][1]).toEqual(['agent']);
   });
 });
+
+describe('ApplicationsService check order (mode, status, no-application-needed, deadline)', () => {
+  const row = (overrides: Record<string, unknown>) => ({
+    rowCount: 1,
+    rows: [{ application_required: false, submission_mode: 'DIRECT', status: 'OPEN', submission_deadline: '2999-01-01', application_deadline: null, ...overrides }],
+  });
+  const agentApply = (overrides: Record<string, unknown>) =>
+    serviceWith(jest.fn().mockResolvedValue(row(overrides))).applyAsAgent('bounty', 'agent', 'hi');
+
+  it('an agent on a DIRECT bounty always gets DIRECT_SUBMISSION_REQUIRED, with or without applications', async () => {
+    await expect(agentApply({ application_required: false })).rejects.toMatchObject({ message: 'DIRECT_SUBMISSION_REQUIRED' });
+    await expect(agentApply({ application_required: true })).rejects.toMatchObject({ message: 'DIRECT_SUBMISSION_REQUIRED' });
+  });
+
+  it('a no-application AGENT bounty that is not open answers with the status error; when open, SUBMISSION_TYPE_BOUNTY', async () => {
+    await expect(agentApply({ submission_mode: 'AGENT', status: 'DRAFT' })).rejects.toMatchObject({ message: 'BOUNTY_NOT_OPEN' });
+    await expect(agentApply({ submission_mode: 'AGENT', status: 'SUBMISSION_CLOSED' })).rejects.toMatchObject({ message: 'BOUNTY_NOT_OPEN' });
+    await expect(agentApply({ submission_mode: 'AGENT', status: 'OPEN' })).rejects.toMatchObject({ message: 'SUBMISSION_TYPE_BOUNTY' });
+  });
+});

@@ -269,7 +269,7 @@ describeDb('ops scripts on a real database', () => {
 
       const again = await invoke(requeueNftJobs, [a.jobId, '--yes']);
       expect(again.code).toBe(1);
-      expect(again.out).toContain(`skip     ${a.jobId} — not found or not FAILED`);
+      expect(again.out).toContain(`skip     ${a.jobId} - not found or not FAILED`);
       expect((await invoke(requeueNftJobs, ['--all', '--yes'])).out).toContain('nothing to requeue');
     });
 
@@ -332,10 +332,14 @@ describeDb('ops scripts on a real database', () => {
       }, {});
     }
 
-    it('flags a database whose lower() does not fold non-ASCII capitals (nickname uniqueness depends on it) and is silent otherwise', async () => {
-      const folds = (await pool.query<{ ok: boolean }>(`SELECT lower('CAFÉ') = 'café' AS ok`)).rows[0].ok;
-      const rows = (await runPreflight()).nickname_case_folding ?? [];
-      expect(rows).toHaveLength(folds ? 0 : 1);
+    it('nickname uniqueness no longer depends on the database locale (0019): silent when the ICU collation exists and no two active nicknames fold together', async () => {
+      const result = await runPreflight();
+      expect(result.nickname_icu_collation_missing ?? []).toHaveLength(0);
+      expect(result.nickname_fold_collision ?? []).toHaveLength(0);
+      // the unique index folds with the same expression the preflight uses, so a C-locale database cannot hold CAFÉ next to café
+      const collide = pool.query(
+        `INSERT INTO "user" (google_id, email, nickname, bio) SELECT 'g-' || x, x || '@x.test', n, '' FROM (VALUES ('fold1', 'Café'), ('fold2', 'CAFÉ')) AS v(x, n)`);
+      await expect(collide).rejects.toMatchObject({ code: '23505', constraint: 'uq_user_nickname_active' });
     });
 
     it('wraps everything in a READ ONLY transaction that ends in ROLLBACK, and contains no write statements', () => {

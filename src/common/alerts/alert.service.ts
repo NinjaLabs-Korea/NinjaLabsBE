@@ -45,7 +45,7 @@ export class AlertService {
     const url = config.get<string>('OPS_ALERT_WEBHOOK_URL');
     const status = webhookStatus(url);
     if (status === 'invalid') {
-      this.logger.error('OPS_ALERT_WEBHOOK_URL is not a valid https URL — ops alerts will be logged only');
+      this.logger.error('OPS_ALERT_WEBHOOK_URL is not a valid https URL - ops alerts will be logged only');
     }
     this.webhookUrl = status === 'ok' ? url!.trim() : undefined;
     this.environment = config.get<string>('RAILWAY_ENVIRONMENT_NAME') || config.get<string>('NODE_ENV') || 'development';
@@ -86,7 +86,7 @@ export class AlertService {
       try {
         const ok = await this.deliver(this.webhookUrl, key, text);
         if (ok) this.markDelivered(key, this.now(), reported);
-        else this.track(key).suppressed += 1; // 이번 발생도 보고되지 못했다 — 다음 알림의 억제 수에 넣는다
+        else this.track(key).suppressed += 1; // 이번 발생도 보고되지 못했다 - 다음 알림의 억제 수에 넣는다
         return ok;
       } finally {
         this.inFlight.delete(key);
@@ -106,7 +106,7 @@ export class AlertService {
     await this.sleep(ALERT_RETRY_DELAY_MS);
     const second = await postOpsAlert(url, text);
     if (second.ok) return true;
-    this.logger.warn(`ops alert webhook delivery failed for ${logSafe(key, 100)}: ${second.reason} (attempt 2/2, giving up — the next occurrence will try again)`);
+    this.logger.warn(`ops alert webhook delivery failed for ${logSafe(key, 100)}: ${second.reason} (attempt 2/2, giving up - the next occurrence will try again)`);
     return false;
   }
 

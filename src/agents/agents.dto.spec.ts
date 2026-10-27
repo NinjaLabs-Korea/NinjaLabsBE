@@ -38,3 +38,10 @@ describe('RegisterAgentDto control and bidi characters', () => {
     for (const name of ['Trusted Admin Bot', '닌자 봇', 'bot-1_v2.0', '👩\u200D💻 coder']) expect(await failedFields({ ...wallet, name })).toEqual([]);
   });
 });
+
+describe('RegisterAgentDto names with no glyph (default-ignorable and lone combining marks)', () => {
+  const wallet = { walletAddress: '0x1111111111111111111111111111111111111111' };
+  it.each(['️', '️️️', '͏', '́', '឴'])('rejects %j', async (name) => {
+    expect(await failedFields({ ...wallet, name })).toEqual(['name']);
+  });
+});

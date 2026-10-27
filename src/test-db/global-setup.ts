@@ -11,7 +11,7 @@ export default async function globalSetup(): Promise<void> {
   const adminUrl = testDatabaseUrl();
   if (!adminUrl) {
     process.stdout.write(
-      '\n[test:db] TEST_DATABASE_URL is not set — real-database tests are SKIPPED.\n' +
+      '\n[test:db] TEST_DATABASE_URL is not set - real-database tests are SKIPPED.\n' +
         '[test:db] Point it at a Postgres the user may CREATE DATABASE on, e.g.\n' +
         '[test:db]   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres npm run test:db\n\n',
     );

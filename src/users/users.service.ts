@@ -1,15 +1,29 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { payoutStatusSql } from '../rewards/payout-status';
 import { isSavableNickname, normalizeNickname } from './nickname';
 
-/** 활성 유저 닉네임 유니크 인덱스 (0001_users.sql, lower(nickname) WHERE deleted_at IS NULL) */
+/** 활성 유저 닉네임 유니크 인덱스 (0019_nickname_unicode_fold.sql, 접힌 닉네임 WHERE deleted_at IS NULL) */
 export const NICKNAME_UNIQUE_INDEX = 'uq_user_nickname_active';
+
+/**
+ * 닉네임의 대소문자 접힘 SQL 식 - 위 인덱스 식과 글자 하나까지 같아야 한다 (바꾸면 마이그레이션도 새로).
+ * 기본 lower()는 DB lc_ctype을 따라 C 로케일에서 `CAFÉ`/`café`를 다른 이름으로 본다. ICU collation을 명시하면 로케일과 무관하다.
+ */
+export const nicknameKeySql = (expr: string) => `lower(${expr} COLLATE "und-x-icu")`;
+
+/** 닉네임을 이미 정한 사람의 다음 변경까지 기다려야 하는 시간 - 이름이 곧 신원(공개 프로필 URL, 멤버 표시)이라 빠른 양도·선점을 막는다 */
+export const NICKNAME_CHANGE_COOLDOWN_HOURS = 24;
+export const NICKNAME_CHANGED_AUDIT_ACTION = 'USER_NICKNAME_CHANGED';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * 닉네임 사용 가능 여부 (활성 유저 기준, 대소문자 무시) — "available"은 "지금 저장하면 받아 준다"는 뜻이다.
@@ -19,7 +33,7 @@ export class UsersService {
   async nicknameAvailable(nickname: unknown): Promise<boolean> {
     if (!isSavableNickname(nickname)) return false;
     const r = await this.db.query(
-      `SELECT 1 FROM "user" WHERE lower(nickname) = lower($1) AND deleted_at IS NULL`,
+      `SELECT 1 FROM "user" WHERE ${nicknameKeySql('nickname')} = ${nicknameKeySql('$1::text')} AND deleted_at IS NULL`,
       [normalizeNickname(nickname)],
     );
     return r.rowCount === 0;
@@ -40,6 +54,25 @@ export class UsersService {
 
   private async doCompleteProfile(userId: string, nickname: string, bio: string, tags: string[]) {
     return this.db.tx(async (tx) => {
+      // 행 잠금: 같은 유저의 동시 저장 두 건이 둘 다 쿨다운 검사를 통과하지 못하게 한다 (탈퇴 경합도 여기서 0행)
+      const current = await tx.query<{ nickname: string; onboarding_step: number }>(
+        `SELECT nickname, onboarding_step FROM "user" WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [userId],
+      );
+      if (!current.rowCount) throw new NotFoundException('USER_NOT_FOUND');
+      // 프로필을 한 번 저장한 뒤(step >= 4) 닉네임이 바뀌는 경우만 제한·기록한다: 임시 닉네임에서 첫 이름을 정하거나 오타를 고치는 온보딩 재저장, 자기소개·태그만 고치는 저장은 자유.
+      const previous = current.rows[0];
+      const renamed = previous.onboarding_step >= 4 && previous.nickname !== nickname;
+      if (renamed) {
+        const recent = await tx.query(
+          `SELECT 1 FROM audit_log
+            WHERE action = $2 AND entity_type = 'user' AND entity_id = $1
+              AND created_at > now() - make_interval(hours => $3::int)
+            LIMIT 1`,
+          [userId, NICKNAME_CHANGED_AUDIT_ACTION, NICKNAME_CHANGE_COOLDOWN_HOURS],
+        );
+        if (recent.rowCount) throw new ConflictException('NICKNAME_CHANGE_COOLDOWN');
+      }
       const updated = await tx.query(
         `UPDATE "user"
             SET nickname = $2, bio = $3, onboarding_step = 4
@@ -48,6 +81,10 @@ export class UsersService {
       );
       // 동시 탈퇴가 먼저 커밋됐으면 0행이다 — 탈퇴자 행에 태그를 다시 심고 성공으로 답하지 않는다
       if (!updated.rowCount) throw new NotFoundException('USER_NOT_FOUND');
+      if (renamed) {
+        // 이전 이름은 바로 풀려 다른 사람이 가져갈 수 있다 - 누가 언제 무엇에서 무엇으로 바꿨는지 남긴다 (닉네임은 공개 정보)
+        await this.audit.record(userId, NICKNAME_CHANGED_AUDIT_ACTION, 'user', userId, tx, { before: { nickname: previous.nickname }, after: { nickname } });
+      }
       await tx.query(`DELETE FROM user_tag WHERE user_id = $1`, [userId]);
       for (const tag of new Set(tags)) {
         await tx.query(`INSERT INTO user_tag (user_id, tag) VALUES ($1, $2)`, [userId, tag]);
@@ -87,7 +124,7 @@ export class UsersService {
               COALESCE(array_agg(t.tag ORDER BY t.tag) FILTER (WHERE t.tag IS NOT NULL), '{}') AS tags
          FROM "user" u
          LEFT JOIN user_tag t ON t.user_id = u.id
-        WHERE lower(u.nickname) = lower($1)
+        WHERE ${nicknameKeySql('u.nickname')} = ${nicknameKeySql('$1::text')}
           AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
           AND u.onboarding_completed_at IS NOT NULL
         GROUP BY u.id`,

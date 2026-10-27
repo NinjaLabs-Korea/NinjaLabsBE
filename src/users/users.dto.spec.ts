@@ -13,6 +13,15 @@ const failedFields = async (body: object) =>
 const valid = { nickname: 'ninja_dev', bio: 'Builder', tags: ['DEV'] };
 
 describe('CompleteProfileDto', () => {
+  it.each(['\u200B\u200B\u200B', '\u3164\u3164', '\u2800\u2800', '\u00AD\u00AD', '\u202E'])('rejects invisible-only bio %j', async (bio) => {
+    expect(await failedFields({ ...valid, bio })).toEqual(['bio']);
+  });
+
+  it('rejects a bio containing a bidi override but keeps multi-line text', async () => {
+    expect(await failedFields({ ...valid, bio: 'trusted\u202Etop' })).toEqual(['bio']);
+    expect(await failedFields({ ...valid, bio: 'line one\nline two' })).toEqual([]);
+  });
+
   it('accepts unicode letters/digits with _ . - and trims surrounding whitespace', async () => {
     expect(await failedFields(valid)).toEqual([]);
     expect(await failedFields({ ...valid, nickname: '닌자.개발자-01' })).toEqual([]);
@@ -128,5 +137,15 @@ describe('confusable nicknames (look-alikes of reserved words and of existing na
 
   it.each(['ninja_dev', '닌자.개발자-01', 'Привет', 'Ελληνικά', 'dev한글', 'ㅋㅋㅋ'])('still accepts the single-script name %p', async (nickname) => {
     expect(await failedFields({ ...valid, nickname })).toEqual([]);
+  });
+});
+
+describe('보이지 않는 결합 문자가 낀 닉네임 (기존 멤버·예약어 사칭)', () => {
+  it.each(['coreni\u034Fnja', 'Admi\u034Fn', 'builde\u17B4rone', 'coreninja\u034F', 'c\u034F\u034F\u034Foreninja', 'ni\u180Bnja'])('rejects %j everywhere', (nickname) => {
+    expect(NICKNAME.test(nickname)).toBe(false);
+    expect(isSavableNickname(nickname)).toBe(false);
+  });
+  it('still accepts a legitimate combining mark', () => {
+    expect(isSavableNickname('caf\u0065\u0301')).toBe(true);
   });
 });

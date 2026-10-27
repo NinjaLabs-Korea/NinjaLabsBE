@@ -86,6 +86,15 @@ describe('BountyAdminService EVM rewards', () => {
     expect(dbQuery).not.toHaveBeenCalled();
   });
 
+  it('rejects a new bounty whose application deadline is after its submission deadline before touching the database', async () => {
+    const txQuery = jest.fn();
+    const { db, dbQuery } = dbWith(txQuery);
+    const body = { ...input, submissionDeadline: new Date(Date.now() + 10 * 86_400_000).toISOString(), applicationDeadline: new Date(Date.now() + 20 * 86_400_000).toISOString() };
+    await expect(adminServicesFor(db).bounties.create('admin', body)).rejects.toMatchObject({ status: 400, message: 'APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE' });
+    expect(txQuery).not.toHaveBeenCalled();
+    expect(dbQuery).not.toHaveBeenCalled();
+  });
+
   it('rejects USDC rewards when the EVM contract is not configured', async () => {
     process.env.INJECTIVE_EVM_CHAIN_ID = '1439';
     delete process.env.USDC_EVM_CONTRACT_ADDRESS;

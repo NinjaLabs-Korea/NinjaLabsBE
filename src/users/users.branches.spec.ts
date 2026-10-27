@@ -1,4 +1,5 @@
 import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { createMockDb } from '../test-support/mock-db';
 import { UsersController } from './users.controller';
@@ -14,7 +15,7 @@ afterEach(() => jest.restoreAllMocks());
 describe('UsersService.nicknameAvailable', () => {
   function setup(rowCount: number) {
     const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount, rows: [] }));
-    return { query, service: new UsersService(createMockDb({ query }).database) };
+    return { query, service: new UsersService(createMockDb({ query }).database, new AuditService(createMockDb({ query }).database)) };
   }
 
   it('looks up the trimmed value case-insensitively among active users: free → true, taken → false', async () => {
@@ -22,7 +23,7 @@ describe('UsersService.nicknameAvailable', () => {
     await expect(free.service.nicknameAvailable('  Ninja.Dev  ')).resolves.toBe(true);
     const [sql, params] = free.query.mock.calls[0];
     expect(params).toEqual(['Ninja.Dev']);
-    expect(sql).toContain('lower(nickname) = lower($1)');
+    expect(sql).toContain('lower(nickname COLLATE "und-x-icu") = lower($1::text COLLATE "und-x-icu")');
     expect(sql).toContain('deleted_at IS NULL');
 
     await expect(setup(1).service.nicknameAvailable('ninja')).resolves.toBe(false);
@@ -37,32 +38,33 @@ describe('UsersService.nicknameAvailable', () => {
 
 describe('UsersService.completeProfile / completeOnboarding', () => {
   it('updates nickname/bio/step 4 for the active user, replaces the tag set, and answers {ok:true} — all in one transaction', async () => {
-    const txQuery = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [] }));
+    const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: sql.includes('FOR UPDATE') ? [{ nickname: 'user_ab12', onboarding_step: 1 }] : [] }));
     const { database, db } = createMockDb({ txQuery });
-    const service = new UsersService(database);
+    const service = new UsersService(database, new AuditService(database));
     await expect(service.completeProfile(userId, 'ninja', 'bio', ['DESIGN', 'DEV'])).resolves.toEqual({ ok: true });
     expect(db.tx).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
     const calls = txQuery.mock.calls;
-    expect(calls[0][0]).toContain('SET nickname = $2, bio = $3, onboarding_step = 4');
-    expect(calls[0][0]).toContain('WHERE id = $1 AND deleted_at IS NULL');
-    expect(calls[0][1]).toEqual([userId, 'ninja', 'bio']);
+    expect(calls[0][0]).toContain('FOR UPDATE');
+    expect(calls[1][0]).toContain('SET nickname = $2, bio = $3, onboarding_step = 4');
+    expect(calls[1][0]).toContain('WHERE id = $1 AND deleted_at IS NULL');
+    expect(calls[1][1]).toEqual([userId, 'ninja', 'bio']);
     // the old set is cleared before the new one is written (an edit that removes a tag really removes it)
-    expect(calls[1]).toEqual(['DELETE FROM user_tag WHERE user_id = $1', [userId]]);
-    expect(calls.slice(2).map(([, params]) => params)).toEqual([[userId, 'DESIGN'], [userId, 'DEV']]);
+    expect(calls[2]).toEqual(['DELETE FROM user_tag WHERE user_id = $1', [userId]]);
+    expect(calls.slice(3).map(([, params]) => params)).toEqual([[userId, 'DESIGN'], [userId, 'DEV']]);
   });
 
   it('a non-unique database failure propagates unchanged (not reported as NICKNAME_TAKEN)', async () => {
     const failure = Object.assign(new Error('value too long'), { code: '22001' });
     const db = { tx: jest.fn(async () => { throw failure; }) };
-    const error = await new UsersService(db as unknown as DatabaseService).completeProfile(userId, 'n', 'b', ['DEV']).catch((caught: unknown) => caught);
+    const error = await new UsersService(db as unknown as DatabaseService, {} as AuditService).completeProfile(userId, 'n', 'b', ['DEV']).catch((caught: unknown) => caught);
     expect(error).toBe(failure);
     expect(error).not.toBeInstanceOf(ConflictException);
   });
 
   it('completeOnboarding only stamps a user that saved the profile and has not completed yet (the first completion time is kept)', async () => {
     const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [] }));
-    const service = new UsersService(createMockDb({ query }).database);
+    const service = new UsersService(createMockDb({ query }).database, new AuditService(createMockDb({ query }).database));
     await expect(service.completeOnboarding(userId)).resolves.toEqual({ ok: true });
     expect(query.mock.calls[0][0]).toContain('SET onboarding_completed_at = now()');
     expect(query.mock.calls[0][0]).toContain('WHERE id = $1 AND onboarding_completed_at IS NULL AND onboarding_step >= 4');
@@ -72,15 +74,15 @@ describe('UsersService.completeProfile / completeOnboarding', () => {
   it('completeOnboarding is idempotent for a completed user, 409 PROFILE_REQUIRED before the profile is saved, 404 for a missing user', async () => {
     const answers = [{ rowCount: 0, rows: [] }, { rowCount: 1, rows: [{ done: true }] }];
     const query = jest.fn(async () => answers.shift()!);
-    await expect(new UsersService(createMockDb({ query }).database).completeOnboarding(userId)).resolves.toEqual({ ok: true });
+    await expect(new UsersService(createMockDb({ query }).database, new AuditService(createMockDb({ query }).database)).completeOnboarding(userId)).resolves.toEqual({ ok: true });
 
     const early = [{ rowCount: 0, rows: [] }, { rowCount: 1, rows: [{ done: false }] }];
     const q2 = jest.fn(async () => early.shift()!);
-    await expect(new UsersService(createMockDb({ query: q2 }).database).completeOnboarding(userId)).rejects.toMatchObject({ message: 'PROFILE_REQUIRED', status: 409 });
+    await expect(new UsersService(createMockDb({ query: q2 }).database, new AuditService(createMockDb({ query: q2 }).database)).completeOnboarding(userId)).rejects.toMatchObject({ message: 'PROFILE_REQUIRED', status: 409 });
 
     const gone = [{ rowCount: 0, rows: [] }, { rowCount: 0, rows: [] }];
     const q3 = jest.fn(async () => gone.shift()!);
-    await expect(new UsersService(createMockDb({ query: q3 }).database).completeOnboarding(userId)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(new UsersService(createMockDb({ query: q3 }).database, new AuditService(createMockDb({ query: q3 }).database)).completeOnboarding(userId)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 
@@ -97,7 +99,7 @@ describe('UsersService.publicProfile result shape', () => {
       if (sql.includes('FROM nft n')) return { rowCount: 1, rows: [nft] };
       throw new Error(`unexpected ${sql}`);
     });
-    const service = new UsersService(createMockDb({ query }).database);
+    const service = new UsersService(createMockDb({ query }).database, new AuditService(createMockDb({ query }).database));
     await expect(service.publicProfile('ninja')).resolves.toEqual({ ...user, completedBounties: [bounty], agents: [agent], nfts: [nft] });
     expect(query.mock.calls[0][1]).toEqual(['ninja']);
     expect(query.mock.calls[0][0]).toContain("u.deleted_at IS NULL AND u.status = 'ACTIVE'");

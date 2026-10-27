@@ -81,9 +81,9 @@ function refusalReason(submission, admin) {
   }
   if (submission.submission_status !== 'APPROVED') return `submission is ${submission.submission_status}, not APPROVED`;
   if (submission.payouts > 0) {
-    return `${submission.payouts} payout row(s) exist for this submission — correct or cancel the payout per ${RUNBOOK} instead`;
+    return `${submission.payouts} payout row(s) exist for this submission - correct or cancel the payout per ${RUNBOOK} instead`;
   }
-  if (submission.nfts > 0) return `a completion NFT exists for this submission — not an unpayable award (${RUNBOOK})`;
+  if (submission.nfts > 0) return `a completion NFT exists for this submission - not an unpayable award (${RUNBOOK})`;
   return null;
 }
 
@@ -162,7 +162,7 @@ async function run(argv, deps) {
   const { submission, admin } = await inspectSubmission(deps.pool, submissionId, adminId);
   const refused = refusalReason(submission, admin);
   if (refused) {
-    log(`refused  ${submissionId} — ${refused}`);
+    log(`refused  ${submissionId} - ${refused}`);
     return 1;
   }
   log(`award    ${submissionId}  bounty=${submission.bounty_id} (${submission.bounty_status})  status=${submission.submission_status}  payouts=0`);
@@ -182,7 +182,7 @@ async function run(argv, deps) {
     return 0;
   } catch (err) {
     if (err instanceof OpsError) {
-      log(`refused  ${submissionId} — ${err.message}`);
+      log(`refused  ${submissionId} - ${err.message}`);
       return 1;
     }
     throw err;

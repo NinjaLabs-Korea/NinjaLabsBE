@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.service';
 import { createMockDb } from '../test-support/mock-db';
 import { payoutStatusSql } from '../rewards/payout-status';
 import { UsersService } from './users.service';
@@ -10,7 +11,7 @@ describe('UsersService publicProfile', () => {
       if (sql.includes('FROM "user" u')) return { rowCount: 1, rows: [{ id: userId, nickname: 'ryan', tags: [] }] };
       return { rowCount: 0, rows: [] };
     });
-    return { query, service: new UsersService(createMockDb({ query }).database) };
+    return { query, service: new UsersService(createMockDb({ query }).database, {} as AuditService) };
   }
 
   it('lists only what the user (or their agents) actually received: PAID payouts, excluding deleted bounties', async () => {
@@ -57,7 +58,7 @@ describe('UsersService publicProfile', () => {
 
   it('returns 404 for unknown or inactive users', async () => {
     const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
-    await expect(new UsersService(createMockDb({ query }).database).publicProfile('ghost'))
+    await expect(new UsersService(createMockDb({ query }).database, {} as AuditService).publicProfile('ghost'))
       .rejects.toMatchObject({ message: 'USER_NOT_FOUND' });
     expect(query.mock.calls[0][1]).toEqual(['ghost']);
   });
@@ -69,9 +70,10 @@ describe('UsersService completeProfile', () => {
   function setup(failOn?: { sql: string; error: Error }) {
     const query = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (failOn && sql.includes(failOn.sql)) throw failOn.error;
-      return { rowCount: 1, rows: [] };
+      return { rowCount: 1, rows: sql.includes('FOR UPDATE') ? [{ nickname: 'user_ab12', onboarding_step: 1 }] : [] };
     });
-    return { query, service: new UsersService(createMockDb({ txQuery: query }).database) };
+    const { database } = createMockDb({ txQuery: query });
+    return { query, service: new UsersService(database, new AuditService(database)) };
   }
 
   it('maps only the nickname unique index to 409 NICKNAME_TAKEN', async () => {
@@ -84,9 +86,10 @@ describe('UsersService completeProfile', () => {
 
   it('a concurrent withdrawal (UPDATE matches no row) → 404 USER_NOT_FOUND and no tags are written for the withdrawn user', async () => {
     const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 0, rows: [] }));
-    const service = new UsersService(createMockDb({ txQuery: query }).database);
+    const { database } = createMockDb({ txQuery: query });
+    const service = new UsersService(database, new AuditService(database));
     await expect(service.completeProfile(userId, 'n', 'b', ['DEV'])).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(1); // the row lock finds nothing, so nothing else runs
   });
 
   it('inserts each tag once even if the caller repeats one', async () => {

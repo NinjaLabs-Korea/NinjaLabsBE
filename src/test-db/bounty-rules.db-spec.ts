@@ -282,6 +282,23 @@ describeDb('bounty rules on a real database', () => {
     expect((await submissions.mySubmissions(user)).map((r) => r.bounty_id)).toEqual([kept]);
   });
 
+  it('/applications/me carries bounty_status and both deadlines, so a cancellation auto-reject is distinguishable from a sponsor rejection', async () => {
+    const cancelled = await createBounty({ applicationRequired: true });
+    const open = await createBounty({ applicationRequired: true });
+    for (const id of [cancelled, open]) await bounties.transition(id, 'OPEN', adminId);
+    const user = await createUser(db);
+    const pending = await applications.apply(cancelled, user, 'hi');
+    const approved = await applications.apply(open, user, 'hi');
+    await applicationReview.review(approved.id, 'APPROVED', undefined, adminId);
+    await bounties.transition(cancelled, 'CANCELLED', adminId);
+    const rows = await applications.myApplications(user);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(pending.id)).toMatchObject({ status: 'REJECTED', bounty_status: 'CANCELLED', application_deadline: null });
+    expect(byId.get(pending.id)?.submission_deadline).toBeInstanceOf(Date);
+    expect(byId.get(approved.id)).toMatchObject({ status: 'APPROVED', bounty_status: 'OPEN', application_deadline: null });
+    expect(byId.get(approved.id)?.submission_deadline).toBeInstanceOf(Date);
+  });
+
   it('withdrawal is limited to the applicant and their own agents, and only while PENDING', async () => {
     const id = await createBounty({ applicationRequired: true });
     await bounties.transition(id, 'OPEN', adminId);

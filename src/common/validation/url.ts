@@ -114,6 +114,27 @@ export function isPublicHttpUrlOrMediaPath(value: unknown): boolean {
   return isPublicHttpUrl(value) || isMediaPath(value);
 }
 
+/** 링크 필드의 엄격 규칙 (하이라이트 linkUrl) */
+export function isPublicHttpUrlOrSitePath(value: unknown): boolean {
+  return isPublicHttpUrl(value) || isSitePath(value);
+}
+
+/**
+ * 엄격 URL 규칙의 **단일 출처**: 판정 함수와 400 메시지 꼬리를 한 곳에 둔다.
+ * 생성 DTO 데코레이터(IsPublicHttpUrl, IsHttpUrlOrMediaPath, IsHttpUrlOrSitePath)와 수정 시 "바뀐 값" 검사(STRICT_URL_TARGETS)가 모두 이 표를 쓰므로
+ * 규칙이나 문구를 바꾸면 두 경로가 같이 바뀐다. 메시지는 `${필드} ${message}`로 만든다.
+ */
+const STRICT_URL_RULES = {
+  // 사용자가 내는 외부 링크(공지 externalUrl 등)
+  publicHttp: { test: isPublicHttpUrl, message: 'must be a public http(s) URL (no localhost or private addresses)' },
+  // 이미지는 공개 페이지가 열고 Next 이미지 최적화가 서버에서 가져온다 - localhost·사설 IP·내부 호스트는 공지 externalUrl처럼 거부
+  image: { test: isPublicHttpUrlOrMediaPath, message: 'must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path' },
+  // 하이라이트 링크는 공개 Hall of Fame이 연다 - 위와 같은 호스트 규칙
+  link: { test: isPublicHttpUrlOrSitePath, message: 'must be a public http(s) URL (no localhost or private addresses) or a site-relative path' },
+} as const;
+
+type StrictUrlRule = keyof typeof STRICT_URL_RULES;
+
 /**
  * 수정 DTO는 완화 규칙(IsSafeUrl)이라 레거시 저장값을 되보내는 PATCH를 받는다. 그렇다고 수정이 엄격 규칙의 우회로가 되면 안 된다 -
  * 저장값과 **다른** 새 값(null로 지우기 제외)은 생성과 같은 엄격 규칙을 통과해야 한다. 위반이면 true.
@@ -124,20 +145,19 @@ export function changedUrlViolates(next: string | null | undefined, stored: stri
 
 /** 수정 시 "바뀐 URL" 검사를 받을 수 있는 테이블과 컬럼 (SQL에 끼우는 식별자라 사용자 입력이 아닌 이 고정 목록만 쓴다) */
 const STRICT_URL_TARGETS = {
-  notice: { columns: ['external_url', 'thumbnail_url'], notDeleted: true },
-  platform_highlight: { columns: ['image_url', 'link_url'], notDeleted: false },
-  bounty: { columns: ['cover_image_url'], notDeleted: true },
-} as const;
+  notice: { columns: { external_url: 'publicHttp', thumbnail_url: 'image' }, notDeleted: true },
+  platform_highlight: { columns: { image_url: 'image', link_url: 'link' }, notDeleted: false },
+  bounty: { columns: { cover_image_url: 'image' }, notDeleted: true },
+} as const satisfies Record<string, { columns: Record<string, StrictUrlRule>; notDeleted: boolean }>;
 
 type StrictUrlTable = keyof typeof STRICT_URL_TARGETS;
 
-export interface ChangedUrlPair {
-  /** PATCH 본문의 새 값 (undefined = 안 보냄, null = 지우기) */
-  next: string | null | undefined;
-  column: string;
-  strict: (value: unknown) => boolean;
-  /** 위반 시 400 본문 (생성 DTO의 메시지와 같은 문구) */
-  message: string;
+/** PATCH 본문의 새 값 (undefined = 안 보냄, null = 지우기) */
+type ChangedUrlValue = string | null | undefined;
+
+/** `cover_image_url` -> `coverImageUrl` (400 메시지에 쓰는 DTO 필드 이름) */
+function toFieldName(column: string): string {
+  return column.replace(/_([a-z])/g, (_, ch: string) => ch.toUpperCase());
 }
 
 /**
@@ -147,23 +167,25 @@ export interface ChangedUrlPair {
  */
 export async function assertChangedUrlsStrict(
   tx: Pick<DatabaseService, 'query'>,
-  options: { table: StrictUrlTable; id: string; notFoundCode: string; pairs: ChangedUrlPair[] },
+  options: { table: StrictUrlTable; id: string; notFoundCode: string; values: Record<string, ChangedUrlValue> },
 ): Promise<void> {
   const target = STRICT_URL_TARGETS[options.table];
   if (!target) throw new Error(`unsupported table: ${String(options.table)}`);
-  const pairs = options.pairs.filter((pair) => typeof pair.next === 'string');
-  if (!pairs.length) return;
-  for (const pair of pairs) {
-    if (!(target.columns as readonly string[]).includes(pair.column)) throw new Error(`unsupported column: ${pair.column}`);
+  const rules: Record<string, StrictUrlRule> = target.columns;
+  const sent = Object.entries(options.values).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
+  if (!sent.length) return;
+  for (const [column] of sent) {
+    if (!Object.hasOwn(rules, column)) throw new Error(`unsupported column: ${column}`);
   }
-  const columns = [...new Set(pairs.map((pair) => pair.column))].join(', ');
+  const columns = sent.map(([column]) => column).join(', ');
   const stored = await tx.query<Record<string, string | null>>(
     `SELECT ${columns} FROM ${options.table} WHERE id = $1${target.notDeleted ? ' AND deleted_at IS NULL' : ''} FOR UPDATE`,
     [options.id],
   );
   if (!stored.rowCount) throw new NotFoundException(options.notFoundCode);
-  for (const pair of pairs) {
-    if (changedUrlViolates(pair.next, stored.rows[0][pair.column], pair.strict)) throw new BadRequestException([pair.message]);
+  for (const [column, next] of sent) {
+    const rule = STRICT_URL_RULES[rules[column]];
+    if (changedUrlViolates(next, stored.rows[0][column], rule.test)) throw new BadRequestException([`${toFieldName(column)} ${rule.message}`]);
   }
 }
 
@@ -184,12 +206,12 @@ export const IsPublicHttpUrl = (options?: ValidationOptions) =>
     {
       name: 'isPublicHttpUrl',
       validator: {
-        validate: (value) => isPublicHttpUrl(value),
+        validate: (value) => STRICT_URL_RULES.publicHttp.test(value),
         // 너무 긴 URL은 "공개 URL이어야 한다"가 아니라 길이 문제로 알려 준다 (FE가 긴 링크와 localhost 링크를 구분해 안내할 수 있게)
         defaultMessage: (args) =>
           isTooLongUrl(args?.value)
             ? `${args?.property} must be at most ${MAX_URL_LENGTH} characters`
-            : buildMessage((prefix) => `${prefix}$property must be a public http(s) URL (no localhost or private addresses)`, options)(args),
+            : buildMessage((prefix) => `${prefix}$property ${STRICT_URL_RULES.publicHttp.message}`, options)(args),
       },
     },
     options,
@@ -200,9 +222,8 @@ export const IsHttpUrlOrMediaPath = (options?: ValidationOptions) =>
     {
       name: 'isHttpUrlOrMediaPath',
       validator: {
-        // 이미지는 공개 페이지가 열고 Next 이미지 최적화가 서버에서 가져온다 - localhost·사설 IP·내부 호스트는 공지 externalUrl처럼 거부
-        validate: (value) => isPublicHttpUrl(value) || isMediaPath(value),
-        defaultMessage: buildMessage((prefix) => `${prefix}$property must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path`, options),
+        validate: (value) => STRICT_URL_RULES.image.test(value),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property ${STRICT_URL_RULES.image.message}`, options),
       },
     },
     options,
@@ -213,9 +234,8 @@ export const IsHttpUrlOrSitePath = (options?: ValidationOptions) =>
     {
       name: 'isHttpUrlOrSitePath',
       validator: {
-        // 하이라이트 링크는 공개 Hall of Fame이 연다 - localhost·사설 IP·내부 호스트는 공지 externalUrl처럼 거부
-        validate: (value) => isPublicHttpUrl(value) || isSitePath(value),
-        defaultMessage: buildMessage((prefix) => `${prefix}$property must be a public http(s) URL (no localhost or private addresses) or a site-relative path`, options),
+        validate: (value) => STRICT_URL_RULES.link.test(value),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property ${STRICT_URL_RULES.link.message}`, options),
       },
     },
     options,

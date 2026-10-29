@@ -7,7 +7,7 @@ import { BountyStatus, BountyStatusPolicy } from '../bounty-status';
 import { SubmissionDecision, SubmissionStatus, SubmissionStatusPolicy } from '../submission-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { assertMediaPathExists } from '../../common/validation/media-reference';
-import { assertChangedUrlsStrict, isPublicHttpUrlOrMediaPath } from '../../common/validation/url';
+import { assertChangedUrlsStrict } from '../../common/validation/url';
 import { RewardInput, RewardTokenResolver } from './reward-token.resolver';
 
 /** 저장된 마감과 이 차이 미만이면 "바꾸지 않은 값" — FE의 datetime-local 입력은 초/밀리초를 보존하지 못한다 */
@@ -126,7 +126,7 @@ export class BountyAdminService {
       await assertMediaPathExists(tx, input.coverImageUrl); // 없는 /media/<id>를 저장하면 공개 카드가 깨진 이미지를 그린다
       await assertChangedUrlsStrict(tx, {
         table: 'bounty', id: bountyId, notFoundCode: 'BOUNTY_NOT_FOUND',
-        pairs: [{ next: input.coverImageUrl, column: 'cover_image_url', strict: isPublicHttpUrlOrMediaPath, message: 'coverImageUrl must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path' }],
+        values: { cover_image_url: input.coverImageUrl },
       });
       // 승인 수 확인과 max_winners 변경 사이에 APPROVE가 끼어들지 않도록 바운티 행을 잠근다 (심사도 같은 행을 잠근다)
       const cur = await tx.query<{ id: string; status: string; submission_deadline: string | Date; application_deadline: string | Date | null }>(

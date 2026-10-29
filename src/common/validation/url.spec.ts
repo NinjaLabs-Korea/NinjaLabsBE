@@ -165,33 +165,43 @@ describe('IsPublicHttpUrl failure message', () => {
 });
 
 describe('assertChangedUrlsStrict', () => {
-  const strict = (value: unknown) => isPublicHttpUrl(value);
-  const pair = (next: string | null | undefined, column = 'external_url') => ({ next, column, strict, message: 'bad url' });
+  const pair = (next: string | null | undefined, column = 'external_url') => ({ [column]: next });
   const dbWith = (stored: string | null) => ({ query: jest.fn().mockResolvedValue({ rowCount: 1, rows: [{ external_url: stored }] }) });
-  const run = (tx: ReturnType<typeof dbWith>, pairs: ReturnType<typeof pair>[]) =>
-    assertChangedUrlsStrict(tx as never, { table: 'notice', id: 'id-1', notFoundCode: 'NOTICE_NOT_FOUND', pairs });
+  const run = (tx: ReturnType<typeof dbWith>, values: ReturnType<typeof pair>) =>
+    assertChangedUrlsStrict(tx as never, { table: 'notice', id: 'id-1', notFoundCode: 'NOTICE_NOT_FOUND', values });
 
   it('passes an unchanged legacy value', async () => {
-    await expect(run(dbWith('cdn.example/x.png'), [pair('cdn.example/x.png')])).resolves.toBeUndefined();
+    await expect(run(dbWith('cdn.example/x.png'), pair('cdn.example/x.png'))).resolves.toBeUndefined();
   });
 
   it('rejects a changed private host with 400 and the given message', async () => {
-    await expect(run(dbWith('https://a.example.com/x'), [pair('http://127.0.0.1/x')])).rejects.toMatchObject({ status: 400, response: { message: ['bad url'] } });
+    await expect(run(dbWith('https://a.example.com/x'), pair('http://127.0.0.1/x'))).rejects.toMatchObject({ status: 400, response: { message: ['externalUrl must be a public http(s) URL (no localhost or private addresses)'] } });
   });
 
   it('allows a changed public URL and null (clear) and skips the query when nothing is sent', async () => {
-    await expect(run(dbWith(null), [pair('https://b.example.com/x')])).resolves.toBeUndefined();
+    await expect(run(dbWith(null), pair('https://b.example.com/x'))).resolves.toBeUndefined();
     const cleared = dbWith('cdn.example/x.png');
-    await expect(run(cleared, [pair(null)])).resolves.toBeUndefined();
+    await expect(run(cleared, pair(null))).resolves.toBeUndefined();
     expect(cleared.query).not.toHaveBeenCalled();
     const omitted = dbWith(null);
-    await run(omitted, [pair(undefined)]);
+    await run(omitted, pair(undefined));
     expect(omitted.query).not.toHaveBeenCalled();
   });
 
   it('404s when the row is missing and refuses columns outside the whitelist', async () => {
     const empty = { query: jest.fn().mockResolvedValue({ rowCount: 0, rows: [] }) };
-    await expect(run(empty as never, [pair('https://b.example.com/x')])).rejects.toMatchObject({ status: 404 });
-    await expect(run(dbWith(null), [pair('https://b.example.com/x', 'title; DROP TABLE x')])).rejects.toThrow('unsupported column');
+    await expect(run(empty as never, pair('https://b.example.com/x'))).rejects.toMatchObject({ status: 404 });
+    await expect(run(dbWith(null), pair('https://b.example.com/x', 'title; DROP TABLE x'))).rejects.toThrow('unsupported column');
+  });
+
+  it.each([
+    ['platform_highlight', 'link_url', 'linkUrl', 'http://127.0.0.1/x', 'must be a public http(s) URL (no localhost or private addresses) or a site-relative path'],
+    ['platform_highlight', 'image_url', 'imageUrl', 'http://127.0.0.1/x', 'must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path'],
+    ['bounty', 'cover_image_url', 'coverImageUrl', '/uploads/x.png', 'must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path'],
+  ])('%s.%s uses the same rule and message as the create DTO', async (table, column, field, next, tail) => {
+    const tx = { query: jest.fn().mockResolvedValue({ rowCount: 1, rows: [{ [column]: null }] }) };
+    await expect(
+      assertChangedUrlsStrict(tx as never, { table: table as 'bounty', id: 'id-1', notFoundCode: 'X', values: { [column]: next } }),
+    ).rejects.toMatchObject({ response: { message: [`${field} ${tail}`] } });
   });
 });

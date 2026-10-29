@@ -3,7 +3,7 @@ import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { isForeignKeyViolation } from '../common/database/pg-errors';
 import { assertMediaPathExists } from '../common/validation/media-reference';
-import { assertChangedUrlsStrict, isPublicHttpUrl, isPublicHttpUrlOrMediaPath, isSitePath } from '../common/validation/url';
+import { assertChangedUrlsStrict } from '../common/validation/url';
 
 /** 운영자용 Hall of Fame 하이라이트 관리 */
 @Injectable()
@@ -78,10 +78,7 @@ export class HighlightAdminService {
       // 수정 DTO는 완화 규칙이지만 바뀐 URL은 생성 DTO와 같은 엄격 규칙을 지켜야 한다 (localhost·사설 IP 우회 방지)
       await assertChangedUrlsStrict(tx, {
         table: 'platform_highlight', id: highlightId, notFoundCode: 'HIGHLIGHT_NOT_FOUND',
-        pairs: [
-          { next: input.imageUrl, column: 'image_url', strict: isPublicHttpUrlOrMediaPath, message: 'imageUrl must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path' },
-          { next: input.linkUrl, column: 'link_url', strict: (v) => isPublicHttpUrl(v) || isSitePath(v), message: 'linkUrl must be a public http(s) URL (no localhost or private addresses) or a site-relative path' },
-        ],
+        values: { image_url: input.imageUrl, link_url: input.linkUrl },
       });
       const r = await tx.query(
         `UPDATE platform_highlight SET ${assignments} WHERE id = $1 RETURNING id, is_published`,

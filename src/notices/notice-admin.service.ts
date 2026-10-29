@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { assertMediaPathExists } from '../common/validation/media-reference';
-import { assertChangedUrlsStrict, isPublicHttpUrl, isPublicHttpUrlOrMediaPath } from '../common/validation/url';
+import { assertChangedUrlsStrict } from '../common/validation/url';
 
 /** 운영자용 공지 관리 (초안 포함 전체 목록, 작성/수정/발행/삭제) */
 @Injectable()
@@ -88,10 +88,7 @@ export class NoticeAdminService {
       // 수정 DTO는 레거시 저장값을 되보내는 PATCH를 위해 완화 규칙이지만, 바뀐 URL은 생성과 같은 공개 호스트 규칙을 지켜야 한다 (localhost·사설 IP 우회 방지)
       await assertChangedUrlsStrict(tx, {
         table: 'notice', id: noticeId, notFoundCode: 'NOTICE_NOT_FOUND',
-        pairs: [
-          { next: input.externalUrl, column: 'external_url', strict: isPublicHttpUrl, message: 'externalUrl must be a public http(s) URL (no localhost or private addresses)' },
-          { next: input.thumbnailUrl, column: 'thumbnail_url', strict: isPublicHttpUrlOrMediaPath, message: 'thumbnailUrl must be a public http(s) URL (no localhost or private addresses) or a /media/<uuid> path' },
-        ],
+        values: { external_url: input.externalUrl, thumbnail_url: input.thumbnailUrl },
       });
       const r = await tx.query(
         `UPDATE notice SET ${assignments} WHERE id = $1 AND deleted_at IS NULL RETURNING id, status`,

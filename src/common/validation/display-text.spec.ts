@@ -20,7 +20,7 @@ const valid = { title: '닌자랩스 공지', body: '본문입니다' };
 const BAD_BOTH = [
   ['empty', ''],
   ['whitespace only', '   '],
-  ['invisible only', '​⁠'],
+  ['invisible only', '\u200b\u2060'],
   ['too long (max + 1)', 'a'.repeat(11)],
 ] as const;
 
@@ -50,7 +50,7 @@ describe('DisplayTitle / DisplayBody', () => {
   });
 
   it('rejects a bidi override in both (RLO)', async () => {
-    expect(await failedFields({ title: 'ab‮cd', body: 'ab‮cd' })).toEqual(['body', 'title']);
+    expect(await failedFields({ title: 'ab\u202ecd', body: 'ab\u202ecd' })).toEqual(['body', 'title']);
   });
 
   it('rejects line breaks in a title only; a body may be multi-line', async () => {
@@ -77,7 +77,7 @@ describe('OptionalDisplayTitle / OptionalDisplayBody', () => {
     expect(await failedFields({ title: null, body: null }, OptionalProbe)).toEqual(['body', 'title']);
   });
 
-  it.each([...BAD_BOTH, ['bidi override', 'ab‮cd']] as const)('rejects %s for both', async (_name, value) => {
+  it.each([...BAD_BOTH, ['bidi override', 'ab\u202ecd']] as const)('rejects %s for both', async (_name, value) => {
     expect(await failedFields({ title: value, body: value }, OptionalProbe)).toEqual(['body', 'title']);
   });
 });
@@ -96,7 +96,7 @@ describe('NullableDisplayBody', () => {
   });
 
   it('turns an invisible-only or blank value into null', async () => {
-    for (const value of ['​⁠', '   ']) {
+    for (const value of ['\u200b\u2060', '   ']) {
       const probe = plainToInstance(NullableProbe, { note: value });
       expect(probe.note).toBeNull();
       expect(await validate(probe)).toEqual([]);
@@ -108,7 +108,7 @@ describe('NullableDisplayBody', () => {
   });
 
   it.each([
-    ['bidi override', 'ab‮cd'],
+    ['bidi override', 'ab\u202ecd'],
     ['too long (max + 1)', 'a'.repeat(11)],
     ['non-string', 5],
   ])('rejects %s', async (_name, value) => {

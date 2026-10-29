@@ -5,7 +5,7 @@
  *
  *   node scripts/forfeit-award.js <submission-id> --reason <text> --admin <admin-user-id> [--dry-run] [--yes]
  *
- *   --reason   몰수 사유 (필수, 앞뒤 공백 제거 후 1~500자). 심사 기록 코멘트 'forfeited: <reason>'과 감사 행에 남는다.
+ *   --reason   몰수 사유 (필수, 앞뒤 공백 제거 후 1~500자(코드 포인트), 보이는 글자가 있는 한 줄, 개행·제어·방향 제어 문자 불가). 심사 기록 코멘트 'forfeited: <reason>'과 감사 행에 남는다.
  *              이 코멘트는 제출자의 `GET /submissions/me` review_comment로 보인다.
  *   --admin    결정한 운영자의 user id — 활성(ACTIVE, 탈퇴 안 함) is_admin 유저여야 한다. 심사 기록 reviewer와 감사 actor가 된다.
  *   --dry-run  검사 결과와 계획만 출력하고 아무것도 쓰지 않는다
@@ -32,11 +32,27 @@ const SOURCE = 'scripts/forfeit-award.js';
 const REASON_MAX = 500;
 const RUNBOOK = 'docs/runbook.md §7.4';
 
-/** 사유 정규화 — 앞뒤 공백 제거, 1~500자가 아니면 null */
-function normalizeReason(raw) {
-  if (typeof raw !== 'string') return null;
+/**
+ * src/common/validation/visible-text.ts의 INVISIBLE / DISPLAY_NAME_FORBIDDEN 사본 (이 스크립트는 plain JS라 TS를 import할 수 없다).
+ * forfeit-award.spec.ts가 전 코드 포인트에서 두 구현이 같은 답을 내는지 대조하므로, 원본을 고치면 여기도 같이 고친다.
+ */
+const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}\p{Z}\p{Co}\p{Cn}\p{Cs}\uFFFC\u2800]/gu;
+const DISPLAY_FORBIDDEN = /[\p{Cc}\u2028\u2029\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/u;
+
+/** 사유가 거부되는 이유 (통과면 null) — 이 문구가 제출자 화면에 나가기 전에 운영자에게 먼저 보인다 */
+function reasonProblem(raw) {
+  if (typeof raw !== 'string') return 'reason must be text';
   const reason = raw.trim();
-  return reason.length >= 1 && reason.length <= REASON_MAX ? reason : null;
+  if (!/[^\p{M}]/u.test(reason.replace(INVISIBLE, ''))) return 'reason must contain visible characters';
+  if (DISPLAY_FORBIDDEN.test(reason)) return 'reason must be one line without direction or control characters';
+  const length = [...reason].length;
+  if (length > REASON_MAX) return `reason must be at most ${REASON_MAX} characters (got ${length})`;
+  return null;
+}
+
+/** 사유 정규화 — 앞뒤 공백 제거. 보이는 글자가 있는 한 줄이고 1~500자(코드 포인트)가 아니면 null */
+function normalizeReason(raw) {
+  return reasonProblem(raw) === null ? raw.trim() : null;
 }
 
 /** 심사 기록 코멘트 */
@@ -150,7 +166,7 @@ async function run(argv, deps) {
     if (positional.length !== 1) problems.push(`expected exactly one <submission-id>, got ${positional.length}`);
     else if (!UUID_RE.test(positional[0])) problems.push('<submission-id> must be a UUID');
     if (values.reason === undefined) problems.push('--reason <text> is required');
-    else if (!reason) problems.push(`--reason must be 1 to ${REASON_MAX} characters after trimming (got ${values.reason.trim().length})`);
+    else if (!reason) problems.push(`--reason must be 1 to ${REASON_MAX} characters of one-line visible text (${reasonProblem(values.reason)})`);
     if (values.admin === undefined) problems.push('--admin <admin-user-id> is required');
     else if (!UUID_RE.test(values.admin)) problems.push('--admin must be a user UUID');
     log(`${problems.join('\n')}\n${USAGE}`);
@@ -190,7 +206,7 @@ async function run(argv, deps) {
 }
 
 module.exports = {
-  run, forfeitAward, inspectSubmission, refusalReason, normalizeReason, reviewComment,
+  run, forfeitAward, inspectSubmission, refusalReason, normalizeReason, reasonProblem, reviewComment,
   FORFEITABLE_BOUNTY_STATUSES, ACTION, REASON_MAX,
 };
 

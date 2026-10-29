@@ -172,7 +172,7 @@ describe('nickname — adversarial table', () => {
     ['ab\n', true],
     ['닌자', true],
     ['٣٣', true], // Arabic-Indic digits are \p{N}
-    ['Ⅻx', true], // letter-number
+    ['Ⅻx', false], // Roman numeral block U+2100-218F looks like Latin letters: rejected
     ['a.b-c_d', true],
     ['a..b', true], // inner dots are fine — only leading/trailing dots make "." / ".." segments
     ['😀😀', false], // emoji is neither \p{L} nor \p{N}

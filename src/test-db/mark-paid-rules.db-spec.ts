@@ -41,11 +41,11 @@ describeDb('reward and payout rules on a real database', () => {
   const normalized = (hash: string) => `0x${hash.slice(2).toLowerCase()}`;
 
   /** 입금 확인까지 끝나고 OPEN인 바운티 (보상 한 개) */
-  async function openFunded(options: { amount?: string; deposit?: string; maxWinners?: number } = {}) {
+  async function openFunded(options: { amount?: string; deposit?: string; maxWinners?: number; submissionMode?: 'DIRECT' | 'AGENT' } = {}) {
     const amount = options.amount ?? '1000';
     const { id: bountyId } = await bounties.create(adminId, {
       title: unique('paid-rules-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
-      category: 'DEV', applicationRequired: false, submissionMode: 'DIRECT', maxWinners: options.maxWinners ?? 1,
+      category: 'DEV', applicationRequired: false, submissionMode: options.submissionMode ?? 'DIRECT', maxWinners: options.maxWinners ?? 1,
       submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
       reward: { tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount },
     });
@@ -261,12 +261,36 @@ describeDb('reward and payout rules on a real database', () => {
     it('pays the primary, connected wallet of the submitter and stores a per-(submission, reward) idempotency key', async () => {
       const { bountyId, rewardId } = await openFunded();
       const winner = await approvedWinner(bountyId);
-      // a secondary wallet and a disconnected old primary must not be picked
+      // a secondary wallet and a disconnected old primary (the unique primary index only covers connected rows) must not be picked
       await db.query(`INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, false, now())`, [winner.userId, `inj1${unique()}`]);
+      await db.query(`INSERT INTO wallet (user_id, chain, address, is_primary, verified_at, disconnected_at) VALUES ($1, 'INJECTIVE', $2, true, now(), now())`, [winner.userId, `inj1${unique()}`]);
       const payout = await rewards.requestPayout(rewardId, winner.submissionId, '100', adminId);
       const row = await db.query<{ recipient_wallet_id: string; idempotency_key: string; amount: string }>(
         `SELECT recipient_wallet_id, idempotency_key, amount::text FROM payout WHERE id = $1`, [payout.id]);
       expect(row.rows[0]).toEqual({ recipient_wallet_id: winner.walletId, idempotency_key: `submission:${winner.submissionId}:reward:${rewardId}`, amount: '100' });
+    });
+
+    it('an agent submission pays the primary, connected wallet of the agent owner', async () => {
+      const { bountyId, rewardId } = await openFunded({ submissionMode: 'AGENT' });
+      const ownerId = await createUser(db);
+      const wallet = await createPrimaryWallet(db, ownerId);
+      const agentId = (await db.query<{ id: string }>(
+        `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at)
+         VALUES ($1, 'payout-bot', $2, $3, 'ACTIVE', now()) RETURNING id`,
+        [ownerId, unique('pk-'), `0x${unique()}`])).rows[0].id;
+      const submission = await submissions.submitAsAgent(bountyId, agentId, { submissionUrl: `https://x.test/${unique()}`, description: 'd' });
+      await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
+      const payout = await rewards.requestPayout(rewardId, submission.id, '100', adminId);
+      const row = await db.query<{ recipient_wallet_id: string }>(`SELECT recipient_wallet_id FROM payout WHERE id = $1`, [payout.id]);
+      expect(row.rows[0].recipient_wallet_id).toBe(wallet.id);
+    });
+
+    it('a reward of a soft-deleted bounty takes no payout request: 404 REWARD_NOT_FOUND and no payout row', async () => {
+      const { bountyId, rewardId } = await openFunded();
+      const winner = await approvedWinner(bountyId);
+      await db.query(`UPDATE bounty SET deleted_at = now() WHERE id = $1`, [bountyId]);
+      await expect(rewards.requestPayout(rewardId, winner.submissionId, '100', adminId)).rejects.toMatchObject({ status: 404, message: 'REWARD_NOT_FOUND' });
+      expect((await db.query(`SELECT 1 FROM payout WHERE submission_id = $1`, [winner.submissionId])).rowCount).toBe(0);
     });
 
     it('a submitter whose primary wallet is disconnected has no recipient: 404 APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND', async () => {

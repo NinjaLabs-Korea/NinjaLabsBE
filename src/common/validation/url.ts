@@ -1,4 +1,6 @@
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { buildMessage, isURL, ValidateBy, ValidationOptions } from 'class-validator';
+import type { DatabaseService } from '../database/database.service';
 
 /**
  * URL 입력 검증 — DTO 필드에 붙여 쓴다. 전부 http(s)만 허용한다 (`javascript:`/`data:` 차단).
@@ -118,6 +120,51 @@ export function isPublicHttpUrlOrMediaPath(value: unknown): boolean {
  */
 export function changedUrlViolates(next: string | null | undefined, stored: string | null | undefined, strict: (value: unknown) => boolean): boolean {
   return typeof next === 'string' && next !== stored && !strict(next);
+}
+
+/** 수정 시 "바뀐 URL" 검사를 받을 수 있는 테이블과 컬럼 (SQL에 끼우는 식별자라 사용자 입력이 아닌 이 고정 목록만 쓴다) */
+const STRICT_URL_TARGETS = {
+  notice: { columns: ['external_url', 'thumbnail_url'], notDeleted: true },
+  platform_highlight: { columns: ['image_url', 'link_url'], notDeleted: false },
+  bounty: { columns: ['cover_image_url'], notDeleted: true },
+} as const;
+
+type StrictUrlTable = keyof typeof STRICT_URL_TARGETS;
+
+export interface ChangedUrlPair {
+  /** PATCH 본문의 새 값 (undefined = 안 보냄, null = 지우기) */
+  next: string | null | undefined;
+  column: string;
+  strict: (value: unknown) => boolean;
+  /** 위반 시 400 본문 (생성 DTO의 메시지와 같은 문구) */
+  message: string;
+}
+
+/**
+ * 수정(PATCH)에서 저장값과 **다른** 새 URL이 생성과 같은 엄격 규칙을 지키는지 검사한다 (changedUrlViolates 참고).
+ * 호출자의 트랜잭션 안에서 행을 `FOR UPDATE`로 읽어 비교하므로 동시 수정과 어긋나지 않는다. 행이 없으면 404 `notFoundCode`.
+ * 보낸 URL이 없거나 전부 null이면 쿼리하지 않는다 (404는 호출자의 UPDATE가 낸다).
+ */
+export async function assertChangedUrlsStrict(
+  tx: Pick<DatabaseService, 'query'>,
+  options: { table: StrictUrlTable; id: string; notFoundCode: string; pairs: ChangedUrlPair[] },
+): Promise<void> {
+  const target = STRICT_URL_TARGETS[options.table];
+  if (!target) throw new Error(`unsupported table: ${String(options.table)}`);
+  const pairs = options.pairs.filter((pair) => typeof pair.next === 'string');
+  if (!pairs.length) return;
+  for (const pair of pairs) {
+    if (!(target.columns as readonly string[]).includes(pair.column)) throw new Error(`unsupported column: ${pair.column}`);
+  }
+  const columns = [...new Set(pairs.map((pair) => pair.column))].join(', ');
+  const stored = await tx.query<Record<string, string | null>>(
+    `SELECT ${columns} FROM ${options.table} WHERE id = $1${target.notDeleted ? ' AND deleted_at IS NULL' : ''} FOR UPDATE`,
+    [options.id],
+  );
+  if (!stored.rowCount) throw new NotFoundException(options.notFoundCode);
+  for (const pair of pairs) {
+    if (changedUrlViolates(pair.next, stored.rows[0][pair.column], pair.strict)) throw new BadRequestException([pair.message]);
+  }
 }
 
 export const IsHttpUrl = (options?: ValidationOptions) =>

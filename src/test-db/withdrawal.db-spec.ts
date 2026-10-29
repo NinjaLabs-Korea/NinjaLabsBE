@@ -14,7 +14,7 @@ import { RewardsService } from '../rewards/rewards.service';
 import { AccountWithdrawalService } from '../users/account-withdrawal.service';
 import { UsersService } from '../users/users.service';
 import { describeDb } from './describe-db';
-import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique } from './harness';
+import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, waitForLockWaiter } from './harness';
 
 describeDb('account withdrawal on a real database', () => {
   let db: DatabaseService;
@@ -285,7 +285,7 @@ describeDb('account withdrawal on a real database', () => {
     let settled = false;
     const request = rewards.requestPayout(won.rewardId, submission.id, '1000', adminId).finally(() => { settled = true; });
     request.catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await Promise.race([waitForLockWaiter(db, 'the payout request to wait on the user row'), request]);
     expect(settled).toBe(false); // blocked on the user row
     release();
     await withdrawing;
@@ -316,7 +316,7 @@ describeDb('account withdrawal on a real database', () => {
     let settled = false;
     const approval = submissionReview.review(submission.id, 'APPROVE', undefined, adminId).finally(() => { settled = true; });
     approval.catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await Promise.race([waitForLockWaiter(db, 'the approval to wait on the user row'), approval]);
     expect(settled).toBe(false); // blocked on the user row
     release();
     await withdrawing;
@@ -349,7 +349,7 @@ describeDb('account withdrawal on a real database', () => {
     let settled = false;
     const withdrawing = withdrawal.withdraw(builder, nickname).finally(() => { settled = true; });
     withdrawing.catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await Promise.race([waitForLockWaiter(db, 'the withdrawal to wait on the user row'), withdrawing]);
     expect(settled).toBe(false); // blocked on the user row
     release();
     await approving;

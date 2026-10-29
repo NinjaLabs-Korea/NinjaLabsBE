@@ -1,9 +1,8 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional } from 'class-validator';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
-import { DisplayBody, DisplayTitle, OptionalDisplayBody, OptionalDisplayTitle } from '../common/validation/display-text';
-import { HasNoBidiOverride, NullIfInvisible } from '../common/validation/visible-text';
+import { DisplayBody, DisplayTitle, NullableDisplayBody, OptionalDisplayBody, OptionalDisplayTitle } from '../common/validation/display-text';
 import { IsHttpUrlOrMediaPath, IsPublicHttpUrl, IsSafeUrl } from '../common/validation/url';
 import { NoticeAdminService } from './notice-admin.service';
 import { IsCalendarDate } from '../common/validation/calendar-date';
@@ -13,7 +12,7 @@ const NOTICE_CATEGORIES = ['NINJALABS', 'INJECTIVE_ECOSYSTEM', 'EVENT', 'RECRUIT
 
 export class CreateNoticeDto {
   @DisplayTitle(200) title!: string;
-  @IsOptional() @NullIfInvisible() @IsString() @HasNoBidiOverride() @MaxLength(500) summary?: string;
+  @NullableDisplayBody(500) summary?: string;
   @DisplayBody(50_000) body!: string;
   @IsIn(NOTICE_CATEGORIES) category!: string;
   @IsOptional() @IsHttpUrlOrMediaPath() thumbnailUrl?: string;
@@ -29,7 +28,7 @@ export class CreateNoticeDto {
 // NOT NULL 컬럼(title/body/category)과 publish는 null을 400으로 막는다 (IsOptionalNotNull) — summary·URL은 nullable이라 null = 지우기.
 export class UpdateNoticeDto {
   @OptionalDisplayTitle(200) title?: string;
-  @IsOptional() @NullIfInvisible() @IsString() @HasNoBidiOverride() @MaxLength(1000) summary?: string;
+  @NullableDisplayBody(1000) summary?: string;
   @OptionalDisplayBody(100_000) body?: string;
   @IsOptionalNotNull() @IsIn(NOTICE_CATEGORIES) category?: string;
   @IsOptional() @IsSafeUrl() thumbnailUrl?: string;

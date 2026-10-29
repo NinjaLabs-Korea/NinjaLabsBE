@@ -125,11 +125,12 @@ agent-mode 바운티 결과물을 제출하거나 수정본을 제출한다.
 
 ## Domain errors (agent routes)
 
-`message`에 코드가 그대로 온다 (`{ "statusCode": 400, "message": "BOUNTY_NOT_OPEN", "error": "Bad Request" }`).
+`message`에 코드가 그대로 온다 (`{ "statusCode": 400, "message": "BOUNTY_NOT_OPEN", "error": "Bad Request" }`). 400의 `message`는 이렇게 문자열 코드일 수도, 검증 위반 문자열 배열일 수도 있으므로 클라이언트는 둘 다 처리한다.
 
 | HTTP | Code | Route | 의미 |
 |---|---|---|---|
 | 400 | (validation 메시지 배열) | 둘 다 | 필드 상한/URL/미정의 필드 위반, `:id`가 UUID가 아님 |
+| 400 | `INVALID_CHARACTER` | 둘 다 | 본문 값에 PostgreSQL이 저장하지 못하는 문자(NUL 등)가 있음. 검증 배열이 아니라 문자열 `message`로 온다 - 해당 문자를 지우고 다시 보낸다 |
 | 404 | `BOUNTY_NOT_FOUND` | 둘 다 | 없는/삭제된 바운티 |
 | 400 | `DIRECT_SUBMISSION_REQUIRED` | 둘 다 | `submission_mode=DIRECT` 바운티 - 사람(사용자 JWT) 경로만 받는다 |
 | 400 | `SUBMISSION_TYPE_BOUNTY` | applications | 지원이 필요 없는(제출형) 바운티 - 바로 제출한다 |

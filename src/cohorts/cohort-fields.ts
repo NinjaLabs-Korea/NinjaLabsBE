@@ -4,6 +4,7 @@ import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsIn, IsNotEmpty, IsOptional, IsS
 import { MaxChars } from '../common/validation/max-chars';
 import { IsOptionalNotNull } from '../common/validation/optional-not-null';
 import { NullIfBlank, Trim } from '../common/validation/trim';
+import { HasNoBidiOverride, HasVisibleText, IsPlainDisplayText, NullIfInvisible, hasVisibleText } from '../common/validation/visible-text';
 import { ACTIVITY_TYPES, INTEREST_AREAS, OTHER, WEB3_EXPERIENCES } from './cohort-status';
 
 /**
@@ -59,29 +60,29 @@ const UniqueArray = () => Transform(({ value }: { value: unknown }) => (Array.is
 
 /** 지원서 입력 필드: 생성 DTO. 컬럼 길이(VARCHAR 60/40, intro 1000)를 그대로 상한으로 쓴다 (MaxChars = Postgres 코드 포인트) */
 export class CohortApplicationFields {
-  @Trim() @IsString() @IsNotEmpty() @MaxChars(60) displayName!: string;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(60) displayName!: string;
   @NormalizeTelegram() @IsString() @Matches(TELEGRAM_HANDLE, { message: 'telegram must be a valid Telegram username (5-32 letters, digits or _)' }) telegram!: string;
   @NormalizeTwitter() @IsString() @Matches(TWITTER_HANDLE, { message: 'twitter must be a valid X (Twitter) username (1-15 letters, digits or _)' }) twitter!: string;
   @IsIn(WEB3_EXPERIENCES) web3Experience!: string;
   @IsIn(ACTIVITY_TYPES) activityType!: string;
   /** activityType 이 OTHER 일 때만 의미가 있고 그때는 필수 (assertOtherDetails), 아니면 무시하고 NULL 로 저장 */
-  @IsOptional() @NullIfBlank() @IsString() @MaxChars(60) activityTypeOther?: string | null;
+  @IsOptional() @NullIfBlank() @NullIfInvisible() @IsString() @IsPlainDisplayText() @MaxChars(60) activityTypeOther?: string | null;
   @UniqueArray() @IsArray() @ArrayNotEmpty() @ArrayMaxSize(INTEREST_AREAS.length) @IsIn(INTEREST_AREAS, { each: true }) interestAreas!: string[];
-  @IsOptional() @NullIfBlank() @IsString() @MaxChars(60) interestOther?: string | null;
-  @Trim() @IsString() @IsNotEmpty() @MaxChars(1000) intro!: string;
+  @IsOptional() @NullIfBlank() @NullIfInvisible() @IsString() @IsPlainDisplayText() @MaxChars(60) interestOther?: string | null;
+  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxChars(1000) intro!: string;
 }
 
 /** 수정: 모두 선택. NOT NULL 컬럼은 null 을 400 으로 막는다 (IsOptionalNotNull), 기타 상세는 nullable */
 export class UpdateCohortApplicationDto {
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxChars(60) displayName?: string;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(60) displayName?: string;
   @IsOptionalNotNull() @NormalizeTelegram() @IsString() @Matches(TELEGRAM_HANDLE, { message: 'telegram must be a valid Telegram username (5-32 letters, digits or _)' }) telegram?: string;
   @IsOptionalNotNull() @NormalizeTwitter() @IsString() @Matches(TWITTER_HANDLE, { message: 'twitter must be a valid X (Twitter) username (1-15 letters, digits or _)' }) twitter?: string;
   @IsOptionalNotNull() @IsIn(WEB3_EXPERIENCES) web3Experience?: string;
   @IsOptionalNotNull() @IsIn(ACTIVITY_TYPES) activityType?: string;
-  @IsOptional() @NullIfBlank() @IsString() @MaxChars(60) activityTypeOther?: string | null;
+  @IsOptional() @NullIfBlank() @NullIfInvisible() @IsString() @IsPlainDisplayText() @MaxChars(60) activityTypeOther?: string | null;
   @IsOptionalNotNull() @UniqueArray() @IsArray() @ArrayNotEmpty() @ArrayMaxSize(INTEREST_AREAS.length) @IsIn(INTEREST_AREAS, { each: true }) interestAreas?: string[];
-  @IsOptional() @NullIfBlank() @IsString() @MaxChars(60) interestOther?: string | null;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @MaxChars(1000) intro?: string;
+  @IsOptional() @NullIfBlank() @NullIfInvisible() @IsString() @IsPlainDisplayText() @MaxChars(60) interestOther?: string | null;
+  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxChars(1000) intro?: string;
 }
 
 export type CohortApplicationValues = {
@@ -90,6 +91,8 @@ export type CohortApplicationValues = {
   interestAreas: string[]; interestOther: string | null; intro: string;
 };
 
+const visibleOrNull = (value?: string | null) => (hasVisibleText(value) ? (value as string).trim() : null);
+
 /**
  * "기타" 상세 규칙: OTHER 이면 상세 필수(없으면 400 COHORT_OTHER_DETAIL_REQUIRED), OTHER 가 아니면 상세는 버린다(NULL).
  * 생성과 수정(기존 행과 합친 값)이 같은 함수를 지나므로 DB CHECK(chk_cohort_application_activity_other / _interest_other)에 닿기 전에 막힌다.
@@ -97,8 +100,8 @@ export type CohortApplicationValues = {
 export function normalizeOtherDetails<T extends { activityType: string; activityTypeOther?: string | null; interestAreas: string[]; interestOther?: string | null }>(
   values: T,
 ): T & { activityTypeOther: string | null; interestOther: string | null } {
-  const activityTypeOther = values.activityType === OTHER ? (values.activityTypeOther?.trim() || null) : null;
-  const interestOther = values.interestAreas.includes(OTHER) ? (values.interestOther?.trim() || null) : null;
+  const activityTypeOther = values.activityType === OTHER ? (visibleOrNull(values.activityTypeOther)) : null;
+  const interestOther = values.interestAreas.includes(OTHER) ? (visibleOrNull(values.interestOther)) : null;
   if (values.activityType === OTHER && !activityTypeOther) throw new BadRequestException('COHORT_OTHER_DETAIL_REQUIRED');
   if (values.interestAreas.includes(OTHER) && !interestOther) throw new BadRequestException('COHORT_OTHER_DETAIL_REQUIRED');
   return { ...values, activityTypeOther, interestOther };

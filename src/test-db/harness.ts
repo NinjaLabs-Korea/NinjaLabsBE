@@ -117,12 +117,12 @@ export async function waitFor(condition: () => boolean | Promise<boolean>, what:
   throw new Error(`timed out waiting for ${what}`);
 }
 
-/** 이 데이터베이스에서 행/advisory 잠금을 기다리는 백엔드가 하나 이상 생길 때까지 기다린다 (동시성 스펙: "상대가 막혔다"를 확인한 뒤 풀어 준다) */
-export async function waitForLockWaiter(db: DatabaseService, what: string): Promise<void> {
+/** 이 데이터베이스에서 행/advisory 잠금을 기다리는 백엔드가 min개(기본 1) 이상 생길 때까지 기다린다 (동시성 스펙: 경쟁자가 모두 줄 섰는지 sleep 없이 확인한 뒤 풀어 준다) */
+export async function waitForLockWaiter(db: DatabaseService, what: string, min = 1): Promise<void> {
   await waitFor(async () => {
     const r = await db.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
-    return r.rows[0].n > 0;
+    return r.rows[0].n >= min;
   }, what);
 }
 

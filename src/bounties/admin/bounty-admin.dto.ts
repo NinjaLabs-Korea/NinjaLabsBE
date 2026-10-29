@@ -1,11 +1,11 @@
 import { Type } from 'class-transformer';
 import {
-  IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested,
+  IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min, ValidateNested,
 } from 'class-validator';
 import { TOKEN_AMOUNT } from '../../common/validation/token-amount';
 import { IsTimestampString } from '../../common/validation/timestamp';
 import { Trim } from '../../common/validation/trim';
-import { HasNoBidiOverride, HasVisibleText, IsPlainDisplayText } from '../../common/validation/visible-text';
+import { DisplayBody, DisplayTitle, OptionalDisplayBody, OptionalDisplayTitle } from '../../common/validation/display-text';
 import { IsHttpUrlOrMediaPath, IsSafeUrl } from '../../common/validation/url';
 import { BountyStatus } from '../bounty-status';
 import { RewardInput } from './reward-token.resolver';
@@ -32,12 +32,12 @@ export class RewardDto implements RewardInput {
 }
 
 export class CreateBountyDto {
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(200) title!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(100) sponsorName!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(500) summary!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(50_000) description!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(20_000) requirements!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(20_000) evaluationCriteria!: string;
+  @DisplayTitle(200) title!: string;
+  @DisplayTitle(100) sponsorName!: string;
+  @DisplayBody(500) summary!: string;
+  @DisplayBody(50_000) description!: string;
+  @DisplayBody(20_000) requirements!: string;
+  @DisplayBody(20_000) evaluationCriteria!: string;
   @IsIn(CATEGORIES) category!: string;
   @IsBoolean() applicationRequired!: boolean;
   @IsIn(SUBMISSION_MODES) submissionMode!: string;
@@ -54,12 +54,12 @@ export class CreateBountyDto {
 // 모든 PATCH를 400으로 만들지 않게 한다 (common/validation/url.ts). VARCHAR 컬럼(title 200, sponsor_name 100)은 컬럼 상한 그대로 —
 // 완화는 "레거시 모양을 받는다"는 뜻이지 스키마를 넘는다는 뜻이 아니다. MaxChars는 Postgres와 같은 코드 포인트 단위로 센다 (common/validation/max-chars.ts).
 export class UpdateBountyDto {
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(200) title?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(100) sponsorName?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(1000) summary?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(100_000) description?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(40_000) requirements?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(40_000) evaluationCriteria?: string;
+  @OptionalDisplayTitle(200) title?: string;
+  @OptionalDisplayTitle(100) sponsorName?: string;
+  @OptionalDisplayBody(1000) summary?: string;
+  @OptionalDisplayBody(100_000) description?: string;
+  @OptionalDisplayBody(40_000) requirements?: string;
+  @OptionalDisplayBody(40_000) evaluationCriteria?: string;
   @IsOptionalNotNull() @IsIn(CATEGORIES) category?: string;
   @IsOptionalNotNull() @IsBoolean() applicationRequired?: boolean;
   @IsOptionalNotNull() @IsIn(SUBMISSION_MODES) submissionMode?: string;

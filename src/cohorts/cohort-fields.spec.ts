@@ -21,6 +21,24 @@ describe('handle normalization', () => {
     expect(normalizeHandle('t.me/name/', tg)).toBe('@name');
     expect(normalizeHandle('', tg)).toBe('');
     expect(normalizeHandle(5, tg)).toBe(5);
+    expect(normalizeHandle('https://t.me/valid_name', tg)).toBe('@valid_name');
+    expect(normalizeHandle('t.me/valid_name?start=1', tg)).toBe('@valid_name');
+  });
+
+  it.each([
+    't.me/joinchat/AAAA', 'https://t.me/JoinChat/AAAA', 'https://t.me/share/url?url=x', 't.me/c/123/4', 't.me/name/12', 't.me/+AbCdEf/x', 't.me/addstickers/pack', 't.me/joinchat',
+  ])('keeps non-profile telegram link %s unchanged so the handle check fails', async (input) => {
+    expect(normalizeHandle(input, tg)).toBe(input);
+    const { errors } = await check(CohortApplicationFields, { ...valid, telegram: input });
+    expect(errors).toContain('telegram');
+  });
+
+  it('applies the same rule to X post/intent links', async () => {
+    const tw = /^(?:https?:\/\/)?(?:www\.|mobile\.)?(?:twitter\.com|x\.com)\/(.*)$/i;
+    expect(normalizeHandle('https://x.com/name/status/1', tw)).toBe('https://x.com/name/status/1');
+    expect(normalizeHandle('x.com/intent/tweet?text=a', tw)).toBe('x.com/intent/tweet?text=a');
+    expect(normalizeHandle('x.com/i/flow/login', tw)).toBe('x.com/i/flow/login');
+    expect(normalizeHandle('https://x.com/Ninja_KR?s=20', tw)).toBe('@Ninja_KR');
   });
 });
 

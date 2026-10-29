@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { validate } from 'class-validator';
-import { IsPublicHttpUrl, isHttpUrl, isMediaPath, isPublicHttpUrl, isSafeUrl, isSitePath } from './url';
+import { IsPublicHttpUrl, assertChangedUrlsStrict, isHttpUrl, isMediaPath, isPublicHttpUrl, isSafeUrl, isSitePath } from './url';
 
 describe('URL field validators', () => {
   const mediaPath = '/media/11111111-1111-4111-8111-111111111111';
@@ -161,5 +161,37 @@ describe('IsPublicHttpUrl failure message', () => {
   it('names the length when the URL is valid but too long, and the public-link rule otherwise', async () => {
     expect(await messageFor(`https://example.com/${'a'.repeat(3000)}`)).toBe('link must be at most 2048 characters');
     expect(await messageFor('http://localhost:3000/x')).toBe('link must be a public http(s) URL (no localhost or private addresses)');
+  });
+});
+
+describe('assertChangedUrlsStrict', () => {
+  const strict = (value: unknown) => isPublicHttpUrl(value);
+  const pair = (next: string | null | undefined, column = 'external_url') => ({ next, column, strict, message: 'bad url' });
+  const dbWith = (stored: string | null) => ({ query: jest.fn().mockResolvedValue({ rowCount: 1, rows: [{ external_url: stored }] }) });
+  const run = (tx: ReturnType<typeof dbWith>, pairs: ReturnType<typeof pair>[]) =>
+    assertChangedUrlsStrict(tx as never, { table: 'notice', id: 'id-1', notFoundCode: 'NOTICE_NOT_FOUND', pairs });
+
+  it('passes an unchanged legacy value', async () => {
+    await expect(run(dbWith('cdn.example/x.png'), [pair('cdn.example/x.png')])).resolves.toBeUndefined();
+  });
+
+  it('rejects a changed private host with 400 and the given message', async () => {
+    await expect(run(dbWith('https://a.example.com/x'), [pair('http://127.0.0.1/x')])).rejects.toMatchObject({ status: 400, response: { message: ['bad url'] } });
+  });
+
+  it('allows a changed public URL and null (clear) and skips the query when nothing is sent', async () => {
+    await expect(run(dbWith(null), [pair('https://b.example.com/x')])).resolves.toBeUndefined();
+    const cleared = dbWith('cdn.example/x.png');
+    await expect(run(cleared, [pair(null)])).resolves.toBeUndefined();
+    expect(cleared.query).not.toHaveBeenCalled();
+    const omitted = dbWith(null);
+    await run(omitted, [pair(undefined)]);
+    expect(omitted.query).not.toHaveBeenCalled();
+  });
+
+  it('404s when the row is missing and refuses columns outside the whitelist', async () => {
+    const empty = { query: jest.fn().mockResolvedValue({ rowCount: 0, rows: [] }) };
+    await expect(run(empty as never, [pair('https://b.example.com/x')])).rejects.toMatchObject({ status: 404 });
+    await expect(run(dbWith(null), [pair('https://b.example.com/x', 'title; DROP TABLE x')])).rejects.toThrow('unsupported column');
   });
 });

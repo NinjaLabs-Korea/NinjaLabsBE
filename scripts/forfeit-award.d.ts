@@ -19,6 +19,7 @@ export declare const FORFEITABLE_BOUNTY_STATUSES: string[];
 export declare const ACTION: string;
 export declare const REASON_MAX: number;
 export declare function normalizeReason(raw: unknown): string | null;
+export declare function reasonProblem(raw: unknown): string | null;
 export declare function reviewComment(reason: string): string;
 export declare function refusalReason(submission: ForfeitSubmissionRow | null, admin: ForfeitAdminRow | null): string | null;
 export declare function forfeitAward(pool: Pool, submissionId: string, adminId: string, reason: string): Promise<{ bountyId: string }>;

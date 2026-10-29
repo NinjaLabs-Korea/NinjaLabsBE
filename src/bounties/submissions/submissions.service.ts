@@ -150,19 +150,23 @@ export class SubmissionsService {
    * payment_status는 rewards/payout-status.ts payoutStatusSql(공개 프로필 payoutStatus와 같은 SQL)인데, 그 식은 **승인된 제출** 전용이다 —
    * APPROVED가 아닌 제출(심사 중·반려·scripts/forfeit-award.js로 몰수된 수상)은 받을 몫이 없으므로 'NONE'으로 고정한다.
    * (식을 그대로 쓰면 여유분이 남은 입금 보상이 있는 동안 반려된 제출도 'PENDING' — "지급 대기"로 보인다.)
+   * bounty_status/submission_deadline/has_review는 덧붙인 필드다: 바운티 취소로 자동 반려된 제출(REJECTED + has_review false + CANCELLED)을 운영자 반려와 구분하는 데 쓴다.
+   * 취소 전이(bounty-admin.service)는 미결 제출마다 코멘트 없는 REJECT 심사 행을 남기므로 "행이 있다"만으로는 구분되지 않는다:
+   * 취소된 바운티의 코멘트 없는 REJECT 행은 시스템 정리로 보고 has_review에서 뺀다 (취소 전에 운영자가 코멘트 없이 반려한 건도 같이 false가 되는 것은 감수한다).
    */
   async mySubmissions(userId: string) {
     const r = await this.db.query(
       `SELECT s.id, s.status, s.current_revision_no, s.submitted_at, s.last_resubmitted_at,
               b.id AS bounty_id, b.title AS bounty_title, b.category,
+              b.status AS bounty_status, b.submission_deadline,
               CASE WHEN ag.id IS NULL THEN NULL
                    ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent,
               CASE WHEN s.status = 'APPROVED' THEN ${payoutStatusSql('s', 'b')} ELSE 'NONE' END AS payment_status, s.description,
-              review.comment AS review_comment
+              review.comment AS review_comment, (review.id IS NOT NULL AND NOT (b.status = 'CANCELLED' AND review.decision = 'REJECT' AND review.comment IS NULL)) AS has_review
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL -- 삭제된 바운티는 공개 프로필·상세와 같이 없는 것으로 본다 (링크가 404가 된다)
          LEFT JOIN agent ag ON ag.id = s.agent_id
-         LEFT JOIN LATERAL (SELECT comment FROM submission_review WHERE submission_id = s.id
+         LEFT JOIN LATERAL (SELECT id, decision, comment FROM submission_review WHERE submission_id = s.id
                             ORDER BY created_at DESC LIMIT 1) review ON true
         WHERE s.submitter_user_id = $1
            OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))

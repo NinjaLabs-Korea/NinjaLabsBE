@@ -20,6 +20,8 @@ export type NftStatus = (typeof NFT_STATUSES)[number];
 
 /** 자식을 attach할 수 있는 부모 상태 */
 export const PARENT_READY: readonly NftStatus[] = ['MINTED', 'ATTACHED'];
+/** 민팅 잡이 다시 민팅하지 않고 건너뛰는, 이미 민팅된 NFT 자신의 상태 (멱등성. 부모 조건인 PARENT_READY와 따로 둔다) */
+export const MINT_ALREADY_DONE: readonly NftStatus[] = ['MINTED', 'ATTACHED'];
 /** attach 대상이 될 수 있는 자식 상태 (아직 ATTACHED가 아닌 민팅 완료분) */
 export const ATTACHABLE: readonly NftStatus[] = ['MINTED', 'ATTACHING'];
 /** 민팅이 끝난 상태 (공개 통계의 "완료 NFT") */

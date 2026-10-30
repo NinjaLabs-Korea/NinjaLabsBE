@@ -66,6 +66,9 @@ function matchingStatements(mock: QueryMock, match: RegExp) {
  * 콜백이 던지면 그대로 reject(롤백 시뮬레이션은 호출 측 mock 몫).
  */
 export function createMockDb(options: MockDbOptions = {}): MockDb {
+  if (options.strict && (options.query || options.txQuery)) {
+    throw new Error('createMockDb: strict cannot be combined with query/txQuery (strict would be silently off)');
+  }
   const handlers: SqlHandler[] = [...(options.handlers ?? [])];
   const strictRouter = async (sql: string, params?: unknown[]) => {
     const normalized = normalizeSql(sql);

@@ -90,9 +90,9 @@ export const NullIfInvisible = () =>
   });
 
 /**
- * 몰수 표식 - scripts/forfeit-award.js가 심사 코멘트를 `forfeited: <사유>`로 시작해 남기고, 제출자 화면(FE `parseReviewComment`)이 이 접두사를
- * "승인됐지만 수상이 몰수됨"으로 해석한다. 표식이 코멘트 본문 안에 있으므로 운영자가 API로 쓴 일반 반려 코멘트가 같은 접두사로 시작하면
- * 제출자는 "승인됐지만 몰수"로 오해한다 -> API 심사 코멘트는 이 접두사로 시작할 수 없다 (대소문자·앞 공백 무관).
+ * 보상 미지급 표식 - scripts/forfeit-award.js가 심사 코멘트를 `forfeited: <사유>`로 시작해 남기고, 제출자 화면(FE `parseReviewComment`)이 이 접두사를
+ * "승인됐지만 보상 미지급"으로 해석한다. 표식이 코멘트 본문 안에 있으므로 운영자가 API로 쓴 일반 반려 코멘트가 같은 접두사로 시작하면
+ * 제출자는 "승인됐지만 보상 미지급"으로 오해한다 -> API 심사 코멘트는 이 접두사로 시작할 수 없다 (대소문자·앞 공백 무관).
  */
 const FORFEIT_MARKER = /^\s*forfeited\s*:/i;
 
@@ -107,7 +107,7 @@ export const IsNotForfeitMarker = (options?: ValidationOptions) =>
       name: 'isNotForfeitMarker',
       validator: {
         validate: (value) => !isForfeitMarker(value),
-        defaultMessage: buildMessage((prefix) => `${prefix}$property must not start with the reserved prefix "forfeited:" (it marks an award taken back by the ops script)`, options),
+        defaultMessage: buildMessage((prefix) => `${prefix}$property must not start with the reserved prefix "forfeited:" (it marks an unpaid reward recorded by the ops script)`, options),
       },
     },
     options,

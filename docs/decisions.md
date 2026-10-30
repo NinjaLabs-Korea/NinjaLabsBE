@@ -26,7 +26,7 @@
 | **[결정 2026-10-24] payout 승인 2인 규칙** | `POST /admin/payouts/:id/approve`는 요청한 운영자(`payout.requested_by`)와 **다른** 운영자만 — 같으면 403 `PAYOUT_SELF_APPROVAL`. 운영자 1인 배포용 탈출구: env `PAYOUT_ALLOW_SELF_APPROVAL=true`(기본 false) → 허용 + `Logger.warn` + 감사 `PAYOUT_SELF_APPROVED`(PAYOUT_APPROVED 대신) | `requested_by`/`approved_by`는 0006부터 있다(`requested_by NOT NULL`) — 새 마이그레이션 불필요. `rewards/payout-approval.ts`, `rewards.service.ts` markApproved |
 | 여러 수상자 분배 | 운영자가 payout 생성 시 금액 직접 입력 | 자동 균등분배는 추후. `bounty_reward` 1:N `payout` 구조라 유연 |
 | 취소 시 환불 | 운영자가 멀티시그에서 스폰서 주소로 수동 환불, `bounty_reward.status = REFUNDED` 기록 | REFUND_PENDING → REFUNDED 상태 이미 존재 |
-| **[결정 2026-10-25] 받을 몫이 남은 수상자가 있으면 취소 불가** | 승인됐지만 아직 받을 몫이 남은 수상자(진행 중 payout 또는 `owesUnpaidRewardSql` 미지급 승인 제출)가 있으면 `→ CANCELLED`는 400 `UNPAID_WINNERS`(COMPLETED 차단과 같은 코드·문구). 막는 이유: IN_REVIEW → OPEN(재오픈) → CANCELLED 경로가 열려 있고, 취소 뒤 환불(`scripts/record-refund.js`)은 입금액 − PAID라 못 받은 수상자 몫이 스폰서에게 돌아간다. 모든 수상자 지급 완료 또는 runbook §7.4대로 수상 취소 후 CANCELLED → 환불이 여전히 환불 경로 | `bounties/admin/bounty-lifecycle.service.ts` blockers(). 전이표·`payout-status.ts`·환불 스크립트는 그대로 |
+| **[결정 2026-10-25] 받을 몫이 남은 수상자가 있으면 취소 불가** | 승인됐지만 아직 받을 몫이 남은 수상자(진행 중 payout 또는 `owesUnpaidRewardSql` 미지급 승인 제출)가 있으면 `→ CANCELLED`는 400 `UNPAID_WINNERS`(COMPLETED 차단과 같은 코드·문구). 막는 이유: IN_REVIEW → OPEN(재오픈) → CANCELLED 경로가 열려 있고, 취소 뒤 환불(`scripts/record-refund.js`)은 입금액 − PAID라 못 받은 수상자 몫이 스폰서에게 돌아간다. 모든 수상자 지급 완료 또는 runbook §7.4대로 보상 미지급 처리 후 CANCELLED → 환불이 여전히 환불 경로 | `bounties/admin/bounty-lifecycle.service.ts` blockers(). 전이표·`payout-status.ts`·환불 스크립트는 그대로 |
 | Injective native USDC 식별 | EVM은 ERC-20 주소+chain ID, Cosmos는 `erc20:<lowercase address>` denom을 함께 저장 | MTS의 동일 자산을 두 실행 환경에서 혼동하지 않도록 서버 환경설정으로 강제 |
 | **[결정 2026-10-24] 지급 총액 공개 지표** | `GET /hall-of-fame/stats`의 `paidTotals`는 **status = `PAID` payout만** 합산, 삭제된 바운티 제외, `(upper(display_symbol), token_type)`별 base unit 문자열. 토큰 decimals는 DB에 없으므로 서버 상수표(`rewards/reward-token-decimals.ts`, INJ 18 / USDC 6)로 붙이고 모르는 심볼은 `null` | 환율 환산(USD 합계)은 하지 않는다 — 가격 소스 의존과 시점 문제. FE `TOKEN_DECIMALS`와 같은 값을 유지할 것 |
 | 송금 수수료 부담 | **플랫폼 부담** | Injective 가스비 ~$0.0003, 논의 가치 없는 수준 |
@@ -67,6 +67,15 @@
 | **[결정 2026-10-24] 운영 알림 채널** | Discord/Slack 호환 incoming webhook 하나 (`OPS_ALERT_WEBHOOK_URL`, 본문 `{content, text}` — 두 서비스 모두 모르는 키를 무시). 미설정이면 로그만 | 새 의존성 없이 global `fetch`. 채널 분리(심각도별)가 필요해지면 `AlertService`에 키 접두사 → URL 맵을 추가 |
 | 알림 임계값 | payout 48시간 미승인(5분 주기 검사), nft_job FAILED 즉시, 고아 PROCESSING(15분) 재큐잉 즉시, 5xx **5분 안 20건 초과**, 기동 실패·preDeploy 마이그레이션 실패 즉시 | 바꾸려면 `payout.worker.ts`, `nft-job.worker.ts`, `http-exception.filter.ts` `HTTP_5XX_BURST_*` |
 | 중복 억제 | 같은 키 **30분에 1회**, 인스턴스별 in-memory, 억제 건수를 다음 알림에 붙인다. 쿨다운은 웹훅이 **2xx로 받은 뒤에만** 시작한다 — 실패하면 2초 뒤 1회 재시도, 그래도 실패면 쿨다운 없이 끝나 다음 발생이 다시 보낸다(웹훅 일시 장애가 30분 침묵이 되지 않게, 2026-10-24). 같은 키가 전송 중(재시도 대기 포함)이면 겹친 호출은 억제 수로만 센다. 기동 실패는 프로세스가 곧 죽으므로 억제 없음(재시작 루프마다 1통 — Railway restart 상한까지) | `ALERT_COOLDOWN_MS` (`common/alerts/alert.service.ts`) |
+
+## 기수 모집
+
+| 항목 | 결정 | 근거 / 비고 |
+|---|---|---|
+| **[결정 2026-10-31] 지원서 질문은 기수마다 편집** | 고정: `displayName`, `telegram`, `twitter`, `intro`(컬럼, 항상 필수). 나머지는 `cohort.questions`(JSONB, 0021)를 운영자가 `PUT /admin/cohorts/:id/questions`로 통째로 편집. 기본 질문은 Web3 경력 + 참여하고 싶은 분야(기타 상세)이고 "현재 활동 유형"은 폐기(소속은 intro에) | 고정 필드는 검색(`q`), 핸들 정규화/CHECK, 심사 화면이 의존한다. 답변은 쓰는 순간 질문 라벨을 복사한 **스냅샷**이라 질문을 고쳐도 낸 지원서는 안 바뀐다. 옛 행은 읽을 때 합성(`legacyAnswers`), 쓰기 모양은 `chk_cohort_application_answer_shape`가 옛/새 형식 중 하나로 강제 |
+| 옛 지원서 본문 호환 | `answers` 없이 옛 필드(`web3Experience` 등)를 보내는 본문은 계속 받아 옛 컬럼에 쓴다 (deprecated) | FE 질문 폼(FE-1) 릴리스 전 구 FE가 운영 중이라 BE를 먼저 배포한다. **FE-1 배포 뒤 정리**: DTO의 옛 필드, `legacyOfInput`, 옛 PATCH 분기, 응답의 deprecated 필드, 별칭 필터(`interestArea`, `activityType`)를 지운다 |
+| 지갑 충돌 코드 분리 | `WALLET_LINKED_TO_OTHER_ACCOUNT`(주소가 다른 계정에), `ACCOUNT_ALREADY_HAS_WALLET`(내 대표 지갑이 이미 있음). `WALLET_ALREADY_LINKED`는 알 수 없는 제약 충돌의 폴백 | 제약 이름(`uq_wallet_chain_address_active` / `uq_wallet_primary_per_user`)으로 구분. 새 코드를 아는 FE가 먼저 배포돼야 한다 |
+| 보상 미지급 문구 | 사용자/운영자에게 보이는 말은 "보상 미지급"(ko), 내부 식별자(`forfeit*`, `SUBMISSION_AWARD_FORFEITED`, 코멘트 접두사 `forfeited:`)는 그대로 | 옛 표현은 돈·법적 어조가 세서 쓰지 않는다. `CANCELLED` payout은 항상 "지급 취소"로 쓴다 |
 
 ## 스택 관련 (기획 문서와 다른 점)
 

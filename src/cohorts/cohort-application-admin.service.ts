@@ -4,9 +4,14 @@ import { DatabaseService } from '../common/database/database.service';
 import { MemberAdminService } from '../members/member-admin.service';
 import { APPLICATION_FIELD_COLUMNS, applicationFields, ApplicationFieldRow } from './cohort-application-view';
 import { toCsv } from './cohort-csv';
+import { answerCsvCells, CohortQuestion, legacyAnswers } from './cohort-questions';
 import { CohortApplicationPolicy, CohortReviewDecision } from './cohort-status';
 
-export type ApplicationFilter = { status?: string; activityType?: string; interestArea?: string; q?: string };
+/**
+ * questionId + optionId 는 둘 다 있을 때만 필터가 된다 (답변 스냅샷 또는 옛 컬럼에서 찾는다).
+ * activityType / interestArea 는 옛 운영 화면용 별칭이다: interestArea=X == questionId=interest_areas&optionId=X.
+ */
+export type ApplicationFilter = { status?: string; questionId?: string; optionId?: string; activityType?: string; interestArea?: string; q?: string };
 
 type AdminRow = ApplicationFieldRow & {
   review_note: string | null; reviewed_by: string | null; reviewed_at: Date | null;
@@ -27,10 +32,10 @@ function adminApplication(row: AdminRow) {
   };
 }
 
-export const CSV_HEADER = [
-  'id', 'applied_at', 'status', 'display_name', 'nickname', 'email', 'telegram', 'twitter', 'web3_experience',
-  'activity_type', 'activity_type_other', 'interest_areas', 'interest_other', 'intro', 'review_note', 'reviewed_at',
-] as const;
+/** CSV 머리글: 고정 9칸 + 현재 질문마다 한 칸(label.ko) + 현재 질문에 없는 답변 + 심사 */
+export const CSV_FIXED_HEADER = ['id', 'applied_at', 'status', 'display_name', 'nickname', 'email', 'telegram', 'twitter', 'intro'] as const;
+export const CSV_TAIL_HEADER = ['other_answers', 'review_note', 'reviewed_at'] as const;
+export const csvHeader = (questions: readonly CohortQuestion[]): string[] => [...CSV_FIXED_HEADER, ...questions.map((q) => q.label.ko), ...CSV_TAIL_HEADER];
 
 /** 운영자: 기수별 지원서 목록/검색/CSV 와 심사 */
 @Injectable()
@@ -47,8 +52,20 @@ export class CohortApplicationAdminService {
     const params: unknown[] = [cohortId];
     const conds = ['a.cohort_id = $1'];
     if (filter.status) { params.push(filter.status); conds.push(`a.status = $${params.length}`); }
-    if (filter.activityType) { params.push(filter.activityType); conds.push(`a.activity_type = $${params.length}`); }
-    if (filter.interestArea) { params.push(filter.interestArea); conds.push(`$${params.length}::text = ANY(a.interest_areas)`); }
+    const choiceFilters: [string, string][] = [];
+    if (filter.questionId && filter.optionId) choiceFilters.push([filter.questionId, filter.optionId]);
+    if (filter.interestArea) choiceFilters.push(['interest_areas', filter.interestArea]);
+    if (filter.activityType) choiceFilters.push(['activity_type', filter.activityType]);
+    for (const [questionId, optionId] of choiceFilters) {
+      params.push(questionId, optionId);
+      const qn = `$${params.length - 1}::text`;
+      const on = `$${params.length}::text`;
+      // 새 형식은 답변 스냅샷에서, 옛 형식 행은 옛 컬럼에서 같은 (질문 id, 선택지 id) 로 찾는다
+      conds.push(`(a.answers @> jsonb_build_array(jsonb_build_object('questionId', ${qn}, 'choices', jsonb_build_array(jsonb_build_object('id', ${on}))))
+                   OR (${qn} = 'web3_experience' AND a.web3_experience = ${on})
+                   OR (${qn} = 'interest_areas' AND ${on} = ANY(a.interest_areas))
+                   OR (${qn} = 'activity_type' AND a.activity_type = ${on}))`);
+    }
     if (filter.q) {
       params.push(MemberAdminService.likePattern(filter.q));
       const n = `$${params.length}`;
@@ -58,9 +75,11 @@ export class CohortApplicationAdminService {
     return { sql: conds.join(' AND '), params };
   }
 
-  private async assertCohort(cohortId: string): Promise<void> {
-    const r = await this.db.query(`SELECT 1 FROM cohort WHERE id = $1`, [cohortId]);
+  /** 기수가 있어야 한다 (404 COHORT_NOT_FOUND). 현재 질문을 돌려준다 (CSV 머리글) */
+  private async assertCohort(cohortId: string): Promise<CohortQuestion[]> {
+    const r = await this.db.query<{ questions: CohortQuestion[] }>(`SELECT questions FROM cohort WHERE id = $1`, [cohortId]);
     if (!r.rowCount) throw new NotFoundException('COHORT_NOT_FOUND');
+    return r.rows[0].questions;
   }
 
   async list(cohortId: string, filter: ApplicationFilter, page = 1, pageSize = ApplicationAdminPageSize()) {
@@ -80,15 +99,18 @@ export class CohortApplicationAdminService {
 
   /** CSV 본문 (BOM 포함). 목록과 같은 필터, 페이지 없이 전부 */
   async csv(cohortId: string, filter: ApplicationFilter): Promise<string> {
-    await this.assertCohort(cohortId);
+    const questions = await this.assertCohort(cohortId);
     const { sql, params } = this.where(cohortId, filter);
     const r = await this.db.query<AdminRow>(`${ADMIN_SELECT} WHERE ${sql} ORDER BY a.created_at DESC, a.id`, params);
     // 텔레그램/트위터는 `@` 없이 내보낸다: 모든 핸들이 `@`로 시작해 수식 차단 접두사가 전 행에 붙는 것을 피한다 (핸들 규칙상 첫 글자는 영문/숫자/_ 라 안전)
     const bare = (handle: string) => handle.replace(/^@/, '');
-    return toCsv(CSV_HEADER, r.rows.map((row) => [
-      row.id, row.created_at, row.status, row.display_name, row.nickname, row.email, bare(row.telegram), bare(row.twitter),
-      row.web3_experience, row.activity_type, row.activity_type_other, row.interest_areas, row.interest_other, row.intro, row.review_note, row.reviewed_at,
-    ]));
+    return toCsv(csvHeader(questions), r.rows.map((row) => {
+      const { cells, otherAnswers } = answerCsvCells(questions, legacyAnswers(row));
+      return [
+        row.id, row.created_at, row.status, row.display_name, row.nickname, row.email, bare(row.telegram), bare(row.twitter), row.intro,
+        ...cells, otherAnswers, row.review_note, row.reviewed_at,
+      ];
+    }));
   }
 
   /**

@@ -27,7 +27,7 @@ export const OptionalDisplayBody = (max: number) => applyDecorators(IsOptionalNo
 
 /**
  * 선택 본문류(공지 summary, 심사 note/comment): 생략과 null은 통과, 보이지 않는 글자만 있으면 null로 바꿔 저장한다.
- * 추가 검증(예: 몰수 표식 거부)은 이 데코레이터 뒤에 따로 붙인다.
+ * 추가 검증(예: 보상 미지급 표식 거부)은 이 데코레이터 뒤에 따로 붙인다.
  */
 export const NullableDisplayBody = (max: number) =>
   applyDecorators(IsOptional(), NullIfInvisible(), IsString(), HasNoBidiOverride(), MaxLength(max));

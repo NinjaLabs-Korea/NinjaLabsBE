@@ -136,4 +136,63 @@ describeDb('wallet challenge/verify on a real database', () => {
     const rows = await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [userId]);
     expect(rows.rowCount).toBe(1);
   });
+  it('issuing a challenge deletes only that (user, wallet) pair\'s unused challenges: a used one and another wallet\'s open challenge survive', async () => {
+    const userId = await createUser(db);
+    const signer = Wallet.createRandom();
+    const other = Wallet.createRandom();
+    const used = await wallets.createChallenge(userId, signer.address);
+    await db.query(`UPDATE wallet_verification_challenge SET used_at = now() WHERE id = $1`, [used.id]);
+    const otherWallet = await wallets.createChallenge(userId, other.address);
+    const stale = await wallets.createChallenge(userId, signer.address);
+    const fresh = await wallets.createChallenge(userId, signer.address);
+
+    const rows = await db.query<{ id: string }>(`SELECT id FROM wallet_verification_challenge WHERE user_id = $1 ORDER BY created_at`, [userId]);
+    const ids = rows.rows.map((row) => row.id);
+    expect(ids).toEqual(expect.arrayContaining([used.id, otherWallet.id, fresh.id]));
+    expect(ids).not.toContain(stale.id);
+    expect(ids).toHaveLength(3);
+  });
+
+  it('a unique violation rolls the whole verify back: the challenge stays open and no onboarding step, wallet or mint job is left behind', async () => {
+    const signer = Wallet.createRandom();
+    const first = await createUser(db);
+    const c1 = await wallets.createChallenge(first, signer.address);
+    await wallets.verifySignature(first, signer.address, await signer.signMessage(c1.message));
+
+    const second = await createUser(db, { onboarded: false });
+    const c2 = await wallets.createChallenge(second, signer.address);
+    await expect(wallets.verifySignature(second, signer.address, await signer.signMessage(c2.message)))
+      .rejects.toMatchObject({ message: 'WALLET_ALREADY_LINKED' });
+    expect(await openChallenges(second)).toBe(1); // the consume UPDATE was rolled back with the failed wallet INSERT
+    expect((await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [second])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM nft_job j JOIN nft n ON n.id = j.nft_id WHERE n.owner_user_id = $1`, [second])).rowCount).toBe(0);
+  });
+
+  it('a live agent of the user with the same wallet blocks linking it as the owner wallet (400 AGENT_WALLET_IS_OWNER_WALLET), a revoked one does not', async () => {
+    const signer = Wallet.createRandom();
+    const injAddress = `inj1${signer.address.slice(2).toLowerCase()}`;
+    const userId = await createUser(db, { onboarded: false });
+    const agent = await db.query<{ id: string }>(
+      `INSERT INTO agent (owner_user_id, name, wallet_address, status, verified_at) VALUES ($1, 'twin', $2, 'ACTIVE', now()) RETURNING id`, [userId, injAddress]);
+    const c1 = await wallets.createChallenge(userId, signer.address);
+    await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(c1.message)))
+      .rejects.toMatchObject({ message: 'AGENT_WALLET_IS_OWNER_WALLET' });
+    expect((await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [userId])).rowCount).toBe(0);
+    expect(await openChallenges(userId)).toBe(1); // consumption rolled back too
+
+    await db.query(`UPDATE agent SET status = 'REVOKED' WHERE id = $1`, [agent.rows[0].id]);
+    const c2 = await wallets.createChallenge(userId, signer.address);
+    await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(c2.message)))
+      .resolves.toMatchObject({ address: injAddress });
+  });
+
+  it('the onboarding step only moves forward: a user already past step 3 keeps their step when linking a wallet', async () => {
+    const userId = await createUser(db, { onboarded: true });
+    await db.query(`UPDATE "user" SET onboarding_step = 5 WHERE id = $1`, [userId]);
+    const signer = Wallet.createRandom();
+    const challenge = await wallets.createChallenge(userId, signer.address);
+    await wallets.verifySignature(userId, signer.address, await signer.signMessage(challenge.message));
+    const user = await db.query<{ onboarding_step: number }>(`SELECT onboarding_step FROM "user" WHERE id = $1`, [userId]);
+    expect(user.rows[0].onboarding_step).toBe(5);
+  });
 });

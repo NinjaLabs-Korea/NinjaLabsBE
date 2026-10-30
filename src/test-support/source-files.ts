@@ -14,6 +14,9 @@ import { join, relative, sep } from 'path';
  */
 export const DEFAULT_EXCLUDE = /\.(?:spec|db-spec|e2e-spec|d)\.ts$/;
 
+/** `exclude` 옵션에 넘기면 기본 제외 규칙을 끄고 아무것도 거르지 않는다 (항상 실패하는 lookahead) */
+export const EXCLUDE_NOTHING = /(?!)/;
+
 export interface SourceFileOptions {
   include?: RegExp;
   exclude?: RegExp;

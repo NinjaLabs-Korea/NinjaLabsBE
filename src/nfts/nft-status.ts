@@ -12,12 +12,16 @@
  *   - scripts/requeue-nft-jobs.js     재큐 SQL 두 문장
  */
 
+import { sqlStatusList } from '../rewards/payout-status';
+
 /** nft 테이블 CHECK와 같은 전체 상태 */
 export const NFT_STATUSES = ['PENDING', 'MINTING', 'MINTED', 'ATTACHING', 'ATTACHED', 'FAILED'] as const;
 export type NftStatus = (typeof NFT_STATUSES)[number];
 
 /** 자식을 attach할 수 있는 부모 상태 */
 export const PARENT_READY: readonly NftStatus[] = ['MINTED', 'ATTACHED'];
+/** 민팅 잡이 다시 민팅하지 않고 건너뛰는, 이미 민팅된 NFT 자신의 상태 (멱등성. 부모 조건인 PARENT_READY와 따로 둔다) */
+export const MINT_ALREADY_DONE: readonly NftStatus[] = ['MINTED', 'ATTACHED'];
 /** attach 대상이 될 수 있는 자식 상태 (아직 ATTACHED가 아닌 민팅 완료분) */
 export const ATTACHABLE: readonly NftStatus[] = ['MINTED', 'ATTACHING'];
 /** 민팅이 끝난 상태 (공개 통계의 "완료 NFT") */
@@ -25,10 +29,10 @@ export const MINTED_OR_LATER: readonly NftStatus[] = ['MINTED', 'ATTACHING', 'AT
 
 /** SQL `IN ('A', 'B')` 텍스트. 상수만 받는다 (바인딩 불가한 정적 집합용) */
 export function sqlIn(statuses: readonly NftStatus[]): string {
-  if (!statuses.length || statuses.some((status) => !(NFT_STATUSES as readonly string[]).includes(status))) {
+  if (statuses.some((status) => !(NFT_STATUSES as readonly string[]).includes(status))) {
     throw new Error('sqlIn: expected NFT status constants');
   }
-  return `IN (${statuses.map((status) => `'${status}'`).join(', ')})`;
+  return `IN (${sqlStatusList(statuses)})`;
 }
 
 /**

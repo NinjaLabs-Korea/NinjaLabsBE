@@ -33,13 +33,15 @@ const setLiteral = (status: string) => new RegExp(`(?:\\[|\\bIN\\s*\\()\\s*'${st
 const SET_LITERALS = [setLiteral(SUBMISSION_STATUS), setLiteral(PAYOUT_STATUS), setLiteral(BOUNTY_STATUS), setLiteral(COHORT_APPLICATION_STATUS), setLiteral(NFT_STATUS)];
 /** 배정 상한식 사본 — rewardCapSql()을 쓴다 */
 const CAP_LITERAL = /LEAST\(\s*(?:\w+\.)?amount\s*,\s*(?:\w+\.)?deposited_amount\s*\)/i;
+/** NFT 상태 규칙의 출처 파일 (POLICY_FILES와 NFT_BARE_ALLOWED가 같은 문자열을 쓰도록 한 곳에 둔다) */
+const NFT_POLICY_FILE = 'nfts/nft-status.ts';
 /** 규칙의 출처 파일 — 여기서만 리터럴 집합을 쓴다 */
-const POLICY_FILES = ['bounties/bounty-status.ts', 'bounties/submission-status.ts', 'bounties/application-status.ts', 'rewards/payout-status.ts', 'cohorts/cohort-status.ts', 'nfts/nft-status.ts'];
+const POLICY_FILES = ['bounties/bounty-status.ts', 'bounties/submission-status.ts', 'bounties/application-status.ts', 'rewards/payout-status.ts', 'cohorts/cohort-status.ts', NFT_POLICY_FILE];
 /**
  * NFT 상태 단일 리터럴을 허용하는 파일. 워커는 상태 전이를 직접 쓰는 곳이라(`SET status = 'MINTED'`, `nft.status === 'ATTACHED'`)
  * 단일 값 비교/대입은 피할 수 없다. 집합(IN 목록, 배열)은 여기서도 막힌다.
  */
-const NFT_BARE_ALLOWED = ['nfts/nft-job.worker.ts'];
+const NFT_BARE_ALLOWED = [NFT_POLICY_FILE, 'nfts/nft-job.worker.ts'];
 
 export function findStatusSetLiterals(source: string): number[] {
   const lines: number[] = [];
@@ -51,7 +53,7 @@ export function findStatusSetLiterals(source: string): number[] {
   return lines;
 }
 
-/** 주석이 아닌 줄의 NFT 상태 단일 리터럴 (nft-status.ts와 NFT_BARE_ALLOWED 밖에서는 금지) */
+/** 주석이 아닌 줄의 NFT 상태 단일 리터럴 (NFT_BARE_ALLOWED 밖에서는 금지) */
 export function findBareNftLiterals(source: string): number[] {
   const lines: number[] = [];
   source.split('\n').forEach((line, i) => {
@@ -116,7 +118,7 @@ describe('submission/application/payout/bounty status sets come from the policy 
   it('no source file outside nft-status.ts (and the worker for transitions) spells an NFT status literal', () => {
     const root = join(__dirname, '..');
     const offenders = listSourceFiles(root)
-      .filter((file) => ![...POLICY_FILES.filter((f) => f === 'nfts/nft-status.ts'), ...NFT_BARE_ALLOWED].includes(relative(root, file)))
+      .filter((file) => !NFT_BARE_ALLOWED.includes(relative(root, file)))
       .flatMap((file) => findBareNftLiterals(readFileSync(file, 'utf8')).map((line) => `${relative(root, file)}:${line}`));
     expect(offenders).toEqual([]);
   });

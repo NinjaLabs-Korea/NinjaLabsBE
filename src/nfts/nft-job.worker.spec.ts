@@ -175,6 +175,16 @@ describe('NftJobWorker', () => {
     expect(firstParams(STMT.holdTail)).toEqual([['b', 'c'], ['c']]);
   });
 
+  it('processes the claimed batch in scheduled_at order regardless of RETURNING (heap) order', async () => {
+    const t = new Date('2026-01-01T00:00:00Z').getTime();
+    const { worker, firstParams } = setup({
+      configured: false,
+      claimed: [{ id: 'later', scheduled_at: new Date(t + 10 * 60_000) }, { id: 'earlier', scheduled_at: new Date(t) }],
+    });
+    await worker.poll();
+    expect(firstParams(STMT.restamp)).toEqual(['earlier', 'later']);
+  });
+
   it('skips a claimed job whose re-stamp touches 0 rows (requeued and reclaimed by another instance meanwhile)', async () => {
     const { worker, ran, chain } = setup({ restamp: { job: 0 } });
     const warn = jest.spyOn(worker['logger'], 'warn').mockImplementation(() => undefined);

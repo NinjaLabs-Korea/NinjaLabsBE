@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -6,6 +6,7 @@ import { createHmac } from 'crypto';
 import { AccessTokenVerifier } from './access-token.verifier';
 import { AuthSessions } from './auth-sessions';
 import { GoogleOAuthFlow } from './google-oauth.flow';
+import { DEFAULT_EXCLUDE, listSourceFiles } from '../test-support/source-files';
 import { JWT_ALGORITHM } from './jwt-algorithm';
 
 const SECRET = 'jwt-algorithm-spec-secret-0123456789abcdef';
@@ -57,15 +58,8 @@ describe('JWT algorithm pinning', () => {
   });
 
   it('every signAsync/verifyAsync/sign/verify call in src passes the algorithm options (nobody forgets the pin on a new path)', () => {
-    const files: string[] = [];
-    const walk = (dir: string) => {
-      for (const name of readdirSync(dir)) {
-        const path = join(dir, name);
-        if (statSync(path).isDirectory()) walk(path);
-        else if (/\.ts$/.test(name) && !/\.(spec|db-spec|e2e-spec)\.ts$/.test(name) && !path.includes('test-')) files.push(path);
-      }
-    };
-    walk(join(__dirname, '..'));
+    // test-db, test-e2e, test-support 폴더는 운영 코드가 아니라 뺀다 (기본 규칙에 폴더 제외만 더한다)
+    const files = listSourceFiles(join(__dirname, '..'), { exclude: new RegExp(`${DEFAULT_EXCLUDE.source}|(?:^|/)test-[^/]+/`) });
     const offenders: string[] = [];
     for (const file of files) {
       const source = readFileSync(file, 'utf8');

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
+import { REQUEUE_JOB_SQL, RESTORE_NFT_AFTER_REQUEUE_SQL } from './nft-status';
 
 /** 운영자 NFT 잡 목록이 받는 상태 — SUCCEEDED/CANCELLED는 운영 대상이 아니라 목록에서 뺀다 */
 export const NFT_JOB_ADMIN_STATUSES = ['FAILED', 'PENDING', 'PROCESSING'] as const;
@@ -13,7 +14,8 @@ export const NFT_JOB_PAGE_SIZE = 30;
  * 워커(NftJobWorker)는 MAX_RETRY번째 실패에서 잡을 FAILED, nft를 FAILED로 고정한다 — 이후는 "운영자 수동 재시도".
  * 재시도는 같은 잡 행을 되살린다 (새 잡을 만들지 않는다: 멱등 키 `mint-parent:` / `mint-child:` / `attach-child:`가 이미 그 행을 가리킨다):
  *   nft_job  FAILED → PENDING, retry_count = 0, scheduled_at = now(), started_at/processed_at = NULL (last_error는 원인 확인용으로 남김)
- *   nft      FAILED → minted_at이 있으면 MINTED(attach 실패 — 이미 민팅된 토큰을 다시 민팅하지 않는다), 없으면 PENDING
+ *   nft      FAILED → token_id가 있으면 MINTED(attach 실패, 이미 민팅된 토큰을 다시 민팅하지 않는다), 없으면 PENDING
+ * 두 문장은 nft-status.ts가 단일 출처이고 scripts/requeue-nft-jobs.js가 같은 SQL을 쓴다 (nft-status.spec.ts가 대조).
  * 감사 `NFT_JOB_RETRIED`(nft_job)를 같은 트랜잭션에 남긴다. FAILED가 아닌 잡은 404 NFT_JOB_NOT_FOUND_OR_NOT_FAILED.
  */
 @Injectable()
@@ -49,18 +51,12 @@ export class NftJobsAdminService {
   async retry(jobId: string, adminId: string) {
     return this.db.tx(async (tx) => {
       const job = await tx.query<{ id: string; nft_id: string; status: string; retry_count: number }>(
-        `UPDATE nft_job
-            SET status = 'PENDING', retry_count = 0, scheduled_at = now(), started_at = NULL, processed_at = NULL
-          WHERE id = $1 AND status = 'FAILED'
+        `${REQUEUE_JOB_SQL}
           RETURNING id, nft_id, status, retry_count`,
-        [jobId],
+        [[jobId]],
       );
       if (!job.rowCount) throw new NotFoundException('NFT_JOB_NOT_FOUND_OR_NOT_FAILED');
-      await tx.query(
-        `UPDATE nft SET status = CASE WHEN minted_at IS NOT NULL THEN 'MINTED' ELSE 'PENDING' END
-          WHERE id = $1 AND status = 'FAILED'`,
-        [job.rows[0].nft_id],
-      );
+      await tx.query(RESTORE_NFT_AFTER_REQUEUE_SQL, [[job.rows[0].nft_id]]);
       await this.audit.record(adminId, 'NFT_JOB_RETRIED', 'nft_job', jobId, tx);
       return job.rows[0];
     });

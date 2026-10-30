@@ -2,21 +2,12 @@ import { Global, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { ThrottlerStorage, ThrottlerStorageService } from '@nestjs/throttler';
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { DatabaseService } from '../database/database.service';
 import { PgThrottlerStorage } from './pg-throttler-storage';
+import { listSourceFiles } from '../../test-support/source-files';
 import { throttlerModule, throttlerModuleOptions, throttlerStorageMode } from './throttler-options';
-
-/** src 아래 비-스펙 .ts 파일 (sql-param-casts.spec의 것과 같은 규칙 — 스펙 파일을 import하면 그 테스트까지 여기서 돌므로 따로 둔다) */
-function sourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) sourceFiles(full, out);
-    else if (/\.ts$/.test(entry) && !/\.(spec|db-spec|e2e-spec|d)\.ts$/.test(entry)) out.push(full);
-  }
-  return out.sort();
-}
 
 @Global()
 @Module({ providers: [{ provide: DatabaseService, useValue: { query: jest.fn() } }], exports: [DatabaseService] })
@@ -75,7 +66,7 @@ describe('throttlerModule wiring', () => {
 
   it('every throttler module in src goes through throttlerModule() (no stray per-instance ThrottlerModule.forRoot)', () => {
     const srcRoot = join(__dirname, '..', '..');
-    const offenders = sourceFiles(srcRoot)
+    const offenders = listSourceFiles(srcRoot)
       .filter((file) => /ThrottlerModule\.forRoot(Async)?\(/.test(readFileSync(file, 'utf8')))
       .map((file) => relative(srcRoot, file));
     expect(offenders).toEqual(['common/throttler/throttler-options.ts']);

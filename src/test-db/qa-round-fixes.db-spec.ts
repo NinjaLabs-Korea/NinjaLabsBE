@@ -72,6 +72,40 @@ describeDb('QA round fixes on a real database', () => {
     expect(reviews.rows.every((row) => row.comment === null && row.reviewer_id === adminId && row.revision_id !== null)).toBe(true);
   });
 
+  it('cancel cascade: every unresolved submission gets exactly one REJECT review on its current revision and no SUBMISSION_* audit row, while a normal reviewer reject writes both', async () => {
+    const bountyId = await openBounty(false);
+    const audit = new AuditService(db);
+    const review = new SubmissionReviewService(db, audit);
+    const users = [await createUser(db), await createUser(db), await createUser(db)];
+    const sent = [];
+    for (const userId of users) sent.push(await submissions.submit(bountyId, userId, { submissionUrl: 'https://x.test/w', description: 'work' }));
+    await review.review(sent[0].id, 'REJECT', 'not good', adminId); // normal reviewer reject, before the cancel
+    await review.review(sent[2].id, 'START_REVIEW', undefined, adminId);
+    await bounties.transition(bountyId, 'CANCELLED', adminId);
+
+    const open = [sent[1].id, sent[2].id];
+    const rows = await db.query<{ id: string; status: string }>(`SELECT id, status FROM bounty_submission WHERE id = ANY($1::uuid[])`, [open]);
+    expect(rows.rows.map((row) => row.status)).toEqual(['REJECTED', 'REJECTED']);
+    const cascaded = await db.query<{ submission_id: string; n: number; on_current: number }>(
+      `SELECT r.submission_id, count(*)::int AS n,
+              count(*) FILTER (WHERE rev.revision_no = s.current_revision_no)::int AS on_current
+         FROM submission_review r
+         JOIN bounty_submission s ON s.id = r.submission_id
+         JOIN submission_revision rev ON rev.id = r.revision_id
+        WHERE r.submission_id = ANY($1::uuid[]) AND r.decision = 'REJECT'
+        GROUP BY r.submission_id`, [open]);
+    expect(cascaded.rows.map((row) => [row.n, row.on_current])).toEqual([[1, 1], [1, 1]]);
+    // audit decision: the cascade is a system effect of one admin action, BOUNTY_CANCELLED is its only audit row
+    const audits = await db.query<{ action: string; entity_id: string }>(
+      `SELECT action, entity_id FROM audit_log WHERE entity_id = ANY($1::uuid[]) AND action LIKE 'SUBMISSION\\_%'`, [[...open, sent[0].id]]);
+    const byId = (id: string) => audits.rows.filter((row) => row.entity_id === id).map((row) => row.action);
+    expect(byId(sent[0].id)).toEqual(['SUBMISSION_REJECT']);
+    expect(byId(sent[1].id)).toEqual([]); // cascaded: no audit row
+    expect(byId(sent[2].id)).toEqual(['SUBMISSION_START_REVIEW']); // only the reviewer's own earlier action, no SUBMISSION_REJECT from the cascade
+    const own = await db.query(`SELECT count(*)::int AS n FROM submission_review WHERE submission_id = $1 AND decision = 'REJECT' AND comment = 'not good'`, [sent[0].id]);
+    expect(own.rows[0].n).toBe(1);
+  });
+
   it('cancelling a bounty rejects its PENDING applications (without a reviewer note), keeps APPROVED/WITHDRAWN ones, and records the reviewer', async () => {
     const bountyId = await openBounty(true);
     const [pendingUser, approvedUser, withdrawnUser] = [await createUser(db), await createUser(db), await createUser(db)];

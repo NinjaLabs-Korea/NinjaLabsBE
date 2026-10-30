@@ -24,7 +24,7 @@ src/
   wallets/             지갑 연결 challenge/verify (nonce 서명 방식)
   members/             공식 멤버 탭 (공개) + 운영자 멤버 지정
   notices/             공지/소식 (공개 읽기, 행사 날짜 event_date) + 운영자 공지 관리
-  cohorts/             기수(다음 기수) 모집: 공개 현재 기수, 지원서 제출/수정/철회, 운영자 기수 관리·심사·CSV
+  cohorts/             기수(다음 기수) 모집: 공개 현재 기수와 지원서 질문(기수마다 편집, cohort-questions.ts), 지원서 제출/수정/철회, 운영자 기수 관리·질문 편집·심사·CSV
   highlights/          Hall of Fame 큐레이션 + 자동 집계 지표 + 운영자 관리
   media/               관리자 이미지 업로드 + 공개 immutable 조회
   bounties/            바운티 목록/상세 + applications + submissions(리비전)

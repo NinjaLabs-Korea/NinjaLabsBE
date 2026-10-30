@@ -38,8 +38,9 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
 
     const id = await openCohort({ description: 'next', closesAt: new Date(Date.now() + HOUR).toISOString() });
     const cur = await e2e.get('/cohorts/current');
-    expect(cur.body).toEqual({ id, name: expect.any(String), description: 'next', opensAt: null, closesAt: expect.any(String), acceptingApplications: true });
-    expect(Object.keys(cur.body).sort()).toEqual(['acceptingApplications', 'closesAt', 'description', 'id', 'name', 'opensAt']);
+    expect(cur.body).toEqual({ id, name: expect.any(String), description: 'next', opensAt: null, closesAt: expect.any(String), acceptingApplications: true, questions: expect.any(Array) });
+    expect(Object.keys(cur.body).sort()).toEqual(['acceptingApplications', 'closesAt', 'description', 'id', 'name', 'opensAt', 'questions']);
+    expect(cur.body.questions.map((q: { id: string }) => q.id)).toEqual(['web3_experience', 'interest_areas']);
   });
 
   it('permission boundaries: anonymous 401 on user routes; a signed-in non-admin gets 403 ADMIN_ONLY on admin routes', async () => {
@@ -48,7 +49,7 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
     for (const [method, path] of [
       ['POST', `/cohorts/${NIL}/applications`], ['GET', '/cohorts/applications/me'], ['PATCH', `/cohorts/applications/${NIL}`], ['POST', `/cohorts/applications/${NIL}/withdraw`],
       ['GET', '/admin/cohorts'], ['POST', '/admin/cohorts'], ['GET', `/admin/cohorts/${NIL}`], ['PATCH', `/admin/cohorts/${NIL}`], ['DELETE', `/admin/cohorts/${NIL}`],
-      ['POST', `/admin/cohorts/${NIL}/transition`], ['GET', `/admin/cohorts/${NIL}/applications`], ['GET', `/admin/cohorts/${NIL}/applications.csv`], ['POST', `/admin/cohort-applications/${NIL}/review`],
+      ['POST', `/admin/cohorts/${NIL}/transition`], ['PUT', `/admin/cohorts/${NIL}/questions`], ['GET', `/admin/cohorts/${NIL}/applications`], ['GET', `/admin/cohorts/${NIL}/applications.csv`], ['POST', `/admin/cohort-applications/${NIL}/review`],
     ] as const) {
       expect((await e2e.request(method, path, {})).status).toBe(401);
       if (path.startsWith('/admin')) {
@@ -222,6 +223,51 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
     expect(member.rows[0].is_member).toBe(false);
   });
 
+  it('PUT /admin/cohorts/:id/questions edits the form; new-shape applications and the old body both work over HTTP', async () => {
+    const cohortId = await openCohort();
+    // DTO shape errors are VALIDATION_FAILED-style 400s, rule violations are COHORT_QUESTIONS_INVALID
+    expect((await e2e.request('PUT', `/admin/cohorts/${cohortId}/questions`, { ...asAdmin, json: { questions: 'nope' } })).status).toBe(400);
+    expect((await e2e.request('PUT', `/admin/cohorts/${cohortId}/questions`, { ...asAdmin, json: { questions: [{ type: 'RADIO', label: { ko: 'x' }, required: true }] } })).status).toBe(400);
+    expect((await e2e.request('PUT', `/admin/cohorts/${cohortId}/questions`, { ...asAdmin, json: { questions: [], extra: 1 } })).status).toBe(400);
+    const invalid = await e2e.request('PUT', `/admin/cohorts/${cohortId}/questions`, { ...asAdmin, json: { questions: [{ id: 'ghost', type: 'SHORT_TEXT', label: { ko: 'x' }, required: false }] } });
+    expect([invalid.status, invalid.body.message]).toEqual([400, 'COHORT_QUESTIONS_INVALID']);
+    expect((await e2e.request('PUT', `/admin/cohorts/${NIL}/questions`, { ...asAdmin, json: { questions: [] } })).body.message).toBe('COHORT_NOT_FOUND');
+
+    const put = await e2e.request('PUT', `/admin/cohorts/${cohortId}/questions`, { ...asAdmin, json: { questions: [
+      { id: 'web3_experience', type: 'SINGLE_CHOICE', label: { ko: 'Web3 경력' }, required: true, options: [{ id: 'LT_1Y', label: { ko: '1년 미만' } }, { id: 'GT_3Y', label: { ko: '3년 이상' } }] },
+      { type: 'SHORT_TEXT', label: { ko: '좋아하는 체인', en: 'Favorite chain' }, help: { ko: '한 단어로' }, required: false },
+    ] } });
+    expect(put.status).toBe(200);
+    expect(put.body.id).toBe(cohortId);
+    const textId = put.body.questions[1].id as string;
+    expect((await e2e.get('/cohorts/current')).body.questions).toEqual(put.body.questions);
+
+    const u = await e2e.loginOnboarded();
+    const fixed = { displayName: '홍길동', telegram: 'https://t.me/ninja_kr', twitter: '@ninja_kr', intro: 'I want to build on Injective.' };
+    const bad = await e2e.post(`/cohorts/${cohortId}/applications`, { ...fixed, answers: [{ questionId: 'web3_experience', choices: ['Y1_3'] }] }, { token: u.accessToken });
+    expect([bad.status, bad.body.message]).toEqual([400, 'COHORT_ANSWERS_INVALID']);
+    const mixed = await e2e.post(`/cohorts/${cohortId}/applications`, { ...fixed, web3Experience: 'LT_1Y', answers: [{ questionId: 'web3_experience', choices: ['LT_1Y'] }] }, { token: u.accessToken });
+    expect([mixed.status, mixed.body.message]).toEqual([400, 'COHORT_ANSWERS_INVALID']);
+    const ok = await e2e.post(`/cohorts/${cohortId}/applications`, { ...fixed, answers: [{ questionId: 'web3_experience', choices: ['GT_3Y'] }, { questionId: textId, text: ' Injective ' }] }, { token: u.accessToken });
+    expect(ok.status).toBe(201);
+    expect(ok.body.answers).toEqual([
+      expect.objectContaining({ questionId: 'web3_experience', choices: [{ id: 'GT_3Y', label: { ko: '3년 이상', en: null, zh: null } }] }),
+      expect.objectContaining({ questionId: textId, text: 'Injective', label: { ko: '좋아하는 체인', en: 'Favorite chain', zh: null } }),
+    ]);
+    expect(ok.body).toMatchObject({ web3Experience: null, interestAreas: null });
+    const list = await e2e.get(`/admin/cohorts/${cohortId}/applications?questionId=web3_experience&optionId=GT_3Y`, asAdmin);
+    expect(list.body.items.map((i: { id: string }) => i.id)).toEqual([ok.body.id]);
+    expect(list.body.items[0].answers).toHaveLength(2);
+    expect((await e2e.get(`/admin/cohorts/${cohortId}/applications?questionId=bad%20id&optionId=x`, asAdmin)).status).toBe(400);
+
+    // the old FE body (no answers) still works for a user on the legacy path
+    const legacyUser = await e2e.loginOnboarded();
+    const legacy = await e2e.post(`/cohorts/${cohortId}/applications`, body(), { token: legacyUser.accessToken });
+    expect(legacy.status).toBe(201);
+    expect(legacy.body.answers.map((a: { questionId: string }) => a.questionId)).toEqual(['web3_experience', 'interest_areas', 'activity_type']);
+    expect(legacy.body.web3Experience).toBe('Y1_3');
+  });
+
   it('CSV export: headers, BOM, filters, escaping and formula-injection neutralization', async () => {
     const cohortId = await openCohort();
     const u = await e2e.loginOnboarded();
@@ -239,8 +285,9 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
     expect(res.text).toContain('"id","applied_at","status","display_name"');
     expect(res.text).toContain(`"'=HYPERLINK(""http://evil.example"",""click"")"`);
     expect(res.text).toContain(`"'@SUM(1+1)\nsecond, ""line"""`);
-    expect(res.text).toContain(`"'+cmd|calc"`);
-    expect(res.text).toContain(`"'-2+3"`);
+    // the legacy "other" details now live inside the question cells / other_answers, prefixed by their label, so they cannot start a formula
+    expect(res.text).toContain('"현재 활동 유형: 기타 (+cmd|calc)"');
+    expect(res.text).toContain('"기타 (-2+3)"');
     expect(res.text).toContain(`"'=1+1"`);
     expect(res.text).not.toMatch(/(^|,)"[=+\-@]/m);
     expect(res.text.split('\r\n').filter(Boolean)).toHaveLength(2);

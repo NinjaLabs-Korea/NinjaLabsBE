@@ -1,16 +1,22 @@
+import { copyFileSync, mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { JwtService } from '@nestjs/jwt';
+import { Pool } from 'pg';
+import { MIGRATIONS_DIR, applyMigrations, migrationFiles, sslOptions } from '../../scripts/migrate';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { DatabaseService } from '../common/database/database.service';
 import { CohortAdminService } from '../cohorts/cohort-admin.service';
 import { CohortApplicationAdminService } from '../cohorts/cohort-application-admin.service';
 import { CohortApplicationsService } from '../cohorts/cohort-applications.service';
+import { DEFAULT_COHORT_QUESTIONS } from '../cohorts/cohort-questions';
 import { CohortsService } from '../cohorts/cohorts.service';
 import { NoticeAdminService } from '../notices/notice-admin.service';
 import { NoticesService } from '../notices/notices.service';
 import { AccountWithdrawalService } from '../users/account-withdrawal.service';
 import { describeDb } from './describe-db';
-import { auditActions, createDb, createUser, TEST_JWT_SECRET, testConfig, unique } from './harness';
+import { auditActions, createDb, createUser, TEST_JWT_SECRET, testConfig, testSslEnv, unique } from './harness';
 
 const base = {
   displayName: '홍길동', telegram: '@ninja_kr', twitter: '@ninja_kr', web3Experience: 'Y1_3', activityType: 'DEVELOPER',
@@ -333,6 +339,157 @@ describeDb('cohort recruitment on a real database', () => {
     });
   });
 
+  describe('configurable questions (0021)', () => {
+    const fixed = { displayName: '홍길동', telegram: '@ninja_kr', twitter: '@ninja_kr', intro: 'I want to build on Injective.' };
+    const answers = (areas: string[] = ['DEVELOPER']) => [{ questionId: 'web3_experience', choices: ['Y1_3'] }, { questionId: 'interest_areas', choices: areas }];
+    const rowOf = async (id: string) => (await db.query<Record<string, any>>(`SELECT web3_experience, activity_type, activity_type_other, interest_areas, interest_other, answers FROM cohort_application WHERE id = $1`, [id])).rows[0];
+
+    it('create seeds the default questions; PUT replaces them in one transaction with an audit row, and GET /cohorts/current shows them', async () => {
+      const { id, questions } = await admin.create(adminId, { name: unique('q-') });
+      expect(questions).toEqual(DEFAULT_COHORT_QUESTIONS);
+      await admin.transition(id, 'OPEN', adminId);
+      expect((await cohorts.current())!.questions).toEqual(DEFAULT_COHORT_QUESTIONS);
+
+      const out = await admin.putQuestions(id, adminId, [
+        { id: 'web3_experience', type: 'SINGLE_CHOICE', label: { ko: 'Web3 경력', en: 'Web3 experience' }, required: true,
+          options: [{ id: 'LT_1Y', label: { ko: '1년 미만' } }, { id: 'GT_3Y', label: { ko: '3년 이상' } }] },
+        { type: 'LONG_TEXT', label: { ko: '지원 동기' }, required: false },
+      ]);
+      expect(out.questions.map((q) => q.id)).toEqual(['web3_experience', expect.stringMatching(/^q_[0-9a-f]{12}$/)]);
+      expect((await cohorts.current())!.questions).toEqual(out.questions);
+      expect((await admin.detail(id)).questions).toEqual(out.questions);
+      const audit = await db.query<{ action: string; before_data: unknown; after_data: unknown }>(
+        `SELECT action, before_data, after_data FROM audit_log WHERE entity_type = 'cohort' AND entity_id = $1 AND action = 'COHORT_QUESTIONS_UPDATED'`, [id]);
+      expect(audit.rows).toEqual([{
+        action: 'COHORT_QUESTIONS_UPDATED',
+        before_data: { questionIds: ['web3_experience', 'interest_areas'] },
+        after_data: { questionIds: ['web3_experience', out.questions[1].id] },
+      }]);
+      await expect(admin.putQuestions(id, adminId, [{ id: 'interest_areas', type: 'SHORT_TEXT', label: { ko: 'x' }, required: false }]))
+        .rejects.toMatchObject({ message: 'COHORT_QUESTIONS_INVALID' }); // interest_areas was removed above
+      await expect(admin.putQuestions('00000000-0000-4000-8000-000000000000', adminId, [])).rejects.toMatchObject({ message: 'COHORT_NOT_FOUND' });
+      expect(await auditActions(db, 'cohort', id)).toContain('COHORT_QUESTIONS_UPDATED');
+    });
+
+    it('new-shape POST stores snapshot answers with NULL legacy columns; the response carries the answers and null legacy fields', async () => {
+      const cohortId = await openCohort();
+      const userId = await createUser(db);
+      const out = await apps.apply(cohortId, userId, { ...fixed, answers: [...answers(['KOL', 'OTHER'])].map((a) => (a.questionId === 'interest_areas' ? { ...a, other: ' UX ' } : a)) }) as Record<string, any>;
+      expect(out.answers.map((a: any) => [a.questionId, a.choices.map((c: any) => c.id), a.other])).toEqual([['web3_experience', ['Y1_3'], null], ['interest_areas', ['KOL', 'OTHER'], 'UX']]);
+      expect(out).toMatchObject({ web3Experience: null, activityType: null, activityTypeOther: null, interestAreas: null, interestOther: null });
+      expect(await rowOf(out.id)).toMatchObject({ web3_experience: null, activity_type: null, activity_type_other: null, interest_areas: null, interest_other: null });
+      expect((await rowOf(out.id)).answers).toHaveLength(2);
+      await expect(apps.apply(cohortId, await createUser(db), { ...fixed, answers: [answers()[0]] })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+      await expect(apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(['OTHER']) })).rejects.toMatchObject({ message: 'COHORT_OTHER_DETAIL_REQUIRED' });
+      await expect(apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(), web3Experience: 'LT_1Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+    });
+
+    it('legacy-shape POST still works, writes legacy columns with empty answers and its response has synthesized answers', async () => {
+      const cohortId = await openCohort();
+      const out = await apps.apply(cohortId, await createUser(db), { ...fixed, ...{ web3Experience: 'LT_1Y', activityType: 'STUDENT', interestAreas: ['RESEARCHER'] } }) as Record<string, any>;
+      expect(await rowOf(out.id)).toMatchObject({ web3_experience: 'LT_1Y', activity_type: 'STUDENT', interest_areas: ['RESEARCHER'], answers: [] });
+      expect(out.answers.map((a: any) => a.questionId)).toEqual(['web3_experience', 'interest_areas', 'activity_type']);
+      expect(out.answers[2].choices).toEqual([{ id: 'STUDENT', label: { ko: '학생', en: 'Student', zh: '学生' } }]);
+      expect(out.web3Experience).toBe('LT_1Y');
+      // a legacy PATCH on a legacy row works; answers on a legacy row convert it to the new shape; legacy fields on a new-shape row are refused
+      expect(await apps.update(out.id, (await db.query<{ user_id: string }>(`SELECT user_id FROM cohort_application WHERE id = $1`, [out.id])).rows[0].user_id, { activityType: 'KOL' }))
+        .toMatchObject({ activityType: 'KOL' });
+    });
+
+    it('PATCH: answers replace everything and null the legacy columns; a fixed-only PATCH keeps stored answers even after the form changed', async () => {
+      const cohortId = await openCohort();
+      const userId = await createUser(db);
+      const { id } = await apps.apply(cohortId, userId, { ...fixed, answers: answers(['KOL']) }) as { id: string };
+      await admin.putQuestions(cohortId, adminId, [{ type: 'SHORT_TEXT', label: { ko: '완전히 다른 질문' }, required: true }]);
+      const kept = await apps.update(id, userId, { intro: 'edited intro' }) as Record<string, any>;
+      expect(kept.intro).toBe('edited intro');
+      expect(kept.answers.map((a: any) => a.questionId)).toEqual(['web3_experience', 'interest_areas']); // not re-checked against the new form
+      await expect(apps.update(id, userId, { answers: answers() })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' }); // validated against the CURRENT questions
+      await expect(apps.update(id, userId, { web3Experience: 'LT_1Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+      const replaced = await apps.update(id, userId, { answers: [{ questionId: (await cohorts.current())!.questions[0].id, text: '새 답' }] }) as Record<string, any>;
+      expect(replaced.answers).toHaveLength(1);
+      expect(replaced.answers[0]).toMatchObject({ text: '새 답', choices: null });
+    });
+
+    it('editing a question label later does not change a stored answer', async () => {
+      const cohortId = await openCohort();
+      const userId = await createUser(db);
+      const { id } = await apps.apply(cohortId, userId, { ...fixed, answers: answers(['KOL']) }) as { id: string };
+      const current = (await cohorts.current())!.questions;
+      await admin.putQuestions(cohortId, adminId, [
+        { id: 'web3_experience', type: 'SINGLE_CHOICE', label: { ko: '이름이 바뀐 질문' }, required: true,
+          options: [{ id: 'Y1_3', label: { ko: '바뀐 선택지' } }, { id: 'LT_1Y', label: { ko: '다른 선택지' } }] },
+      ]);
+      expect((await cohorts.current())!.questions[0].label.ko).toBe('이름이 바뀐 질문');
+      const [mine] = await apps.mine(userId) as Record<string, any>[];
+      expect(mine.answers[0].label).toEqual(current[0].label);
+      expect(mine.answers[0].choices[0].label.ko).toBe('1~3년');
+      expect(mine.answers.map((a: any) => a.questionId)).toEqual(['web3_experience', 'interest_areas']); // the removed question's answer is still there
+      expect(id).toBe(mine.id);
+    });
+
+    it('filters: questionId+optionId match both legacy and new rows; the old aliases still work; a lone param is ignored', async () => {
+      const cohortId = await openCohort();
+      const legacy = await apps.apply(cohortId, await createUser(db), { ...fixed, web3Experience: 'GT_3Y', activityType: 'KOL', interestAreas: ['DEVELOPER', 'KOL'] }) as { id: string };
+      const fresh = await apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(['DEVELOPER']) }) as { id: string };
+      const other = await apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(['BIZDEV']) }) as { id: string };
+      const ids = async (f: Parameters<CohortApplicationAdminService['list']>[1]) => (await appAdmin.list(cohortId, f)).items.map((i) => i.id).sort();
+      expect(await ids({ questionId: 'interest_areas', optionId: 'DEVELOPER' })).toEqual([legacy.id, fresh.id].sort());
+      expect(await ids({ interestArea: 'DEVELOPER' })).toEqual([legacy.id, fresh.id].sort());
+      expect(await ids({ questionId: 'interest_areas', optionId: 'BIZDEV' })).toEqual([other.id]);
+      expect(await ids({ questionId: 'web3_experience', optionId: 'GT_3Y' })).toEqual([legacy.id]);
+      expect(await ids({ questionId: 'web3_experience', optionId: 'Y1_3' })).toEqual([fresh.id, other.id].sort());
+      expect(await ids({ questionId: 'activity_type', optionId: 'KOL' })).toEqual([legacy.id]);
+      expect(await ids({ activityType: 'KOL' })).toEqual([legacy.id]);
+      expect(await ids({ questionId: 'interest_areas' })).toHaveLength(3);
+      expect(await ids({ questionId: 'interest_areas', optionId: 'DEVELOPER', status: 'ACCEPTED' })).toEqual([]);
+    });
+
+    it('CSV: fixed 9 + current question labels + other_answers + review columns; legacy activity_type lands in other_answers', async () => {
+      const cohortId = await openCohort();
+      const legacy = await apps.apply(cohortId, await createUser(db), { ...fixed, web3Experience: 'LT_1Y', activityType: 'OTHER', activityTypeOther: '디자이너', interestAreas: ['KOL', 'OTHER'], interestOther: 'UX' }) as { id: string };
+      const fresh = await apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(['DEVELOPER']) }) as { id: string };
+      const csv = await appAdmin.csv(cohortId, {});
+      const lines = csv.slice(1).split('\r\n').filter(Boolean);
+      expect(lines[0]).toBe(CSV_HEADER_LINE);
+      const cells = (id: string) => lines.find((l) => l.includes(id))!.split('","').map((c) => c.replace(/^"|"$/g, ''));
+      const l = cells(legacy.id);
+      expect(l.slice(9, 12)).toEqual(['1년 미만', 'KOL(인플루언서);기타 (UX)', '현재 활동 유형: 기타 (디자이너)']);
+      const f = cells(fresh.id);
+      expect(f.slice(9, 12)).toEqual(['1~3년', '개발자', '']);
+      // a changed form changes the header, and answers to removed questions move to other_answers
+      await admin.putQuestions(cohortId, adminId, [{ id: 'web3_experience', type: 'SINGLE_CHOICE', label: { ko: '경력' }, required: true,
+        options: [{ id: 'LT_1Y', label: { ko: '1년 미만' } }, { id: 'Y1_3', label: { ko: '1~3년' } }] }]);
+      const csv2 = (await appAdmin.csv(cohortId, {})).slice(1).split('\r\n').filter(Boolean);
+      expect(csv2[0]).toBe('"id","applied_at","status","display_name","nickname","email","telegram","twitter","intro","경력","other_answers","review_note","reviewed_at"');
+      expect(csv2.find((line) => line.includes(fresh.id))).toContain('"참여하고 싶은 분야: 개발자"');
+    });
+
+    it('CSV: free-text answers go through the same formula neutralization', async () => {
+      const cohortId = await openCohort();
+      const { questions } = await admin.putQuestions(cohortId, adminId, [{ type: 'LONG_TEXT', label: { ko: '=질문' }, required: true }]);
+      await apps.apply(cohortId, await createUser(db), { ...fixed, answers: [{ questionId: questions[0].id, text: '=HYPERLINK("http://evil")' }] });
+      const csv = await appAdmin.csv(cohortId, {});
+      expect(csv).toContain(`"'=질문"`); // header
+      expect(csv).toContain(`"'=HYPERLINK(""http://evil"")"`); // cell
+    });
+
+    it('the database refuses rows that mix the legacy columns and answers', async () => {
+      const cohortId = await openCohort();
+      const userId = await createUser(db);
+      const insert = (cols: string, vals: string) => db.query(
+        `INSERT INTO cohort_application (cohort_id, user_id, display_name, telegram, twitter, intro${cols}) VALUES ($1, $2, 'n', '@abcde', '@a', 'hi'${vals})`, [cohortId, userId]);
+      // new-shape columns together with a legacy column
+      await expect(insert(", web3_experience, answers", ", 'LT_1Y', '[{}]'::jsonb")).rejects.toMatchObject({ code: '23514', constraint: 'chk_cohort_application_answer_shape' });
+      // legacy shape needs all three legacy columns
+      await expect(insert(", web3_experience", ", 'LT_1Y'")).rejects.toMatchObject({ code: '23514', constraint: 'chk_cohort_application_answer_shape' });
+      await expect(insert(", activity_type", ", 'KOL'")).rejects.toMatchObject({ code: '23514', constraint: 'chk_cohort_application_answer_shape' });
+      await expect(insert(", answers", ", '{}'::jsonb")).rejects.toMatchObject({ code: '23514', constraint: 'chk_cohort_application_answers_array' });
+      await expect(db.query(`UPDATE cohort SET questions = '{}'::jsonb WHERE id = $1`, [cohortId])).rejects.toMatchObject({ code: '23514', constraint: 'chk_cohort_questions_shape' });
+      await expect(insert(", answers", ", '[]'::jsonb")).resolves.toBeDefined(); // new shape with no answers (all questions optional) is fine
+    });
+  });
+
   describe('account withdrawal', () => {
     it('withdraws SUBMITTED applications, keeps every row, leaves decided ones as recorded', async () => {
       const cohortId = await openCohort();
@@ -355,7 +512,7 @@ describeDb('cohort recruitment on a real database', () => {
   });
 });
 
-const CSV_HEADER_LINE = '"id","applied_at","status","display_name","nickname","email","telegram","twitter","web3_experience","activity_type","activity_type_other","interest_areas","interest_other","intro","review_note","reviewed_at"';
+const CSV_HEADER_LINE = '"id","applied_at","status","display_name","nickname","email","telegram","twitter","intro","Web3 경력","참여하고 싶은 분야","other_answers","review_note","reviewed_at"';
 
 describeDb('notice event_date on a real database', () => {
   let db: DatabaseService;
@@ -403,5 +560,55 @@ describeDb('notice event_date on a real database', () => {
     const byPublished = await notices.list(1, 50, 'EVENT');
     expect(titles(byPublished.items as Array<{ id: string }>)).toEqual([undatedNewest, undatedOlder, early, late]);
     await expect(admin.create(adminId, { title: 'bad', body: 'b', category: 'EVENT', eventDate: '2026-02-30' })).rejects.toMatchObject({ code: '22008' });
+  });
+});
+
+
+/** 0021 은 이미 있는 기수와 옛 형식 지원서를 건드리지 않고 기본 질문만 채워야 한다: 0020 까지만 적용한 별도 DB 에 옛 데이터를 넣고 0021 을 적용한다 */
+describeDb('0021 migration on a database with legacy cohort data', () => {
+  const adminUrl = process.env.TEST_DATABASE_URL!;
+  const ssl = sslOptions(testSslEnv());
+  const name = `ninjalabs_test_q21_${Date.now().toString(36)}_${unique().slice(0, 6)}`;
+  let pool: Pool;
+  let db: DatabaseService;
+
+  beforeAll(async () => {
+    const admin = new Pool({ connectionString: adminUrl, ssl, max: 1 });
+    try { await admin.query(`CREATE DATABASE "${name}"`); } finally { await admin.end(); }
+    const url = new URL(adminUrl);
+    url.pathname = `/${name}`;
+    pool = new Pool({ connectionString: url.toString(), ssl, max: 2 });
+    db = createDb({ DATABASE_URL: url.toString() });
+  });
+  afterAll(async () => {
+    await db.onApplicationShutdown();
+    await pool.end();
+    const admin = new Pool({ connectionString: adminUrl, ssl, max: 1 });
+    try { await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`); } finally { await admin.end(); }
+  });
+
+  it('keeps legacy applications as they are and seeds the default questions into every existing cohort', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ninjalabs-q21-'));
+    for (const file of migrationFiles()) if (file < '0021') copyFileSync(join(MIGRATIONS_DIR, file), join(dir, file));
+    await applyMigrations(pool, { dir });
+    const adminId = await createUser(db, { isAdmin: true });
+    const userId = await createUser(db);
+    const draft = (await db.query<{ id: string }>(`INSERT INTO cohort (name, created_by, status) VALUES ('d', $1, 'DRAFT') RETURNING id`, [adminId])).rows[0].id;
+    const closed = (await db.query<{ id: string }>(`INSERT INTO cohort (name, created_by, status) VALUES ('c', $1, 'CLOSED') RETURNING id`, [adminId])).rows[0].id;
+    const app = (await db.query<{ id: string }>(
+      `INSERT INTO cohort_application (cohort_id, user_id, display_name, telegram, twitter, web3_experience, activity_type, interest_areas, intro)
+       VALUES ($1, $2, 'n', '@abcde', '@a', 'LT_1Y', 'KOL', ARRAY['KOL']::text[], 'hi') RETURNING id`, [closed, userId])).rows[0].id;
+
+    const { applied } = await applyMigrations(pool);
+    expect(applied).toEqual(['0021_cohort_questions.sql']);
+
+    for (const id of [draft, closed]) {
+      expect((await db.query<{ questions: unknown }>(`SELECT questions FROM cohort WHERE id = $1`, [id])).rows[0].questions).toEqual(DEFAULT_COHORT_QUESTIONS);
+    }
+    const row = (await db.query<Record<string, unknown>>(`SELECT web3_experience, activity_type, interest_areas, answers FROM cohort_application WHERE id = $1`, [app])).rows[0];
+    expect(row).toEqual({ web3_experience: 'LT_1Y', activity_type: 'KOL', interest_areas: ['KOL'], answers: [] });
+    // a cohort created after the migration without the app (raw SQL) starts empty; the app seeds defaults on create
+    const raw = (await db.query<{ questions: unknown }>(`INSERT INTO cohort (name, created_by) VALUES ('raw', $1) RETURNING questions`, [adminId])).rows[0];
+    expect(raw.questions).toEqual([]);
   });
 });

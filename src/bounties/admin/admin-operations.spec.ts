@@ -95,6 +95,15 @@ describe('BountyAdminService EVM rewards', () => {
     expect(dbQuery).not.toHaveBeenCalled();
   });
 
+  it('create: an application deadline under 60 s after the submission deadline is tolerated (datetime-local drops seconds), 60 s or more is refused', async () => {
+    const submission = Date.now() + 10 * 86_400_000;
+    const within = { ...input, reward: undefined, submissionDeadline: new Date(submission).toISOString(), applicationDeadline: new Date(submission + 59_000).toISOString() };
+    const txQuery = jest.fn(async (sql: string) => (sql.includes('INSERT INTO bounty\n') ? { rows: [{ id: 'b' }], rowCount: 1 } : { rows: [], rowCount: 1 }));
+    await expect(adminServicesFor(dbWith(txQuery).db).bounties.create('admin', within)).resolves.toEqual({ id: 'b' });
+    const over = { ...within, applicationDeadline: new Date(submission + 60_000).toISOString() };
+    await expect(adminServicesFor(dbWith(jest.fn()).db).bounties.create('admin', over)).rejects.toMatchObject({ message: 'APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE' });
+  });
+
   it('rejects USDC rewards when the EVM contract is not configured', async () => {
     process.env.INJECTIVE_EVM_CHAIN_ID = '1439';
     delete process.env.USDC_EVM_CONTRACT_ADDRESS;
@@ -133,11 +142,10 @@ describe('Admin review safeguards', () => {
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF b');
     expect(query.mock.calls[1]).toEqual([expect.stringContaining('FROM bounty_submission WHERE id = $1 FOR UPDATE'), ['sub']]);
     expect(query.mock.calls[2]).toEqual([expect.stringContaining('UPDATE bounty_submission SET status = $2, reviewed_at = now() WHERE id = $1'), ['sub', 'REVISION_REQUESTED']]);
-    expect(query.mock.calls[3][1]).toEqual(['sub', 2]); // revision row of the reviewed revision
-    expect(query.mock.calls[4][0]).toContain('INSERT INTO submission_review');
-    expect(query.mock.calls[4][1]).toEqual(['sub', 'revision', 'admin', 'REQUEST_REVISION', 'Add tests']);
-    expect(query.mock.calls[5][0]).toContain('INSERT INTO audit_log');
-    expect(query.mock.calls[5][1]).toEqual(['admin', 'SUBMISSION_REQUEST_REVISION', 'bounty_submission', 'sub']);
+    expect(query.mock.calls[3][0]).toContain('INSERT INTO submission_review'); // current revision resolved inside the INSERT (system-review.ts)
+    expect(query.mock.calls[3][1]).toEqual([['sub'], 'admin', 'REQUEST_REVISION', 'Add tests']);
+    expect(query.mock.calls[4][0]).toContain('INSERT INTO audit_log');
+    expect(query.mock.calls[4][1]).toEqual(['admin', 'SUBMISSION_REQUEST_REVISION', 'bounty_submission', 'sub']);
     expect(dbQuery).not.toHaveBeenCalled();
   });
   it('prevents opening a bounty with an unconfirmed reward deposit', async () => {

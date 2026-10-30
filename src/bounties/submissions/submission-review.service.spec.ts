@@ -4,26 +4,22 @@ import { createMockDb } from '../../test-support/mock-db';
 import { SubmissionReviewService } from './submission-review.service';
 
 /**
- * Answers by statement shape: the locked bounty (`FOR UPDATE OF b`), the locked submission, the approved count, the UPDATE, the
- * revision lookup (which revision is current), the review INSERT and the audit INSERT.
+ * Answers by statement shape: the locked bounty (`FOR UPDATE OF b`), the locked submission, the approved count, the UPDATE,
+ * the review INSERT (current revision resolved in SQL) and the audit INSERT.
  */
 function setup(options: {
   bounty?: { id: string; status: string; max_winners: number } | null;
   submission?: { id: string; status: string; current_revision_no: number } | null;
   approved?: number;
-  revisionRowExists?: boolean;
   submitterActive?: boolean;
 } = {}) {
   const bounty = options.bounty === undefined ? { id: 'bounty', status: 'OPEN', max_winners: 3 } : options.bounty;
   const submission = options.submission === undefined ? { id: 'sub', status: 'SUBMITTED', current_revision_no: 1 } : options.submission;
-  const query = jest.fn(async (sql: string, params?: unknown[]) => {
+  const query = jest.fn(async (sql: string, _params?: unknown[]) => {
     if (sql.includes('FOR UPDATE OF b')) return bounty ? { rowCount: 1, rows: [bounty] } : { rowCount: 0, rows: [] };
     if (sql.includes('FOR SHARE OF u')) return options.submitterActive === false ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ id: 'user' }] };
     if (sql.includes('FROM bounty_submission WHERE id = $1 FOR UPDATE')) return submission ? { rowCount: 1, rows: [submission] } : { rowCount: 0, rows: [] };
     if (sql.includes("status = 'APPROVED'")) return { rowCount: 1, rows: [{ count: String(options.approved ?? 0) }] };
-    if (sql.includes('FROM submission_revision WHERE submission_id = $1 AND revision_no = $2')) {
-      return options.revisionRowExists === false ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ id: `rev-${params![1]}` }] };
-    }
     return { rowCount: 1, rows: [] };
   });
   const dbQuery = jest.fn();
@@ -46,8 +42,7 @@ describe('SubmissionReviewService decisions', () => {
     const { service, call, dbQuery } = setup({ submission: { id: 'sub', status: 'SUBMITTED', current_revision_no: 4 } });
     await expect(service.review('sub', decision, 'note', 'admin', 4)).resolves.toEqual({ id: 'sub', status });
     expect(call('UPDATE bounty_submission SET status = $2')![1]).toEqual(['sub', status]);
-    expect(call('FROM submission_revision')![1]).toEqual(['sub', 4]);
-    expect(call('INSERT INTO submission_review')![1]).toEqual(['sub', 'rev-4', 'admin', decision, 'note']);
+    expect(call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', decision, 'note']);
     expect(call('INSERT INTO audit_log')![1]).toEqual(['admin', `SUBMISSION_${decision}`, 'bounty_submission', 'sub']);
     expect(dbQuery).not.toHaveBeenCalled();
   });
@@ -55,10 +50,10 @@ describe('SubmissionReviewService decisions', () => {
   it('stores a blank or padded comment as NULL / trimmed (the submitter sees it as the review comment)', async () => {
     const blank = setup();
     await blank.service.review('sub', 'APPROVE', '  \n ', 'admin');
-    expect(blank.call('INSERT INTO submission_review')![1]).toEqual(['sub', 'rev-1', 'admin', 'APPROVE', null]);
+    expect(blank.call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', 'APPROVE', null]);
     const padded = setup();
     await padded.service.review('sub', 'APPROVE', '  nice work ', 'admin');
-    expect(padded.call('INSERT INTO submission_review')![1]).toEqual(['sub', 'rev-1', 'admin', 'APPROVE', 'nice work']);
+    expect(padded.call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', 'APPROVE', 'nice work']);
   });
 
   it('an unknown decision is refused before any transaction is opened', async () => {
@@ -119,7 +114,7 @@ describe('SubmissionReviewService revision guard and feedback', () => {
   it('revisionNo omitted skips the stale-revision check and reviews whatever is current', async () => {
     const { service, call } = setup({ submission: { id: 'sub', status: 'RESUBMITTED', current_revision_no: 7 } });
     await expect(service.review('sub', 'APPROVE', undefined, 'admin')).resolves.toEqual({ id: 'sub', status: 'APPROVED' });
-    expect(call('INSERT INTO submission_review')![1]).toEqual(['sub', 'rev-7', 'admin', 'APPROVE', null]);
+    expect(call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', 'APPROVE', null]);
   });
 
   it.each([[1, 2], [3, 2]])('revisionNo %i while the current revision is %i → 400 SUBMISSION_REVISION_CHANGED, nothing written', async (seen, current) => {
@@ -141,10 +136,12 @@ describe('SubmissionReviewService revision guard and feedback', () => {
     await expect(setup().service.review('sub', 'REJECT', undefined, 'admin')).resolves.toEqual({ id: 'sub', status: 'REJECTED' });
   });
 
-  it('a missing revision snapshot (legacy row) stores the review with revision_id NULL instead of failing', async () => {
-    const { service, call } = setup({ revisionRowExists: false });
-    await expect(service.review('sub', 'START_REVIEW', undefined, 'admin')).resolves.toEqual({ id: 'sub', status: 'IN_REVIEW' });
-    expect(call('INSERT INTO submission_review')![1]).toEqual(['sub', null, 'admin', 'START_REVIEW', null]);
+  it('the review row is written for the submission\'s current revision, and a missing snapshot (legacy row) falls back to revision_id NULL inside the same INSERT', async () => {
+    const { service, call } = setup({ submission: { id: 'sub', status: 'SUBMITTED', current_revision_no: 3 } });
+    await service.review('sub', 'START_REVIEW', undefined, 'admin');
+    const sql = call('INSERT INTO submission_review')![0] as string;
+    expect(sql).toContain('sr.revision_no = s.current_revision_no'); // scalar subselect: NULL when no snapshot row exists
+    expect(call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', 'START_REVIEW', null]);
   });
 });
 

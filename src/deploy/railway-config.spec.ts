@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
+import { listSourceFiles } from '../test-support/source-files';
 import { SHUTDOWN_DRAIN_TIMEOUT_MS } from '../common/lifecycle/single-flight-task';
 
 /**
@@ -64,13 +65,9 @@ describe('.railway/railway.ts covers every env key the code reads', () => {
     PGSSLMODE: 'local Postgres only (disable); production uses TLS',
   };
 
-  function sourceFiles(dir: string): string[] {
-    return readdirSync(dir).flatMap((name) => {
-      const path = join(dir, name);
-      if (statSync(path).isDirectory()) return name === 'test-db' || name === 'test-e2e' || name === 'test-support' ? [] : sourceFiles(path);
-      return /\.(ts|js)$/.test(name) && !/\.(spec|d)\.ts$/.test(name) ? [path] : [];
-    });
-  }
+  /** 런타임 코드만: .ts와 .js (scripts는 js), 테스트 폴더와 스펙/.d.ts 제외 */
+  const sourceFiles = (dir: string) =>
+    listSourceFiles(dir, { extensions: ['.ts', '.js'], exclude: /\.(?:spec|db-spec|e2e-spec|d)\.ts$|(?:^|\/)(?:test-db|test-e2e|test-support)\// });
 
   const readKeys = new Set<string>();
   for (const file of [...sourceFiles(join(root, 'src')), ...sourceFiles(join(root, 'scripts'))]) {

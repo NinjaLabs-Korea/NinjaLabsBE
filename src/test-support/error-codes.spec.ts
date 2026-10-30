@@ -1,6 +1,8 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 import { ERROR_CODES } from '../common/http/error-codes';
+import { listSourceFiles } from './source-files';
+
 
 /**
  * 정적 가드 — 서비스가 던지는 에러 코드 ↔ `common/http/error-codes.ts` 카탈로그 ↔ `docs/api-contract.md` 코드 표가
@@ -25,16 +27,6 @@ const THROW = /new (\w+Exception)\(\s*[`']([A-Z][A-Z0-9_]+)/g;
 const DOC_BEGIN = '<!-- error-codes:begin -->';
 const DOC_END = '<!-- error-codes:end -->';
 const SRC_ROOT = join(__dirname, '..');
-
-/** 운영 소스(.ts)만 — 스펙/db-spec/e2e/d.ts 제외 (sql-param-casts.spec.ts의 listSourceFiles와 같은 기준; 다른 스펙을 import하면 그 테스트가 중복 등록돼 따로 둔다) */
-function listSourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) listSourceFiles(full, out);
-    else if (/\.ts$/.test(entry) && !/\.(spec|db-spec|e2e-spec|d)\.ts$/.test(entry)) out.push(full);
-  }
-  return out.sort();
-}
 
 /** 소스에서 던져지는 `code -> 상태 집합` (오름차순) */
 function scanThrownCodes(): Map<string, number[]> {

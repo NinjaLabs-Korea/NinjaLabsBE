@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join, relative } from 'path';
+import { listSourceFiles } from './source-files';
 
 /**
  * 정적 가드 — 같은 SQL 문장 안에서 같은 `$n`이 서로 다른 타입으로 추론되게 쓰였는지 검사한다 (README "코드 배치 규칙").
@@ -23,18 +24,6 @@ const PARAM = /\$(\d+)(?:::(\w+(?:\[\])?))?/g;
 const NOT_A_COLUMN = new Set(['ANY', 'ALL', 'SOME', 'NULL', 'TRUE', 'FALSE', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'AND', 'OR', 'NOT', 'IS', 'IN', 'INTERVAL', 'NOW']);
 
 export type Finding = { param: number; reason: string };
-
-export function listSourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      if (entry !== 'node_modules') listSourceFiles(full, out);
-    } else if (/\.ts$/.test(entry) && !/\.(spec|db-spec|d)\.ts$/.test(entry)) {
-      out.push(full);
-    }
-  }
-  return out.sort();
-}
 
 /**
  * 소스에서 문자열/템플릿 리터럴을 꺼낸다 (주석은 건너뛴다). 템플릿의 `${…}`는 중첩 깊이를 세어 넘기고,

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
+import { MINTED_OR_LATER, sqlIn } from '../nfts/nft-status';
 import { rewardTokenDecimals } from '../rewards/reward-token-decimals';
 
 /** 토큰별 지급 완료(PAID) 보상 합계 — amount 는 base unit 정수 문자열 (DECIMAL(78,0) 합이라 Number 로 바꾸지 않는다) */
@@ -108,7 +109,7 @@ export class HighlightsService {
          (SELECT count(*) FROM nft n
             JOIN bounty b ON b.id = n.bounty_id
            WHERE n.nft_type = 'BOUNTY_COMPLETION_CHILD'
-             AND n.status IN ('MINTED','ATTACHING','ATTACHED')
+             AND n.status ${sqlIn(MINTED_OR_LATER)}
              AND b.deleted_at IS NULL) AS completion_nfts,
          (SELECT count(DISTINCT lower(btrim(sponsor_name))) FROM bounty
            WHERE status = 'COMPLETED' AND deleted_at IS NULL) AS sponsors`,

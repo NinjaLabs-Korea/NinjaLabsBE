@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
+import { listSourceFiles } from './source-files';
 
 /**
  * 운영자와 사용자가 읽는 문자열(스크립트 출력, 로그, 알림, 에러 메시지)에 em dash(U+2014)를 쓰지 않는다 (프로젝트 규칙).
@@ -8,21 +9,12 @@ import { join } from 'path';
 const EM_DASH = '—';
 const COMMENT_LINE = /^\s*(\/\/|\*|\/\*)/;
 
-function walk(dir: string, accept: (file: string) => boolean, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) {
-      if (name !== 'node_modules') walk(full, accept, out);
-    } else if (accept(full)) out.push(full);
-  }
-  return out;
-}
-
 describe('no em dash in runtime strings', () => {
   const root = join(__dirname, '..', '..');
   const files = [
-    ...walk(join(root, 'scripts'), (f) => f.endsWith('.js')),
-    ...walk(join(root, 'src'), (f) => f.endsWith('.ts') && !/\.(spec|db-spec|e2e-spec)\.ts$/.test(f)),
+    // scripts는 .js (모든 파일), src는 기본 규칙
+    ...listSourceFiles(join(root, 'scripts'), { extensions: ['.js'], exclude: /$^/ }),
+    ...listSourceFiles(join(root, 'src')),
   ];
 
   it('scans a non-trivial set of files', () => expect(files.length).toBeGreaterThan(50));

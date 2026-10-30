@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 지급할 수 없는 승인 수상의 보상 미지급 처리 — 승인(APPROVED)됐지만 payout을 만들 수 없는 제출(예: 수상자가 지갑을 연결하지 않고 연락 두절)을
+ * 지급할 수 없는 승인 수상의 보상 미지급 처리 - 승인(APPROVED)됐지만 payout을 만들 수 없는 제출(예: 수상자가 지갑을 연결하지 않고 연락 두절)을
  * REJECTED로 되돌려 바운티를 COMPLETED/CANCELLED로 닫을 수 있게 한다 (docs/runbook.md §7.4 "지급할 수 없는 수상").
  *
  *   node scripts/forfeit-award.js <submission-id> --reason <text> --admin <admin-user-id> [--dry-run] [--yes]

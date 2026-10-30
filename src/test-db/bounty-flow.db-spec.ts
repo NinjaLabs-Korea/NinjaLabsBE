@@ -387,7 +387,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
   });
 
   /**
-   * 지급 취소/풀 소진 뒤에도 바운티를 끝낼 수 있다 — 규칙은 rewards/payout-status.ts (OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql).
+   * 지급 취소/풀 소진 뒤에도 바운티를 끝낼 수 있다 - 규칙은 rewards/payout-status.ts (OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql).
    *   - 취소된(CANCELLED) payout은 진행 중이 아니고, 그 수상자는 받을 몫이 없다(NONE) — 같은 (보상, 제출)로 다시 요청할 수 없으므로.
    *   - 다른 수상자가 풀을 다 가져간 승인 제출도 받을 몫이 없다(NONE).
    *   - 여유분이 남은 승인 제출, FAILED payout이 걸린 제출은 받을 몫이 남은 것이라 COMPLETED를 막는다 (PENDING).

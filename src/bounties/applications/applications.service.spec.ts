@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
-import { createMockDb } from '../../test-support/mock-db';
+import { createMockDb, normalizeSql } from '../../test-support/mock-db';
 import { ApplicationsService } from './applications.service';
 
 /** apply() runs inside db.tx; pool and tx share the same checked mock, assertions read the raw jest.fn */
@@ -8,7 +8,7 @@ function serviceWith(query: jest.Mock, audit = { record: jest.fn() }) {
   return new ApplicationsService(createMockDb({ query, txQuery: query }).database, audit as unknown as AuditService);
 }
 
-/** assertOnboarded() lookup that a USER actor runs right after the submission-mode check (agents skip it) */
+/** Eligibility lookup for the user or agent owner, before reading participant rows. */
 const ONBOARDED = { rowCount: 1, rows: [{ done: true }] };
 
 describe('ApplicationsService submission modes', () => {
@@ -236,7 +236,7 @@ describe('ApplicationsService apply rules', () => {
     const query = jest.fn().mockResolvedValueOnce(bountyRow()).mockResolvedValueOnce(onboarding);
     await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
     expect(query).toHaveBeenCalledTimes(2);
-    expect(query.mock.calls[1][0]).toContain('onboarding_completed_at IS NOT NULL AS done FROM "user" WHERE id = $1 AND deleted_at IS NULL');
+    expect(normalizeSql(query.mock.calls[1][0])).toContain(`onboarding_completed_at IS NOT NULL AS done FROM "user" WHERE id = $1 AND deleted_at IS NULL AND status = 'ACTIVE' FOR SHARE`);
     expect(query.mock.calls[1][1]).toEqual(['user']);
   });
 

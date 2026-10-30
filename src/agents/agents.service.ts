@@ -70,6 +70,8 @@ export class AgentsService {
     try {
       // 같은 지갑/키를 점유한 행 확인(남의 버려진 PENDING은 soft delete)과 INSERT를 한 트랜잭션에서 — 유니크 위반이면 전체가 롤백되고 아래 catch로 간다
       const r = await this.db.tx(async (tx) => {
+        // 탈퇴도 유저 -> 에이전트 순서로 잠근다. 에이전트 조회/INSERT 전에 소유자의 활성 온보딩을 확인하고 잠가야 교착을 피한다.
+        await BountyActor.user(ownerUserId).assertOnboarded(tx);
         await this.retireReusableAgents(tx, ownerUserId, storedPublicKey, normalizedAddress);
         const inserted = await tx.query<{ id: string }>(
           `INSERT INTO agent (owner_user_id, name, description, public_key, wallet_address)
@@ -79,8 +81,6 @@ export class AgentsService {
         );
         // 본인 지갑 검사는 INSERT 뒤에 한다: 던지면 이 트랜잭션 전체(위의 버려진 행 정리 포함)가 롤백된다
         await this.assertNotOwnerWallet(tx, ownerUserId, isEvm ? getInjectiveAddress(normalizedAddress) : normalizedAddress);
-        // 온보딩을 마치지 않은 소유자는 에이전트를 만들 수 없다 (409 PROFILE_REQUIRED, 사람의 지원·제출과 같은 규칙). 던지면 위 INSERT도 롤백된다
-        await BountyActor.user(ownerUserId).assertOnboarded(tx);
         return inserted;
       });
       return {

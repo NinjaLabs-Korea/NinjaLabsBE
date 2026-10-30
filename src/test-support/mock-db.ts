@@ -48,6 +48,14 @@ export interface MockDb {
   handle: (match: RegExp, reply: SqlHandler['reply']) => void;
   /** pool 경로로 실행된 문장 중 `match`에 맞는 것을 호출 순서대로 (SQL은 공백 정규화). 위치 인덱스 대신 이것으로 단언한다 */
   statements: (match: RegExp) => Array<{ sql: string; params: unknown[] | undefined }>;
+  /** `statements`의 트랜잭션 경로판 (`db.tx` 콜백의 `tx.query`로 나간 문장) */
+  txStatements: (match: RegExp) => Array<{ sql: string; params: unknown[] | undefined }>;
+}
+
+function matchingStatements(mock: QueryMock, match: RegExp) {
+  return (mock.mock.calls as Array<[string, unknown[] | undefined]>)
+    .map(([sql, params]) => ({ sql: normalizeSql(sql), params }))
+    .filter(({ sql }) => match.test(sql));
 }
 
 /**
@@ -58,6 +66,9 @@ export interface MockDb {
  * 콜백이 던지면 그대로 reject(롤백 시뮬레이션은 호출 측 mock 몫).
  */
 export function createMockDb(options: MockDbOptions = {}): MockDb {
+  if (options.strict && (options.query || options.txQuery)) {
+    throw new Error('createMockDb: strict cannot be combined with query/txQuery (strict would be silently off)');
+  }
   const handlers: SqlHandler[] = [...(options.handlers ?? [])];
   const strictRouter = async (sql: string, params?: unknown[]) => {
     const normalized = normalizeSql(sql);
@@ -79,9 +90,7 @@ export function createMockDb(options: MockDbOptions = {}): MockDb {
     txQuery,
     txClient,
     handle: (match, reply) => { handlers.unshift({ match, reply }); },
-    statements: (match) =>
-      (query.mock.calls as Array<[string, unknown[] | undefined]>)
-        .map(([sql, params]) => ({ sql: normalizeSql(sql), params }))
-        .filter(({ sql }) => match.test(sql)),
+    statements: (match) => matchingStatements(query, match),
+    txStatements: (match) => matchingStatements(txQuery, match),
   };
 }

@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { listSourceFiles } from './source-files';
+import { EXCLUDE_NOTHING, listSourceFiles } from './source-files';
 
 /**
  * 운영자와 사용자가 읽는 문자열(스크립트 출력, 로그, 알림, 에러 메시지)에 em dash(U+2014)를 쓰지 않는다 (프로젝트 규칙).
@@ -13,7 +13,7 @@ describe('no em dash in runtime strings', () => {
   const root = join(__dirname, '..', '..');
   const files = [
     // scripts는 .js (모든 파일), src는 기본 규칙
-    ...listSourceFiles(join(root, 'scripts'), { extensions: ['.js'], exclude: /$^/ }),
+    ...listSourceFiles(join(root, 'scripts'), { extensions: ['.js'], exclude: EXCLUDE_NOTHING }),
     ...listSourceFiles(join(root, 'src')),
   ];
 

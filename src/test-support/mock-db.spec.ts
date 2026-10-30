@@ -8,6 +8,11 @@ describe('createMockDb strict mode', () => {
     await expect(db.query(long)).rejects.toThrow(/^Unexpected SQL: .{0,80}$/s);
   });
 
+  it('refuses strict combined with its own query/txQuery mock (strict would be silently off)', () => {
+    expect(() => createMockDb({ strict: true, query: jest.fn() })).toThrow(/strict cannot be combined/);
+    expect(() => createMockDb({ strict: true, txQuery: jest.fn() })).toThrow(/strict cannot be combined/);
+  });
+
   it('also rejects unknown SQL on the transaction path', async () => {
     const { database } = createMockDb({ strict: true });
     await expect(database.tx((tx) => tx.query('DELETE FROM nope'))).rejects.toThrow('Unexpected SQL: DELETE FROM nope');

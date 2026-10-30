@@ -5,7 +5,7 @@ import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
 import { SHUTDOWN_DRAIN_TIMEOUT_MS, SingleFlightTask } from '../common/lifecycle/single-flight-task';
 import { InjectiveNftClient } from './injective-nft.client';
-import { ATTACHABLE, NftStatus, PARENT_READY, sqlIn } from './nft-status';
+import { ATTACHABLE, MINT_ALREADY_DONE, NftStatus, PARENT_READY, sqlIn } from './nft-status';
 
 /** 잡당 총 시도 횟수 — 첫 시도 + 재시도 4회. MAX_RETRY번째 실패에서 FAILED로 고정된다 (docs/decisions.md) */
 const MAX_RETRY = 5;
@@ -327,7 +327,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       case 'MINT_PARENT':
       case 'MINT_CHILD':
       case 'RETRY_MINT': {
-        if (!PARENT_READY.includes(nft.status as NftStatus)) { // 이미 민팅됐으면 멱등 스킵
+        if (!MINT_ALREADY_DONE.includes(nft.status as NftStatus)) { // 이미 민팅됐으면 멱등 스킵
           await this.db.query(`UPDATE nft SET status = 'MINTING' WHERE id = $1`, [nft.id]);
           // token_id = nft.id (UUID) — 컨트랙트 전역에서 유일
           if (await this.chain.tokenExists(nft.id)) {

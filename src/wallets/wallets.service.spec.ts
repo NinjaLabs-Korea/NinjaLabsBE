@@ -117,9 +117,8 @@ describe('WalletsService challenge lookup', () => {
     const nfts = { enqueueParentMintInTransaction: jest.fn() };
     const service = new WalletsService(mock.database, nfts as never);
     const signer = Wallet.createRandom();
-    /** tx 안에서 나간 문장 중 `match`에 맞는 개수 (txQuery 호출 기록은 원본 SQL이라 공백을 접어 비교한다) */
-    const txRan = (match: RegExp) =>
-      (mock.txQuery.mock.calls as Array<[string]>).filter(([sql]) => match.test(sql.replace(/\s+/g, ' ').trim())).length;
+    /** tx 안에서 나간 문장 중 `match`에 맞는 개수 (MockDb.txStatements가 공백을 접어 비교한다) */
+    const txRan = (match: RegExp) => mock.txStatements(match).length;
     return {
       db: mock.db, txQuery: mock.txQuery, txRan, nfts, signer,
       run: (signature = '0xsig') => service.verifySignature('user-id', signer.address, signature),

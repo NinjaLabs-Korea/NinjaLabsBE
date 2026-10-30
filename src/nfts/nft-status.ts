@@ -35,6 +35,22 @@ export function sqlIn(statuses: readonly NftStatus[]): string {
   return `IN (${sqlStatusList(statuses)})`;
 }
 
+/** ATTACH_CHILD 잡 멱등 키 접두사. 키 형식의 단일 출처 (워커 INSERT 두 곳, 운영자 재시도가 같은 행을 가리킨다) */
+export const ATTACH_CHILD_KEY_PREFIX = 'attach-child:';
+
+/** 자식 NFT id로 만든 ATTACH_CHILD 멱등 키 (`attach-child:<child id>`) */
+export function attachChildKey(nftId: string): string {
+  return `${ATTACH_CHILD_KEY_PREFIX}${nftId}`;
+}
+
+/** attachChildKey의 SQL 표현식판. 컬럼 식별자(예: `c.id`)만 받는다 */
+export function attachChildKeySql(column: string): string {
+  if (!/^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?$/i.test(column)) {
+    throw new Error('attachChildKeySql: expected a column identifier');
+  }
+  return `'${ATTACH_CHILD_KEY_PREFIX}' || ${column}`;
+}
+
 /**
  * FAILED 잡 재큐 (운영자 재시도 + scripts/requeue-nft-jobs.js 공통). $1 = nft_job id 배열.
  * 서비스는 뒤에 RETURNING을 붙인다.

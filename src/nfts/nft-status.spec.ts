@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { ATTACHABLE, MINTED_OR_LATER, NFT_STATUSES, PARENT_READY, REQUEUE_JOB_SQL, RESTORE_NFT_AFTER_REQUEUE_SQL, sqlIn } from './nft-status';
+import { ATTACHABLE, attachChildKey, attachChildKeySql, MINTED_OR_LATER, NFT_STATUSES, PARENT_READY, REQUEUE_JOB_SQL, RESTORE_NFT_AFTER_REQUEUE_SQL, sqlIn } from './nft-status';
 
 const squash = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 
@@ -22,6 +22,17 @@ describe('nft-status single source', () => {
     expect(sqlIn(PARENT_READY)).toBe("IN ('MINTED', 'ATTACHED')");
     expect(() => sqlIn(["x'; DROP" as never])).toThrow();
     expect(() => sqlIn([])).toThrow();
+  });
+});
+
+describe('ATTACH_CHILD idempotency key', () => {
+  it('pins the key format (rows already in the DB use it)', () => {
+    expect(attachChildKey('abc')).toBe('attach-child:abc');
+  });
+
+  it('the SQL fragment builds the same prefix and refuses non-identifiers', () => {
+    expect(attachChildKeySql('c.id')).toBe("'attach-child:' || c.id");
+    expect(() => attachChildKeySql("c.id; DROP")).toThrow();
   });
 });
 

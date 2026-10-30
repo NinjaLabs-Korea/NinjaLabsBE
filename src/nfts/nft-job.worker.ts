@@ -5,6 +5,7 @@ import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
 import { SHUTDOWN_DRAIN_TIMEOUT_MS, SingleFlightTask } from '../common/lifecycle/single-flight-task';
 import { InjectiveNftClient } from './injective-nft.client';
+import { ATTACHABLE, NftStatus, PARENT_READY, sqlIn } from './nft-status';
 
 /** 잡당 총 시도 횟수 — 첫 시도 + 재시도 4회. MAX_RETRY번째 실패에서 FAILED로 고정된다 (docs/decisions.md) */
 const MAX_RETRY = 5;
@@ -83,8 +84,6 @@ function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise
 type ClaimedJob = { id: string; nft_id: string; job_type: string; retry_count: number; scheduled_at: Date };
 /** execute()의 결과 — 'deferred'면 잡을 성공으로 닫지 않고 PENDING으로 되돌려 나중에 다시 시도한다 */
 type JobOutcome = 'done' | 'deferred';
-/** 자식을 attach할 수 있는 부모 상태 */
-const PARENT_READY = ['MINTED', 'ATTACHED'];
 /**
  * 선점(claim) 문장 — 한 문장 안의 FOR UPDATE SKIP LOCKED 로 다중 인스턴스가 서로 다른 잡을 집는다. test-db(nft-worker.db-spec)가
  * 두 트랜잭션에서 이 문장을 그대로 실행해 "둘 다 즉시, 서로소 집합" 을 확인하므로 워커 밖으로 꺼내 둔다.
@@ -328,7 +327,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       case 'MINT_PARENT':
       case 'MINT_CHILD':
       case 'RETRY_MINT': {
-        if (nft.status !== 'MINTED' && nft.status !== 'ATTACHED') { // 이미 민팅됐으면 멱등 스킵
+        if (!PARENT_READY.includes(nft.status as NftStatus)) { // 이미 민팅됐으면 멱등 스킵
           await this.db.query(`UPDATE nft SET status = 'MINTING' WHERE id = $1`, [nft.id]);
           // token_id = nft.id (UUID) — 컨트랙트 전역에서 유일
           if (await this.chain.tokenExists(nft.id)) {
@@ -385,13 +384,13 @@ export class NftJobWorker implements BeforeApplicationShutdown {
         const attached = await this.db.query(
           `UPDATE nft c SET status = 'ATTACHED', attached_at = now()
              FROM nft p
-            WHERE c.id = $1 AND c.status IN ('MINTED', 'ATTACHING')
-              AND p.id = c.parent_nft_id AND p.status IN ('MINTED', 'ATTACHED')
+            WHERE c.id = $1 AND c.status ${sqlIn(ATTACHABLE)}
+              AND p.id = c.parent_nft_id AND p.status ${sqlIn(PARENT_READY)}
             RETURNING c.id`,
           [nft.id],
         );
         if (attached.rowCount) return 'done';
-        if (nft.status === 'MINTED' || nft.status === 'ATTACHING') return 'deferred'; // 부모 미준비 - 1시간 뒤 재시도
+        if (ATTACHABLE.includes(nft.status as NftStatus)) return 'deferred'; // 부모 미준비 - 1시간 뒤 재시도
         throw new Error(`nft ${nft.id} cannot be attached in status ${nft.status}`);
       }
       default:
@@ -405,6 +404,6 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       `SELECT status FROM nft WHERE id = $1 AND nft_type = 'NINJA_PARENT'`,
       [parentNftId],
     );
-    return parent.rowCount === 1 && PARENT_READY.includes(parent.rows[0].status);
+    return parent.rowCount === 1 && PARENT_READY.includes(parent.rows[0].status as NftStatus);
   }
 }

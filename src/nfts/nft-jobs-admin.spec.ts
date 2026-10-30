@@ -40,10 +40,10 @@ describe('NftJobsAdminService', () => {
     const { service, dbQuery, txQuery } = setup({ job: 1 });
     await expect(service.retry(jobId, 'admin')).resolves.toEqual({ id: jobId, nft_id: nftId, status: 'PENDING', retry_count: 0 });
     expect(txQuery.mock.calls[0][0]).toContain("SET status = 'PENDING', retry_count = 0, scheduled_at = now(), started_at = NULL, processed_at = NULL");
-    expect(txQuery.mock.calls[0][0]).toContain("WHERE id = $1 AND status = 'FAILED'");
-    expect(txQuery.mock.calls[0][1]).toEqual([jobId]);
-    expect(txQuery.mock.calls[1][0]).toContain("CASE WHEN minted_at IS NOT NULL THEN 'MINTED' ELSE 'PENDING' END");
-    expect(txQuery.mock.calls[1][1]).toEqual([nftId]);
+    expect(txQuery.mock.calls[0][0]).toContain("WHERE id = ANY($1::uuid[]) AND status = 'FAILED'");
+    expect(txQuery.mock.calls[0][1]).toEqual([[jobId]]);
+    expect(txQuery.mock.calls[1][0]).toContain("CASE WHEN token_id IS NOT NULL THEN 'MINTED' ELSE 'PENDING' END");
+    expect(txQuery.mock.calls[1][1]).toEqual([[nftId]]);
     expect(txQuery.mock.calls[2]).toEqual([expect.stringContaining('INSERT INTO audit_log'), ['admin', 'NFT_JOB_RETRIED', 'nft_job', jobId]]);
     expect(dbQuery).not.toHaveBeenCalled();
   });

@@ -217,3 +217,50 @@ describe('BountyAdminService.transition for every pair', () => {
       .resolves.toEqual({ id: 'b', status: 'IN_REVIEW' });
   });
 });
+
+describe('BountyLifecycleService.closeOpenWork', () => {
+  const lifecycle = new BountyLifecycleService();
+
+  it('rejects PENDING applications, rejects unresolved submissions and records one review insert for exactly the closed ids', async () => {
+    const query = jest.fn(async (sql: string, _params?: unknown[]) =>
+      (sql.startsWith('UPDATE bounty_submission') ? { rowCount: 2, rows: [{ id: 's1' }, { id: 's2' }] } : { rowCount: 1, rows: [] }));
+    await lifecycle.closeOpenWork({ query } as never, 'b', 'admin');
+    const statements = query.mock.calls.map(([sql]) => sql as string);
+    expect(statements[0]).toMatch(/^UPDATE bounty_application/);
+    expect(query.mock.calls[0][1]).toEqual(['b', 'REJECTED', 'admin', 'PENDING']);
+    expect(statements[1]).toMatch(/^UPDATE bounty_submission/);
+    expect(query.mock.calls[1][1]).toEqual(['b', 'REJECTED', ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
+    expect(statements[2]).toContain('INSERT INTO submission_review');
+    expect(query.mock.calls[2][1]).toEqual([['s1', 's2'], 'admin', 'REJECT', null]);
+    expect(statements).toHaveLength(3);
+    expect(statements.some((sql) => sql.includes('audit_log'))).toBe(false); // audit decision: BOUNTY_CANCELLED is the only record
+  });
+
+  it('writes no review row when no submission was left to close', async () => {
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 0, rows: [] }));
+    await lifecycle.closeOpenWork({ query } as never, 'b', 'admin');
+    expect(query.mock.calls.some(([sql]) => (sql as string).includes('INSERT INTO submission_review'))).toBe(false);
+  });
+
+  it.each(['SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED'])('transition to %s does not call closeOpenWork, CANCELLED does', async (to) => {
+    const from = { SUBMISSION_CLOSED: 'OPEN', IN_REVIEW: 'SUBMISSION_CLOSED', COMPLETED: 'IN_REVIEW' }[to]!;
+    const spy = jest.spyOn(BountyLifecycleService.prototype, 'closeOpenWork');
+    const make = (status: string) => {
+      const query = jest.fn(async (sql: string) => {
+        if (sql.includes('FOR UPDATE')) return { rowCount: 1, rows: [{ status, submission_deadline: FUTURE }] };
+        if (sql.includes('AS pending')) return { rowCount: 1, rows: [{ ...ZERO }] };
+        return { rowCount: 1, rows: [] };
+      });
+      const { database } = createMockDb({ query: jest.fn(), txQuery: query });
+      return new BountyAdminService(database, new AuditService(database), new BountyLifecycleService(), {} as RewardTokenResolver);
+    };
+    try {
+      await make(from).transition('b', to, 'admin');
+      expect(spy).not.toHaveBeenCalled();
+      await make('OPEN').transition('b', 'CANCELLED', 'admin');
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

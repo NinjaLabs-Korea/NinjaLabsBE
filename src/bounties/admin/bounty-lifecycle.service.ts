@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../common/database/database.service';
 import { OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql, PAYABLE_REWARD_STATUSES, sqlStatusList } from '../../rewards/payout-status';
-import { SubmissionStatusPolicy } from '../submission-status';
+import { ApplicationStatus } from '../application-status';
+import { SubmissionDecision, SubmissionStatus, SubmissionStatusPolicy } from '../submission-status';
+import { recordReviews } from '../submissions/system-review';
 
 /** 전이 차단 사유 코드 — 운영 화면(FE admin.operations.blockers.<code>)이 이 코드로 번역한다. 추가 시 FE 메시지도 함께. */
 export type LifecycleBlockerCode =
@@ -83,5 +85,31 @@ export class BountyLifecycleService {
     const blockerDetails = Object.fromEntries(Object.entries(details).map(([to, list]) =>
       [to, list.map(({ code, count }) => (count === undefined ? { code } : { code, count }))]));
     return { blockers, blockerDetails };
+  }
+
+  /**
+   * 취소(CANCELLED)할 때 같은 트랜잭션에서 남은 미결 작업을 닫는다. 호출자(BountyAdminService.transition)는 CANCELLED일 때만 부른다.
+   * 감사 결정(2026-10-30): 연쇄 반려는 제출/지원별 감사 행(SUBMISSION_*, APPLICATION_*)을 남기지 않는다. 한 번의 운영자 행동이 낳은
+   * 시스템 효과이므로 바운티의 BOUNTY_CANCELLED 감사 행 하나가 기록이다 (감사 액션 카탈로그는 바꾸지 않는다).
+   */
+  async closeOpenWork(tx: Pick<DatabaseService, 'query'>, bountyId: string, adminId: string): Promise<void> {
+    // 취소된 바운티에 PENDING 지원이 남으면 지원자에게 영영 "심사 중"으로 보이고 아무도 처리할 수 없다 -> 반려한다
+    // (APPROVED 지원은 기록으로 남기고, 철회 가능한 PENDING만 정리한다. 반려는 접수가 끝나도 허용되는 기존 규칙과 같은 상태 전이다)
+    // review_note는 비운다: 사람이 쓴 심사 코멘트가 아니라 시스템 전이인데, 영어 고정 문구를 넣으면 지원자 화면에 "심사자 메모"로 그대로 보였다. 바운티 상태(CANCELLED)가 이유를 말해 준다
+    await tx.query(
+      `UPDATE bounty_application
+          SET status = $2, reviewed_by = $3, reviewed_at = now(), review_note = NULL
+        WHERE bounty_id = $1 AND status = $4`,
+      [bountyId, ApplicationStatus.REJECTED, adminId, ApplicationStatus.PENDING],
+    );
+    // 미결 제출(심사 대기, 심사 중, 수정 요청)도 같다: 취소 뒤에는 BOUNTY_REVIEW_CLOSED로 운영자가 닫을 수 없고 제출자는 영영 "제출됨"으로 본다.
+    // 반려하고 현재 리비전에 심사 이력(코멘트 없음, 바운티 상태가 이유)을 남긴다. 승인된 수상은 UNPAID_WINNERS가 이미 막고, 지급이 끝난 승인은 기록으로 둔다.
+    const closed = await tx.query(
+      `UPDATE bounty_submission SET status = $2, reviewed_at = now()
+        WHERE bounty_id = $1 AND status = ANY($3::text[])
+        RETURNING id`,
+      [bountyId, SubmissionStatus.REJECTED, SubmissionStatusPolicy.unresolvedStatuses()],
+    ) as { rows: Array<{ id: string }> };
+    await recordReviews(tx, closed.rows.map((row) => row.id), adminId, SubmissionDecision.REJECT, null);
   }
 }

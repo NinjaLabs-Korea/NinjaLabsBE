@@ -2,9 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardHoldsFundsSql, sqlStatusList } from '../../rewards/payout-status';
-import { ApplicationStatus } from '../application-status';
 import { BountyStatus, BountyStatusPolicy } from '../bounty-status';
-import { SubmissionDecision, SubmissionStatus, SubmissionStatusPolicy } from '../submission-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { assertMediaPathExists } from '../../common/validation/media-reference';
 import { assertChangedUrlsStrict } from '../../common/validation/url';
@@ -17,6 +15,38 @@ const DEADLINE_UNCHANGED_TOLERANCE_MS = 60_000;
 function assertApplicationDeadlineNotAfterSubmission(submission: string | Date, application: string | Date | null | undefined): void {
   if (application == null) return;
   if (new Date(application).getTime() - new Date(submission).getTime() >= DEADLINE_UNCHANGED_TOLERANCE_MS) throw new BadRequestException('APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE');
+}
+
+type DeadlineInput = { submissionDeadline?: string; applicationDeadline?: string | null };
+type StoredDeadlines = { submission_deadline: string | Date; application_deadline: string | Date | null };
+
+/**
+ * 생성/수정 공통 마감 검사. stored가 없으면(생성) 모든 마감이 미래여야 한다.
+ * 수정: 마감은 과거로 "옮길" 수 없다. FE는 수정 때마다 기존 마감을 그대로 되보내므로 저장된 값과 같은 과거 마감은 통과시킨다
+ * (null로 지우는 것도 허용). FE가 datetime-local로 왕복시키며 초/밀리초를 잃으므로 1분 미만 차이는 "같은 값"으로 본다.
+ * enforceFuture=false(접수가 끝난 상태)이면 미래 검사는 건너뛰고 순서 검사만 한다.
+ * 순서: 두 마감 중 하나라도 건드리면 (새 값 ?? 저장된 값)의 쌍으로 검사한다 - 마감과 무관한 수정은 옛 데이터의 뒤집힌 쌍에도 막히지 않는다.
+ */
+function assertDeadlines(input: DeadlineInput, stored?: StoredDeadlines, enforceFuture = true): void {
+  if (enforceFuture) {
+    for (const [deadline, current] of [
+      [input.submissionDeadline, stored?.submission_deadline],
+      [input.applicationDeadline, stored?.application_deadline],
+    ] as const) {
+      if (!deadline) continue;
+      const next = new Date(deadline).getTime();
+      const unchanged = current != null && Math.abs(next - new Date(current).getTime()) < DEADLINE_UNCHANGED_TOLERANCE_MS;
+      if (!unchanged && !(next > Date.now())) throw new BadRequestException('DEADLINE_IN_PAST');
+    }
+  }
+  if (!stored) {
+    assertApplicationDeadlineNotAfterSubmission(input.submissionDeadline!, input.applicationDeadline);
+  } else if (input.submissionDeadline !== undefined || input.applicationDeadline !== undefined) {
+    assertApplicationDeadlineNotAfterSubmission(
+      input.submissionDeadline ?? stored.submission_deadline,
+      input.applicationDeadline === undefined ? stored.application_deadline : input.applicationDeadline,
+    );
+  }
 }
 
 /** 운영자용 바운티 관리 — 등록/수정/삭제/상태 전이 (쓰기 명령). 운영 현황 조회는 BountyOperationsQuery.
@@ -57,10 +87,7 @@ export class BountyAdminService {
     reward?: RewardInput;
   }) {
     // 수정(update)과 같은 규칙: 새 바운티의 마감은 미래여야 한다 — 과거 마감으로 만들면 DRAFT에서 열 수도(DEADLINE_PASSED) 접수할 수도 없는 행이 생긴다
-    for (const deadline of [input.submissionDeadline, input.applicationDeadline]) {
-      if (deadline && !(new Date(deadline).getTime() > Date.now())) throw new BadRequestException('DEADLINE_IN_PAST');
-    }
-    assertApplicationDeadlineNotAfterSubmission(input.submissionDeadline, input.applicationDeadline);
+    assertDeadlines(input);
     const reward = this.rewardTokens.resolve(input.reward);
     return this.db.tx(async (tx) => {
       await assertMediaPathExists(tx, input.coverImageUrl);
@@ -134,28 +161,9 @@ export class BountyAdminService {
         [bountyId],
       );
       if (!cur.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-      // 마감은 과거로 "옮길" 수 없다 — FE는 수정 때마다 기존 마감을 그대로 되보내므로, 저장된 값과 같은 과거 마감은 통과시킨다
-      // (null로 지우는 것도 허용). FE가 datetime-local로 왕복시키며 초/밀리초를 잃으므로 1분 미만 차이는 "같은 값"으로 본다.
-      // 접수가 끝난 상태(SUBMISSION_CLOSED/IN_REVIEW/COMPLETED/CANCELLED)에서는 마감이 더 이상 의미 없으므로 검사하지 않는다 —
-      // 지난 마감을 그대로 둔 채 제목/설명만 고칠 수 있어야 한다.
-      if (BountyStatusPolicy.enforcesFutureDeadline(cur.rows[0].status)) {
-        for (const [deadline, stored] of [
-          [input.submissionDeadline, cur.rows[0].submission_deadline],
-          [input.applicationDeadline, cur.rows[0].application_deadline],
-        ] as const) {
-          if (!deadline) continue;
-          const next = new Date(deadline).getTime();
-          const unchanged = stored !== null && Math.abs(next - new Date(stored).getTime()) < DEADLINE_UNCHANGED_TOLERANCE_MS;
-          if (!unchanged && !(next > Date.now())) throw new BadRequestException('DEADLINE_IN_PAST');
-        }
-      }
-      // 두 마감 중 하나라도 건드리면 (새 값 ?? 저장된 값)의 쌍으로 순서를 검사한다 - 마감과 무관한 수정은 옛 데이터의 뒤집힌 쌍에도 막히지 않는다
-      if (input.submissionDeadline !== undefined || input.applicationDeadline !== undefined) {
-        assertApplicationDeadlineNotAfterSubmission(
-          input.submissionDeadline ?? cur.rows[0].submission_deadline,
-          input.applicationDeadline === undefined ? cur.rows[0].application_deadline : input.applicationDeadline,
-        );
-      }
+      // 접수가 끝난 상태(SUBMISSION_CLOSED/IN_REVIEW/COMPLETED/CANCELLED)에서는 마감이 더 이상 의미 없으므로 미래 검사를 하지 않는다 —
+      // 지난 마감을 그대로 둔 채 제목/설명만 고칠 수 있어야 한다. 규칙 본문은 assertDeadlines.
+      assertDeadlines(input, cur.rows[0], BountyStatusPolicy.enforcesFutureDeadline(cur.rows[0].status));
       if (input.maxWinners !== undefined) {
         const approved = await tx.query<{ count: string }>(
           `SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`,
@@ -223,31 +231,7 @@ export class BountyAdminService {
       const stamp = BountyStatusPolicy.stampColumnFor(to);
       const stampCol = stamp ? `, ${stamp} = COALESCE(${stamp}, now())` : '';
       await tx.query(`UPDATE bounty SET status = $2${stampCol} WHERE id = $1`, [bountyId, to]);
-      // 취소된 바운티에 PENDING 지원이 남으면 지원자에게 영영 "심사 중"으로 보이고 아무도 처리할 수 없다 -> 같은 트랜잭션에서 반려한다
-      // (APPROVED 지원은 기록으로 남기고, 철회 가능한 PENDING만 정리한다. 반려는 접수가 끝나도 허용되는 기존 규칙과 같은 상태 전이다)
-      // review_note는 비운다: 사람이 쓴 심사 코멘트가 아니라 시스템 전이인데, 영어 고정 문구를 넣으면 지원자 화면에 "심사자 메모"로 그대로 보였다. 바운티 상태(CANCELLED)가 이유를 말해 준다
-      if (to === BountyStatus.CANCELLED) {
-        await tx.query(
-          `UPDATE bounty_application
-              SET status = $2, reviewed_by = $3, reviewed_at = now(), review_note = NULL
-            WHERE bounty_id = $1 AND status = $4`,
-          [bountyId, ApplicationStatus.REJECTED, adminId, ApplicationStatus.PENDING],
-        );
-        // 미결 제출(심사 대기, 심사 중, 수정 요청)도 같다: 취소 뒤에는 BOUNTY_REVIEW_CLOSED로 운영자가 닫을 수 없고 제출자는 영영 "제출됨"으로 본다.
-        // 같은 트랜잭션에서 반려하고 현재 리비전에 심사 이력(코멘트 없음, 바운티 상태가 이유)을 남긴다. 승인된 수상은 UNPAID_WINNERS가 이미 막고, 지급이 끝난 승인은 기록으로 둔다.
-        await tx.query(
-          `WITH closed AS (
-             UPDATE bounty_submission SET status = $2, reviewed_at = now()
-              WHERE bounty_id = $1 AND status = ANY($4::text[])
-              RETURNING id, current_revision_no)
-           INSERT INTO submission_review (submission_id, revision_id, reviewer_id, decision, comment)
-           SELECT c.id,
-                  (SELECT sr.id FROM submission_revision sr WHERE sr.submission_id = c.id AND sr.revision_no = c.current_revision_no),
-                  $3::uuid, $5, NULL
-             FROM closed c`,
-          [bountyId, SubmissionStatus.REJECTED, adminId, SubmissionStatusPolicy.unresolvedStatuses(), SubmissionDecision.REJECT],
-        );
-      }
+      if (to === BountyStatus.CANCELLED) await this.lifecycle.closeOpenWork(tx, bountyId, adminId);
       await this.audit.record(adminId, `BOUNTY_${to}`, 'bounty', bountyId, tx);
       return { id: bountyId, status: to };
     });

@@ -3,6 +3,7 @@ import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { BountyStatusPolicy } from '../bounty-status';
 import { SubmissionDecision, SubmissionStatusPolicy } from '../submission-status';
+import { recordReviews } from './system-review';
 
 /** 운영자의 제출물 심사 — 심사 시작/수정 요청/승인/반려와 리비전별 심사 기록 */
 @Injectable()
@@ -66,15 +67,7 @@ export class SubmissionReviewService {
         `UPDATE bounty_submission SET status = $2, reviewed_at = now() WHERE id = $1`,
         [submissionId, newStatus],
       );
-      const rev = await tx.query<{ id: string }>(
-        `SELECT id FROM submission_revision WHERE submission_id = $1 AND revision_no = $2`,
-        [submissionId, sub.rows[0].current_revision_no],
-      );
-      await tx.query(
-        `INSERT INTO submission_review (submission_id, revision_id, reviewer_id, decision, comment)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [submissionId, rev.rows[0]?.id ?? null, adminId, decision, comment?.trim() || null],
-      );
+      await recordReviews(tx, [submissionId], adminId, decision as SubmissionDecision, comment?.trim() || null);
       await this.audit.record(adminId, `SUBMISSION_${decision}`, 'bounty_submission', submissionId, tx);
       // APPROVE 시 후속 흐름(payout 요청 → NFT 민팅)은 rewards/nfts 모듈에서 별도 호출
       return { id: submissionId, status: newStatus };

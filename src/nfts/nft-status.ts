@@ -12,6 +12,8 @@
  *   - scripts/requeue-nft-jobs.js     재큐 SQL 두 문장
  */
 
+import { sqlStatusList } from '../rewards/payout-status';
+
 /** nft 테이블 CHECK와 같은 전체 상태 */
 export const NFT_STATUSES = ['PENDING', 'MINTING', 'MINTED', 'ATTACHING', 'ATTACHED', 'FAILED'] as const;
 export type NftStatus = (typeof NFT_STATUSES)[number];
@@ -25,10 +27,10 @@ export const MINTED_OR_LATER: readonly NftStatus[] = ['MINTED', 'ATTACHING', 'AT
 
 /** SQL `IN ('A', 'B')` 텍스트. 상수만 받는다 (바인딩 불가한 정적 집합용) */
 export function sqlIn(statuses: readonly NftStatus[]): string {
-  if (!statuses.length || statuses.some((status) => !(NFT_STATUSES as readonly string[]).includes(status))) {
+  if (statuses.some((status) => !(NFT_STATUSES as readonly string[]).includes(status))) {
     throw new Error('sqlIn: expected NFT status constants');
   }
-  return `IN (${statuses.map((status) => `'${status}'`).join(', ')})`;
+  return `IN (${sqlStatusList(statuses)})`;
 }
 
 /**

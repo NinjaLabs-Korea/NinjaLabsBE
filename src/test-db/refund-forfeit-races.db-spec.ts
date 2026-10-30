@@ -142,7 +142,7 @@ describeDb('refund / delete / forfeit across rules and races', () => {
       const p = () => rewards.requestPayout(r1, w.sid, '100', adminId).then(() => 'payout', (e) => e.message);
       if (order) { tasks.push(f()); await waitForLockWaiter(db, 'first'); tasks.push(p()); }
       else { tasks.push(p()); await waitForLockWaiter(db, 'first'); tasks.push(f()); }
-      await new Promise((r) => setTimeout(r, 100));
+      await waitForLockWaiter(db, 'second', 2);
       await holder.query('COMMIT'); holder.release();
       const results = await Promise.all(tasks);
       const forfeitRes = (order ? results[0] : results[1]) as { code: number; out: string };
@@ -169,7 +169,7 @@ describeDb('refund / delete / forfeit across rules and races', () => {
       const del = () => bounties.remove(bountyId, adminId).then(() => 'deleted', (e) => String(e.status));
       if (order) { tasks.push(rf()); await waitForLockWaiter(db, 'first'); tasks.push(del()); }
       else { tasks.push(del()); await waitForLockWaiter(db, 'first'); tasks.push(rf()); }
-      await new Promise((r) => setTimeout(r, 100));
+      await waitForLockWaiter(db, 'second', 2);
       await holder.query('COMMIT'); holder.release();
       const results = await Promise.all(tasks);
       const refund = (order ? results[0] : results[1]) as { code: number };

@@ -1,21 +1,19 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
-import { Trim } from '../common/validation/trim';
-import { HasNoBidiOverride, HasVisibleText, IsPlainDisplayText } from '../common/validation/visible-text';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
+import { DisplayBody, DisplayTitle, OptionalDisplayBody, OptionalDisplayTitle } from '../common/validation/display-text';
 import { IsHttpUrlOrMediaPath, IsHttpUrlOrSitePath, IsSafeUrl } from '../common/validation/url';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
 import { HighlightAdminService } from './highlight-admin.service';
-import { MaxChars } from '../common/validation/max-chars';
 import { IsOptionalNotNull, MaxPgInt } from '../common/validation/optional-not-null';
 
 const HIGHLIGHT_TYPES = ['MILESTONE', 'FEATURED_BOUNTY', 'PROJECT', 'PARTNERSHIP', 'AWARD', 'OTHER'];
 
 export class CreateHighlightDto {
   @IsIn(HIGHLIGHT_TYPES) type!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(200) title!: string;
-  @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(2000) description!: string;
+  @DisplayTitle(200) title!: string;
+  @DisplayBody(2000) description!: string;
   @IsOptional() @IsHttpUrlOrMediaPath() imageUrl?: string;
   // FE 내부 라우트(`/bounties/<slug>`)도 링크로 쓴다
   @IsOptional() @IsHttpUrlOrSitePath() linkUrl?: string;
@@ -29,8 +27,8 @@ export class CreateHighlightDto {
 // NOT NULL 컬럼(type/title/description/display_order)과 publish는 null을 400으로 막는다 (IsOptionalNotNull) — URL은 nullable이라 null = 지우기.
 export class UpdateHighlightDto {
   @IsOptionalNotNull() @IsIn(HIGHLIGHT_TYPES) type?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(200) title?: string;
-  @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxLength(4000) description?: string;
+  @OptionalDisplayTitle(200) title?: string;
+  @OptionalDisplayBody(4000) description?: string;
   @IsOptional() @IsSafeUrl() imageUrl?: string;
   @IsOptional() @IsSafeUrl() linkUrl?: string;
   @IsOptionalNotNull() @Type(() => Number) @IsInt() @Min(0) @MaxPgInt() displayOrder?: number;

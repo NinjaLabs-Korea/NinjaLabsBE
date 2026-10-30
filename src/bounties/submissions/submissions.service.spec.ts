@@ -50,6 +50,7 @@ describe('SubmissionsService owner visibility of agent submissions', () => {
     expect(params).toEqual(['user']);
     expect(sql).toContain("json_build_object('id', ag.id, 'name', ag.name) END AS agent");
     expect(sql).toContain('LEFT JOIN agent ag ON ag.id = s.agent_id');
+    expect(sql).toContain('s.submission_url, s.repository_url, s.commit_sha');
     expect(sql).toContain('WHERE s.submitter_user_id = $1');
     // `= ANY(ARRAY(subquery))` so the planner can BitmapOr idx_submission_submitter + idx_submission_agent_status (0015); `IN (subquery)` cannot
     expect(sql).toContain('OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))');

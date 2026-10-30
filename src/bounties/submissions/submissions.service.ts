@@ -162,6 +162,7 @@ export class SubmissionsService {
               CASE WHEN ag.id IS NULL THEN NULL
                    ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent,
               CASE WHEN s.status = 'APPROVED' THEN ${payoutStatusSql('s', 'b')} ELSE 'NONE' END AS payment_status, s.description,
+              s.submission_url, s.repository_url, s.commit_sha, -- 현재 리비전 값: FE 재제출 폼 미리 채우기용 (재제출은 전체 교체라 비워 보내면 지워진다)
               review.comment AS review_comment, (review.id IS NOT NULL AND NOT (b.status = 'CANCELLED' AND review.decision = 'REJECT' AND review.comment IS NULL)) AS has_review
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL -- 삭제된 바운티는 공개 프로필·상세와 같이 없는 것으로 본다 (링크가 404가 된다)

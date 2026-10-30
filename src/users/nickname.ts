@@ -9,13 +9,17 @@ import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
  *   - 화면에 그려지지 않는 Default_Ignorable_Code_Point(결합 자소 결합자 U+034F, 크메르 U+17B4/17B5, 몽골 변이 선택자 U+180B-180F 등)는 불가 - \p{M}이라 결합 문자 허용으로 열리지만 `coreni<U+034F>nja`가 `coreninja`와 똑같이 보여 기존 멤버·예약어를 사칭하고, 예약어 골격·`lower(nickname)` 유일성은 이 문자를 지우지 않는다
  *   - 변이 선택자(\p{Variation_Selector}, U+FE00-FE0F 등)는 불가 - \p{M}이라 결합 문자 허용으로 열리지만 이모지 꾸밈용이고 보이지 않는다 (MaxChars도 U+FE0F를 길이에서 뺀다)
  *   - 전각/반각 문자(U+FF00 블록)와 수학용 영숫자(U+1D400 블록)는 불가 - `ａｄｍｉｎ`처럼 NFKC로 라틴 글자가 되는 모양만 같은 문자로 예약어·기존 이름을 사칭한다
- *   - 라틴 글자와 키릴/그리스 글자를 한 이름에 섞는 것은 불가 (`аdmin`의 키릴 а, `buіlderone`의 키릴 і 같은 혼합 문자 동형이의어)
+ *   - 라틴 글자 모양을 한 다른 블록은 불가 (FE src/lib/nickname.ts가 같은 범위를 쓴다): 닷리스 i U+0131, 닷리스 j U+0237, IPA 확장 U+0250-02AF, 스페이싱 수정 문자 U+02B0-02FF,
+ *     음성 확장 U+1D00-1DBF(스몰캡 `ᴍ` 등), 문자형 기호·숫자 형태 U+2100-218F(로마 숫자 `ⅽ`·`ⅼ` 등), 라틴 확장-D/E의 스몰캡 U+A730-A7FF·U+AB30-AB6F
+ *   - 라틴 글자(ASCII, U+00C0-024F)가 있는 이름은 라틴 글자 모양을 빌려 쓰는 문자(Script=Cyrillic, Greek, Coptic, Armenian(`ո`), Cherokee(`Ꭺ`), Lisu(`ꓐ`), Georgian, Canadian_Aboriginal,
+ *     Tifinagh, Vai, Glagolitic, Osage, Deseret, Adlam, Runic, Ogham)를 더 가질 수 없다 (`аdmin`의 키릴 а 같은 혼합 문자 동형이의어). 한글/한자/가나/태국어/힌디어 등과 라틴의 혼합은 허용.
+ *     키릴 전용·그리스 전용 이름은 기존대로 허용하고 예약어 골격(CONFUSABLE_TO_LATIN)으로 사칭만 막는다. 목록을 바꾸면 FE src/lib/nickname.ts도 같이.
  *   - 길이 2~50 (DTO의 @Length)
  *   - 라우트와 충돌하는 예약어(`me`, `check-nickname`, `admin`, `new`, `edit`)는 대소문자 무관 거부
  *   - 탈퇴 익명화 이름의 접두사 `withdrawn_`(대소문자 무관)도 거부 — 남은 제출/payout 기록에 표시되는 탈퇴자 이름을 사칭하지 못하게
  *   - 정적 파일 확장자(`.png`, `.json`, … — STATIC_FILE_EXTENSIONS)로 끝나는 이름 거부 (대소문자 무관)
  */
-export const NICKNAME = /^(?!.*[\p{Default_Ignorable_Code_Point}\u115F\u1160\u3164\uFFA0\p{Variation_Selector}\uFF00-\uFFEF\u{1D400}-\u{1D7FF}])(?!(?=.*[A-Za-z\u00C0-\u024F])(?=.*[\p{Script=Cyrillic}\p{Script=Greek}]))(?!.*\p{M}{4})(?!.*[_.-]\p{M})[\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*[\p{L}\p{N}\p{M}]$/u;
+export const NICKNAME = /^(?!.*[\p{Default_Ignorable_Code_Point}\u115F\u1160\u3164\uFFA0\p{Variation_Selector}\uFF00-\uFFEF\u{1D400}-\u{1D7FF}])(?!.*[\u0131\u0237\u0250-\u02FF\u1D00-\u1DBF\u2100-\u218F\uA730-\uA7FF\uAB30-\uAB6F])(?!(?=.*[A-Za-z\u00C0-\u024F])(?=.*[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Coptic}\p{Script=Armenian}\p{Script=Cherokee}\p{Script=Lisu}\p{Script=Georgian}\p{Script=Canadian_Aboriginal}\p{Script=Tifinagh}\p{Script=Vai}\p{Script=Glagolitic}\p{Script=Osage}\p{Script=Deseret}\p{Script=Adlam}\p{Script=Runic}\p{Script=Ogham}]))(?!.*\p{M}{4})(?!.*[_.-]\p{M})[\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*[\p{L}\p{N}\p{M}]$/u;
 
 export const RESERVED_NICKNAMES: readonly string[] = ['me', 'check-nickname', 'admin', 'new', 'edit'];
 
@@ -49,9 +53,16 @@ export function endsWithStaticFileExtension(value: unknown): boolean {
  * 라틴 글자와 모양이 같은 키릴/그리스 글자 -> 라틴. 혼합 문자 이름은 NICKNAME이 이미 막지만, 전부 키릴/그리스로만 쓴 예약어 닮은꼴은 이 접기로 잡는다.
  * 전체 confusables 표가 아니라 소문자 동형 글자만 (예약어 비교용) - 기존 사용자 이름과의 동형 충돌은 혼합 문자 금지로 막는다.
  */
+/** 체로키 대문자 -> 라틴 (toLowerCase 뒤 골격 키로 쓰려고 소문자 형태를 키로 만든다) */
+function cherokeeLookalikes(cherokee: string, latin: string): Record<string, string> {
+  return Object.fromEntries([...cherokee].map((char, index) => [char.toLowerCase(), latin[index]]));
+}
+
 const CONFUSABLE_TO_LATIN: Readonly<Record<string, string>> = {
   'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y', 'і': 'i', 'ј': 'j', 'ѕ': 's', 'ԁ': 'd', 'ԛ': 'q', 'ԝ': 'w', 'һ': 'h', 'ո': 'n',
   'α': 'a', 'ο': 'o', 'ρ': 'p', 'ν': 'v', 'ι': 'i', 'κ': 'k', 'τ': 't', 'χ': 'x', 'υ': 'u',
+  'օ': 'o', 'ս': 'u', 'ɑ': 'a',
+  ...cherokeeLookalikes('ᎪᏴᏟᎠᎬᏀᎻᎵᎫᏦᏞᎷᏢᏒᏚᎢᏙᎳᏃ', 'abcdeghijklmprstvwz'),
 };
 
 /** 예약어 비교용 골격 - NFKC(전각 -> 반각 등) + 소문자 + 키릴/그리스 동형 글자를 라틴으로 */

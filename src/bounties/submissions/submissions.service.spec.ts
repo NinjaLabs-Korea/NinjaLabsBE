@@ -57,7 +57,7 @@ describe('SubmissionsService owner visibility of agent submissions', () => {
     expect(sql).toContain('JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL'); // soft-deleted bounties are gone, as on the public profile
     // same helper as the public profile payoutStatus, applied to APPROVED submissions only (anything else owes nothing → NONE)
     expect(sql).toContain(`CASE WHEN s.status = 'APPROVED' THEN ${payoutStatusSql('s', 'b')} ELSE 'NONE' END AS payment_status`);
-    for (const kept of ['payment_status', 's.description', 'review.comment AS review_comment', 'b.category', 'ORDER BY s.submitted_at DESC']) {
+    for (const kept of ['payment_status', 's.description', 'review.comment AS review_comment', 'b.category', 'b.status AS bounty_status', 'b.submission_deadline', 'AS has_review', "b.status = 'CANCELLED' AND review.decision = 'REJECT' AND review.comment IS NULL", 'ORDER BY s.submitted_at DESC']) {
       expect(sql).toContain(kept);
     }
   });

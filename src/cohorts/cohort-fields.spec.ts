@@ -21,6 +21,24 @@ describe('handle normalization', () => {
     expect(normalizeHandle('t.me/name/', tg)).toBe('@name');
     expect(normalizeHandle('', tg)).toBe('');
     expect(normalizeHandle(5, tg)).toBe(5);
+    expect(normalizeHandle('https://t.me/valid_name', tg)).toBe('@valid_name');
+    expect(normalizeHandle('t.me/valid_name?start=1', tg)).toBe('@valid_name');
+  });
+
+  it.each([
+    't.me/joinchat/AAAA', 'https://t.me/JoinChat/AAAA', 'https://t.me/share/url?url=x', 't.me/c/123/4', 't.me/name/12', 't.me/+AbCdEf/x', 't.me/addstickers/pack', 't.me/joinchat',
+  ])('keeps non-profile telegram link %s unchanged so the handle check fails', async (input) => {
+    expect(normalizeHandle(input, tg)).toBe(input);
+    const { errors } = await check(CohortApplicationFields, { ...valid, telegram: input });
+    expect(errors).toContain('telegram');
+  });
+
+  it('applies the same rule to X post/intent links', async () => {
+    const tw = /^(?:https?:\/\/)?(?:www\.|mobile\.)?(?:twitter\.com|x\.com)\/(.*)$/i;
+    expect(normalizeHandle('https://x.com/name/status/1', tw)).toBe('https://x.com/name/status/1');
+    expect(normalizeHandle('x.com/intent/tweet?text=a', tw)).toBe('x.com/intent/tweet?text=a');
+    expect(normalizeHandle('x.com/i/flow/login', tw)).toBe('x.com/i/flow/login');
+    expect(normalizeHandle('https://x.com/Ninja_KR?s=20', tw)).toBe('@Ninja_KR');
   });
 });
 
@@ -50,6 +68,27 @@ describe('CohortApplicationFields', () => {
   });
 });
 
+describe.each([['create', CohortApplicationFields], ['update', UpdateCohortApplicationDto]] as const)('visible text rules (%s)', (_name, cls) => {
+  const run = (patch: object) => check(cls as new () => object, { ...valid, ...patch });
+  it.each([
+    ['displayName', '\u200B\u200B'], ['displayName', 'ab\u202Ecd'], ['displayName', 'a\nb'], ['displayName', '\u3164\u2800'],
+    ['intro', '\u200B\u200B\u200B'], ['intro', 'hi \u202E evil'], ['intro', 'x\u2066y'],
+    ['activityTypeOther', 'a\u202Eb'], ['interestOther', 'a\nb'],
+  ])('rejects %s = %j', async (field, value) => {
+    expect((await run({ [field]: value })).errors).toContain(field);
+  });
+  it('accepts Korean/emoji names with ZWJ and multi-line intro', async () => {
+    const { errors, dto } = await run({ displayName: '홍길동 👩‍💻', intro: 'line1\nline2\r\n\nline4', activityTypeOther: ' farmer ' });
+    expect(errors).toEqual([]);
+    expect(dto).toMatchObject({ activityTypeOther: 'farmer' });
+  });
+  it('treats invisible-only other details as blank (null)', async () => {
+    const { errors, dto } = await run({ activityTypeOther: '\u200B', interestOther: '\u3164' });
+    expect(errors).toEqual([]);
+    expect(dto).toMatchObject({ activityTypeOther: null, interestOther: null });
+  });
+});
+
 describe('UpdateCohortApplicationDto', () => {
   it('everything is optional but NOT NULL fields reject null', async () => {
     expect((await check(UpdateCohortApplicationDto, {})).errors).toEqual([]);
@@ -68,6 +107,9 @@ describe('normalizeOtherDetails', () => {
   it('keeps trimmed details when OTHER is selected', () => {
     expect(normalizeOtherDetails({ activityType: 'OTHER', activityTypeOther: ' farmer ', interestAreas: ['OTHER'], interestOther: ' art ' }))
       .toMatchObject({ activityTypeOther: 'farmer', interestOther: 'art' });
+  });
+  it('treats invisible-only details as missing', () => {
+    expect(() => normalizeOtherDetails({ activityType: 'OTHER', activityTypeOther: '\u200B', interestAreas: ['KOL'] })).toThrow('COHORT_OTHER_DETAIL_REQUIRED');
   });
   it('requires details when OTHER is selected (COHORT_OTHER_DETAIL_REQUIRED)', () => {
     expect(() => normalizeOtherDetails({ ...base, activityType: 'OTHER' })).toThrow('COHORT_OTHER_DETAIL_REQUIRED');

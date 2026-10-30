@@ -107,6 +107,7 @@ export class ApplicationsService {
     const r = await this.db.query(
       `SELECT a.id, a.status, a.message, a.applied_at, a.reviewed_at, a.review_note,
               b.id AS bounty_id, b.title AS bounty_title, b.category,
+              b.status AS bounty_status, b.submission_deadline, b.application_deadline,
               CASE WHEN ag.id IS NULL THEN NULL
                    ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent
          FROM bounty_application a

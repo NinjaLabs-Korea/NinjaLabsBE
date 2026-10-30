@@ -1,6 +1,7 @@
 import { BeforeApplicationShutdown, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { AlertService } from '../common/alerts/alert.service';
 import { DatabaseService } from '../common/database/database.service';
 import { SHUTDOWN_DRAIN_TIMEOUT_MS, SingleFlightTask } from '../common/lifecycle/single-flight-task';
@@ -65,8 +66,8 @@ function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise
  *   PENDING → PROCESSING → (온체인 tx) → SUCCEEDED / PENDING(retry_count++, 10분 뒤)
  *   MAX_RETRY번째 시도까지 실패하면 FAILED로 고정, nft.status = FAILED → 운영자 수동 재시도
  *
- * 다중 인스턴스: 선점은 FOR UPDATE SKIP LOCKED 한 문장, 이후 잡별 UPDATE는 전부 `AND status = 'PROCESSING'`으로 소유를 확인한다 —
- * 고아 정리(15분)가 되돌린 잡을 다른 인스턴스가 다시 선점한 뒤 원래 인스턴스가 뒤늦게 끝내도 결과를 덮어쓰지 못한다.
+ * 다중 인스턴스: 선점은 FOR UPDATE SKIP LOCKED 한 문장, 실행마다 새 claim_token을 발급한다.
+ * 잡 상태 변경과 NFT 쓰기는 같은 claim_token을 확인하므로 재선점되거나 타임아웃된 이전 실행이 결과를 덮어쓰지 못한다.
  *
  * 경로 A(표준 cw721-base): MINT_PARENT/MINT_CHILD는 mint 실행,
  * ATTACH 계열은 온체인 nest가 없으므로 DB 상태 전이만 수행한다.
@@ -81,7 +82,8 @@ function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise
  * 상태를 다시 읽는 것으로 닫는다 (부모는 MINTED가 된 뒤 자식을 훑으므로 어느 쪽이든 한쪽은 잡을 본다). 부모가 아직 준비되지 않은 상태에서
  * 집힌 ATTACH_CHILD(레거시 잡)는 실패/성공 처리하지 않고 1시간 뒤로 미룬다 — 성공으로 닫으면 멱등 키 때문에 다시는 attach되지 않는다.
  */
-type ClaimedJob = { id: string; nft_id: string; job_type: string; retry_count: number; scheduled_at: Date };
+type ClaimedJob = { id: string; nft_id: string; job_type: string; retry_count: number; scheduled_at: Date; claim_token: string };
+class JobClaimLostError extends Error {}
 /** execute()의 결과 — 'deferred'면 잡을 성공으로 닫지 않고 PENDING으로 되돌려 나중에 다시 시도한다 */
 type JobOutcome = 'done' | 'deferred';
 /**
@@ -89,14 +91,14 @@ type JobOutcome = 'done' | 'deferred';
  * 두 트랜잭션에서 이 문장을 그대로 실행해 "둘 다 즉시, 서로소 집합" 을 확인하므로 워커 밖으로 꺼내 둔다.
  */
 export const CLAIM_PENDING_JOBS_SQL = `UPDATE nft_job
-            SET status = 'PROCESSING', started_at = now()
+            SET status = 'PROCESSING', started_at = now(), claim_token = gen_random_uuid()
           WHERE id IN (
                 SELECT id FROM nft_job
                  WHERE status = 'PENDING' AND scheduled_at <= now()
                  ORDER BY scheduled_at
                  LIMIT 10
                    FOR UPDATE SKIP LOCKED)
-          RETURNING id, nft_id, job_type, retry_count, scheduled_at`;
+          RETURNING id, nft_id, job_type, retry_count, scheduled_at, claim_token`;
 /** 부모가 준비되지 않아 미룬 ATTACH_CHILD의 재시도 간격 */
 const ATTACH_DEFER_INTERVAL = '1 hour';
 
@@ -177,25 +179,27 @@ export class NftJobWorker implements BeforeApplicationShutdown {
   /**
    * 아직 차례가 오지 않은 배치 꼬리의 started_at을 갱신한다 — 잡 하나가 최대 JOB_EXECUTION_DEADLINE_MS(3분)이므로 배치(10건)가 느리면
    * 꼬리는 선점 뒤 15분 넘게 기다릴 수 있고, 그러면 다른 인스턴스의 고아 정리가 되돌려 다시 선점한 잡을 이 인스턴스가 PROCESSING으로 보고
-   * 그대로 실행해 같은 잡이 두 인스턴스에서 동시에 돈다. 소유 확인(`status = 'PROCESSING'`)은 그대로 — 이미 되돌려진 잡은 건드리지 않는다.
+   * 그대로 실행해 같은 잡이 두 인스턴스에서 동시에 돈다. (id, claim_token) 쌍으로 이 배치가 소유한 잡만 갱신한다.
    */
   private async holdUnstarted(tail: ClaimedJob[]) {
     if (!tail.length) return;
     await this.db.query(
-      `UPDATE nft_job SET started_at = now() WHERE id = ANY($1::uuid[]) AND status = 'PROCESSING'`,
-      [tail.map((job) => job.id)],
+      `UPDATE nft_job SET started_at = now()
+        WHERE (id, claim_token) IN (SELECT * FROM unnest($1::uuid[], $2::uuid[])) AND status = 'PROCESSING'`,
+      [tail.map((job) => job.id), tail.map((job) => job.claim_token)],
     );
   }
 
   /**
    * 종료 중 배치에서 아직 손대지 않은 잡을 PENDING으로 돌려놓는다 — 다음 인스턴스가 곧바로 다시 선점한다.
-   * 시도하지 않았으므로 retry_count/scheduled_at은 그대로. `status = 'PROCESSING'`이 소유 확인이다.
+   * 시도하지 않았으므로 retry_count/scheduled_at은 그대로. 다른 실행이 재선점한 잡은 건드리지 않는다.
    */
   private async releaseUnstarted(jobs: ClaimedJob[]) {
     try {
       const released = await this.db.query(
-        `UPDATE nft_job SET status = 'PENDING' WHERE id = ANY($1::uuid[]) AND status = 'PROCESSING'`,
-        [jobs.map((job) => job.id)],
+        `UPDATE nft_job SET status = 'PENDING', claim_token = NULL
+          WHERE (id, claim_token) IN (SELECT * FROM unnest($1::uuid[], $2::uuid[])) AND status = 'PROCESSING'`,
+        [jobs.map((job) => job.id), jobs.map((job) => job.claim_token)],
       );
       this.logger.log(`shutdown: released ${released.rowCount ?? 0} unstarted nft_job(s) back to PENDING`);
     } catch (err) {
@@ -210,17 +214,23 @@ export class NftJobWorker implements BeforeApplicationShutdown {
    * (실제 민팅 여부는 재실행 시 nft.status 멱등 체크가 판단한다).
    */
   private async requeueStaleJobs() {
-    const stale = await this.db.query<{ id: string; nft_id: string }>(
-      `UPDATE nft_job
-          SET status = 'PENDING', scheduled_at = now()
-        WHERE status = 'PROCESSING' AND started_at < now() - interval '${STALE_PROCESSING_INTERVAL}'
-        RETURNING id, nft_id`,
-    );
+    const stale = await this.db.tx(async (tx) => {
+      const reclaimed = await tx.query<{ id: string; nft_id: string }>(
+        `UPDATE nft_job
+            SET status = 'PENDING', scheduled_at = now(), claim_token = NULL
+          WHERE status = 'PROCESSING' AND started_at < now() - interval '${STALE_PROCESSING_INTERVAL}'
+          RETURNING id, nft_id`,
+      );
+      if (reclaimed.rowCount) {
+        // Hold the reclaimed job rows until their NFT reset commits, before a peer can claim them.
+        await tx.query(
+          `UPDATE nft SET status = 'PENDING' WHERE status = 'MINTING' AND id = ANY($1::uuid[])`,
+          [reclaimed.rows.map((row) => row.nft_id)],
+        );
+      }
+      return reclaimed;
+    });
     if (!stale.rowCount) return;
-    await this.db.query(
-      `UPDATE nft SET status = 'PENDING' WHERE status = 'MINTING' AND id = ANY($1::uuid[])`,
-      [stale.rows.map((row) => row.nft_id)],
-    );
     this.logger.warn(
       `requeued ${stale.rowCount} stale nft_job(s) stuck in PROCESSING for over ${STALE_PROCESSING_INTERVAL}`,
     );
@@ -233,10 +243,10 @@ export class NftJobWorker implements BeforeApplicationShutdown {
 
   private async process(job: ClaimedJob) {
     // 선점 시점의 started_at은 배치 전체의 것 — 느린 배치 꼬리가 다른 인스턴스의 고아 정리(15분)에 걸리지 않도록 잡별로 다시 찍는다.
-    // `status = 'PROCESSING'`이 소유 확인: 그 사이 고아 정리가 PENDING으로 되돌렸거나 다른 인스턴스가 다시 선점했으면 0행 — 내 잡이 아니다
+    // PROCESSING만으로는 다른 인스턴스의 재선점을 구분하지 못한다. 실행별 토큰까지 비교한다.
     const owned = await this.db.query(
-      `UPDATE nft_job SET started_at = now() WHERE id = $1 AND status = 'PROCESSING' RETURNING id`,
-      [job.id],
+      `UPDATE nft_job SET started_at = now() WHERE id = $1 AND status = 'PROCESSING' AND claim_token = $2 RETURNING id`,
+      [job.id, job.claim_token],
     );
     if (!owned.rowCount) {
       this.logger.warn(`nft_job ${job.id} is no longer PROCESSING (requeued or claimed by another instance) - skipping`);
@@ -246,9 +256,10 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       // 컨트랙트 미배포/지갑 미설정 — 잡을 실패시키지 않고 다음 폴링으로 미룸
       await this.db.query(
         `UPDATE nft_job SET status = 'PENDING', scheduled_at = now() + interval '1 hour',
+                claim_token = NULL,
                 last_error = 'NFT_CONTRACT_ADDRESS / MASTER_WALLET_MNEMONIC not configured'
-          WHERE id = $1 AND status = 'PROCESSING'`,
-        [job.id],
+          WHERE id = $1 AND status = 'PROCESSING' AND claim_token = $2`,
+        [job.id, job.claim_token],
       );
       return;
     }
@@ -263,39 +274,50 @@ export class NftJobWorker implements BeforeApplicationShutdown {
         // 부모 NFT가 아직 준비되지 않은 ATTACH_CHILD — retry_count를 소모하지 않고 뒤로 미룬다 (성공으로 닫지 않는다: 멱등 키가 재큐잉을 막는다)
         await this.db.query(
           `UPDATE nft_job SET status = 'PENDING', scheduled_at = now() + interval '${ATTACH_DEFER_INTERVAL}',
+                  claim_token = NULL,
                   last_error = 'parent NFT not minted yet - attach deferred'
-            WHERE id = $1 AND status = 'PROCESSING'`,
-          [job.id],
+            WHERE id = $1 AND status = 'PROCESSING' AND claim_token = $2`,
+          [job.id, job.claim_token],
         );
         this.logger.log(`nft_job ${job.id} deferred: parent NFT of ${job.nft_id} is not minted yet`);
         return;
       }
       const done = await this.db.query(
-        `UPDATE nft_job SET status = 'SUCCEEDED', processed_at = now(), last_error = NULL
-          WHERE id = $1 AND status = 'PROCESSING'`,
-        [job.id],
+        `UPDATE nft_job SET status = 'SUCCEEDED', processed_at = now(), last_error = NULL, claim_token = NULL
+          WHERE id = $1 AND status = 'PROCESSING' AND claim_token = $2`,
+        [job.id, job.claim_token],
       );
       if (!done.rowCount) this.logger.warn(`nft_job ${job.id} finished but was no longer PROCESSING - result not recorded by this instance`);
     } catch (err) {
+      if (err instanceof JobClaimLostError) {
+        this.logger.warn(`nft_job ${job.id} claim expired - ignoring the previous attempt`);
+        return;
+      }
       const message = this.sanitizeError(err);
       const exhausted = job.retry_count + 1 >= MAX_RETRY;
       // $2는 세 번 쓰인다 — 모두 같은 캐스트(::varchar)여야 한다. `status = $2`(varchar)와 `$2 = 'PENDING'`(text)이 섞이면 Postgres가
       // 42P08로 거부해 실패 처리 자체가 실패한다 (test-support/sql-param-casts.spec.ts가 정적으로, test-db가 실 DB로 검증)
-      const recorded = await this.db.query(
-        `UPDATE nft_job
-            SET status = $2::varchar, retry_count = retry_count + 1, last_error = $3,
-                scheduled_at = CASE WHEN $2::varchar = 'PENDING' THEN now() + interval '10 minutes' ELSE scheduled_at END,
-                processed_at = CASE WHEN $2::varchar = 'FAILED' THEN now() ELSE NULL END
-          WHERE id = $1 AND status = 'PROCESSING'`,
-        [job.id, exhausted ? 'FAILED' : 'PENDING', message],
-      );
+      const recorded = await this.db.tx(async (tx) => {
+        const result = await tx.query(
+          `UPDATE nft_job
+              SET status = $2::varchar, retry_count = retry_count + 1, last_error = $3,
+                  scheduled_at = CASE WHEN $2::varchar = 'PENDING' THEN now() + interval '10 minutes' ELSE scheduled_at END,
+                  processed_at = CASE WHEN $2::varchar = 'FAILED' THEN now() ELSE NULL END,
+                  claim_token = NULL
+            WHERE id = $1 AND status = 'PROCESSING' AND claim_token = $4`,
+          [job.id, exhausted ? 'FAILED' : 'PENDING', message, job.claim_token],
+        );
+        if (result.rowCount && exhausted) {
+          await tx.query(`UPDATE nft SET status = 'FAILED' WHERE id = $1`, [job.nft_id]);
+        }
+        return result;
+      });
       if (!recorded.rowCount) {
         // 다른 인스턴스가 이미 되가져간 잡 — 그쪽 결과가 유효하므로 retry_count도, nft 상태도 건드리지 않는다
         this.logger.warn(`nft_job ${job.id} failed late but was no longer PROCESSING - ignoring: ${message}`);
         return;
       }
       if (exhausted) {
-        await this.db.query(`UPDATE nft SET status = 'FAILED' WHERE id = $1`, [job.nft_id]);
         this.logger.error(`nft_job ${job.id} failed permanently: ${message}`);
         // 운영자 수동 재시도가 필요하다 — 잡 종류별 30분 쿨다운 (체인 장애로 한꺼번에 실패해도 종류당 한 통 + 억제 건수)
         await this.alerts.notify(
@@ -306,15 +328,31 @@ export class NftJobWorker implements BeforeApplicationShutdown {
     }
   }
 
-  private async execute(job: { id: string; nft_id: string; job_type: string }): Promise<JobOutcome> {
-    const r = await this.db.query<{
+  /** Lock the current claim through its DB effects. Chain RPCs are never awaited under this lock. */
+  private async withClaim<T>(job: ClaimedJob, action: (tx: PoolClient) => Promise<T>): Promise<T> {
+    return this.db.tx(async (tx) => {
+      const owned = await tx.query(
+        `SELECT id FROM nft_job WHERE id = $1 AND status = 'PROCESSING' AND claim_token = $2 FOR UPDATE`,
+        [job.id, job.claim_token],
+      );
+      if (!owned.rowCount) throw new JobClaimLostError();
+      return action(tx);
+    });
+  }
+
+  private ownedQuery<T extends QueryResultRow = QueryResultRow>(job: ClaimedJob, sql: string, params: unknown[]): Promise<QueryResult<T>> {
+    return this.withClaim(job, (tx) => tx.query<T>(sql, params));
+  }
+
+  private async execute(job: ClaimedJob): Promise<JobOutcome> {
+    const r = await this.ownedQuery<{
       id: string;
       nft_type: string;
       status: string;
       parent_nft_id: string | null;
       metadata_uri: string | null;
       owner_address: string;
-    }>(
+    }>(job,
       `SELECT n.id, n.nft_type, n.status, n.parent_nft_id, n.metadata_uri, w.address AS owner_address
          FROM nft n JOIN wallet w ON w.id = n.owner_wallet_id
         WHERE n.id = $1`,
@@ -328,12 +366,12 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       case 'MINT_CHILD':
       case 'RETRY_MINT': {
         if (!MINT_ALREADY_DONE.includes(nft.status as NftStatus)) { // 이미 민팅됐으면 멱등 스킵
-          await this.db.query(`UPDATE nft SET status = 'MINTING' WHERE id = $1`, [nft.id]);
+          await this.ownedQuery(job, `UPDATE nft SET status = 'MINTING' WHERE id = $1`, [nft.id]);
           // token_id = nft.id (UUID) — 컨트랙트 전역에서 유일
           if (await this.chain.tokenExists(nft.id)) {
             // 이전 실행이 mint 브로드캐스트 직후 죽어 DB만 못 갱신한 경우 — 재민팅하면 컨트랙트가 거부하므로 DB만 복구한다.
             // tx 해시는 알 수 없으므로 mint_tx_hash(nullable)는 건드리지 않는다.
-            await this.db.query(
+            await this.ownedQuery(job,
               `UPDATE nft
                   SET status = 'MINTED', token_id = $2, contract_address = $3, minted_at = now()
                 WHERE id = $1`,
@@ -341,8 +379,10 @@ export class NftJobWorker implements BeforeApplicationShutdown {
             );
             this.logger.warn(`nft ${nft.id} already minted on chain - recovered as MINTED without re-minting`);
           } else {
+            // A slow tokenExists call may have outlived this claim. Check again before broadcasting.
+            await this.withClaim(job, async () => undefined);
             const txHash = await this.chain.mint(nft.id, nft.owner_address, nft.metadata_uri);
-            await this.db.query(
+            await this.ownedQuery(job,
               `UPDATE nft
                   SET status = 'MINTED', token_id = $2, mint_tx_hash = $3,
                       contract_address = $4, minted_at = now()
@@ -353,7 +393,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
         }
         if (nft.nft_type === 'NINJA_PARENT') {
           // 부모가 준비됐으니 그동안 MINTED로 기다리던 자식들을 attach — 이미 PENDING으로 미뤄진 잡은 지금 바로 돌게 당긴다
-          const queued = await this.db.query(
+          const queued = await this.ownedQuery(job,
             `INSERT INTO nft_job (nft_id, job_type, idempotency_key)
              SELECT c.id, 'ATTACH_CHILD', 'attach-child:' || c.id
                FROM nft c
@@ -367,8 +407,8 @@ export class NftJobWorker implements BeforeApplicationShutdown {
         }
         // 자식 NFT는 민팅 후 부모에 attach — 부모가 없거나 아직 MINTED/ATTACHED가 아니면 MINTED로 보류 (decisions.md).
         // 부모 상태는 자식이 MINTED가 된 뒤 다시 읽는다 (헤더 주석의 경합 참고).
-        if (nft.parent_nft_id && nft.status !== 'ATTACHED' && await this.parentReady(nft.parent_nft_id)) {
-          await this.db.query(
+        if (nft.parent_nft_id && nft.status !== 'ATTACHED' && await this.parentReady(job, nft.parent_nft_id)) {
+          await this.ownedQuery(job,
             `INSERT INTO nft_job (nft_id, job_type, idempotency_key)
              VALUES ($1, 'ATTACH_CHILD', $2)
              ON CONFLICT (idempotency_key) DO NOTHING`,
@@ -381,7 +421,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       case 'RETRY_ATTACH': {
         if (nft.status === 'ATTACHED') return 'done'; // 멱등
         // 표준 cw721에는 온체인 nest가 없음 — DB 상태 전이만 (Nestable 전환 시 실제 attach 호출). 부모가 MINTED/ATTACHED일 때만.
-        const attached = await this.db.query(
+        const attached = await this.ownedQuery(job,
           `UPDATE nft c SET status = 'ATTACHED', attached_at = now()
              FROM nft p
             WHERE c.id = $1 AND c.status ${sqlIn(ATTACHABLE)}
@@ -399,8 +439,8 @@ export class NftJobWorker implements BeforeApplicationShutdown {
   }
 
   /** 부모 NFT가 자식을 받을 수 있는 상태인가 — 자식 민팅 **뒤에** 새로 읽는다 */
-  private async parentReady(parentNftId: string): Promise<boolean> {
-    const parent = await this.db.query<{ status: string }>(
+  private async parentReady(job: ClaimedJob, parentNftId: string): Promise<boolean> {
+    const parent = await this.ownedQuery<{ status: string }>(job,
       `SELECT status FROM nft WHERE id = $1 AND nft_type = 'NINJA_PARENT'`,
       [parentNftId],
     );

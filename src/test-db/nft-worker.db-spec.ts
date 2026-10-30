@@ -263,6 +263,70 @@ describeDb('nft_job worker on a real database', () => {
     expect(await nftRow(second.nftId)).toEqual({ status: 'MINTED', token_id: second.nftId, mint_tx_hash: '0xB' });
   });
 
+  it.each(['success', 'failure'] as const)('fences A\'s late %s while B still owns PROCESSING jobs, including the unstarted batch tail', async (outcome) => {
+    const first = await parentJob('2 minutes');
+    const second = await parentJob('1 minute');
+    const gateA = deferred<string>();
+    const gateB = deferred<string>();
+    const chainA = chainStub(() => gateA.promise);
+    const chainB = chainStub((tokenId) => tokenId === first.nftId ? gateB.promise : Promise.resolve('0xB-tail'));
+    const a = createWorker(chainA);
+    const b = createWorker(chainB);
+    const claims = () => db.query<{ id: string; claim_token: string; started_at: Date }>(
+      `SELECT id, claim_token, started_at FROM nft_job WHERE id = ANY($1::uuid[]) ORDER BY id`, [[first.jobId, second.jobId]]);
+
+    const pollA = a.poll();
+    await waitFor(() => chainA.mint.mock.calls.length === 1, 'A to enter mint');
+    const original = await claims();
+    await db.query(`UPDATE nft_job SET started_at = now() - interval '16 minutes' WHERE id = ANY($1::uuid[])`, [[first.jobId, second.jobId]]);
+    await b['requeueStaleJobs']();
+    // The stale sweep schedules all rows at the same time. Restore a deterministic batch order for this test.
+    await db.query(`UPDATE nft_job SET scheduled_at = now() - CASE WHEN id = $1 THEN interval '2 minutes' ELSE interval '1 minute' END
+      WHERE id = ANY($2::uuid[])`, [first.jobId, [first.jobId, second.jobId]]);
+    const pollB = b.poll();
+    await waitFor(() => chainB.mint.mock.calls.length === 1, 'B to reclaim and enter mint');
+    const current = await claims();
+    expect(current.rows.map((row) => row.claim_token)).not.toEqual(original.rows.map((row) => row.claim_token));
+
+    if (outcome === 'success') gateA.resolve('0xA-late');
+    else gateA.reject(new Error('late failure from A'));
+    await pollA;
+    // B is still running, not SUCCEEDED: a PROCESSING-only check would incorrectly pass here.
+    expect(await jobRow(first.jobId)).toMatchObject({ status: 'PROCESSING', retry_count: 0, last_error: null });
+    expect(await nftRow(first.nftId)).toEqual({ status: 'MINTING', token_id: null, mint_tx_hash: null });
+    expect((await claims()).rows).toEqual(current.rows); // A cannot restamp B's unstarted tail either.
+    expect(chainA.mint).toHaveBeenCalledTimes(1);
+    gateB.resolve('0xB');
+    await pollB;
+    expect(await jobRow(first.jobId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0 });
+    expect(await nftRow(first.nftId)).toEqual({ status: 'MINTED', token_id: first.nftId, mint_tx_hash: '0xB' });
+    expect(await nftRow(second.nftId)).toEqual({ status: 'MINTED', token_id: second.nftId, mint_tx_hash: '0xB-tail' });
+  });
+
+  it('a timed-out execution cannot write NFT state after a retry has acquired a new claim', async () => {
+    const { nftId, jobId } = await parentJob('1 minute');
+    const gateA = deferred<string>();
+    const gateB = deferred<string>();
+    const chainA = chainStub(() => gateA.promise);
+    const chainB = chainStub(() => gateB.promise);
+    const a = createWorker(chainA);
+    const b = createWorker(chainB);
+    (a as unknown as { executionDeadlineMs: number }).executionDeadlineMs = 1000;
+    const execute = jest.spyOn(a as unknown as { execute: (job: unknown) => Promise<unknown> }, 'execute');
+    await a.poll();
+    expect(await jobRow(jobId)).toMatchObject({ status: 'PENDING', retry_count: 1 });
+    await db.query(`UPDATE nft_job SET scheduled_at = now() WHERE id = $1`, [jobId]);
+    const pollB = b.poll();
+    await waitFor(() => chainB.mint.mock.calls.length === 1, 'retry to start minting');
+    gateA.resolve('0xA-after-deadline');
+    await expect(execute.mock.results[0].value).rejects.toThrow();
+    expect(await jobRow(jobId)).toMatchObject({ status: 'PROCESSING', retry_count: 1 });
+    expect(await nftRow(nftId)).toEqual({ status: 'MINTING', token_id: null, mint_tx_hash: null });
+    gateB.resolve('0xB-after-retry');
+    await pollB;
+    expect(await nftRow(nftId)).toEqual({ status: 'MINTED', token_id: nftId, mint_tx_hash: '0xB-after-retry' });
+  });
+
   it('a child minted while its parent is still PENDING stays MINTED; the parent mint then queues ATTACH_CHILD and the next poll attaches it', async () => {
     const userId = await createUser(db);
     const wallet = await createPrimaryWallet(db, userId);

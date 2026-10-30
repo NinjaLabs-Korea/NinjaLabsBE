@@ -217,6 +217,12 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 - 위 error 로그(`rejected the server request`)가 보이면: `GOOGLE_CLIENT_SECRET` 회전/만료, 리디렉션 URI 불일치(§4)를 고친다.
 
 ### 7.3 NFT 민팅 정체
+
+워커는 `0020_nft_job_claim_token.sql` 적용 후 실행별 `claim_token`으로 잡 소유권을 확인한다.
+재선점·타임아웃 후 이전 실행의 DB 기록은 거부되며, NFT 상태 쓰기도 잡 행 잠금 안에서 검증한다.
+이 버전으로 전환할 때는 기존 워커를 종료·드레인한 뒤 새 워커를 시작한다. 구 버전 워커는 토큰 검사를 하지 않는다.
+이미 전송된 온체인 트랜잭션은 취소할 수 없으며, 다음 실행의 `tokenExists` 조회로 DB 상태를 복구한다.
+
 1. 상태 보기:
    ```sql
    SELECT status, job_type, count(*), min(scheduled_at), max(retry_count) FROM nft_job GROUP BY 1, 2 ORDER BY 1, 2;

@@ -15,14 +15,15 @@ jest.mock('./injective-nft.client', () => ({ InjectiveNftClient: class {} }));
  * `src/test-db/nft-worker.db-spec.ts`가 행 단언으로 검증한다.
  */
 const STMT = {
-  stale: /^UPDATE nft_job SET status = 'PENDING', scheduled_at = now\(\) WHERE status = 'PROCESSING' AND started_at </,
+  stale: /^UPDATE nft_job SET status = 'PENDING', scheduled_at = now\(\), claim_token = NULL WHERE status = 'PROCESSING' AND started_at </,
   resetMinting: /^UPDATE nft SET status = 'PENDING' WHERE status = 'MINTING'/,
-  claim: /^UPDATE nft_job SET status = 'PROCESSING', started_at = now\(\) WHERE id IN/,
-  holdTail: /^UPDATE nft_job SET started_at = now\(\) WHERE id = ANY/,
+  claim: /^UPDATE nft_job SET status = 'PROCESSING', started_at = now\(\), claim_token = gen_random_uuid\(\) WHERE id IN/,
+  claimLock: /^SELECT id FROM nft_job WHERE id = \$1 AND status = 'PROCESSING' AND claim_token = \$2 FOR UPDATE$/,
+  holdTail: /^UPDATE nft_job SET started_at = now\(\) WHERE \(id, claim_token\) IN/,
   restamp: /^UPDATE nft_job SET started_at = now\(\) WHERE id = \$1/,
   loadNft: /FROM nft n JOIN wallet w/,
-  deferUnconfigured: /^UPDATE nft_job SET status = 'PENDING', scheduled_at = now\(\) \+ interval '1 hour', last_error = 'NFT_CONTRACT_ADDRESS/,
-  deferAttach: /^UPDATE nft_job SET status = 'PENDING', scheduled_at = now\(\) \+ interval '1 hour', last_error = 'parent NFT not minted yet/,
+  deferUnconfigured: /^UPDATE nft_job SET status = 'PENDING', scheduled_at = now\(\) \+ interval '1 hour', claim_token = NULL, last_error = 'NFT_CONTRACT_ADDRESS/,
+  deferAttach: /^UPDATE nft_job SET status = 'PENDING', scheduled_at = now\(\) \+ interval '1 hour', claim_token = NULL, last_error = 'parent NFT not minted yet/,
   succeeded: /^UPDATE nft_job SET status = 'SUCCEEDED'/,
   recordFailure: /^UPDATE nft_job SET status = \$2::varchar, retry_count = retry_count \+ 1/,
   nftFailed: /^UPDATE nft SET status = 'FAILED'/,
@@ -33,7 +34,7 @@ const STMT = {
   parentScan: /^INSERT INTO nft_job .* SELECT c\.id, 'ATTACH_CHILD'/,
   attachEnqueue: /^INSERT INTO nft_job .* VALUES \(\$1, 'ATTACH_CHILD'/,
   attach: /^UPDATE nft c SET status = 'ATTACHED'/,
-  release: /^UPDATE nft_job SET status = 'PENDING' WHERE id = ANY/,
+  release: /^UPDATE nft_job SET status = 'PENDING', claim_token = NULL WHERE \(id, claim_token\) IN/,
 } as const;
 
 describe('NftJobWorker', () => {
@@ -65,6 +66,7 @@ describe('NftJobWorker', () => {
     const mock = createMockDb({
       strict: true,
       handlers: [
+        on(STMT.claimLock, () => ({ rowCount: 1, rows: [{ id: 'job' }] })),
         on(STMT.parentRead, () => ({ rowCount: 1, rows: [{ status: options.parentStatus ?? 'MINTED' }] })),
         on(STMT.attach, (params) => (parentReady ? { rowCount: 1, rows: [{ id: params![0] }] } : { rowCount: 0, rows: [] })),
         on(STMT.parentScan, () => ({ rowCount: options.waitingChildren ?? 0, rows: [] })),
@@ -76,7 +78,7 @@ describe('NftJobWorker', () => {
         on(STMT.resetMinting, () => ({ rowCount: 1, rows: [] })),
         on(STMT.claim, () => {
           const claimed = options.claimed ?? [{ id: 'job', scheduled_at: new Date() }];
-          const rows = claimed.map((job) => ({ ...job, nft_id: nftId, job_type: options.jobType ?? 'MINT_CHILD', retry_count: options.retryCount ?? 0 }));
+          const rows = claimed.map((job) => ({ ...job, claim_token: `claim:${job.id}`, nft_id: nftId, job_type: options.jobType ?? 'MINT_CHILD', retry_count: options.retryCount ?? 0 }));
           return { rowCount: rows.length, rows };
         }),
         on(STMT.holdTail, () => ({ rowCount: 1, rows: [] })),
@@ -103,6 +105,8 @@ describe('NftJobWorker', () => {
         on(STMT.release, (params) => ({ rowCount: (params![0] as unknown[]).length, rows: [] })),
       ],
     });
+    // Keep the existing ordered statement/event assertions across both pool and claim-locked transactions.
+    mock.txQuery.mockImplementation((sql: string, params?: unknown[]) => mock.query(sql, params));
     const chain = {
       isConfigured: jest.fn(() => options.configured ?? true),
       contractAddress: jest.fn(() => 'inj1contract'),
@@ -126,7 +130,7 @@ describe('NftJobWorker', () => {
     /** 해당 문장들의 첫 바인딩(보통 잡 id) */
     const firstParams = (match: RegExp) => stmts(match).map(({ params }) => params![0]);
     /** 잡의 실패 기록 UPDATE에 실린 [id, 다음 상태, last_error] */
-    const failureRecorded = () => stmts(STMT.recordFailure).map(({ params }) => params);
+    const failureRecorded = () => stmts(STMT.recordFailure).map(({ params }) => params?.slice(0, 3));
     return { worker, query: mock.query, mock, chain, alerts, events, stmts, ran, firstParams, failureRecorded };
   }
 
@@ -537,7 +541,7 @@ describe('NftJobWorker', () => {
       await Promise.all([poll, shutdown]);
       expect(firstParams(STMT.succeeded)).toEqual(['a']); // the in-flight job finished and was recorded
       expect(chain.mint).toHaveBeenCalledTimes(1); // b and c never ran
-      expect(stmts(STMT.release).map(({ params }) => params)).toEqual([[['b', 'c']]]);
+      expect(stmts(STMT.release).map(({ params }) => params)).toEqual([[['b', 'c'], ['claim:b', 'claim:c']]]);
     });
 
     it('a poll after shutdown claims nothing and touches no rows', async () => {

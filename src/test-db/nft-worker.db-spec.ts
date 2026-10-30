@@ -29,11 +29,11 @@ describeDb('nft_job worker on a real database', () => {
   });
   afterAll(async () => db.onApplicationShutdown());
 
-  function chainStub(mint: (tokenId: string) => Promise<string>) {
+  function chainStub(mint: (tokenId: string) => Promise<string>, options: { configured?: boolean; tokenExists?: boolean } = {}) {
     return {
-      isConfigured: () => true,
+      isConfigured: () => options.configured ?? true,
       contractAddress: () => 'inj1testcontract',
-      tokenExists: jest.fn(async () => false),
+      tokenExists: jest.fn(async () => options.tokenExists ?? false),
       mint: jest.fn(mint),
     };
   }
@@ -66,6 +66,12 @@ describeDb('nft_job worker on a real database', () => {
   async function nftRow(id: string) {
     const r = await db.query<{ status: string; token_id: string | null; mint_tx_hash: string | null }>(
       `SELECT status, token_id, mint_tx_hash FROM nft WHERE id = $1`, [id]);
+    return r.rows[0];
+  }
+
+  async function nftChainColumns(id: string) {
+    const r = await db.query<{ contract_address: string | null; minted_at: Date | null }>(
+      `SELECT contract_address, minted_at FROM nft WHERE id = $1`, [id]);
     return r.rows[0];
   }
 
@@ -317,5 +323,110 @@ describeDb('nft_job worker on a real database', () => {
     await worker.poll();
     expect(await attachJob(child.nftId)).toMatchObject({ status: 'SUCCEEDED' });
     expect((await nftRow(child.nftId)).status).toBe('ATTACHED');
+  });
+  it('an unconfigured chain defers the job by 1 hour with an explanatory last_error, burning no retry and leaving the nft PENDING (even on what would be the last attempt)', async () => {
+    const { nftId, jobId } = await parentJob('1 minute');
+    await db.query(`UPDATE nft_job SET retry_count = 4 WHERE id = $1`, [jobId]);
+    const chain = chainStub(async () => '0xnever', { configured: false });
+    const before = Date.now();
+    await createWorker(chain).poll();
+
+    const job = await jobRow(jobId);
+    expect(job).toMatchObject({
+      status: 'PENDING', retry_count: 4, processed_at: null,
+      last_error: 'NFT_CONTRACT_ADDRESS / MASTER_WALLET_MNEMONIC not configured',
+    });
+    expect(job.scheduled_at.getTime() - before).toBeGreaterThan(55 * 60_000);
+    expect(chain.mint).not.toHaveBeenCalled();
+    expect(chain.tokenExists).not.toHaveBeenCalled();
+    expect((await nftRow(nftId)).status).toBe('PENDING');
+  });
+
+  it('a token already on chain (crashed run) is recovered as MINTED with token_id and contract_address but no mint_tx_hash, without minting again', async () => {
+    const { nftId, jobId } = await parentJob('1 minute');
+    const chain = chainStub(async () => '0xnever', { tokenExists: true });
+    await createWorker(chain).poll();
+
+    expect(chain.mint).not.toHaveBeenCalled();
+    expect(await jobRow(jobId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0, last_error: null });
+    expect(await nftRow(nftId)).toEqual({ status: 'MINTED', token_id: nftId, mint_tx_hash: null });
+    expect(await nftChainColumns(nftId)).toEqual({ contract_address: 'inj1testcontract', minted_at: expect.any(Date) });
+  });
+
+  it('a mint that succeeds on chain stores the contract address and minted_at next to token_id and the tx hash', async () => {
+    const { nftId } = await parentJob('1 minute');
+    await createWorker(chainStub(async () => '0xfresh')).poll();
+    expect(await nftRow(nftId)).toEqual({ status: 'MINTED', token_id: nftId, mint_tx_hash: '0xfresh' });
+    expect(await nftChainColumns(nftId)).toEqual({ contract_address: 'inj1testcontract', minted_at: expect.any(Date) });
+  });
+
+  it('the stale sweep requeues only jobs PROCESSING for over 15 minutes and resets only their MINTING nfts; a fresh PROCESSING job and its nft are left alone', async () => {
+    const stale = await parentJob('2 minutes');
+    const fresh = await parentJob('1 minute');
+    for (const { jobId, nftId } of [stale, fresh]) {
+      await db.query(`UPDATE nft_job SET status = 'PROCESSING', started_at = now() WHERE id = $1`, [jobId]);
+      await db.query(`UPDATE nft SET status = 'MINTING' WHERE id = $1`, [nftId]);
+    }
+    await db.query(`UPDATE nft_job SET started_at = now() - interval '16 minutes' WHERE id = $1`, [stale.jobId]);
+
+    const worker = createWorker(chainStub(async () => '0xnever', { configured: false }));
+    await worker.poll();
+
+    // the stale job went back to PENDING, was reclaimed in the same poll and deferred (unconfigured chain), its MINTING nft reset
+    expect(await jobRow(stale.jobId)).toMatchObject({ status: 'PENDING', retry_count: 0 });
+    expect((await nftRow(stale.nftId)).status).toBe('PENDING');
+    expect(await jobRow(fresh.jobId)).toMatchObject({ status: 'PROCESSING', retry_count: 0 });
+    expect((await nftRow(fresh.nftId)).status).toBe('MINTING');
+    expect(worker['alerts'].notify).toHaveBeenCalledWith('nft-job-stale-requeue', expect.stringContaining('requeued 1 nft_job(s)'));
+
+    await db.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE id = ANY($1::uuid[])`, [[stale.jobId, fresh.jobId]]);
+  });
+
+  it('a job that stopped being PROCESSING while its mint was in flight is not overwritten by a late success or a late permanent failure', async () => {
+    const lateSuccess = await parentJob('2 minutes');
+    const gateOk = deferred<string>();
+    const okChain = chainStub(() => gateOk.promise);
+    const okPoll = createWorker(okChain).poll();
+    await waitFor(() => okChain.mint.mock.calls.length === 1, 'the mint to start');
+    await db.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE id = $1`, [lateSuccess.jobId]);
+    gateOk.resolve('0xlate');
+    await okPoll;
+    expect(await jobRow(lateSuccess.jobId)).toMatchObject({ status: 'CANCELLED', processed_at: null });
+
+    // the nft itself did get minted on chain; only the job bookkeeping is fenced
+    const lateFailure = await parentJob('2 minutes');
+    await db.query(`UPDATE nft_job SET retry_count = 4 WHERE id = $1`, [lateFailure.jobId]);
+    const gateFail = deferred<string>();
+    const failChain = chainStub(() => gateFail.promise);
+    const failWorker = createWorker(failChain);
+    const failPoll = failWorker.poll();
+    await waitFor(() => failChain.mint.mock.calls.length === 1, 'the second mint to start');
+    await db.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE id = $1`, [lateFailure.jobId]);
+    gateFail.reject(new Error('late 5th failure'));
+    await failPoll;
+    expect(await jobRow(lateFailure.jobId)).toMatchObject({ status: 'CANCELLED', retry_count: 4, last_error: null });
+    expect((await nftRow(lateFailure.nftId)).status).not.toBe('FAILED');
+    expect(failWorker['alerts'].notify).not.toHaveBeenCalled();
+  });
+
+  it('re-running the mint job of a child that is already MINTED does not mint again and leaves a single ATTACH_CHILD job (ON CONFLICT DO NOTHING)', async () => {
+    const userId = await createUser(db);
+    const wallet = await createPrimaryWallet(db, userId);
+    const { nftId: parentId } = (await nfts.enqueueParentMint(userId, wallet.id))!;
+    const chain = chainStub(async (tokenId) => `0x${tokenId.slice(0, 8)}`);
+    const worker = createWorker(chain);
+    await worker.poll();
+    expect((await nftRow(parentId)).status).toBe('MINTED');
+    const child = await childJob(userId, wallet.id);
+    await worker.poll();
+    const mintsBefore = chain.mint.mock.calls.length;
+    expect((await attachJob(child.nftId)).status).toBe('PENDING');
+
+    await db.query(`UPDATE nft_job SET status = 'PENDING', scheduled_at = now() WHERE id = $1`, [child.jobId]);
+    await worker.poll();
+    expect(chain.mint.mock.calls.length).toBe(mintsBefore);
+    expect(await jobRow(child.jobId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0, last_error: null });
+    const attachJobs = await db.query(`SELECT id FROM nft_job WHERE nft_id = $1 AND job_type = 'ATTACH_CHILD'`, [child.nftId]);
+    expect(attachJobs.rows).toHaveLength(1);
   });
 });

@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join, relative } from 'path';
+import { listSourceFiles } from './source-files';
 
 /**
  * 정적 가드 — 제출/지원서/payout 상태 **집합**을 문자열 리터럴로 새로 만들지 못하게 한다 (README "코드 배치 규칙").
@@ -39,19 +40,6 @@ const POLICY_FILES = ['bounties/bounty-status.ts', 'bounties/submission-status.t
  * 단일 값 비교/대입은 피할 수 없다. 집합(IN 목록, 배열)은 여기서도 막힌다.
  */
 const NFT_BARE_ALLOWED = ['nfts/nft-job.worker.ts'];
-
-/** src 아래 비-스펙 .ts 파일 (sql-param-casts.spec.ts와 같은 기준 — 스펙 파일을 import하면 그 테스트가 여기서도 돌아 따로 둔다) */
-function listSourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      if (entry !== 'node_modules') listSourceFiles(full, out);
-    } else if (/\.ts$/.test(entry) && !/\.(spec|db-spec|e2e-spec|d)\.ts$/.test(entry)) {
-      out.push(full);
-    }
-  }
-  return out.sort();
-}
 
 export function findStatusSetLiterals(source: string): number[] {
   const lines: number[] = [];

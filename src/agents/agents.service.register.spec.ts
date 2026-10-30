@@ -98,8 +98,8 @@ describe('AgentsService.register input validation', () => {
       status: 'PENDING_VERIFICATION',
       verificationMessage: AgentsService.verificationMessage(agentId, ownerUserId),
     });
-    expect(txQuery.mock.calls[0][1]).toEqual([INJ_ADDRESS, INJ_PUBKEY]);
-    expect(txQuery.mock.calls[1][1]).toEqual([ownerUserId, 'bot', 'desc', INJ_PUBKEY, INJ_ADDRESS]);
+    expect(txQuery.mock.calls.find(([sql]) => sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')"))?.[1]).toEqual([INJ_ADDRESS, INJ_PUBKEY]);
+    expect(txQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO agent ('))?.[1]).toEqual([ownerUserId, 'bot', 'desc', INJ_PUBKEY, INJ_ADDRESS]);
   });
 
   it.each([
@@ -116,12 +116,14 @@ describe('AgentsService.register input validation', () => {
     expect(lookup[1]).toEqual([ownerUserId]);
   });
 
-  it('an owner who has not finished onboarding is 409 PROFILE_REQUIRED (a login is not an onboarding) - the INSERT is rolled back with the transaction', async () => {
-    const { service } = setup({ onboarded: false });
+  it('an owner who has not finished onboarding is 409 PROFILE_REQUIRED before locking or inserting agents', async () => {
+    const { service, txQuery } = setup({ onboarded: false });
     await expect(service.register(ownerUserId, 'bot', undefined, undefined, Wallet.createRandom().address)).rejects.toMatchObject({
       status: 409,
       message: 'PROFILE_REQUIRED',
     });
+    expect(txQuery).toHaveBeenCalledTimes(1);
+    expect(txQuery.mock.calls[0][0]).toContain('FOR SHARE');
   });
 
   it('a different dedicated wallet is fine even when the owner has a connected wallet', async () => {
@@ -134,8 +136,8 @@ describe('AgentsService.register input validation', () => {
     const someoneElsesKey = Wallet.createRandom().signingKey.compressedPublicKey;
     const { service, txQuery } = setup();
     await expect(service.register(ownerUserId, 'bot', undefined, someoneElsesKey, signer.address)).resolves.toMatchObject({ agentId });
-    expect(txQuery.mock.calls[0][1]).toEqual([signer.address, null]);
-    expect(txQuery.mock.calls[1][1]).toEqual([ownerUserId, 'bot', null, null, signer.address]);
+    expect(txQuery.mock.calls.find(([sql]) => sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')"))?.[1]).toEqual([signer.address, null]);
+    expect(txQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO agent ('))?.[1]).toEqual([ownerUserId, 'bot', null, null, signer.address]);
   });
 
   it.each([

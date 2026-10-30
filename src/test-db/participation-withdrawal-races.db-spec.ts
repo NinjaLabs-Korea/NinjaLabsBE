@@ -1,4 +1,6 @@
 import { JwtService } from '@nestjs/jwt';
+import { Wallet } from 'ethers';
+import { AgentsService } from '../agents/agents.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
@@ -9,10 +11,13 @@ import { BountyActor } from '../bounties/bounty-actor';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { CohortAdminService } from '../cohorts/cohort-admin.service';
 import { CohortApplicationsService } from '../cohorts/cohort-applications.service';
-import { DatabaseService } from '../common/database/database.service';
+import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { AccountWithdrawalService } from '../users/account-withdrawal.service';
 import { describeDb } from './describe-db';
 import { createDb, createUser, deferred, TEST_JWT_SECRET, testConfig, unique, waitFor } from './harness';
+
+jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
+jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
 
 type Scenario = { name: string; kind: 'COHORT' | 'APPLICATION' | 'SUBMISSION'; agent: boolean; existing: boolean };
 const scenarios: Scenario[] = [
@@ -107,13 +112,19 @@ describeDb('participation and account withdrawal races', () => {
   }
 
   // Observe an actual PostgreSQL lock wait, or detect an operation that incorrectly finishes without waiting.
-  async function expectBlocked(work: Promise<unknown>) {
+  async function expectBlocked(work: Promise<unknown>, sqlFragment?: string) {
     let settled = false;
+    let waiting: string[] = [];
     void work.finally(() => { settled = true; }).catch(() => undefined);
-    await waitFor(async () => settled || (await db.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`)).rows[0].n > 0,
+    await waitFor(async () => {
+      if (settled) return true;
+      waiting = (await db.query<{ query: string }>(
+        `SELECT query FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`)).rows.map((row) => row.query);
+      return waiting.length > 0;
+    },
     'the competing operation to wait for the user row');
     expect(settled).toBe(false);
+    if (sqlFragment) expect(waiting).toEqual(expect.arrayContaining([expect.stringContaining(sqlFragment)]));
   }
 
   it.each(scenarios)('$name: participation first commits, then withdrawal cleans the resulting record', async (scenario) => {
@@ -182,6 +193,43 @@ describeDb('participation and account withdrawal races', () => {
       await db.query(`UPDATE "user" SET status = $2 WHERE id = $1`, [f.userId, status]);
       await expect(f.participate()).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
       expect(await f.rows()).toEqual([]);
+    }
+  });
+
+  it('agent re-registration locks the owner before occupied agent rows, avoiding a deadlock with withdrawal', async () => {
+    const nickname = unique('register_');
+    const owner = await createUser(db, { nickname });
+    const agents = new AgentsService(db, audit);
+    const signer = Wallet.createRandom();
+    await agents.register(owner, 'pending', undefined, undefined, signer.address);
+    const locked = deferred();
+    const release = deferred();
+    type Retirer = { retireReusableAgents: (tx: QueryRunner, userId: string, key: string | null, address: string) => Promise<void> };
+    const internal = agents as unknown as Retirer;
+    const original = internal.retireReusableAgents.bind(agents);
+    const spy = jest.spyOn(internal, 'retireReusableAgents').mockImplementation(async (...args) => {
+      await original(...args); // Real FOR UPDATE on the existing PENDING agent, before the duplicate INSERT.
+      locked.resolve();
+      await release.promise;
+    });
+    const registering = agents.register(owner, 'updated', undefined, undefined, signer.address);
+    void registering.catch(() => undefined);
+    let withdrawing: Promise<unknown> | undefined;
+    try {
+      await Promise.race([locked.promise, registering.then(() => { throw new Error('registration passed the pause'); })]);
+      withdrawing = withdrawal.withdraw(owner, nickname);
+      await expectBlocked(withdrawing, 'SELECT nickname FROM "user"'); // Not blocked on agent rows after already locking the owner.
+      release.resolve();
+      const [registration] = await Promise.allSettled([registering, withdrawing]);
+      // A duplicate INSERT rolls back the first transaction. Withdrawal may win the race with the name-only fallback;
+      // either the existing pending registration is returned, or the fallback refuses it. Neither side may deadlock.
+      if (registration.status === 'rejected') expect(registration.reason).toMatchObject({ status: 409, message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
+      await expect(withdrawing).resolves.toEqual({ ok: true });
+      expect((await db.query(`SELECT status FROM agent WHERE owner_user_id = $1`, [owner])).rows).toEqual([{ status: 'REVOKED' }]);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([registering, ...(withdrawing ? [withdrawing] : [])]);
+      spy.mockRestore();
     }
   });
 });

@@ -194,9 +194,11 @@ describe('AgentsService EVM registration', () => {
       service.register(ownerUserId, 'market-agent-v2', undefined, undefined, signer.address),
     ).resolves.toMatchObject({ agentId, status: 'PENDING_VERIFICATION' });
 
-    // lookup (FOR UPDATE) → INSERT; uq_agent_wallet ignores REVOKED rows (0014), so nothing is retired
-    const [lookup, insert] = registerQuery.mock.calls;
-    expect(registerQuery).toHaveBeenCalledTimes(4); // + the owner-wallet check and the owner onboarding check after the INSERT
+    // owner (FOR SHARE) -> agent lookup (FOR UPDATE) -> INSERT; revoked rows do not occupy the unique wallet index.
+    const [owner, lookup, insert] = registerQuery.mock.calls;
+    expect(registerQuery).toHaveBeenCalledTimes(4); // + the owner-wallet check after the INSERT
+    expect(owner[0]).toContain('FOR SHARE');
+    expect(owner[1]).toEqual([ownerUserId]);
     expect(lookup[0]).toContain("status IN ('REVOKED', 'PENDING_VERIFICATION') AND deleted_at IS NULL");
     expect(lookup[0]).toContain('FOR UPDATE');
     expect(lookup[1]).toEqual([signer.address, null]);
@@ -217,7 +219,7 @@ describe('AgentsService EVM registration', () => {
     await expect(
       service.register(ownerUserId, 'market-agent', undefined, undefined, signer.address),
     ).rejects.toMatchObject({ message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
-    expect(registerQuery).toHaveBeenCalledTimes(1);
+    expect(registerQuery).toHaveBeenCalledTimes(2); // owner eligibility, then occupied agent
     expect(db.query).not.toHaveBeenCalled();
   });
 
@@ -258,7 +260,7 @@ describe('AgentsService EVM registration', () => {
       service.register(ownerUserId, 'market-agent', undefined, undefined, signer.address),
     ).resolves.toMatchObject({ agentId, status: 'PENDING_VERIFICATION' });
 
-    const [lookup, retire, insert] = registerQuery.mock.calls;
+    const [, lookup, retire, insert] = registerQuery.mock.calls;
     // Abandonment is decided in SQL under the row lock, from created_at.
     expect(lookup[0]).toContain("created_at < now() - interval '24 hours'");
     expect(lookup[0]).toContain('FOR UPDATE');
@@ -280,7 +282,7 @@ describe('AgentsService EVM registration', () => {
     await expect(
       service.register(ownerUserId, 'market-agent', undefined, undefined, signer.address),
     ).rejects.toMatchObject({ message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
-    expect(registerQuery).toHaveBeenCalledTimes(1);
+    expect(registerQuery).toHaveBeenCalledTimes(2); // owner eligibility, then occupied agent
     expect(db.query).not.toHaveBeenCalled();
   });
 
@@ -310,8 +312,9 @@ describe('AgentsService EVM registration', () => {
     const publicKey = Buffer.from(injSigner.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64');
     await service.register(ownerUserId, 'inj-agent', undefined, publicKey, injAddress);
     // $2 is cast identically in both positions — a bare + cast mix is a 42P08 at parse time on a real Postgres
-    expect(registerQuery.mock.calls[0][0]).toContain('($2::text IS NOT NULL AND public_key = $2::text)');
-    expect(registerQuery.mock.calls[0][1]).toEqual([injAddress, publicKey]);
+    const lookup = registerQuery.mock.calls.find(([sql]) => sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')"));
+    expect(lookup?.[0]).toContain('($2::text IS NOT NULL AND public_key = $2::text)');
+    expect(lookup?.[1]).toEqual([injAddress, publicKey]);
   });
 
   it('rejects a signature from a different EVM key', async () => {

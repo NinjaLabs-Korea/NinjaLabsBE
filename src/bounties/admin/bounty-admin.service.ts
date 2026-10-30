@@ -161,7 +161,7 @@ export class BountyAdminService {
         [bountyId],
       );
       if (!cur.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-      // 접수가 끝난 상태(SUBMISSION_CLOSED/IN_REVIEW/COMPLETED/CANCELLED)에서는 마감이 더 이상 의미 없으므로 미래 검사를 하지 않는다 —
+      // 접수가 끝난 상태(SUBMISSION_CLOSED/IN_REVIEW/COMPLETED/CANCELLED)에서는 마감이 더 이상 의미 없으므로 미래 검사를 하지 않는다:
       // 지난 마감을 그대로 둔 채 제목/설명만 고칠 수 있어야 한다. 규칙 본문은 assertDeadlines.
       assertDeadlines(input, cur.rows[0], BountyStatusPolicy.enforcesFutureDeadline(cur.rows[0].status));
       if (input.maxWinners !== undefined) {

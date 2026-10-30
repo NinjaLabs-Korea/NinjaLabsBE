@@ -372,9 +372,9 @@ export class NftJobWorker implements BeforeApplicationShutdown {
   private async runMintJob(job: ClaimedJob, nft: JobNft): Promise<JobOutcome> {
     if (!MINT_ALREADY_DONE.includes(nft.status as NftStatus)) { // 이미 민팅됐으면 멱등 스킵
       await this.ownedQuery(job, `UPDATE nft SET status = 'MINTING' WHERE id = $1`, [nft.id]);
-      // token_id = nft.id (UUID) — 컨트랙트 전역에서 유일
+      // token_id = nft.id (UUID) - 컨트랙트 전역에서 유일
       if (await this.chain.tokenExists(nft.id)) {
-        // 이전 실행이 mint 브로드캐스트 직후 죽어 DB만 못 갱신한 경우 — 재민팅하면 컨트랙트가 거부하므로 DB만 복구한다.
+        // 이전 실행이 mint 브로드캐스트 직후 죽어 DB만 못 갱신한 경우 - 재민팅하면 컨트랙트가 거부하므로 DB만 복구한다.
         // tx 해시는 알 수 없으므로 mint_tx_hash(nullable)는 건드리지 않는다.
         await this.ownedQuery(job,
           `UPDATE nft
@@ -397,7 +397,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       }
     }
     if (nft.nft_type === 'NINJA_PARENT') {
-      // 부모가 준비됐으니 그동안 MINTED로 기다리던 자식들을 attach — 이미 PENDING으로 미뤄진 잡은 지금 바로 돌게 당긴다
+      // 부모가 준비됐으니 그동안 MINTED로 기다리던 자식들을 attach - 이미 PENDING으로 미뤄진 잡은 지금 바로 돌게 당긴다
       const queued = await this.ownedQuery(job,
         `INSERT INTO nft_job (nft_id, job_type, idempotency_key)
          SELECT c.id, 'ATTACH_CHILD', ${attachChildKeySql('c.id')}
@@ -410,7 +410,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       if (queued.rowCount) this.logger.log(`parent nft ${nft.id} minted - queued ATTACH_CHILD for ${queued.rowCount} waiting child NFT(s)`);
       return 'done';
     }
-    // 자식 NFT는 민팅 후 부모에 attach — 부모가 없거나 아직 MINTED/ATTACHED가 아니면 MINTED로 보류 (decisions.md).
+    // 자식 NFT는 민팅 후 부모에 attach - 부모가 없거나 아직 MINTED/ATTACHED가 아니면 MINTED로 보류 (decisions.md).
     // 부모 상태는 자식이 MINTED가 된 뒤 다시 읽는다 (헤더 주석의 경합 참고).
     if (nft.parent_nft_id && nft.status !== 'ATTACHED' && await this.parentReady(job, nft.parent_nft_id)) {
       await this.ownedQuery(job,
@@ -425,7 +425,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
 
   private async runAttachJob(job: ClaimedJob, nft: JobNft): Promise<JobOutcome> {
     if (nft.status === 'ATTACHED') return 'done'; // 멱등
-    // 표준 cw721에는 온체인 nest가 없음 — DB 상태 전이만 (Nestable 전환 시 실제 attach 호출). 부모가 MINTED/ATTACHED일 때만.
+    // 표준 cw721에는 온체인 nest가 없음 - DB 상태 전이만 (Nestable 전환 시 실제 attach 호출). 부모가 MINTED/ATTACHED일 때만.
     const attached = await this.ownedQuery(job,
       `UPDATE nft c SET status = 'ATTACHED', attached_at = now()
          FROM nft p

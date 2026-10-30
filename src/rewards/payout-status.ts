@@ -123,10 +123,10 @@ export function recipientActiveSql(submission = 's'): string {
  *                — requestPayout이 아직 받아 줄 수 있다. 탈퇴한 수령자는 requestPayout이 404라 영영 받을 수 없다
  *                (풀이 가득 찼을 때 탈퇴한 뒤 다른 수상이 취소돼 여유분이 생기는 경우 — 이걸 빼면 COMPLETED가 영영 막힌다).
  *                지갑만 없는 수령자는 다시 연결하면 받을 수 있으므로 계속 owed다.
- *          취소된 payout만 있는 제출은 (a)도 (b)도 아니다: 취소는 수상 취소이고, requestPayout은 (보상, 제출)에 행이 있으면
+ *          취소된 payout만 있는 제출은 (a)도 (b)도 아니다: 취소는 지급 취소(CANCELLED payout)이고, requestPayout은 (보상, 제출)에 행이 있으면
  *          상태와 무관하게 409 PAYOUT_ALREADY_REQUESTED라 다시 받을 수 없다 → NONE.
  *   paid = owed 중 이 제출의 PAID payout이 있는 것
- *   NONE           owed가 비었다 (보상 없음 / 입금 전 / 다른 수상자가 다 가져감 / 수상 취소 / 미요청인데 수령자 탈퇴)
+ *   NONE           owed가 비었다 (보상 없음 / 입금 전 / 다른 수상자가 다 가져감 / 지급 취소(CANCELLED payout) / 미요청인데 수령자 탈퇴)
  *   PAID           paid = owed
  *   PARTIALLY_PAID 0 < paid < owed
  *   PENDING        paid = 0

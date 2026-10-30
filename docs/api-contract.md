@@ -51,7 +51,9 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `CHALLENGE_NOT_FOUND` | 400 | 발급된 지갑 challenge가 없다 (먼저 challenge 요청) |
 | `CHALLENGE_EXPIRED` | 400 | challenge가 만료됐거나 이미 사용됐다 |
 | `INVALID_SIGNATURE` | 401 | 서명 검증에 실패했다 (지갑 연결·에이전트 등록 공통) |
-| `WALLET_ALREADY_LINKED` | 409 | 이 주소가 이미 다른 계정에 연결됐거나, 내 대표 지갑이 이미 있다 (부분 유니크 인덱스 충돌) |
+| `WALLET_LINKED_TO_OTHER_ACCOUNT` | 409 | 이 주소가 이미 다른 계정에 연결돼 있다 |
+| `ACCOUNT_ALREADY_HAS_WALLET` | 409 | 이 계정에 이미 다른 대표 지갑이 연결돼 있다 |
+| `WALLET_ALREADY_LINKED` | 409 | 지갑 유니크 충돌(제약 이름 미상). 구 FE 호환용, 새 코드는 위 둘 |
 | `INVALID_AGENT_WALLET_ADDRESS` | 400 | 에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다) |
 | `AGENT_PUBLIC_KEY_REQUIRED` | 400 | 에이전트 공개키가 필요하다 |
 | `AGENT_PUBLIC_KEY_MISMATCH` | 400 | inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다 |
@@ -114,7 +116,9 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `COHORT_APPLICATION_NOT_FOUND` | 404 | 기수 지원서가 없거나 내 것이 아니다 (남의 지원서도 같은 404) |
 | `COHORT_APPLICATION_NOT_SUBMITTED` | 409 | SUBMITTED가 아니라 수정·철회할 수 없다 (이미 심사됨/철회됨) |
 | `COHORT_APPLICATION_WITHDRAWN` | 409 | 철회된 지원서라 심사할 수 없다 |
-| `COHORT_OTHER_DETAIL_REQUIRED` | 400 | 활동 유형 또는 관심 분야에 OTHER를 골랐는데 상세(activityTypeOther/interestOther)가 비었다 |
+| `COHORT_OTHER_DETAIL_REQUIRED` | 400 | 상세 입력(withDetail) 선택지를 골랐는데 other가 비었다 (구 본문: 활동 유형 또는 관심 분야에 OTHER를 골랐는데 activityTypeOther/interestOther가 빔) |
+| `COHORT_QUESTIONS_INVALID` | 400 | 기수 질문 목록이 규칙에 맞지 않는다 (모르는 id, 중복 id, 선택지 수, withDetail 둘 이상 등) |
+| `COHORT_ANSWERS_INVALID` | 400 | 지원서 답변이 지금 질문과 맞지 않는다 (없는 질문/선택지, 필수 미응답, 형식, 옛/새 본문 혼용) |
 | `COHORT_INVALID_WINDOW` | 400 | 접수 종료(closesAt)가 시작(opensAt)보다 늦지 않다 |
 | `COHORT_INVALID_TRANSITION` | 400 | 허용되지 않는 기수 상태 전이다 (DRAFT->OPEN->CLOSED, CLOSED->OPEN만) |
 | `COHORT_ALREADY_OPEN` | 409 | 다른 기수가 이미 OPEN이다 (동시에 열린 기수는 하나) |
@@ -220,7 +224,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
   `payoutStatus: 'PAID' | 'PARTIALLY_PAID' | 'PENDING' | 'NONE'`이 함께 온다 (2026-10-25, 다중 보상 대응). 판정 대상은 **이 제출에 지급될 보상(owed)** —
   그 바운티의 보상 중 입금 확인 상태(`FUNDED`/`PARTIALLY_PAID`/`PAID`)이면서 ① 이 제출의 취소 아닌 payout 행이 있거나 ② 이 제출의 payout 행이
   하나도 없고 아직 여유분(`LEAST(amount, deposited_amount)` − 취소 아닌 payout 합계 > 0)이 남았고 수령자(제출자/에이전트 소유자)가 탈퇴하지 않은 것. `paid` = owed 중 이 제출의 `PAID` payout이 있는 것.
-  `NONE` owed 없음(보상 없음·입금 전·다른 수상자가 상한을 다 가져감·수상 취소 — `CANCELLED` payout만 있는 제출은 다시 요청할 수 없다) / `PAID` paid = owed / `PARTIALLY_PAID` 일부만 지급 / `PENDING` 하나도 지급 전.
+  `NONE` owed 없음(보상 없음·입금 전·다른 수상자가 상한을 다 가져감·지급 취소(`CANCELLED` payout) — `CANCELLED` payout만 있는 제출은 다시 요청할 수 없다) / `PAID` paid = owed / `PARTIALLY_PAID` 일부만 지급 / `PENDING` 하나도 지급 전.
   예: 보상 2개 중 하나 지급·다른 하나 여유분 있음 → `PARTIALLY_PAID`, 다른 하나가 다른 수상자에게 소진됨 → `PAID`.
   `/submissions/me`의 `payment_status`와 **같은 SQL**(`src/rewards/payout-status.ts` `payoutStatusSql`). FE는 `PENDING`/`PARTIALLY_PAID`이면 `rewards`(지급된 것) 옆에 `postedRewards`를 "지급 대기"로 보여준다.
   기존 필드(`id`, `title`, `category`, `completed_at`, `rewards`)는 그대로다.
@@ -233,7 +237,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | POST | `/wallets/verify` | ✅ | Keplr/Leap: `{address, signature, publicKey}` / EVM: `{address, signature}` → 검증 성공 시 지갑 저장 + NFT 민팅 잡 등록 |
 | GET | `/wallets/me` | ✅ | 내 대표 지갑 (없으면 null — 미연결 상태) |
 
-- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_ALREADY_LINKED`(다른 계정의 주소이거나 내 대표 지갑이 다른 주소일 때 — 내 지갑이 이미 **같은 주소**면 재시도로 보고 200과 그 지갑을 돌려준다), `USER_NOT_FOUND`(404 — challenge 뒤에 탈퇴한 계정, 지갑은 저장되지 않는다)
+- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_LINKED_TO_OTHER_ACCOUNT`(이 주소가 다른 계정에 연결됨), `ACCOUNT_ALREADY_HAS_WALLET`(내 대표 지갑이 이미 다른 주소 — 둘 다 409이고 내 지갑이 이미 **같은 주소**면 재시도로 보고 200과 그 지갑을 돌려준다), `WALLET_ALREADY_LINKED`(제약 이름을 알 수 없는 유니크 충돌의 폴백, 구 FE 호환용), `USER_NOT_FOUND`(404 — challenge 뒤에 탈퇴한 계정, 지갑은 저장되지 않는다)
 - Keplr/Leap: challenge의 `message`를 `signArbitrary(chainId, address, message)`로 서명.
   응답의 `signature`(base64)와 `pub_key.value`(base64)를 그대로 `signature`, `publicKey`로 전송.
   서버는 ADR-36 sign doc을 재구성해 keccak256/secp256k1로 검증하고 공개키→주소 일치도 확인한다.
@@ -256,7 +260,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | GET | `/applications/me` | ✅ | 내 지원 내역 (FE `/applications` 페이지) - 본인 건 + **내 에이전트가 낸 건** 포함. 행마다 바운티 현황 `bounty_status`(`DRAFT\|FUNDING_PENDING\|OPEN\|SUBMISSION_CLOSED\|IN_REVIEW\|COMPLETED\|CANCELLED`), `submission_deadline`(ISO 타임스탬프), `application_deadline`(ISO 타임스탬프 또는 `null`)를 함께 준다. `status: REJECTED`이면서 `bounty_status: CANCELLED`면 운영자 반려가 아니라 취소에 따른 자동 정리다 |
 | POST | `/applications/:id/withdraw` | ✅ | 지원 철회 (PENDING만) — 본인 지원 또는 내 에이전트의 지원 |
 | POST | `/bounties/:id/submissions` | ✅ | 제출/재제출 `{submissionUrl, description, repositoryUrl?, commitSha?}` (URL은 공개 http(s)만: localhost·사설/루프백 IP·`.local`/`.internal` 호스트는 400). 온보딩을 마치지 않은 사람(에이전트면 그 소유자)은 409 `PROFILE_REQUIRED` |
-| GET | `/submissions/me` | ✅ | 내 제출 내역: 본인 건 + **내 에이전트가 낸 건** 포함. 행마다 `payment_status: 'PAID' \| 'PARTIALLY_PAID' \| 'PENDING' \| 'NONE'`: 공개 프로필 `payoutStatus`와 같은 규칙(위 "공개 프로필"). 그 규칙은 승인 제출 기준이라 `APPROVED`가 아닌 행(심사 중·반려·몰수된 수상)은 항상 `NONE`. 바운티 현황 `bounty_status`(`/applications/me`와 같은 값), `submission_deadline`(ISO 타임스탬프), 사람이 남긴 심사 기록 유무 `has_review`(boolean)를 함께 준다. 현재 리비전의 `submission_url`(string), `repository_url`(string \| null), `commit_sha`(string \| null)도 준다(재제출 폼 미리 채우기용: 재제출은 전체 교체라 폼이 비워 보내면 저장소 URL·커밋 SHA가 지워진다). 추가 필드라 FE는 선택값으로 다루면 되고 배포 순서는 무관하다. `status: REJECTED` + `has_review: false` + `bounty_status: CANCELLED`면 운영자 반려가 아니라 바운티 취소에 따른 자동 정리다. 취소 전이가 미결 제출마다 코멘트 없는 `REJECT` 심사 행을 남기지만 `has_review`는 취소된 바운티의 코멘트 없는 `REJECT` 행을 세지 않는다(`review_comment`는 `null`). 취소 전에 운영자가 코멘트 없이 반려한 건도 같이 `false`가 된다 |
+| GET | `/submissions/me` | ✅ | 내 제출 내역: 본인 건 + **내 에이전트가 낸 건** 포함. 행마다 `payment_status: 'PAID' \| 'PARTIALLY_PAID' \| 'PENDING' \| 'NONE'`: 공개 프로필 `payoutStatus`와 같은 규칙(위 "공개 프로필"). 그 규칙은 승인 제출 기준이라 `APPROVED`가 아닌 행(심사 중·반려·보상 미지급 처리된 수상)은 항상 `NONE`. 바운티 현황 `bounty_status`(`/applications/me`와 같은 값), `submission_deadline`(ISO 타임스탬프), 사람이 남긴 심사 기록 유무 `has_review`(boolean)를 함께 준다. 현재 리비전의 `submission_url`(string), `repository_url`(string \| null), `commit_sha`(string \| null)도 준다(재제출 폼 미리 채우기용: 재제출은 전체 교체라 폼이 비워 보내면 저장소 URL·커밋 SHA가 지워진다). 추가 필드라 FE는 선택값으로 다루면 되고 배포 순서는 무관하다. `status: REJECTED` + `has_review: false` + `bounty_status: CANCELLED`면 운영자 반려가 아니라 바운티 취소에 따른 자동 정리다. 취소 전이가 미결 제출마다 코멘트 없는 `REJECT` 심사 행을 남기지만 `has_review`는 취소된 바운티의 코멘트 없는 `REJECT` 행을 세지 않는다(`review_comment`는 `null`). 취소 전에 운영자가 코멘트 없이 반려한 건도 같이 `false`가 된다 |
 
 `/applications/me`, `/submissions/me`의 모든 행에 `agent: { id, name } | null`이 들어간다 (사용자가 직접 낸 건은 `null`).
 기존 필드와 정렬(최신순)은 그대로다.
@@ -355,7 +359,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | POST | `/admin/nft-jobs/:id/retry` | 운영자 수동 재시도: `FAILED` 잡만 → `PENDING`, `retry_count = 0`, `scheduled_at = now()`, `started_at`/`processed_at` NULL(`last_error`는 원인 확인용으로 유지). nft는 `FAILED`에서 `minted_at`이 있으면 `MINTED`(attach 실패 — 재민팅하지 않음), 없으면 `PENDING`. 감사 `NFT_JOB_RETRIED`(entity `nft_job`)를 같은 트랜잭션에 → `{ id, nft_id, status: 'PENDING', retry_count: 0 }`. FAILED가 아니거나 없으면 **404 `NFT_JOB_NOT_FOUND_OR_NOT_FAILED`** |
 | GET | `/admin/audit-logs?entityType=&entityId=&page=` | 감사 로그 → `{ items, page, pageSize: 30, total }` (최신순). 항목: `id, actor_user_id, actor_agent_id, actor_nickname, actor_agent_name, action, entity_type, entity_id, created_at, before_data, after_data` (행위자 이름은 사용자/에이전트가 지워지지 않았을 때, 스크립트 행은 null). `page`≥1 정수, `entityType`≤64자, `entityId` UUID — 그 외 `400`. (이전엔 배열을 반환했으나 FE 호출처가 없어 공통 페이지네이션 봉투로 변경) |
 
-운영자 지정(`is_admin`)은 API가 없다 — `scripts/grant-admin.js`로만 바꾼다([runbook.md](runbook.md) §3). 그 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/requeue-nft-jobs.js`는 `NFT_JOB_REQUEUED`(entity `nft_job`)를, `scripts/record-refund.js`는 `REWARD_REFUNDED`(entity `bounty_reward`, `after_data` `{txHash, refundedAmount}`)를, runbook §7.4의 수동 SQL은 `PAYOUT_CORRECTED_MANUAL`/`PAYOUT_CANCELLED_MANUAL`(entity `payout`)을 남긴다 — 감사 로그 화면은 actor가 비어 있고 action이 위 여섯 가지 중 하나인 행을 "운영 스크립트"로 표시하면 된다. 일곱 번째 운영 스크립트 action `SUBMISSION_AWARD_FORFEITED`(entity `bounty_submission`, `scripts/forfeit-award.js`, runbook §7.4 "지급할 수 없는 수상")는 **actor가 채워진다**(`--admin`으로 받은 결정 운영자 id) — action 이름만으로 "운영 스크립트"로 표시한다. `before_data` `{status: "APPROVED"}`, `after_data` `{status: "REJECTED", reason, bountyId, source}`. 같은 트랜잭션에 `submission_review`(decision `REJECT`, comment `forfeited: <사유>`) 행이 남으므로 제출자의 `GET /submissions/me` `review_comment`에 그 코멘트가 보인다. `POST /admin/submissions/:id/review`의 `comment`는 `forfeited:`(대소문자·앞 공백 무관)로 시작할 수 없다(400) - 이 접두사는 이 스크립트가 남긴 몰수 표식이라 일반 반려 코멘트가 쓰면 제출자 화면이 "승인됐지만 몰수"로 오해한다. 보이는 글자가 없는 `comment`/`note`는 `null`로 취급되어 수정 요청에서는 400 `REVISION_COMMENT_REQUIRED`다. 에이전트 키로 한 행위는 `actor_user_id`가 비는 대신 `actor_agent_id`가 채워진다(`AuditService.recordAgentAction` — 지금은 `APPLICATION_REAPPLIED`). 다만 이 수정 이전에 쌓인 에이전트 `APPLICATION_REAPPLIED` 행은 actor가 둘 다 비어 있으므로, 표시는 action 이름으로 판단하고 "actor가 비었다"만으로 운영 스크립트로 단정하지 말 것.
+운영자 지정(`is_admin`)은 API가 없다 — `scripts/grant-admin.js`로만 바꾼다([runbook.md](runbook.md) §3). 그 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/requeue-nft-jobs.js`는 `NFT_JOB_REQUEUED`(entity `nft_job`)를, `scripts/record-refund.js`는 `REWARD_REFUNDED`(entity `bounty_reward`, `after_data` `{txHash, refundedAmount}`)를, runbook §7.4의 수동 SQL은 `PAYOUT_CORRECTED_MANUAL`/`PAYOUT_CANCELLED_MANUAL`(entity `payout`)을 남긴다 — 감사 로그 화면은 actor가 비어 있고 action이 위 여섯 가지 중 하나인 행을 "운영 스크립트"로 표시하면 된다. 일곱 번째 운영 스크립트 action `SUBMISSION_AWARD_FORFEITED`(entity `bounty_submission`, `scripts/forfeit-award.js`, runbook §7.4 "지급할 수 없는 수상")는 **actor가 채워진다**(`--admin`으로 받은 결정 운영자 id) — action 이름만으로 "운영 스크립트"로 표시한다. `before_data` `{status: "APPROVED"}`, `after_data` `{status: "REJECTED", reason, bountyId, source}`. 같은 트랜잭션에 `submission_review`(decision `REJECT`, comment `forfeited: <사유>`) 행이 남으므로 제출자의 `GET /submissions/me` `review_comment`에 그 코멘트가 보인다. `POST /admin/submissions/:id/review`의 `comment`는 `forfeited:`(대소문자·앞 공백 무관)로 시작할 수 없다(400) - 이 접두사는 이 스크립트가 남긴 보상 미지급 표식이라 일반 반려 코멘트가 쓰면 제출자 화면이 "승인됐지만 보상 미지급"으로 오해한다. 보이는 글자가 없는 `comment`/`note`는 `null`로 취급되어 수정 요청에서는 400 `REVISION_COMMENT_REQUIRED`다. 에이전트 키로 한 행위는 `actor_user_id`가 비는 대신 `actor_agent_id`가 채워진다(`AuditService.recordAgentAction` — 지금은 `APPLICATION_REAPPLIED`). 다만 이 수정 이전에 쌓인 에이전트 `APPLICATION_REAPPLIED` 행은 actor가 둘 다 비어 있으므로, 표시는 action 이름으로 판단하고 "actor가 비었다"만으로 운영 스크립트로 단정하지 말 것.
 
 `AdminGuard`는 JWT의 `isAdmin` 클레임 외에 요청마다 `"user"` 행(`is_admin`, `status='ACTIVE'`, 미삭제)을 다시 확인한다 — 어드민 해제/정지가 토큰 만료 전에 즉시 반영된다 (403 `ADMIN_ONLY`).
 

@@ -11,7 +11,7 @@ describeDb('onboarding over HTTP (e2e)', () => {
   beforeAll(async () => { e2e = await startApp(); });
   afterAll(async () => e2e?.close());
 
-  it('wallet challenge → real EIP-191 signature → inj1 wallet stored, parent mint job enqueued; a second verify is 409 WALLET_ALREADY_LINKED', async () => {
+  it('wallet challenge → real EIP-191 signature → inj1 wallet stored, parent mint job enqueued; a second address is 409 ACCOUNT_ALREADY_HAS_WALLET, another account's address is 409 WALLET_LINKED_TO_OTHER_ACCOUNT', async () => {
     const session = await e2e.login();
     const signer = Wallet.createRandom();
 
@@ -51,14 +51,14 @@ describeDb('onboarding over HTTP (e2e)', () => {
     const c2 = await e2e.post('/wallets/challenge', { address: second.address }, { token: session.accessToken });
     const dup = await e2e.post('/wallets/verify', { address: second.address, signature: await second.signMessage(c2.body.message) }, { token: session.accessToken });
     expect(dup.status).toBe(409);
-    expect(dup.body).toEqual({ statusCode: 409, error: 'Conflict', message: 'WALLET_ALREADY_LINKED' });
+    expect(dup.body).toEqual({ statusCode: 409, error: 'Conflict', message: 'ACCOUNT_ALREADY_HAS_WALLET' });
 
     // the same address for another account
     const other = await e2e.login();
     const c3 = await e2e.post('/wallets/challenge', { address: signer.address.toLowerCase() }, { token: other.accessToken });
     const taken = await e2e.post('/wallets/verify', { address: signer.address.toLowerCase(), signature: await signer.signMessage(c3.body.message) }, { token: other.accessToken });
     expect(taken.status).toBe(409);
-    expect(taken.body.message).toBe('WALLET_ALREADY_LINKED');
+    expect(taken.body.message).toBe('WALLET_LINKED_TO_OTHER_ACCOUNT');
     const jobs = await e2e.db.query(`SELECT 1 FROM nft WHERE owner_user_id = $1`, [other.userId]);
     expect(jobs.rowCount).toBe(0); // rolled back with the wallet insert
   });

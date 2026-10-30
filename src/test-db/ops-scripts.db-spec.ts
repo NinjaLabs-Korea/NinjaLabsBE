@@ -913,7 +913,7 @@ describeDb('ops scripts on a real database', () => {
 
   /**
    * scripts/forfeit-award.js — 지갑 없는 수상자(requestPayout 404)는 "받을 몫이 남은" 것으로 세져(다시 연결할 수 있으므로) COMPLETED·CANCELLED가
-   * 둘 다 막힌다. 연락이 끊긴 경우 운영자가 이 스크립트로 수상을 몰수하면 바운티를 닫고, 취소 → 환불 → 삭제까지 갈 수 있다 (runbook §7.4).
+   * 둘 다 막힌다. 연락이 끊긴 경우 운영자가 이 스크립트로 보상 미지급 처리를 하면 바운티를 닫고, 취소 → 환불 → 삭제까지 갈 수 있다 (runbook §7.4).
    */
   describe('scripts/forfeit-award.js', () => {
     const OWED = 'Record completed payments for all approved winners and finish every pending payout.';
@@ -989,6 +989,8 @@ describeDb('ops scripts on a real database', () => {
       const res = await forfeit(submissionId, adminId.toUpperCase(), [], async () => true);
       expect(res.code).toBe(0);
       expect(res.prompts).toHaveLength(1);
+      expect(res.prompts[0]).toContain('as not paid (보상 미지급)');
+      expect(res.out).toContain('(reward not paid: no wallet connected after 30 days)');
       expect(await submissionStatus(submissionId)).toBe('REJECTED');
       expect(await reviews(submissionId)).toEqual([{ revision_id: revisionId, reviewer_id: adminId, decision: 'REJECT', comment: 'forfeited: no wallet connected after 30 days' }]);
       expect(await auditRows('bounty_submission', submissionId)).toEqual([{

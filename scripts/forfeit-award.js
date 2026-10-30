@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * 지급할 수 없는 수상 몰수 — 승인(APPROVED)됐지만 payout을 만들 수 없는 제출(예: 수상자가 지갑을 연결하지 않고 연락 두절)을
+ * 지급할 수 없는 승인 수상의 보상 미지급 처리 — 승인(APPROVED)됐지만 payout을 만들 수 없는 제출(예: 수상자가 지갑을 연결하지 않고 연락 두절)을
  * REJECTED로 되돌려 바운티를 COMPLETED/CANCELLED로 닫을 수 있게 한다 (docs/runbook.md §7.4 "지급할 수 없는 수상").
  *
  *   node scripts/forfeit-award.js <submission-id> --reason <text> --admin <admin-user-id> [--dry-run] [--yes]
  *
- *   --reason   몰수 사유 (필수, 앞뒤 공백 제거 후 1~500자(코드 포인트), 보이는 글자가 있는 한 줄, 개행·제어·방향 제어 문자 불가). 심사 기록 코멘트 'forfeited: <reason>'과 감사 행에 남는다.
- *              이 코멘트는 제출자의 `GET /submissions/me` review_comment로 보인다.
+ *   --reason   보상 미지급 사유 (필수, 앞뒤 공백 제거 후 1~500자(코드 포인트), 보이는 글자가 있는 한 줄, 개행·제어·방향 제어 문자 불가). 심사 기록 코멘트 'forfeited: <reason>'과 감사 행에 남는다.
+ *              이 코멘트는 제출자의 `GET /submissions/me` review_comment로 보이므로, 사유는 제출자가 읽는 한국어 문장으로 쓴다 (예: '지갑 미연결').
  *   --admin    결정한 운영자의 user id — 활성(ACTIVE, 탈퇴 안 함) is_admin 유저여야 한다. 심사 기록 reviewer와 감사 actor가 된다.
  *   --dry-run  검사 결과와 계획만 출력하고 아무것도 쓰지 않는다
  *   --yes      확인 프롬프트를 건너뛴다 (비대화형 실행은 필수)
@@ -24,7 +24,7 @@
  */
 const { OpsError, UUID_RE, extractValueOptions, parseArgs, promptYes, runCli } = require('./ops-cli');
 
-const USAGE = 'usage: node scripts/forfeit-award.js <submission-id> --reason <text (1-500 chars)> --admin <admin-user-id> [--dry-run] [--yes]';
+const USAGE = 'usage: node scripts/forfeit-award.js <submission-id> --reason <user-facing text, 1-500 chars, e.g. '지갑 미연결'> --admin <admin-user-id> [--dry-run] [--yes]';
 /** src/bounties/bounty-status.ts IN_PROGRESS의 사본 — 심사(SubmissionReviewService)가 받는 바운티 상태와 같다 (forfeit-award.spec.ts가 대조) */
 const FORFEITABLE_BOUNTY_STATUSES = ['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'];
 const ACTION = 'SUBMISSION_AWARD_FORFEITED';
@@ -104,7 +104,7 @@ function refusalReason(submission, admin) {
 }
 
 /**
- * 몰수 (한 트랜잭션). 잠근 뒤 다시 검사하므로 그 사이 바뀐 상태는 거부된다.
+ * 보상 미지급 처리 (한 트랜잭션). 잠근 뒤 다시 검사하므로 그 사이 바뀐 상태는 거부된다.
  * @returns {Promise<{ bountyId: string }>} 거부되면 OpsError throw (롤백)
  */
 async function forfeitAward(pool, submissionId, adminId, reason) {
@@ -188,13 +188,13 @@ async function run(argv, deps) {
     log('dry-run  nothing written');
     return 0;
   }
-  if (!flags.yes && !(await prompt(`Forfeit the approved award ${submissionId} (bounty ${submission.bounty_id})?`))) {
+  if (!flags.yes && !(await prompt(`Mark the reward of approved submission ${submissionId} (bounty ${submission.bounty_id}) as not paid (보상 미지급)?`))) {
     log('aborted  nothing written (non-interactive runs need --yes)');
     return 1;
   }
   try {
     await forfeitAward(deps.pool, submissionId, adminId, reason);
-    log(`done     submission ${submissionId} REJECTED (award forfeited)`);
+    log(`done     submission ${submissionId} REJECTED (reward not paid: ${reason})`);
     return 0;
   } catch (err) {
     if (err instanceof OpsError) {

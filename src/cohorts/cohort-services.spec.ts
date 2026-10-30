@@ -3,6 +3,7 @@ import { createMockDb } from '../test-support/mock-db';
 import { CohortAdminService } from './cohort-admin.service';
 import { CohortApplicationAdminService } from './cohort-application-admin.service';
 import { CohortApplicationsService } from './cohort-applications.service';
+import { DEFAULT_COHORT_QUESTIONS } from './cohort-questions';
 import { withdrawOpenCohortApplicationsOfUser } from './cohort-withdrawal';
 
 const ID = '11111111-1111-4111-8111-111111111111';
@@ -47,6 +48,48 @@ describe('CohortApplicationsService.apply', () => {
     await expect(race.service.apply(ID, USER, input)).rejects.toMatchObject({ message: 'COHORT_ALREADY_APPLIED' });
   });
 
+  describe('new (answers) and legacy body shapes', () => {
+    const fixed = { displayName: 'A', telegram: '@abcde', twitter: '@a', intro: 'hi' };
+    const answers = [{ questionId: 'web3_experience', choices: ['LT_1Y'] }, { questionId: 'interest_areas', choices: ['KOL'] }];
+    const accepting = { rowCount: 1, rows: [{ accepting: true, questions: DEFAULT_COHORT_QUESTIONS }] };
+    const done = { rowCount: 1, rows: [{ done: true }] };
+
+    it('400 COHORT_ANSWERS_INVALID before touching the database when answers and a legacy field are mixed, or a POST has neither full set', async () => {
+      const { db, service } = setup(jest.fn());
+      await expect(service.apply(ID, USER, { ...fixed, answers, web3Experience: 'LT_1Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+      await expect(service.apply(ID, USER, { ...fixed, answers, interestOther: null })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+      await expect(service.apply(ID, USER, fixed)).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+      await expect(service.apply(ID, USER, { ...fixed, web3Experience: 'LT_1Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+      expect(db.tx).not.toHaveBeenCalled();
+    });
+
+    it('new shape: validates against the locked cohort questions and writes NULL legacy columns plus the snapshot', async () => {
+      const script = jest.fn().mockResolvedValueOnce(accepting).mockResolvedValueOnce(done).mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: ID }] }).mockResolvedValue({ rowCount: 1, rows: [{ id: ID, answers: [] }] });
+      const { service } = setup(script);
+      await service.apply(ID, USER, { ...fixed, answers });
+      const insert = script.mock.calls.find(([sql]) => /INSERT INTO cohort_application/.test(sql))!;
+      const params = insert[1] as unknown[];
+      expect(params.slice(2, 6)).toEqual(['A', '@abcde', '@a', 'hi']);
+      expect(params.slice(6, 11)).toEqual([null, null, null, null, null]);
+      expect(JSON.parse(params[11] as string).map((a: { questionId: string }) => a.questionId)).toEqual(['web3_experience', 'interest_areas']);
+    });
+
+    it('new shape: a required question left out is 400 COHORT_ANSWERS_INVALID', async () => {
+      const { service } = setup(jest.fn().mockResolvedValueOnce(accepting).mockResolvedValueOnce(done));
+      await expect(service.apply(ID, USER, { ...fixed, answers: [answers[0]] })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+    });
+
+    it('legacy shape: writes the legacy columns and an empty answers array', async () => {
+      const script = jest.fn().mockResolvedValueOnce(accepting).mockResolvedValueOnce(done).mockResolvedValueOnce({ rowCount: 0, rows: [] })
+        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: ID }] }).mockResolvedValue({ rowCount: 1, rows: [{ id: ID, answers: [] }] });
+      const { service } = setup(script);
+      await service.apply(ID, USER, input);
+      const params = script.mock.calls.find(([sql]) => /INSERT INTO cohort_application/.test(sql))![1] as unknown[];
+      expect(params.slice(6)).toEqual(['LT_1Y', 'DEVELOPER', null, ['KOL'], null, '[]']);
+    });
+  });
+
   it('400 COHORT_OTHER_DETAIL_REQUIRED before touching the database', async () => {
     const { db, service } = setup(jest.fn());
     await expect(service.apply(ID, USER, { ...input, activityType: 'OTHER' })).rejects.toMatchObject({ message: 'COHORT_OTHER_DETAIL_REQUIRED' });
@@ -56,7 +99,7 @@ describe('CohortApplicationsService.apply', () => {
 
 describe('CohortApplicationsService.update / withdraw', () => {
   const row = { id: ID, cohort_id: ID, status: 'SUBMITTED', accepting: true, display_name: 'A', telegram: '@abcde', twitter: '@a', web3_experience: 'LT_1Y',
-    activity_type: 'DEVELOPER', activity_type_other: null, interest_areas: ['KOL'], interest_other: null, intro: 'hi', cohort_name: 'c', cohort_status: 'OPEN', reviewed_at: null, created_at: new Date(), updated_at: new Date() };
+    activity_type: 'DEVELOPER', activity_type_other: null, interest_areas: ['KOL'], interest_other: null, answers: [], questions: DEFAULT_COHORT_QUESTIONS, intro: 'hi', cohort_name: 'c', cohort_status: 'OPEN', reviewed_at: null, created_at: new Date(), updated_at: new Date() };
   const make = (script: jest.Mock) => { const { database } = createMockDb({ txQuery: script }); return new CohortApplicationsService(database, new AuditService(database)); };
 
   it('update: 404 when not the owner, 409 when not SUBMITTED, 409 when the cohort stopped accepting', async () => {
@@ -67,6 +110,27 @@ describe('CohortApplicationsService.update / withdraw', () => {
 
   it('update: merges onto the stored row, so switching to OTHER without detail is rejected', async () => {
     await expect(make(jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [row] })).update(ID, USER, { activityType: 'OTHER' })).rejects.toMatchObject({ message: 'COHORT_OTHER_DETAIL_REQUIRED' });
+  });
+
+  it('update: legacy fields on a new-shape row, or answers mixed with legacy fields, are 400 COHORT_ANSWERS_INVALID', async () => {
+    const newRow = { ...row, web3_experience: null, activity_type: null, interest_areas: null, answers: [{ questionId: 'web3_experience' }] };
+    await expect(make(jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [newRow] })).update(ID, USER, { web3Experience: 'GT_3Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+    await expect(make(jest.fn()).update(ID, USER, { answers: [], activityType: 'KOL' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+  });
+
+  it('update: answers replace everything against the current questions and null the legacy columns; fixed-only patches keep stored answers', async () => {
+    const script = jest.fn().mockResolvedValue({ rowCount: 1, rows: [row] });
+    await make(script).update(ID, USER, { answers: [{ questionId: 'web3_experience', choices: ['GT_3Y'] }, { questionId: 'interest_areas', choices: ['KOL'] }] });
+    const write = script.mock.calls.find(([sql]) => /UPDATE cohort_application/.test(sql))![1] as unknown[];
+    expect(write.slice(5, 10)).toEqual([null, null, null, null, null]);
+    expect(JSON.parse(write[10] as string)).toHaveLength(2);
+
+    const newRow = { ...row, web3_experience: null, activity_type: null, interest_areas: null, answers: [{ questionId: 'old_question' }] };
+    const keep = jest.fn().mockResolvedValue({ rowCount: 1, rows: [newRow] });
+    await make(keep).update(ID, USER, { intro: 'changed' });
+    const kept = keep.mock.calls.find(([sql]) => /UPDATE cohort_application/.test(sql))![1] as unknown[];
+    expect(kept[4]).toBe('changed');
+    expect(JSON.parse(kept[10] as string)).toEqual([{ questionId: 'old_question' }]); // not re-checked against the edited form
   });
 
   it('update: does not leak review_note in the applicant view', async () => {
@@ -102,6 +166,12 @@ describe('CohortAdminService', () => {
     await expect(make(script).transition(ID, 'OPEN', USER)).rejects.toMatchObject({ message: 'COHORT_ALREADY_OPEN' });
   });
 
+  it('putQuestions: 404 for a missing cohort, 400 COHORT_QUESTIONS_INVALID for an unknown id', async () => {
+    await expect(make(jest.fn().mockResolvedValueOnce({ rowCount: 0, rows: [] })).putQuestions(ID, USER, [])).rejects.toMatchObject({ message: 'COHORT_NOT_FOUND' });
+    const stored = jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [{ questions: DEFAULT_COHORT_QUESTIONS }] });
+    await expect(make(stored).putQuestions(ID, USER, [{ id: 'ghost', type: 'SHORT_TEXT', label: { ko: 'x' }, required: false }])).rejects.toMatchObject({ message: 'COHORT_QUESTIONS_INVALID' });
+  });
+
   it('remove: 409 when the cohort has any application', async () => {
     await expect(make(jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [{}] }).mockResolvedValueOnce({ rowCount: 1, rows: [{}] })).remove(ID, USER)).rejects.toMatchObject({ message: 'COHORT_HAS_APPLICATIONS' });
   });
@@ -112,10 +182,20 @@ describe('CohortApplicationAdminService', () => {
 
   it('list binds every filter and escapes LIKE metacharacters in q', async () => {
     const query = jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [{}] }).mockResolvedValue({ rowCount: 0, rows: [{ n: 0 }] });
-    await make(query).list(ID, { status: 'SUBMITTED', activityType: 'KOL', interestArea: 'BIZDEV', q: '50%_\\' }, 2, 10);
+    await make(query).list(ID, { status: 'SUBMITTED', questionId: 'web3_experience', optionId: 'Y1_3', activityType: 'KOL', interestArea: 'BIZDEV', q: '50%_\\' }, 2, 10);
     const [sql, params] = query.mock.calls[1];
     expect(sql).toContain('ORDER BY a.created_at DESC, a.id');
-    expect(params).toEqual([ID, 'SUBMITTED', 'KOL', 'BIZDEV', '%50\\%\\_\\\\%', 10, 10]);
+    expect(sql).toContain("jsonb_build_object('questionId'");
+    // questionId+optionId first, then the old aliases (interestArea == interest_areas, activityType == activity_type)
+    expect(params).toEqual([ID, 'SUBMITTED', 'web3_experience', 'Y1_3', 'interest_areas', 'BIZDEV', 'activity_type', 'KOL', '%50\\%\\_\\\\%', 10, 10]);
+  });
+
+  it('list ignores a lone questionId or optionId (the filter needs both)', async () => {
+    for (const filter of [{ questionId: 'interest_areas' }, { optionId: 'KOL' }]) {
+      const query = jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [{}] }).mockResolvedValue({ rowCount: 0, rows: [{ n: 0 }] });
+      await make(query).list(ID, filter, 1, 10);
+      expect(query.mock.calls[1][1]).toEqual([ID, 10, 0]);
+    }
   });
 
   it('list: 404 COHORT_NOT_FOUND', async () => {

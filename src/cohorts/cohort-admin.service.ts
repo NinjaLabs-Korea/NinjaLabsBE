@@ -2,15 +2,16 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
+import { CohortQuestion, CohortQuestionInput, DEFAULT_COHORT_QUESTIONS, validateQuestions } from './cohort-questions';
 import { CohortApplicationStatus, CohortStatus, CohortStatusPolicy, cohortAcceptingSql } from './cohort-status';
 
 type CohortRow = {
   id: string; name: string; description: string | null; status: string; opens_at: Date | null; closes_at: Date | null;
-  accepting: boolean; created_by: string; created_at: Date; updated_at: Date;
+  accepting: boolean; questions: CohortQuestion[]; created_by: string; created_at: Date; updated_at: Date;
 };
 
 const COHORT_SELECT = `SELECT c.id, c.name, c.description, c.status, c.opens_at, c.closes_at, ${cohortAcceptingSql('c')} AS accepting,
-       c.created_by, c.created_at, c.updated_at FROM cohort c`;
+       c.questions, c.created_by, c.created_at, c.updated_at FROM cohort c`;
 
 type ApplicationCounts = Record<string, number> & { total: number };
 
@@ -30,6 +31,8 @@ function adminView(row: CohortRow, counts: ApplicationCounts) {
     opensAt: row.opens_at,
     closesAt: row.closes_at,
     acceptingApplications: row.accepting,
+    /** 지원서 질문 (고정 필드 제외). PUT /admin/cohorts/:id/questions 로 통째로 바꾼다 */
+    questions: row.questions,
     /** 상태별 지원서 수 (+ total) */
     applicationCounts: counts,
     /** 지금 상태에서 운영자가 보낼 수 있는 다음 상태 (다른 OPEN 기수가 있으면 OPEN 전이는 409 COHORT_ALREADY_OPEN) */
@@ -80,9 +83,9 @@ export class CohortAdminService {
     assertWindow(input.opensAt ?? null, input.closesAt ?? null);
     return this.db.tx(async (tx) => {
       const r = await tx.query<{ id: string }>(
-        `INSERT INTO cohort (name, description, opens_at, closes_at, created_by)
-         VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5) RETURNING id`,
-        [input.name, input.description ?? null, input.opensAt ?? null, input.closesAt ?? null, adminId],
+        `INSERT INTO cohort (name, description, opens_at, closes_at, created_by, questions)
+         VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6::jsonb) RETURNING id`,
+        [input.name, input.description ?? null, input.opensAt ?? null, input.closesAt ?? null, adminId, JSON.stringify(DEFAULT_COHORT_QUESTIONS)],
       );
       await this.audit.record(adminId, 'COHORT_CREATED', 'cohort', r.rows[0].id, tx);
       return this.view(tx, r.rows[0].id);
@@ -107,6 +110,25 @@ export class CohortAdminService {
         [cohortId, next.name, next.description, next.opensAt, next.closesAt],
       );
       await this.audit.record(adminId, 'COHORT_UPDATED', 'cohort', cohortId, tx);
+      return this.view(tx, cohortId);
+    });
+  }
+
+  /**
+   * 지원서 질문을 통째로 바꾼다 (상태와 지원서 유무와 무관: 낸 답변은 스냅샷이라 영향이 없다). 한 트랜잭션: 기수 잠금(FOR UPDATE) -> 저장된 목록 기준 검증 -> 저장 -> 감사.
+   * 지원자의 쓰기(FOR SHARE)와 직렬화된다. 400 COHORT_QUESTIONS_INVALID, 404 COHORT_NOT_FOUND.
+   */
+  async putQuestions(cohortId: string, adminId: string, input: CohortQuestionInput[]) {
+    return this.db.tx(async (tx) => {
+      const found = await tx.query<{ questions: CohortQuestion[] }>(`SELECT questions FROM cohort WHERE id = $1 FOR UPDATE`, [cohortId]);
+      if (!found.rowCount) throw new NotFoundException('COHORT_NOT_FOUND');
+      const before = found.rows[0].questions;
+      const next = validateQuestions(before, input);
+      await tx.query(`UPDATE cohort SET questions = $2::jsonb WHERE id = $1`, [cohortId, JSON.stringify(next)]);
+      await this.audit.record(adminId, 'COHORT_QUESTIONS_UPDATED', 'cohort', cohortId, tx, {
+        before: { questionIds: before.map((q) => q.id) },
+        after: { questionIds: next.map((q) => q.id) },
+      });
       return this.view(tx, cohortId);
     });
   }

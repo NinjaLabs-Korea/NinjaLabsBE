@@ -24,7 +24,7 @@
  */
 const { OpsError, UUID_RE, extractValueOptions, parseArgs, promptYes, runCli } = require('./ops-cli');
 
-const USAGE = 'usage: node scripts/forfeit-award.js <submission-id> --reason <user-facing text, 1-500 chars, e.g. '지갑 미연결'> --admin <admin-user-id> [--dry-run] [--yes]';
+const USAGE = 'usage: node scripts/forfeit-award.js <submission-id> --reason <user-facing Korean text, 1-500 chars, e.g. 지갑 미연결> --admin <admin-user-id> [--dry-run] [--yes]';
 /** src/bounties/bounty-status.ts IN_PROGRESS의 사본 — 심사(SubmissionReviewService)가 받는 바운티 상태와 같다 (forfeit-award.spec.ts가 대조) */
 const FORFEITABLE_BOUNTY_STATUSES = ['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'];
 const ACTION = 'SUBMISSION_AWARD_FORFEITED';

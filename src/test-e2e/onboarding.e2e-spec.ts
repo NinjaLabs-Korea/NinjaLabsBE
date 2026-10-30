@@ -11,7 +11,7 @@ describeDb('onboarding over HTTP (e2e)', () => {
   beforeAll(async () => { e2e = await startApp(); });
   afterAll(async () => e2e?.close());
 
-  it('wallet challenge → real EIP-191 signature → inj1 wallet stored, parent mint job enqueued; a second address is 409 ACCOUNT_ALREADY_HAS_WALLET, another account's address is 409 WALLET_LINKED_TO_OTHER_ACCOUNT', async () => {
+  it('wallet challenge → real EIP-191 signature → inj1 wallet stored, parent mint job enqueued; a second address is 409 ACCOUNT_ALREADY_HAS_WALLET, the address of another account is 409 WALLET_LINKED_TO_OTHER_ACCOUNT', async () => {
     const session = await e2e.login();
     const signer = Wallet.createRandom();
 

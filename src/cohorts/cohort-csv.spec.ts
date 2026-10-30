@@ -1,3 +1,5 @@
+import { csvHeader } from './cohort-application-admin.service';
+import { DEFAULT_COHORT_QUESTIONS } from './cohort-questions';
 import { CSV_BOM, csvCell, neutralizeFormula, toCsv } from './cohort-csv';
 
 describe('csv', () => {
@@ -26,5 +28,13 @@ describe('csv', () => {
     const out = toCsv(['a', '=h'], [['1', '=2'], ['x', '한글']]);
     expect(out.startsWith(CSV_BOM)).toBe(true);
     expect(out).toBe(`${CSV_BOM}"a","'=h"\r\n"1","'=2"\r\n"x","한글"\r\n`);
+  });
+
+  it('header = fixed 9 columns + one per current question (label.ko) + other_answers, review_note, reviewed_at', () => {
+    expect(csvHeader(DEFAULT_COHORT_QUESTIONS)).toEqual([
+      'id', 'applied_at', 'status', 'display_name', 'nickname', 'email', 'telegram', 'twitter', 'intro',
+      'Web3 경력', '참여하고 싶은 분야', 'other_answers', 'review_note', 'reviewed_at',
+    ]);
+    expect(csvHeader([]).slice(9)).toEqual(['other_answers', 'review_note', 'reviewed_at']);
   });
 });

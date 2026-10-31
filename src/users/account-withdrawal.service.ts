@@ -7,7 +7,7 @@ import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { withdrawOpenParticipationOfUser } from '../bounties/participation-withdrawal';
 import { withdrawOpenCohortApplicationsOfUser } from '../cohorts/cohort-withdrawal';
 import { DatabaseService } from '../common/database/database.service';
-import { PAYABLE_REWARD_STATUSES, rewardHeadroomSql, TERMINAL_PAYOUT_STATUSES } from '../rewards/payout-status';
+import { PAYABLE_REWARD_STATUSES, payoutRequestableSql, TERMINAL_PAYOUT_STATUSES } from '../rewards/payout-status';
 import { disconnectAllWalletsOfUser } from '../wallets/wallet-disconnection';
 import { normalizeNickname, WITHDRAWN_NICKNAME_PREFIX } from './nickname';
 import { ownedAgentIdsSql } from '../agents/owned-agents';
@@ -31,8 +31,7 @@ SELECT count(*)::int AS n
  WHERE s.status = 'APPROVED'
    AND (s.submitter_user_id = $1
         OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'including-deleted')}))
-   AND NOT EXISTS (SELECT 1 FROM payout p WHERE p.bounty_reward_id = rw.id AND p.submission_id = s.id)
-   AND ${rewardHeadroomSql('rw', 'p')}`;
+   AND ${payoutRequestableSql('rw', 's', 'p')}`;
 
 /** 탈퇴 행의 google_id/email 앞에 붙는 프리픽스 — `deleted:<epoch ms>:` */
 export function withdrawnIdentityPrefix(nowMs: number): string {

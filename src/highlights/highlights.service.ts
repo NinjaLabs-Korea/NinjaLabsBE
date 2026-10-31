@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
+import { completedBountySql, completedWinSql } from '../bounties/completed-wins';
 import { MINTED_OR_LATER, sqlIn } from '../nfts/nft-status';
 import { rewardTokenDecimals } from '../rewards/reward-token-decimals';
 
@@ -100,10 +101,10 @@ export class HighlightsService {
     }>(
       `SELECT
          (SELECT count(*) FROM bounty
-           WHERE status = 'COMPLETED' AND deleted_at IS NULL) AS completed_bounties,
+           WHERE ${completedBountySql('')}) AS completed_bounties,
          (SELECT count(DISTINCT COALESCE(s.submitter_user_id, s.agent_id)) FROM bounty_submission s
             JOIN bounty b ON b.id = s.bounty_id
-           WHERE s.status = 'APPROVED' AND b.deleted_at IS NULL
+           WHERE ${completedWinSql('s', 'b')}
              AND (b.status = 'COMPLETED'
                   OR EXISTS (SELECT 1 FROM payout p WHERE p.submission_id = s.id AND p.status = 'PAID'))) AS builders,
          (SELECT count(*) FROM nft n
@@ -112,7 +113,7 @@ export class HighlightsService {
              AND n.status ${sqlIn(MINTED_OR_LATER)}
              AND b.deleted_at IS NULL) AS completion_nfts,
          (SELECT count(DISTINCT lower(btrim(sponsor_name))) FROM bounty
-           WHERE status = 'COMPLETED' AND deleted_at IS NULL) AS sponsors`,
+           WHERE ${completedBountySql('')}) AS sponsors`,
     );
     const s = r.rows[0];
     return {

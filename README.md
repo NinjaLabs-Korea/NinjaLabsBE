@@ -77,7 +77,7 @@ docs/
 - **유니크 충돌 판별은 `isUniqueViolation(err)`** (`common/database/pg-errors.ts`).
 - **에러 코드는 `common/http/error-codes.ts` 카탈로그에 등록한다** (코드 → HTTP 상태 → 한 줄 의미). 서비스에는 `throw new XxxException('NEW_CODE')` 리터럴로 던지고, 카탈로그와 `docs/api-contract.md` "에러 코드" 표에 같은 행을 추가한다 — 빠지면 `src/test-support/error-codes.spec.ts`가 실패한다.
 - **사람/에이전트 참여는 `BountyActor`로 표현한다** (`bounties/bounty-actor.ts`). `isAgent ? ... : ...` 분기를 새로 만들지 않는다.
-- **자주 쓰는 SQL 조건은 조각 함수로 끼운다**: 활성 유저 `activeUserSql()`(`users/active-user.ts`), 연결된 대표 지갑 `primaryWalletSql()`(`wallets/primary-wallet.ts`), 유저가 소유한 에이전트 id `ownedAgentIdsSql($n, 'live' | 'including-deleted')`와 참여 행의 사람 `participantUserIdSql()`(`agents/owned-agents.ts`). 사본을 새로 쓰면 `common/database/sql-predicates.spec.ts`가 실패한다. 탈퇴 여부만 보는 `deleted_at IS NULL`처럼 의도적으로 다른 조건은 각 파일 주석에 적었다.
+- **자주 쓰는 SQL 조건은 조각 함수로 끼운다**: 활성 유저 `activeUserSql()`(`users/active-user.ts`), 연결된 대표 지갑 `primaryWalletSql()`(`wallets/primary-wallet.ts`), 유저가 소유한 에이전트 id `ownedAgentIdsSql($n, 'live' | 'including-deleted')`와 참여 행의 사람 `participantUserIdSql()`(`agents/owned-agents.ts`). 사본을 새로 쓰면 `common/database/sql-predicates.spec.ts`가 실패한다. 공개 집계의 완료된 수상·완료된 바운티는 `completedWinSql()`/`completedBountySql()`(`bounties/completed-wins.ts`), "지급 요청 가능"은 `payoutRequestableSql()`(`rewards/payout-status.ts`, `requestPayout`의 명령형 검사와 db-spec으로 대조). 탈퇴 여부만 보는 `deleted_at IS NULL`처럼 의도적으로 다른 조건은 각 파일 주석에 적었다.
 - **지갑 서명 검증은 `signatureSchemeFor(address).verify()`** (`common/crypto/wallet-signature.ts`). 새 지갑 종류는 구현체를 추가한다.
 - **`process.env`를 직접 읽지 않는다.** 서비스는 `ConfigService`를 주입받고, `main.ts`도 `NestFactory.create()` 뒤 `app.get(ConfigService)`로 읽는다
   (import 시점의 `process.env`는 `ConfigModule.forRoot()`가 `.env`를 읽기 전이다). 예외는 `main.ts`의 기동 실패 catch 하나 — DI가 뜨기 전에

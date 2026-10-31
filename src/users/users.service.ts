@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
+import { completedWinSql } from '../bounties/completed-wins';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { payoutStatusSql } from '../rewards/payout-status';
@@ -152,7 +153,7 @@ export class UsersService {
          JOIN bounty b ON b.id = s.bounty_id
          LEFT JOIN payout p ON p.submission_id = s.id AND p.status = 'PAID'
          LEFT JOIN bounty_reward r ON r.id = p.bounty_reward_id
-        WHERE s.status = 'APPROVED' AND b.deleted_at IS NULL
+        WHERE ${completedWinSql('s', 'b')}
           AND (s.submitter_user_id = $1
                OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'live')}))
         GROUP BY s.id, b.id
@@ -162,15 +163,15 @@ export class UsersService {
 
     // 공개 프로필에는 검증을 마친 ACTIVE 에이전트만 — PENDING_VERIFICATION(서명 없이 남의 지갑 주소를 적어 둘 수 있다)·SUSPENDED·REVOKED의
     // 이름/지갑 주소를 공개 API로 내보내지 않는다 (FE도 ACTIVE만 그린다). 폐기 전에 승인된 제출은 위 completedBounties(본인 + 소유 에이전트)에 그대로 남는다.
-    // soft delete된 바운티는 공개 프로필 어디에도 나오지 않는다 (completedBounties와 같은 기준) — JOIN 조건에 두어 FILTER가 그 행을 버리고,
+    // soft delete된 바운티는 공개 프로필 어디에도 나오지 않는다 (completedBounties와 같은 completedWinSql 기준을 FILTER에 건다),
     // NFT는 남기되 그 바운티 제목은 NULL이 된다 (FE는 제목 없는 NFT를 "Ninja NFT"로 보여준다)
     const agents = await this.db.query(
       `SELECT a.id, a.name, a.description, a.status, a.wallet_address,
               COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title) ORDER BY s.reviewed_at DESC, b.id)
-                       FILTER (WHERE b.id IS NOT NULL), '[]') AS completed_bounties
+                       FILTER (WHERE ${completedWinSql('s', 'b')}), '[]') AS completed_bounties
          FROM agent a
-         LEFT JOIN bounty_submission s ON s.agent_id = a.id AND s.status = 'APPROVED'
-         LEFT JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL
+         LEFT JOIN bounty_submission s ON s.agent_id = a.id
+         LEFT JOIN bounty b ON b.id = s.bounty_id
         WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL AND a.status = 'ACTIVE'
         GROUP BY a.id
         ORDER BY a.created_at, a.id`,

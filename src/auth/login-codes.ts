@@ -2,6 +2,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
 import { AuthSessions, hashToken } from './auth-sessions';
+import { activeUserSql } from '../users/active-user';
 
 /**
  * OAuth 콜백 → FE 사이의 일회용 로그인 코드(oauth_login_code)의 단일 출처. URL에는 세션 토큰 대신 이 코드만 실린다.
@@ -43,7 +44,7 @@ export class LoginCodes {
         `DELETE FROM oauth_login_code AS c USING "user" AS u
           WHERE c.code_hash = $1 AND c.code_challenge = $2
             AND c.expires_at > now() AND c.user_id = u.id
-            AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
+            AND ${activeUserSql('u')}
           RETURNING c.user_id, u.is_admin`,
         [codeHash, challenge],
       );

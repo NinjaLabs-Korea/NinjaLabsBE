@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
+import { primaryWalletSql } from '../wallets/primary-wallet';
 
 /** 운영자용 유저 검색 및 공식 멤버 지정/해제 */
 @Injectable()
@@ -24,7 +25,7 @@ export class MemberAdminService {
       `SELECT u.id, u.email, u.nickname, u.status, u.is_member, u.member_role,
               u.member_display_order, u.created_at, w.address AS wallet_address
          FROM "user" u
-         LEFT JOIN wallet w ON w.user_id = u.id AND w.is_primary = true AND w.disconnected_at IS NULL
+         LEFT JOIN wallet w ON w.user_id = u.id AND ${primaryWalletSql('w')}
         WHERE u.deleted_at IS NULL
           AND (u.email ILIKE $1 ESCAPE '\\' OR u.nickname ILIKE $1 ESCAPE '\\')
         ORDER BY u.created_at DESC, u.id

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
+import { activeUserSql } from '../users/active-user';
 
 /**
  * 바운티에 지원·제출하는 주체 — 사람(USER) 또는 AI 에이전트(AGENT).
@@ -68,13 +69,13 @@ export class BountyActor {
       this.kind === 'USER'
         ? await tx.query<{ done: boolean }>(
             `SELECT onboarding_completed_at IS NOT NULL AS done FROM "user"
-              WHERE id = $1 AND deleted_at IS NULL AND status = 'ACTIVE' FOR SHARE`,
+              WHERE id = $1 AND ${activeUserSql('')} FOR SHARE`,
             [this.id],
           )
         : await tx.query<{ done: boolean }>(
             `SELECT u.onboarding_completed_at IS NOT NULL AS done
                FROM agent a JOIN "user" u ON u.id = a.owner_user_id
-              WHERE a.id = $1 AND u.deleted_at IS NULL AND u.status = 'ACTIVE' FOR SHARE OF u`,
+              WHERE a.id = $1 AND ${activeUserSql('u')} FOR SHARE OF u`,
             [this.id],
           );
     if (!r.rowCount || !r.rows[0].done) throw new ConflictException('PROFILE_REQUIRED');

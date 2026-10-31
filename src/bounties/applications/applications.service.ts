@@ -10,6 +10,7 @@ import { isUniqueViolation } from '../../common/database/pg-errors';
 import { ApplicationStatusPolicy } from '../application-status';
 import { BountyActor } from '../bounty-actor';
 import { BountyStatus } from '../bounty-status';
+import { ownedAgentIdsSql } from '../../agents/owned-agents';
 
 /**
  * 지원형 바운티(application_required = true) 참가 신청
@@ -114,7 +115,7 @@ export class ApplicationsService {
          JOIN bounty b ON b.id = a.bounty_id AND b.deleted_at IS NULL -- 삭제된 바운티는 없는 것으로 본다 (링크가 404가 된다)
          LEFT JOIN agent ag ON ag.id = a.agent_id
         WHERE a.applicant_user_id = $1
-           OR a.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))
+           OR a.agent_id = ANY(${ownedAgentIdsSql('$1', 'live')})
         ORDER BY a.applied_at DESC`,
       [userId],
     );
@@ -127,7 +128,7 @@ export class ApplicationsService {
       `UPDATE bounty_application SET status = 'WITHDRAWN'
         WHERE id = $1 AND status = 'PENDING'
           AND (applicant_user_id = $2
-               OR agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $2 AND deleted_at IS NULL)))
+               OR agent_id = ANY(${ownedAgentIdsSql('$2', 'live')}))
         RETURNING id, status`,
       [applicationId, userId],
     );

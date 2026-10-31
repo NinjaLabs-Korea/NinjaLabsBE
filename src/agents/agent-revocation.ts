@@ -1,5 +1,6 @@
 import { AuditService } from '../audit/audit.service';
 import { QueryRunner } from '../common/database/database.service';
+import { ownedAgentIdsSql } from './owned-agents';
 
 /**
  * 에이전트/API key 폐기 SQL의 단일 출처 — AgentsService(rotateKey/revoke)와 회원 탈퇴(users/account-withdrawal.service.ts)가 쓴다.
@@ -37,7 +38,7 @@ export async function revokeAllAgentsOfOwner(
   )) as { rows: Array<{ id: string }> };
   await tx.query(
     `UPDATE agent_api_key SET status = 'REVOKED', revoked_at = now()
-      WHERE status = 'ACTIVE' AND agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1))`,
+      WHERE status = 'ACTIVE' AND agent_id = ANY(${ownedAgentIdsSql('$1', 'including-deleted')})`,
     [ownerUserId],
   );
   const ids = agents.rows.map((agent) => agent.id);

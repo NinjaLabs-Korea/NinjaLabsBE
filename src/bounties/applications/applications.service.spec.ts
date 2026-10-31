@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
 import { createMockDb, normalizeSql } from '../../test-support/mock-db';
 import { ApplicationsService } from './applications.service';
+import { activeUserSql } from '../../users/active-user';
 
 /** apply() runs inside db.tx; pool and tx share the same checked mock, assertions read the raw jest.fn */
 function serviceWith(query: jest.Mock, audit = { record: jest.fn() }) {
@@ -236,7 +237,7 @@ describe('ApplicationsService apply rules', () => {
     const query = jest.fn().mockResolvedValueOnce(bountyRow()).mockResolvedValueOnce(onboarding);
     await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
     expect(query).toHaveBeenCalledTimes(2);
-    expect(normalizeSql(query.mock.calls[1][0])).toContain(`onboarding_completed_at IS NOT NULL AS done FROM "user" WHERE id = $1 AND deleted_at IS NULL AND status = 'ACTIVE' FOR SHARE`);
+    expect(normalizeSql(query.mock.calls[1][0])).toContain(`onboarding_completed_at IS NOT NULL AS done FROM "user" WHERE id = $1 AND ${activeUserSql('')} FOR SHARE`);
     expect(query.mock.calls[1][1]).toEqual(['user']);
   });
 

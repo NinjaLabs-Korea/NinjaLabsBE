@@ -4,6 +4,8 @@ import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { payoutStatusSql } from '../rewards/payout-status';
 import { isSavableNickname, normalizeNickname } from './nickname';
+import { ownedAgentIdsSql } from '../agents/owned-agents';
+import { activeUserSql } from './active-user';
 
 /** 활성 유저 닉네임 유니크 인덱스 (0019_nickname_unicode_fold.sql, 접힌 닉네임 WHERE deleted_at IS NULL) */
 export const NICKNAME_UNIQUE_INDEX = 'uq_user_nickname_active';
@@ -125,7 +127,7 @@ export class UsersService {
          FROM "user" u
          LEFT JOIN user_tag t ON t.user_id = u.id
         WHERE ${nicknameKeySql('u.nickname')} = ${nicknameKeySql('$1::text')}
-          AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
+          AND ${activeUserSql('u')}
           AND u.onboarding_completed_at IS NOT NULL
         GROUP BY u.id`,
       [normalizeNickname(nickname)],
@@ -152,7 +154,7 @@ export class UsersService {
          LEFT JOIN bounty_reward r ON r.id = p.bounty_reward_id
         WHERE s.status = 'APPROVED' AND b.deleted_at IS NULL
           AND (s.submitter_user_id = $1
-               OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)))
+               OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'live')}))
         GROUP BY s.id, b.id
         ORDER BY s.reviewed_at DESC, s.id`,
       [u.id],

@@ -4,6 +4,7 @@ import { OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql, PAYABLE_REWARD_STATUSES, sql
 import { ApplicationStatus } from '../application-status';
 import { SubmissionDecision, SubmissionStatus, SubmissionStatusPolicy } from '../submission-status';
 import { recordReviews } from '../submissions/system-review';
+import { participantUserIdSql } from '../../agents/owned-agents';
 
 /** 전이 차단 사유 코드 — 운영 화면(FE admin.operations.blockers.<code>)이 이 코드로 번역한다. 추가 시 FE 메시지도 함께. */
 export type LifecycleBlockerCode =
@@ -46,7 +47,7 @@ export class BountyLifecycleService {
           AND (s.submitter_user_id = a.applicant_user_id OR s.agent_id = a.agent_id))
         -- 탈퇴한 참가자(또는 탈퇴한 소유자의 에이전트)는 영영 제출하지 못한다 - 탈퇴는 APPROVED 지원을 철회하지 않으므로 세지 않으면 마감 전까지 접수를 닫을 수 없다
         AND EXISTS (SELECT 1 FROM "user" ou WHERE ou.deleted_at IS NULL
-          AND ou.id = COALESCE(a.applicant_user_id, (SELECT ag.owner_user_id FROM agent ag WHERE ag.id = a.agent_id)))
+          AND ou.id = ${participantUserIdSql('a', 'applicant_user_id', 'ag')})
         -- 폐기(REVOKED)·삭제된 에이전트도 제출할 수 없다 - 에이전트 개별 폐기는 승인된 지원을 철회하지 않는다
         AND (a.agent_id IS NULL OR EXISTS (SELECT 1 FROM agent ag WHERE ag.id = a.agent_id AND ag.deleted_at IS NULL AND ag.status <> 'REVOKED'))) AS unsubmitted,
       (SELECT count(*)::int FROM bounty_submission WHERE bounty_id = $1

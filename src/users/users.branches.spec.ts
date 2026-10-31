@@ -4,6 +4,7 @@ import { DatabaseService } from '../common/database/database.service';
 import { createMockDb } from '../test-support/mock-db';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
+import { activeUserSql } from './active-user';
 
 // 컨트롤러 import 사슬이 서명 검증 모듈(@injectivelabs/sdk-ts, ESM)까지 닿으므로 껍데기로 대체한다 (users.dto.spec와 동일)
 jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
@@ -102,7 +103,7 @@ describe('UsersService.publicProfile result shape', () => {
     const service = new UsersService(createMockDb({ query }).database, new AuditService(createMockDb({ query }).database));
     await expect(service.publicProfile('ninja')).resolves.toEqual({ ...user, completedBounties: [bounty], agents: [agent], nfts: [nft] });
     expect(query.mock.calls[0][1]).toEqual(['ninja']);
-    expect(query.mock.calls[0][0]).toContain("u.deleted_at IS NULL AND u.status = 'ACTIVE'");
+    expect(query.mock.calls[0][0]).toContain(activeUserSql('u'));
     for (const [, params] of query.mock.calls.slice(1)) expect(params).toEqual([userId]);
     expect(query.mock.calls[2][0]).toContain('a.owner_user_id = $1 AND a.deleted_at IS NULL');
   });

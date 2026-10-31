@@ -19,6 +19,14 @@ export const KEEP_ALIVE_TIMEOUT_MS = 65_000;
 export const HEADERS_TIMEOUT_MS = 66_000;
 
 /**
+ * CORS preflight 캐시 시간(초, `Access-Control-Max-Age`). 없으면 브라우저 기본값(Chrome 5초)만 캐시해
+ * 새로고침 뒤 교차 오리진 API 호출마다 OPTIONS 왕복이 한 번 더 붙는다.
+ * 10분이면 같은 탭의 연속 호출은 preflight 없이 나가고, 허용 목록·헤더를 바꾼 배포도 10분 안에 반영된다.
+ * 브라우저 상한: Chrome 7200초, Firefox 86400초.
+ */
+export const CORS_PREFLIGHT_MAX_AGE_SECONDS = 600;
+
+/**
  * HTTP 파이프라인 설정의 단일 출처 — main.ts와 HTTP e2e 스위트(src/test-e2e)가 **같은 함수**로 앱을 구성한다.
  * 여기 없는 설정은 e2e가 검증하지 못하므로, 전역 파이프/필터/인터셉터/CORS/프록시 설정은 반드시 이 함수에 추가한다.
  */
@@ -57,6 +65,7 @@ export function configureApp(app: NestExpressApplication): void {
     origin: (origin, callback) => callback(null, corsOrigins.allows(origin)),
     credentials: true,
     exposedHeaders: [REQUEST_ID_HEADER],
+    maxAge: CORS_PREFLIGHT_MAX_AGE_SECONDS,
   });
 
   // DTO 검증: 정의되지 않은 필드는 400 거절 (FE 페이로드와 DTO가 1:1로 맞춰져 있음) + 타입 자동 변환

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
+import { AUDIT_ACTIONS, AuditAction } from './audit-actions';
 
 export const AUDIT_LOG_PAGE_SIZE = 30;
 
@@ -7,17 +8,17 @@ export const AUDIT_LOG_PAGE_SIZE = 30;
 export type AuditChange = { before?: Record<string, unknown>; after?: Record<string, unknown> };
 
 /**
- * 감사 로그 기록의 단일 진입점.
+ * 감사 로그 기록의 단일 진입점. action과 entity_type은 audit-actions.ts 카탈로그로 타입이 묶인다(값은 그대로 저장).
  * 트랜잭션 안에서 호출할 때는 runner로 tx를 넘겨 같은 트랜잭션에 기록한다.
  */
 @Injectable()
 export class AuditService {
   constructor(private readonly db: DatabaseService) {}
 
-  async record(
+  async record<A extends AuditAction>(
     actorId: string | undefined,
-    action: string,
-    entityType: string,
+    action: A,
+    entityType: (typeof AUDIT_ACTIONS)[A],
     entityId: string,
     runner: QueryRunner = this.db,
     change?: AuditChange,
@@ -44,10 +45,10 @@ export class AuditService {
    * Agent API 키로 한 행위 — 유저 id가 없으므로 `actor_agent_id`를 채운다. 둘 다 비면 운영 스크립트가 남긴 행으로 읽히기 때문에
    * (api-contract.md "운영 스크립트" action 표시 규칙) 에이전트 행위는 이 메서드로 남긴다.
    */
-  async recordAgentAction(
+  async recordAgentAction<A extends AuditAction>(
     agentId: string,
-    action: string,
-    entityType: string,
+    action: A,
+    entityType: (typeof AUDIT_ACTIONS)[A],
     entityId: string,
     runner: QueryRunner = this.db,
   ): Promise<void> {

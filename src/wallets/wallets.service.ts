@@ -13,6 +13,7 @@ import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { NftsService } from '../nfts/nfts.service';
 import { primaryWalletSql } from './primary-wallet';
+import { ONBOARDING_STEP } from '../users/onboarding-step';
 
 /**
  * 지갑 연결 흐름 (온보딩 2단계)
@@ -157,7 +158,7 @@ export class WalletsService {
           [userId, injectiveAddress, verified.publicKey],
         );
         const stepped = await tx.query(
-          `UPDATE "user" SET onboarding_step = GREATEST(onboarding_step, 3)
+          `UPDATE "user" SET onboarding_step = GREATEST(onboarding_step, ${ONBOARDING_STEP.PROFILE})
             WHERE id = $1 AND deleted_at IS NULL`,
           [userId],
         );

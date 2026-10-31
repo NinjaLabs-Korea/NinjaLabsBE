@@ -226,16 +226,24 @@ describeDb('auth over HTTP (e2e)', () => {
     }
     const openSessions = async (hash: string) =>
       (await e2e.db.query<{ revoked: boolean }>(`SELECT revoked_at IS NOT NULL AS revoked FROM auth_session WHERE refresh_token_hash = $1`, [hash])).rows;
+    /** the cookie-mode body carries `user`, and it is exactly what GET /auth/me answers for the same session (one serializer, no drift) */
+    async function expectUserIsMe(body: { accessToken: string; user?: unknown }) {
+      expect(Object.keys(body)).toEqual(['accessToken', 'user']);
+      const me = await e2e.get('/auth/me', { token: body.accessToken });
+      expect(me.status).toBe(200);
+      expect(body.user).toEqual(me.body);
+      return me.body as { id: string };
+    }
 
     it('exchange sets ninja_rt with the exact attributes (HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=<refresh TTL>, no Domain) and the body has no refreshToken', async () => {
       const { res } = await cookieLogin();
       expect(res.status).toBe(200);
       expect(res.headers['cache-control']).toBe('no-store, private');
-      expect(Object.keys(res.body)).toEqual(['accessToken']);
       expect(claims(res.body.accessToken)).toMatchObject({ typ: 'access' });
       const token = issuedCookie(res);
       expect(await openSessions(sha256(token))).toEqual([{ revoked: false }]);
-      expect((await e2e.get('/auth/me', { token: res.body.accessToken })).status).toBe(200);
+      const me = await expectUserIsMe(res.body);
+      expect(me.id).toBe(claims(res.body.accessToken).sub);
     });
 
     it('refresh reads the cookie (body {} or no body at all), rotates, re-sets the cookie and returns only the access token', async () => {
@@ -244,8 +252,8 @@ describeDb('auth over HTTP (e2e)', () => {
       const rotated = await e2e.post('/auth/refresh', {}, withCookie(first, ip));
       expect(rotated.status).toBe(200);
       expect(rotated.headers['cache-control']).toBe('no-store, private');
-      expect(Object.keys(rotated.body)).toEqual(['accessToken']);
       e2e.trackTokens(rotated.body);
+      await expectUserIsMe(rotated.body);
       const second = issuedCookie(rotated);
       expect(second).not.toBe(first);
       expect(await openSessions(sha256(first))).toEqual([{ revoked: true }]);
@@ -255,6 +263,34 @@ describeDb('auth over HTTP (e2e)', () => {
       expect(noBody.status).toBe(200);
       e2e.trackTokens(noBody.body);
       expect(issuedCookie(noBody)).not.toBe(second);
+      await expectUserIsMe(noBody.body);
+    });
+
+    it('the refresh `user` follows the live profile, wallet and NFT exactly like GET /auth/me (same getMe)', async () => {
+      const { res, ip } = await cookieLogin();
+      const userId = claims(res.body.accessToken).sub as string;
+      await e2e.db.query(`UPDATE "user" SET onboarding_step = 4, onboarding_completed_at = now(), bio = 'hello', is_member = true WHERE id = $1`, [userId]);
+      await e2e.db.query(`INSERT INTO user_tag (user_id, tag) VALUES ($1, 'DEV'), ($1, 'DESIGN')`, [userId]);
+      await e2e.db.query(`INSERT INTO wallet (user_id, address, verified_at) VALUES ($1, $2, now())`, [userId, `inj1refresh${userId.replace(/-/g, '').slice(0, 20)}`]);
+      const rotated = await e2e.post('/auth/refresh', {}, withCookie(issuedCookie(res), ip));
+      expect(rotated.status).toBe(200);
+      e2e.trackTokens(rotated.body);
+      issuedCookie(rotated);
+      const me = await expectUserIsMe(rotated.body);
+      expect(me).toMatchObject({ id: userId, bio: 'hello', onboardingStep: 4, onboardingCompleted: true, isMember: true, wallet: { address: expect.stringMatching(/^inj1refresh/) } });
+      expect([...(me as unknown as { tags: string[] }).tags].sort()).toEqual(['DESIGN', 'DEV']);
+    });
+
+    it('suspended or withdrawn users get the same answer as before in cookie mode: 401 INVALID_REFRESH_TOKEN, cookie cleared, no user', async () => {
+      for (const update of [`status = 'SUSPENDED'`, `status = 'WITHDRAWN', deleted_at = now()`]) {
+        const { res, ip } = await cookieLogin();
+        const token = issuedCookie(res);
+        await e2e.db.query(`UPDATE "user" SET ${update} WHERE id = $1`, [claims(res.body.accessToken).sub]);
+        const refused = await e2e.post('/auth/refresh', {}, withCookie(token, ip));
+        expect(refused.status).toBe(401);
+        expect(refused.body).toEqual(unauthorized('INVALID_REFRESH_TOKEN'));
+        expect(setCookies(refused)).toEqual([CLEARED]);
+      }
     });
 
     it('grace reuse works in cookie mode: the old cookie within 30 s gets the winner\'s cookie (no second rotation)', async () => {
@@ -266,7 +302,7 @@ describeDb('auth over HTTP (e2e)', () => {
       const graced = await e2e.post('/auth/refresh', {}, withCookie(old, ip)); // a second tab still holding the old cookie
       expect(graced.status).toBe(200);
       e2e.trackTokens(graced.body);
-      expect(Object.keys(graced.body)).toEqual(['accessToken']);
+      await expectUserIsMe(graced.body);
       expect(issuedCookie(graced)).toBe(successor);
       const open = await e2e.db.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM auth_session WHERE user_id = (SELECT user_id FROM auth_session WHERE refresh_token_hash = $1) AND revoked_at IS NULL`, [sha256(successor)]);
@@ -313,8 +349,8 @@ describeDb('auth over HTTP (e2e)', () => {
       const legacy = await e2e.login(); // body-mode session as an old tab has it
       const migrated = await e2e.post('/auth/refresh', { refreshToken: legacy.refreshToken }, { headers: { ...COOKIE_MODE, cookie: 'ninja_rt=stale-cookie-value' } });
       expect(migrated.status).toBe(200);
-      expect(Object.keys(migrated.body)).toEqual(['accessToken']);
       e2e.trackTokens(migrated.body);
+      await expectUserIsMe(migrated.body);
       const cookie = issuedCookie(migrated);
       expect(await openSessions(sha256(legacy.refreshToken))).toEqual([{ revoked: true }]);
       // from now on the cookie alone refreshes

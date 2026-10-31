@@ -28,7 +28,7 @@ import { isDatabaseUnavailable } from '../common/database/pg-errors';
 import { requestIdOf } from '../common/http/request-id';
 import { AUTH_PROXIED_ROUTE_IP_THROTTLE, AuthTokenThrottlerGuard } from './auth-throttler.guard';
 import { AuthGuard } from './auth.guard';
-import { AuthService, SessionUser } from './auth.service';
+import { AuthService, MeResponse, SessionUser } from './auth.service';
 import { clearRefreshCookie, isCookieMode, readRefreshCookie, setRefreshCookie } from './session-cookie';
 import { OriginAllowlist } from '../common/origin-allowlist';
 import { feRedirectAllowlist, resolveFeRedirect } from './fe-origins';
@@ -211,6 +211,7 @@ export class AuthController {
   /**
    * POST /auth/exchange — 로그인 코드 + PKCE verifier → 세션.
    * 쿠키 모드(`X-Ninja-Session: cookie`): refresh는 `Set-Cookie: ninja_rt=…`로만 주고 본문에서 뺀다 (session-cookie.ts).
+   *   본문은 `{accessToken, user}`: `user`는 `GET /auth/me`와 같은 응답 (withSessionUser).
    * 한도: 로그인 코드 해시별 10/min (AuthTokenThrottlerGuard) + IP당 600/min (전역 120/min을 이 라우트만 올림 — AUTH_PROXIED_ROUTE_IP_THROTTLE).
    */
   @Post('exchange')
@@ -220,7 +221,8 @@ export class AuthController {
   @UseGuards(AuthTokenThrottlerGuard)
   async exchange(@Body() dto: LoginCodeDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const session = await this.auth.exchangeLoginCode(dto.code, dto.codeVerifier, req.ip, req.headers['user-agent']);
-    return isCookieMode(req) ? this.toCookieSession(session, res) : session;
+    if (!isCookieMode(req)) return session;
+    return this.withSessionUser(this.toCookieSession(session, res), requestIdOf(req), requestTraceId(req.headers));
   }
 
   private safeOrigin(value: string): string | null {
@@ -234,7 +236,8 @@ export class AuthController {
   /**
    * POST /auth/refresh — 토큰 재발급 (refresh token 회전).
    *   - 본문 모드(deprecated): `{refreshToken}` → `{accessToken, refreshToken}` — 응답의 새 refreshToken으로 교체 필수. 쿠키는 무시.
-   *   - 쿠키 모드(`X-Ninja-Session: cookie`): `ninja_rt` 쿠키를 읽어 회전하고 새 토큰을 다시 쿠키로 → 본문 `{accessToken}`.
+   *   - 쿠키 모드(`X-Ninja-Session: cookie`): `ninja_rt` 쿠키를 읽어 회전하고 새 토큰을 다시 쿠키로 → 본문 `{accessToken, user}`.
+   *     `user`는 `GET /auth/me`와 같은 응답이라 FE가 페이지 로드에서 `/auth/me` 왕복을 건너뛴다 (withSessionUser).
    *     본문에 `refreshToken`이 함께 오면(localStorage 레거시 토큰의 1회 이전) 본문 토큰을 쓰고 결과를 쿠키로 심는다.
    *     쿠키에서 읽은 토큰이 401이면 쿠키도 지운다 (죽은 세션).
    * 한도: 제시된 refresh 토큰 해시별 10/min (AuthTokenThrottlerGuard — Vercel 프록시의 공유 IP로 버킷이 섞이지 않게) + IP당 600/min
@@ -251,6 +254,7 @@ export class AuthController {
     const cookieMode = isCookieMode(req);
     const fromCookie = cookieMode && !dto.refreshToken ? readRefreshCookie(req) : undefined;
     const refreshToken = dto.refreshToken ?? fromCookie;
+    let cookieSession: { accessToken: string };
     if (!refreshToken) {
       if (!cookieMode) throw new BadRequestException(REFRESH_TOKEN_REQUIRED);
       onboardingLog(this.logger, 'session.refresh.rejected', { rid, traceId, reason: 'NO_REFRESH_COOKIE' });
@@ -260,12 +264,15 @@ export class AuthController {
     try {
       const session = await this.auth.refresh(refreshToken, req.ip, req.headers['user-agent']);
       onboardingLog(this.logger, 'session.refresh.succeeded', { rid, traceId });
-      return cookieMode ? this.toCookieSession(session, res) : session;
+      if (!cookieMode) return session;
+      cookieSession = this.toCookieSession(session, res);
     } catch (caught) {
       onboardingError(this.logger, 'session.refresh.failed', caught, { rid, traceId });
       if (fromCookie && caught instanceof UnauthorizedException) clearRefreshCookie(res);
       throw caught;
     }
+    // 회전은 이미 커밋됐고 새 쿠키도 심었다. 여기서부터는 실패해도 refresh 자체를 실패시키지 않는다 (withSessionUser)
+    return this.withSessionUser(cookieSession, rid, traceId);
   }
 
   /**
@@ -294,6 +301,24 @@ export class AuthController {
     const { refreshToken, ...rest } = session;
     setRefreshCookie(res, refreshToken, this.auth.refreshTtlSeconds);
     return rest;
+  }
+
+  /**
+   * 쿠키 모드 refresh/exchange 응답에 `user`(= 같은 세션의 `GET /auth/me` 응답)를 싣는다. FE는 이것이 있으면 `/auth/me`를 부르지 않는다.
+   * 세션은 이미 발급·회전돼 쿠키까지 심긴 뒤라, 사용자 조회가 실패해도(DB 순간 장애, 그 사이 탈퇴) 응답을 실패시키지 않고 `user`만 뺀다.
+   * 상태 코드·쿠키는 지금과 같고 FE는 예전처럼 `/auth/me`로 폴백한다. 본문 모드(deprecated)에는 싣지 않는다.
+   */
+  private async withSessionUser<T extends { accessToken: string }>(
+    body: T,
+    rid: string | undefined,
+    traceId: string | undefined,
+  ): Promise<T | (T & { user: MeResponse })> {
+    try {
+      return { ...body, user: await this.auth.sessionUserOf(body.accessToken) };
+    } catch (caught) {
+      onboardingError(this.logger, 'session.user.omitted', caught, { rid, traceId });
+      return body;
+    }
   }
 
   /** GET /auth/me — 현재 세션 유저 프로필 + 온보딩/지갑/NFT 상태 */

@@ -6,9 +6,13 @@ const COOKIE = { 'x-ninja-session': 'cookie' };
 const CLEARED = 'ninja_rt=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0';
 const issued = (token: string) => `ninja_rt=${token}; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=1209600`;
 
+/** what AuthService.sessionUserOf (= getMe for the access token's owner) answers in these tests */
+const ME = { id: 'u1', nickname: 'ryan', onboardingStep: 4, onboardingCompleted: true };
+
 function setup() {
   const auth = {
     refreshTtlSeconds: 1_209_600,
+    sessionUserOf: jest.fn(async (_accessToken: string): Promise<unknown> => ME),
     exchangeLoginCode: jest.fn(async () => ({ accessToken: 'access', refreshToken: 'new-refresh' })),
     refresh: jest.fn(async () => ({ accessToken: 'access', refreshToken: 'rotated' })),
     revoke: jest.fn(async () => undefined),
@@ -27,16 +31,19 @@ describe('AuthController cookie mode (X-Ninja-Session: cookie)', () => {
     const body = setup();
     await expect(body.controller.exchange(login, body.req(), body.res as never)).resolves.toEqual({ accessToken: 'access', refreshToken: 'new-refresh' });
     expect(body.setCookies()).toEqual([]);
+    expect(body.auth.sessionUserOf).not.toHaveBeenCalled(); // body mode (deprecated) is unchanged: no user
 
     const cookie = setup();
-    await expect(cookie.controller.exchange(login, cookie.req(COOKIE), cookie.res as never)).resolves.toEqual({ accessToken: 'access' });
+    await expect(cookie.controller.exchange(login, cookie.req(COOKIE), cookie.res as never)).resolves.toEqual({ accessToken: 'access', user: ME });
+    expect(cookie.auth.sessionUserOf).toHaveBeenCalledWith('access');
     expect(cookie.setCookies()).toEqual([issued('new-refresh')]);
   });
 
   it('refresh: cookie mode reads ninja_rt, rotates and re-sets it; body mode ignores the cookie', async () => {
     const s = setup();
-    await expect(s.controller.refresh({}, s.req({ ...COOKIE, cookie: 'ninja_rt=old' }), s.res as never)).resolves.toEqual({ accessToken: 'access' });
+    await expect(s.controller.refresh({}, s.req({ ...COOKIE, cookie: 'ninja_rt=old' }), s.res as never)).resolves.toEqual({ accessToken: 'access', user: ME });
     expect(s.auth.refresh).toHaveBeenCalledWith('old', '10.0.0.1', undefined);
+    expect(s.auth.sessionUserOf).toHaveBeenCalledWith('access');
     expect(s.setCookies()).toEqual([issued('rotated')]);
 
     const b = setup();
@@ -44,6 +51,25 @@ describe('AuthController cookie mode (X-Ninja-Session: cookie)', () => {
       status: 400, response: { message: ['refreshToken should not be empty', 'refreshToken must be a string'] },
     });
     expect(b.auth.refresh).not.toHaveBeenCalled();
+  });
+
+  it('refresh/exchange: a failed user lookup after the rotation drops only `user`, still 200, the rotated cookie is still set (FE falls back to /auth/me)', async () => {
+    const s = setup();
+    s.auth.sessionUserOf.mockRejectedValue(new Error('connection terminated'));
+    await expect(s.controller.refresh({}, s.req({ ...COOKIE, cookie: 'ninja_rt=old' }), s.res as never)).resolves.toEqual({ accessToken: 'access' });
+    expect(s.setCookies()).toEqual([issued('rotated')]);
+
+    const e = setup();
+    e.auth.sessionUserOf.mockRejectedValue(new Error('USER_NOT_FOUND'));
+    await expect(e.controller.exchange(login, e.req(COOKIE), e.res as never)).resolves.toEqual({ accessToken: 'access' });
+    expect(e.setCookies()).toEqual([issued('new-refresh')]);
+  });
+
+  it('refresh: a rejected rotation never looks the user up', async () => {
+    const s = setup();
+    s.auth.refresh.mockRejectedValue(new UnauthorizedException('INVALID_REFRESH_TOKEN'));
+    await expect(s.controller.refresh({}, s.req({ ...COOKIE, cookie: 'ninja_rt=dead' }), s.res as never)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(s.auth.sessionUserOf).not.toHaveBeenCalled();
   });
 
   it('refresh: a body token with the header (legacy migration) wins over the cookie and is moved into the cookie', async () => {

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
-import { KEEP_ALIVE_TIMEOUT_MS } from '../app-setup';
+import { CORS_PREFLIGHT_MAX_AGE_SECONDS, KEEP_ALIVE_TIMEOUT_MS } from '../app-setup';
 import { describeDb } from '../test-db/describe-db';
 import { getEthereumAddress, getInjectiveAddress } from './support/injective-sdk.stub';
 import { E2eApp, FE_ORIGIN, PREVIEW_ORIGIN, startApp } from './support/harness';
@@ -61,6 +61,8 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
       expect(res.headers['access-control-allow-origin']).toBe(origin);
       expect(res.headers['access-control-allow-credentials']).toBe('true');
       expect(String(res.headers['access-control-allow-methods'])).toMatch(/POST/);
+      // preflight 캐시: 브라우저 기본(Chrome 5초) 대신 상수 값만큼 OPTIONS 왕복을 건너뛴다
+      expect(res.headers['access-control-max-age']).toBe(String(CORS_PREFLIGHT_MAX_AGE_SECONDS));
     });
 
     it.each([
@@ -72,6 +74,7 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
       const res = await e2e.request('OPTIONS', '/auth/refresh', { headers: { origin, 'access-control-request-method': 'POST' } });
       expect(res.headers['access-control-allow-origin']).toBeUndefined();
       expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+      expect(res.headers['access-control-max-age']).toBeUndefined();
     });
 
     it('a request without Origin proceeds (server-to-server / curl) and a simple GET from an allowed origin carries ACAO', async () => {
@@ -81,6 +84,7 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
       const allowed = await e2e.get('/bounties', { headers: { origin: FE_ORIGIN } });
       expect(allowed.status).toBe(200);
       expect(allowed.headers['access-control-allow-origin']).toBe(FE_ORIGIN);
+      expect(allowed.headers['access-control-max-age']).toBeUndefined(); // Max-Age is a preflight-only header
       const denied = await e2e.get('/bounties', { headers: { origin: 'https://evil.example' } });
       expect(denied.status).toBe(200); // CORS is enforced by the browser; the server only withholds ACAO
       expect(denied.headers['access-control-allow-origin']).toBeUndefined();

@@ -116,9 +116,9 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `COHORT_APPLICATION_NOT_FOUND` | 404 | 기수 지원서가 없거나 내 것이 아니다 (남의 지원서도 같은 404) |
 | `COHORT_APPLICATION_NOT_SUBMITTED` | 409 | SUBMITTED가 아니라 수정·철회할 수 없다 (이미 심사됨/철회됨) |
 | `COHORT_APPLICATION_WITHDRAWN` | 409 | 철회된 지원서라 심사할 수 없다 |
-| `COHORT_OTHER_DETAIL_REQUIRED` | 400 | 상세 입력(withDetail) 선택지를 골랐는데 other가 비었다 (구 본문: 활동 유형 또는 관심 분야에 OTHER를 골랐는데 activityTypeOther/interestOther가 빔) |
+| `COHORT_OTHER_DETAIL_REQUIRED` | 400 | 상세 입력(withDetail) 선택지를 골랐는데 other가 비었다 |
 | `COHORT_QUESTIONS_INVALID` | 400 | 기수 질문 목록이 규칙에 맞지 않는다 (모르는 id, 중복 id, 선택지 수, withDetail 둘 이상 등) |
-| `COHORT_ANSWERS_INVALID` | 400 | 지원서 답변이 지금 질문과 맞지 않는다 (없는 질문/선택지, 필수 미응답, 형식, 옛/새 본문 혼용) |
+| `COHORT_ANSWERS_INVALID` | 400 | 지원서 답변이 지금 질문과 맞지 않는다 (없는 질문/선택지, 필수 미응답, 형식) |
 | `COHORT_INVALID_WINDOW` | 400 | 접수 종료(closesAt)가 시작(opensAt)보다 늦지 않다 |
 | `COHORT_INVALID_TRANSITION` | 400 | 허용되지 않는 기수 상태 전이다 (DRAFT->OPEN->CLOSED, CLOSED->OPEN만) |
 | `COHORT_ALREADY_OPEN` | 409 | 다른 기수가 이미 OPEN이다 (동시에 열린 기수는 하나) |
@@ -287,7 +287,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 ## 기수 모집 (cohorts, 2026-10-26)
 
 합격(`ACCEPTED`)은 멤버 지정이 아니다. 운영자가 멤버 관리(`POST /admin/users/:id/member`)에서 따로 지정한다. 필드는 camelCase, 날짜는 ISO 8601.
-지원서 입력(`POST /cohorts/:id/applications`, `PATCH`는 모두 선택): 고정 필드 `displayName`(≤60), `telegram`(≤40, `@name`/`name`/`https://t.me/name` 모두 받아 `@name`으로 저장; 영문 시작 5~32자), `twitter`(`@name`/`https://x.com/name`; 1~15자), `intro`(1~1000자, 공백만 불가)와 질문 답변 `answers`. 알 수 없는 필드는 400.
+지원서 입력(`POST /cohorts/:id/applications`, `PATCH`는 모두 선택): 고정 필드 `displayName`(≤60), `telegram`(≤40, `@name`/`name`/`https://t.me/name` 모두 받아 `@name`으로 저장; 영문 시작 5~32자), `twitter`(`@name`/`https://x.com/name`; 1~15자), `intro`(1~1000자, 공백만 불가)와 질문 답변 `answers`(POST 필수 배열, 질문이 없거나 모두 선택이면 `[]`; PATCH 선택, `null` 불가). 알 수 없는 필드는 400(DTO 검증 실패).
 
 ### 지원서 질문 (0021, 2026-10-31)
 
@@ -298,14 +298,15 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 - `ApplicationAnswer`(저장·응답) = `{questionId, type, label, text|null, choices: {id,label}[]|null, other|null}`. **스냅샷**: 쓰는 순간 질문의 라벨과 고른 선택지 라벨을 복사하므로 질문을 나중에 고쳐도 낸 지원서는 안 바뀐다. 답하지 않은 선택 질문은 생략, 순서는 질문 순서.
 - 답변 입력 `AnswerInput` = `{questionId, text?(≤2000), choices?(중복 없음, ≤20), other?(≤60)}`, `answers` ≤30. 서버 규칙(`validateAnswers`, FE가 거울): 없는/중복 질문 불가, 글 질문은 `text`만(SHORT_TEXT ≤200자 한 줄, LONG_TEXT ≤2000자), 선택 질문은 `choices`만(SINGLE 정확히 1개, MULTI 1개 이상, 현재 선택지여야 함), `withDetail` 선택지를 골랐으면 `other`(보이는 글자, 한 줄, ≤60) 필수(400 `COHORT_OTHER_DETAIL_REQUIRED`)이고 아니면 버림, 필수 질문 미응답·그 밖의 위반은 400 `COHORT_ANSWERS_INVALID`(FE는 "폼이 바뀜"으로 보고 기수를 다시 읽고 초안을 유지). 답변은 기수 행 `FOR SHARE` 아래에서 검증돼 질문 저장(`FOR UPDATE`)과 직렬화된다.
 - 쓰기: 새 본문(POST, 철회 재지원, `answers`가 있는 PATCH)은 답변을 저장하고 옛 컬럼(`web3_experience`, `activity_type`, `activity_type_other`, `interest_areas`, `interest_other`)을 모두 NULL로 둔다. PATCH에 `answers`를 보내면 **전체 교체**(지금 질문 기준 검증), 안 보내면 저장된 답변을 그대로 둔다(고쳐진 폼으로 다시 검사하지 않음). 한 행은 옛 형식(옛 컬럼 채움 + `answers` `[]`) 아니면 새 형식(옛 컬럼 전부 NULL)이고 `chk_cohort_application_answer_shape`가 섞인 행을 막는다.
-- **옛 본문 호환(deprecated)**: `answers` 없이 옛 필드(`web3Experience`, `activityType`, `activityTypeOther`, `interestAreas`, `interestOther`)를 보내면 예전 경로 그대로 옛 컬럼에 쓴다(필수 질문 검사 없음). POST는 `answers` 또는 옛 필드 셋(`web3Experience`, `activityType`, `interestAreas`)이 있어야 하고, `answers`와 옛 필드를 함께 보내거나 새 형식 행에 옛 필드 PATCH를 하면 400 `COHORT_ANSWERS_INVALID`. 이 경로는 FE-1(질문 폼) 릴리스 뒤 정리에서 지운다.
+- **옛 본문은 받지 않는다(2026-10-31, FE 릴리스 #69 뒤 제거)**: 옛 필드(`web3Experience`, `activityType`, `activityTypeOther`, `interestAreas`, `interestOther`)는 입력 DTO에 없다. POST·PATCH 본문에 하나라도 있으면(값이 `null`이어도) 400 DTO 검증 실패(`message`는 class-validator 문장 배열, 예: `property web3Experience should not exist`; 코드가 아니다)이고 아무것도 쓰지 않는다. `answers`가 없는 POST도 같은 400(`answers must be an array` 등). 예전처럼 `COHORT_ANSWERS_INVALID`가 아니다.
+- 옛 형식 행(0021 전에 저장된 행)은 다시 쓰지 않고 그대로 둔다. `answers` 없는 PATCH(고정 필드만)는 옛 컬럼을 그대로 다시 쓰고, `answers`가 있는 PATCH나 철회 뒤 재지원은 그 행을 새 형식으로 바꾼다.
 - 읽기: 지원자·운영자 응답에 `answers`가 붙는다. 새 형식 행은 저장된 스냅샷, 옛 형식 행은 `legacyAnswers`가 `web3_experience`, `interest_areas`, `activity_type`(라벨 "현재 활동 유형") 순으로 합성한다. 옛 필드 `web3Experience`, `activityType`, `activityTypeOther`, `interestAreas`, `interestOther`는 응답에 남지만 deprecated이고 새 형식 행에서는 `null`이다.
 
 | Method | Path | Auth | 설명 |
 |---|---|---|---|
-| POST | `/cohorts/:id/applications` | ✅ | 지원 → 201 지원자용 지원서(아래). 온보딩 미완료 409 `PROFILE_REQUIRED`, 기수 없음/DRAFT 404 `COHORT_NOT_FOUND`, 접수 중 아님 409 `COHORT_NOT_ACCEPTING`, 이미 지원 409 `COHORT_ALREADY_APPLIED`(동시 요청도 정확히 하나만 201), 답변이 지금 질문과 맞지 않거나 옛/새 본문 혼용 400 `COHORT_ANSWERS_INVALID`, 상세 입력 선택지의 `other` 누락 400 `COHORT_OTHER_DETAIL_REQUIRED`. **철회한(WITHDRAWN) 지원이 있으면 같은 행을 다시 열어** 같은 `id`, `SUBMITTED`, 심사 필드 초기화(감사 `COHORT_APPLICATION_REAPPLIED`). 10/min |
+| POST | `/cohorts/:id/applications` | ✅ | 지원 → 201 지원자용 지원서(아래). 온보딩 미완료 409 `PROFILE_REQUIRED`, 기수 없음/DRAFT 404 `COHORT_NOT_FOUND`, 접수 중 아님 409 `COHORT_NOT_ACCEPTING`, 이미 지원 409 `COHORT_ALREADY_APPLIED`(동시 요청도 정확히 하나만 201), 답변이 지금 질문과 맞지 않으면 400 `COHORT_ANSWERS_INVALID`, 옛 필드나 `answers` 누락은 400 DTO 검증 실패, 상세 입력 선택지의 `other` 누락 400 `COHORT_OTHER_DETAIL_REQUIRED`. **철회한(WITHDRAWN) 지원이 있으면 같은 행을 다시 열어** 같은 `id`, `SUBMITTED`, 심사 필드 초기화(감사 `COHORT_APPLICATION_REAPPLIED`). 10/min |
 | GET | `/cohorts/applications/me` | ✅ | 내 지원 내역(최신순 배열). 항목: `id, cohortId, cohort{id,name,status,acceptingApplications}, status, displayName, telegram, twitter, answers, intro, reviewedAt, editable, withdrawable, createdAt, updatedAt` (+ deprecated `web3Experience, activityType, activityTypeOther, interestAreas, interestOther`, 새 형식 행에서는 null). **`reviewNote`·심사자는 내려보내지 않는다**(운영자 내부 메모; 결과는 `status`로만 알린다) |
-| PATCH | `/cohorts/applications/:id` | ✅ | 본인 지원서 수정(보낸 필드만; `answers`를 보내면 전체 교체, 옛 필드는 옛 형식 행만, 위 "지원서 질문"). `SUBMITTED`가 아니면 409 `COHORT_APPLICATION_NOT_SUBMITTED`, 기수가 접수 중이 아니면 409 `COHORT_NOT_ACCEPTING`, 없거나 남의 것이면 404 `COHORT_APPLICATION_NOT_FOUND`. 10/min |
+| PATCH | `/cohorts/applications/:id` | ✅ | 본인 지원서 수정(보낸 필드만; `answers`를 보내면 전체 교체, 옛 필드는 400, 위 "지원서 질문"). `SUBMITTED`가 아니면 409 `COHORT_APPLICATION_NOT_SUBMITTED`, 기수가 접수 중이 아니면 409 `COHORT_NOT_ACCEPTING`, 없거나 남의 것이면 404 `COHORT_APPLICATION_NOT_FOUND`. 10/min |
 | POST | `/cohorts/applications/:id/withdraw` | ✅ | 본인 철회 `SUBMITTED -> WITHDRAWN`(기수가 마감됐어도 가능). 409 `COHORT_APPLICATION_NOT_SUBMITTED`, 404. 10/min |
 | GET | `/admin/cohorts` | 🔐 | 전체 기수 배열(최신순). 항목: `id, name, description, status, opensAt, closesAt, acceptingApplications, questions, applicationCounts{SUBMITTED,ACCEPTED,REJECTED,WITHDRAWN,total}, allowedTransitions, createdBy, createdAt, updatedAt` |
 | POST | `/admin/cohorts` | 🔐 | 생성(항상 DRAFT) `{name≤60, description?, opensAt?, closesAt?}` → 위 항목. 기본 질문 둘을 심는다(`questions` 필드는 받지 않는다). `closesAt <= opensAt`이면 400 `COHORT_INVALID_WINDOW`. 감사 `COHORT_CREATED` |

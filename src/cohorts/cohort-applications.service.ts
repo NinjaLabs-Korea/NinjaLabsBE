@@ -1,31 +1,25 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { BountyActor } from '../bounties/bounty-actor';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { APPLICATION_FIELD_COLUMNS, applicantView, ApplicationFieldRow } from './cohort-application-view';
-import { AnswerInputDto, hasLegacyFields, LegacyAnswerValues, normalizeOtherDetails } from './cohort-fields';
+import { AnswerInputDto } from './cohort-fields';
 import { ApplicationAnswer, CohortQuestion, validateAnswers } from './cohort-questions';
 import { CohortApplicationPolicy, CohortApplicationStatus, cohortAcceptingSql } from './cohort-status';
 
 type OwnedRow = ApplicationFieldRow & { cohort_name: string; cohort_status: string; accepting: boolean; reviewed_at: Date | null; questions: CohortQuestion[] };
 
 type FixedValues = { displayName: string; telegram: string; twitter: string; intro: string };
-/** 생성 본문: 새 형식(answers) 또는 옛 형식(deprecated 필드). 둘 다 선택으로 받고 service 가 하나만 허용한다 */
-export type ApplyInput = FixedValues & { answers?: AnswerInputDto[] } & Partial<LegacyAnswerValues>;
+/** 생성 본문: 고정 필드 + 답변 (옛 본문은 DTO 가 400 으로 거절한다) */
+export type ApplyInput = FixedValues & { answers: AnswerInputDto[] };
 /** 수정 본문: 보낸 필드만 */
-export type UpdateInput = Partial<FixedValues> & { answers?: AnswerInputDto[] } & Partial<LegacyAnswerValues>;
+export type UpdateInput = Partial<FixedValues> & { answers?: AnswerInputDto[] };
 
-/** 한 행에 쓸 답변 칸: 새 형식은 옛 컬럼이 전부 null + answers 스냅샷, 옛 형식은 옛 컬럼 + answers [] (chk_cohort_application_answer_shape) */
-type AnswerColumns = { legacy: LegacyAnswerValues | null; answers: ApplicationAnswer[] };
-
-const bad = () => new BadRequestException('COHORT_ANSWERS_INVALID');
-
-/** 옛 형식 본문이 셋(경력, 활동 유형, 관심 분야)을 모두 갖췄는지 보고 "기타 상세" 규칙까지 적용한다 (DB 를 건드리기 전) */
-function legacyOfInput(input: ApplyInput): LegacyAnswerValues {
-  if (input.web3Experience === undefined || input.activityType === undefined || input.interestAreas === undefined) throw bad();
-  return normalizeOtherDetails({ ...input, web3Experience: input.web3Experience, activityType: input.activityType, interestAreas: input.interestAreas });
-}
+/** 옛 형식 행의 옛 컬럼 값 (0021 전에 저장된 행). 새로 쓰지는 않고, 답변을 안 바꾸는 PATCH 가 그대로 다시 쓸 때만 쓴다 */
+type LegacyColumns = { web3Experience: string; activityType: string; activityTypeOther: string | null; interestAreas: string[]; interestOther: string | null };
+/** 한 행에 쓸 답변 칸: 새 형식은 옛 컬럼이 전부 null + answers 스냅샷, 옛 형식 행은 옛 컬럼 그대로 + answers [] (chk_cohort_application_answer_shape) */
+type AnswerColumns = { legacy: LegacyColumns | null; answers: ApplicationAnswer[] };
 
 const OWNED_SELECT = `SELECT ${APPLICATION_FIELD_COLUMNS}, a.reviewed_at, c.questions,
        c.name AS cohort_name, c.status AS cohort_status, ${cohortAcceptingSql('c')} AS accepting
@@ -43,10 +37,6 @@ export class CohortApplicationsService {
   ) {}
 
   async apply(cohortId: string, userId: string, input: ApplyInput) {
-    // 새 형식(answers)과 옛 형식(deprecated 필드)은 섞을 수 없다. 옛 형식은 DB 를 건드리기 전에 "기타 상세"까지 검사한다 (옛 FE 호환 경로: FE-1 배포 뒤 정리에서 지운다)
-    const isNew = input.answers !== undefined;
-    if (isNew && hasLegacyFields(input)) throw bad();
-    const legacy = isNew ? null : legacyOfInput(input);
     return this.db.tx(async (tx) => {
       // FOR SHARE: 같은 기수에 대한 운영자 전이/삭제(UPDATE/DELETE)와 직렬화되고, 지원끼리는 서로 막지 않는다.
       // DRAFT 기수는 아직 공개 전이므로 없는 것과 같다.
@@ -58,7 +48,7 @@ export class CohortApplicationsService {
       await BountyActor.user(userId).assertOnboarded(tx); // 409 PROFILE_REQUIRED (바운티 지원과 같은 규칙)
       if (!cohort.rows[0].accepting) throw new ConflictException('COHORT_NOT_ACCEPTING');
       // 답변은 기수 행 FOR SHARE 아래에서 검증한다: 운영자의 질문 저장(FOR UPDATE)과 직렬화돼 방금 바뀐 질문으로 검증하거나 끝난 질문으로 저장하지 않는다
-      const columns: AnswerColumns = { legacy, answers: legacy ? [] : validateAnswers(cohort.rows[0].questions, input.answers ?? []) };
+      const columns: AnswerColumns = { legacy: null, answers: validateAnswers(cohort.rows[0].questions, input.answers) };
 
       const existing = await tx.query<{ id: string; status: string }>(
         `SELECT id, status FROM cohort_application WHERE cohort_id = $1 AND user_id = $2 FOR UPDATE`,
@@ -107,12 +97,10 @@ export class CohortApplicationsService {
 
   /**
    * 본인 지원서 수정: SUBMITTED 이고 기수가 아직 접수 중일 때만. 보낸 필드만 바꾼다.
-   *  - answers 를 보내면 전체 교체: 지금 질문 기준으로 검증하고 옛 컬럼을 NULL 로 만든다 (옛 필드와 함께 보내면 400 COHORT_ANSWERS_INVALID).
-   *  - answers 없이 옛 필드를 보내면 옛 형식 행만 통한다 (새 형식 행이면 400). 기존 행과 합쳐 "기타 상세" 규칙을 다시 검사한다.
-   *  - 둘 다 없으면 저장된 답변을 그대로 둔다 (고쳐진 질문으로 다시 검사하지 않는다).
+   *  - answers 를 보내면 전체 교체: 지금 질문 기준으로 검증하고 옛 컬럼을 NULL 로 만든다 (옛 형식 행도 새 형식이 된다).
+   *  - 안 보내면 저장된 답변을 그대로 둔다 (고쳐진 질문으로 다시 검사하지 않는다). 옛 형식 행은 옛 컬럼을 그대로 다시 쓴다.
    */
   async update(applicationId: string, userId: string, patch: UpdateInput) {
-    if (patch.answers !== undefined && hasLegacyFields(patch)) throw bad();
     return this.db.tx(async (tx) => {
       const found = await tx.query<OwnedRow>(
         `${OWNED_SELECT} WHERE a.id = $1 AND a.user_id = $2 FOR UPDATE OF a FOR SHARE OF c`,
@@ -127,18 +115,6 @@ export class CohortApplicationsService {
       let columns: AnswerColumns;
       if (patch.answers !== undefined) {
         columns = { legacy: null, answers: validateAnswers(row.questions, patch.answers) };
-      } else if (hasLegacyFields(patch)) {
-        if (!isLegacyRow) throw bad();
-        columns = {
-          legacy: normalizeOtherDetails({
-            web3Experience: patch.web3Experience ?? row.web3_experience as string,
-            activityType: patch.activityType ?? row.activity_type as string,
-            activityTypeOther: patch.activityTypeOther !== undefined ? patch.activityTypeOther : row.activity_type_other,
-            interestAreas: patch.interestAreas ?? row.interest_areas as string[],
-            interestOther: patch.interestOther !== undefined ? patch.interestOther : row.interest_other,
-          }),
-          answers: [],
-        };
       } else {
         columns = isLegacyRow
           ? { legacy: { web3Experience: row.web3_experience as string, activityType: row.activity_type as string, activityTypeOther: row.activity_type_other, interestAreas: row.interest_areas as string[], interestOther: row.interest_other }, answers: [] }

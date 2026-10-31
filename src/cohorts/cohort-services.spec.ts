@@ -9,7 +9,8 @@ import { withdrawOpenCohortApplicationsOfUser } from './cohort-withdrawal';
 const ID = '11111111-1111-4111-8111-111111111111';
 const USER = '22222222-2222-4222-8222-222222222222';
 const input = {
-  displayName: 'A', telegram: '@abcde', twitter: '@a', web3Experience: 'LT_1Y', activityType: 'DEVELOPER', interestAreas: ['KOL'], intro: 'hi',
+  displayName: 'A', telegram: '@abcde', twitter: '@a', intro: 'hi',
+  answers: [{ questionId: 'web3_experience', choices: ['LT_1Y'] }, { questionId: 'interest_areas', choices: ['KOL'] }],
 };
 
 describe('CohortApplicationsService.apply', () => {
@@ -38,7 +39,7 @@ describe('CohortApplicationsService.apply', () => {
   });
 
   it('409 COHORT_ALREADY_APPLIED for an existing non-withdrawn application, and for a unique violation race', async () => {
-    const accepting = { rowCount: 1, rows: [{ accepting: true }] };
+    const accepting = { rowCount: 1, rows: [{ accepting: true, questions: DEFAULT_COHORT_QUESTIONS }] };
     const done = { rowCount: 1, rows: [{ done: true }] };
     const rejected = setup(jest.fn().mockResolvedValueOnce(accepting).mockResolvedValueOnce(done).mockResolvedValueOnce({ rowCount: 1, rows: [{ id: ID, status: 'REJECTED' }] }));
     await expect(rejected.service.apply(ID, USER, input)).rejects.toMatchObject({ message: 'COHORT_ALREADY_APPLIED' });
@@ -48,22 +49,13 @@ describe('CohortApplicationsService.apply', () => {
     await expect(race.service.apply(ID, USER, input)).rejects.toMatchObject({ message: 'COHORT_ALREADY_APPLIED' });
   });
 
-  describe('new (answers) and legacy body shapes', () => {
+  describe('answers body', () => {
     const fixed = { displayName: 'A', telegram: '@abcde', twitter: '@a', intro: 'hi' };
-    const answers = [{ questionId: 'web3_experience', choices: ['LT_1Y'] }, { questionId: 'interest_areas', choices: ['KOL'] }];
+    const answers = input.answers;
     const accepting = { rowCount: 1, rows: [{ accepting: true, questions: DEFAULT_COHORT_QUESTIONS }] };
     const done = { rowCount: 1, rows: [{ done: true }] };
 
-    it('400 COHORT_ANSWERS_INVALID before touching the database when answers and a legacy field are mixed, or a POST has neither full set', async () => {
-      const { db, service } = setup(jest.fn());
-      await expect(service.apply(ID, USER, { ...fixed, answers, web3Experience: 'LT_1Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
-      await expect(service.apply(ID, USER, { ...fixed, answers, interestOther: null })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
-      await expect(service.apply(ID, USER, fixed)).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
-      await expect(service.apply(ID, USER, { ...fixed, web3Experience: 'LT_1Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
-      expect(db.tx).not.toHaveBeenCalled();
-    });
-
-    it('new shape: validates against the locked cohort questions and writes NULL legacy columns plus the snapshot', async () => {
+    it(' validates against the locked cohort questions and writes NULL legacy columns plus the snapshot', async () => {
       const script = jest.fn().mockResolvedValueOnce(accepting).mockResolvedValueOnce(done).mockResolvedValueOnce({ rowCount: 0, rows: [] })
         .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: ID }] }).mockResolvedValue({ rowCount: 1, rows: [{ id: ID, answers: [] }] });
       const { service } = setup(script);
@@ -75,25 +67,26 @@ describe('CohortApplicationsService.apply', () => {
       expect(JSON.parse(params[11] as string).map((a: { questionId: string }) => a.questionId)).toEqual(['web3_experience', 'interest_areas']);
     });
 
-    it('new shape: a required question left out is 400 COHORT_ANSWERS_INVALID', async () => {
+    it('a required question left out is 400 COHORT_ANSWERS_INVALID', async () => {
       const { service } = setup(jest.fn().mockResolvedValueOnce(accepting).mockResolvedValueOnce(done));
       await expect(service.apply(ID, USER, { ...fixed, answers: [answers[0]] })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
     });
 
-    it('legacy shape: writes the legacy columns and an empty answers array', async () => {
-      const script = jest.fn().mockResolvedValueOnce(accepting).mockResolvedValueOnce(done).mockResolvedValueOnce({ rowCount: 0, rows: [] })
-        .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: ID }] }).mockResolvedValue({ rowCount: 1, rows: [{ id: ID, answers: [] }] });
+    it('re-opening a WITHDRAWN application writes the new shape (NULL legacy columns), even over a legacy-shape row', async () => {
+      const script = jest.fn().mockResolvedValueOnce(accepting).mockResolvedValueOnce(done).mockResolvedValueOnce({ rowCount: 1, rows: [{ id: ID, status: 'WITHDRAWN' }] })
+        .mockResolvedValue({ rowCount: 1, rows: [{ id: ID, answers: [] }] });
       const { service } = setup(script);
-      await service.apply(ID, USER, input);
-      const params = script.mock.calls.find(([sql]) => /INSERT INTO cohort_application/.test(sql))![1] as unknown[];
-      expect(params.slice(6)).toEqual(['LT_1Y', 'DEVELOPER', null, ['KOL'], null, '[]']);
+      await service.apply(ID, USER, { ...fixed, answers });
+      const params = script.mock.calls.find(([sql]) => /UPDATE cohort_application/.test(sql))![1] as unknown[];
+      expect(params.slice(6, 11)).toEqual([null, null, null, null, null]);
+      expect(JSON.parse(params[11] as string)).toHaveLength(2);
     });
-  });
 
-  it('400 COHORT_OTHER_DETAIL_REQUIRED before touching the database', async () => {
-    const { db, service } = setup(jest.fn());
-    await expect(service.apply(ID, USER, { ...input, activityType: 'OTHER' })).rejects.toMatchObject({ message: 'COHORT_OTHER_DETAIL_REQUIRED' });
-    expect(db.tx).not.toHaveBeenCalled();
+    it('400 COHORT_OTHER_DETAIL_REQUIRED when the withDetail option is chosen without other', async () => {
+      const { service } = setup(jest.fn().mockResolvedValueOnce(accepting).mockResolvedValueOnce(done));
+      await expect(service.apply(ID, USER, { ...fixed, answers: [answers[0], { questionId: 'interest_areas', choices: ['OTHER'] }] }))
+        .rejects.toMatchObject({ message: 'COHORT_OTHER_DETAIL_REQUIRED' });
+    });
   });
 });
 
@@ -108,14 +101,12 @@ describe('CohortApplicationsService.update / withdraw', () => {
     await expect(make(jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [{ ...row, accepting: false }] })).update(ID, USER, {})).rejects.toMatchObject({ message: 'COHORT_NOT_ACCEPTING' });
   });
 
-  it('update: merges onto the stored row, so switching to OTHER without detail is rejected', async () => {
-    await expect(make(jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [row] })).update(ID, USER, { activityType: 'OTHER' })).rejects.toMatchObject({ message: 'COHORT_OTHER_DETAIL_REQUIRED' });
-  });
-
-  it('update: legacy fields on a new-shape row, or answers mixed with legacy fields, are 400 COHORT_ANSWERS_INVALID', async () => {
-    const newRow = { ...row, web3_experience: null, activity_type: null, interest_areas: null, answers: [{ questionId: 'web3_experience' }] };
-    await expect(make(jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [newRow] })).update(ID, USER, { web3Experience: 'GT_3Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
-    await expect(make(jest.fn()).update(ID, USER, { answers: [], activityType: 'KOL' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
+  it('update: a fixed-only patch on a stored legacy-shape row rewrites its legacy columns unchanged (answers stay [])', async () => {
+    const legacyRow = { ...row, activity_type: 'OTHER', activity_type_other: 'farmer', interest_areas: ['KOL', 'OTHER'], interest_other: 'art' };
+    const script = jest.fn().mockResolvedValue({ rowCount: 1, rows: [legacyRow] });
+    await make(script).update(ID, USER, { displayName: 'B' });
+    const write = script.mock.calls.find(([sql]) => /UPDATE cohort_application/.test(sql))![1] as unknown[];
+    expect(write.slice(1, 11)).toEqual(['B', '@abcde', '@a', 'hi', 'LT_1Y', 'OTHER', 'farmer', ['KOL', 'OTHER'], 'art', '[]']);
   });
 
   it('update: answers replace everything against the current questions and null the legacy columns; fixed-only patches keep stored answers', async () => {

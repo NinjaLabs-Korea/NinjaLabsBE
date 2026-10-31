@@ -1,10 +1,19 @@
 import { describeDb } from '../test-db/describe-db';
 import { E2eApp, Session, startApp, UUID } from './support/harness';
 
+/** 기본 질문 답변: 관심 분야만 바꿔서 (상세 선택지 OTHER 는 other) */
+const answersWith = (areas: string[], other?: string) =>
+  [{ questionId: 'web3_experience', choices: ['Y1_3'] }, { questionId: 'interest_areas', choices: areas, ...(other === undefined ? {} : { other }) }];
 const body = (over: Record<string, unknown> = {}) => ({
-  displayName: '홍길동', telegram: 'https://t.me/ninja_kr', twitter: '@ninja_kr', web3Experience: 'Y1_3', activityType: 'DEVELOPER',
-  interestAreas: ['DEVELOPER', 'KOL'], intro: 'I want to build on Injective.', ...over,
+  displayName: '홍길동', telegram: 'https://t.me/ninja_kr', twitter: '@ninja_kr', intro: 'I want to build on Injective.',
+  answers: answersWith(['DEVELOPER', 'KOL']), ...over,
 });
+/** FE 릴리스 #69 전의 옛 본문: 이제 DTO 검증 400 (forbidNonWhitelisted) */
+const OLD_BODY = {
+  displayName: '홍길동', telegram: 'https://t.me/ninja_kr', twitter: '@ninja_kr', web3Experience: 'Y1_3', activityType: 'DEVELOPER',
+  interestAreas: ['DEVELOPER', 'KOL'], intro: 'I want to build on Injective.',
+};
+const OLD_FIELDS = ['web3Experience', 'activityType', 'activityTypeOther', 'interestAreas', 'interestOther'];
 const NIL = '00000000-0000-4000-8000-000000000000';
 const HOUR = 3_600_000;
 
@@ -28,6 +37,16 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
     const opened = await e2e.post(`/admin/cohorts/${created.body.id}/transition`, { to: 'OPEN' }, asAdmin);
     expect(opened.status).toBe(201);
     return created.body.id as string;
+  }
+
+  /** 옛 형식(0021 전) 행을 DB 에 직접 심는다: API 는 옛 본문을 더 받지 않지만 운영 DB 에는 남아 있어 읽기/필터/CSV 가 다뤄야 한다 */
+  async function insertLegacy(cohortId: string, userId: string, v: Record<string, unknown>): Promise<string> {
+    const r = await e2e.db.query<{ id: string }>(
+      `INSERT INTO cohort_application (cohort_id, user_id, display_name, telegram, twitter, intro, web3_experience, activity_type, activity_type_other, interest_areas, interest_other)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[], $11) RETURNING id`,
+      [cohortId, userId, v.displayName ?? '홍길동', v.telegram ?? '@ninja_kr', v.twitter ?? '@ninja_kr', v.intro ?? 'I want to build on Injective.',
+        v.web3Experience ?? 'Y1_3', v.activityType ?? 'DEVELOPER', v.activityTypeOther ?? null, v.interestAreas ?? ['DEVELOPER'], v.interestOther ?? null]);
+    return r.rows[0].id;
   }
 
   it('GET /cohorts/current is public, answers a literal JSON null with no OPEN cohort, then the cohort shape', async () => {
@@ -102,11 +121,11 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
     const apply = (json: unknown, token = user.accessToken, id = cohortId) => e2e.post(`/cohorts/${id}/applications`, json, { token });
 
     for (const bad of [
-      body({ telegram: 'ab' }), body({ twitter: 'way_too_long_for_twitter' }), body({ web3Experience: 'x' }), body({ activityType: 'NINJA' }),
-      body({ interestAreas: [] }), body({ interestAreas: ['STUDENT'] }), body({ displayName: '' }), body({ intro: '  ' }), body({ intro: 'x'.repeat(1001) }),
+      body({ telegram: 'ab' }), body({ twitter: 'way_too_long_for_twitter' }), body({ answers: undefined }), body({ answers: null }), body({ answers: 'x' }),
+      body({ answers: [{ questionId: 'interest_areas', choices: ['KOL', 'KOL'] }] }), body({ displayName: '' }), body({ intro: '  ' }), body({ intro: 'x'.repeat(1001) }),
       body({ status: 'ACCEPTED' }), body({ userId: NIL }),
     ]) expect((await apply(bad)).status).toBe(400);
-    const noOther = await apply(body({ activityType: 'OTHER' }));
+    const noOther = await apply(body({ answers: answersWith(['OTHER']) }));
     expect([noOther.status, noOther.body.message]).toEqual([400, 'COHORT_OTHER_DETAIL_REQUIRED']);
     expect((await apply(body(), user.accessToken, 'not-a-uuid')).status).toBe(400);
     expect((await apply(body(), user.accessToken, NIL)).body.message).toBe('COHORT_NOT_FOUND');
@@ -115,13 +134,14 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
     const notReady = await apply(body(), fresh.accessToken);
     expect([notReady.status, notReady.body.message]).toEqual([409, 'PROFILE_REQUIRED']);
 
-    const ok = await apply(body({ activityType: 'OTHER', activityTypeOther: 'farmer', interestAreas: ['OTHER', 'OTHER'], interestOther: 'art' }));
+    const ok = await apply(body({ answers: answersWith(['OTHER'], ' art ') }));
     expect(ok.status).toBe(201);
     expect(ok.body).toMatchObject({
-      id: expect.stringMatching(UUID), cohortId, status: 'SUBMITTED', displayName: '홍길동', telegram: '@ninja_kr', twitter: '@ninja_kr', web3Experience: 'Y1_3',
-      activityType: 'OTHER', activityTypeOther: 'farmer', interestAreas: ['OTHER'], interestOther: 'art', editable: true, withdrawable: true,
+      id: expect.stringMatching(UUID), cohortId, status: 'SUBMITTED', displayName: '홍길동', telegram: '@ninja_kr', twitter: '@ninja_kr', web3Experience: null,
+      activityType: null, activityTypeOther: null, interestAreas: null, interestOther: null, editable: true, withdrawable: true,
       cohort: { id: cohortId, status: 'OPEN', acceptingApplications: true },
     });
+    expect(ok.body.answers[1]).toMatchObject({ questionId: 'interest_areas', choices: [expect.objectContaining({ id: 'OTHER' })], other: 'art' });
     expect(ok.body).not.toHaveProperty('reviewNote');
 
     const dup = await apply(body());
@@ -153,10 +173,11 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
 
     expect((await patch({ intro: 'hacked' }, stranger.accessToken)).body.message).toBe('COHORT_APPLICATION_NOT_FOUND');
     expect((await e2e.post(`/cohorts/applications/${id}/withdraw`, {}, { token: stranger.accessToken })).status).toBe(404);
-    for (const bad of [{ intro: null }, { telegram: 'x' }, { interestAreas: [] }, { status: 'ACCEPTED' }, { activityType: 'OTHER' }]) expect((await patch(bad)).status).toBe(400);
-    const edited = await patch({ intro: 'edited', telegram: '@new_handle', interestAreas: ['RESEARCHER'] });
+    for (const bad of [{ intro: null }, { telegram: 'x' }, { answers: null }, { status: 'ACCEPTED' }, { activityType: 'OTHER' }, { interestAreas: ['KOL'] }]) expect((await patch(bad)).status).toBe(400);
+    const edited = await patch({ intro: 'edited', telegram: '@new_handle', answers: answersWith(['RESEARCHER']) });
     expect(edited.status).toBe(200);
-    expect(edited.body).toMatchObject({ id, intro: 'edited', telegram: '@new_handle', interestAreas: ['RESEARCHER'], displayName: '홍길동' });
+    expect(edited.body).toMatchObject({ id, intro: 'edited', telegram: '@new_handle', displayName: '홍길동' });
+    expect(edited.body.answers[1].choices.map((c: { id: string }) => c.id)).toEqual(['RESEARCHER']);
     expect((await patch({})).status).toBe(200);
 
     const reviewed = await e2e.post(`/admin/cohort-applications/${id}/review`, { decision: 'REJECTED', note: 'internal: bot-like' }, asAdmin);
@@ -197,8 +218,9 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
       const u = await e2e.loginOnboarded();
       return (await e2e.post(`/cohorts/${cohortId}/applications`, body(over), { token: u.accessToken })).body.id as string;
     };
-    const a = await mk({ displayName: 'Alice Kim', activityType: 'KOL', interestAreas: ['KOL'] });
-    const b = await mk({ displayName: 'Bob Lee', telegram: '@bob_lee_tg', activityType: 'STUDENT', interestAreas: ['BIZDEV', 'RESEARCHER'] });
+    // a 는 옛 형식(0021 전) 행: 옛 별칭 필터 activityType 은 옛 컬럼에서만 찾는다
+    const a = await insertLegacy(cohortId, (await e2e.loginOnboarded()).userId, { displayName: 'Alice Kim', activityType: 'KOL', interestAreas: ['KOL'] });
+    const b = await mk({ displayName: 'Bob Lee', telegram: '@bob_lee_tg', answers: answersWith(['BIZDEV', 'RESEARCHER']) });
     await e2e.post(`/admin/cohort-applications/${b}/review`, { decision: 'ACCEPTED' }, asAdmin);
 
     const list = (qs = '') => e2e.get(`/admin/cohorts/${cohortId}/applications${qs}`, asAdmin);
@@ -246,8 +268,9 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
     const fixed = { displayName: '홍길동', telegram: 'https://t.me/ninja_kr', twitter: '@ninja_kr', intro: 'I want to build on Injective.' };
     const bad = await e2e.post(`/cohorts/${cohortId}/applications`, { ...fixed, answers: [{ questionId: 'web3_experience', choices: ['Y1_3'] }] }, { token: u.accessToken });
     expect([bad.status, bad.body.message]).toEqual([400, 'COHORT_ANSWERS_INVALID']);
+    // an old field next to answers is now a plain DTO validation 400 (forbidNonWhitelisted), not COHORT_ANSWERS_INVALID
     const mixed = await e2e.post(`/cohorts/${cohortId}/applications`, { ...fixed, web3Experience: 'LT_1Y', answers: [{ questionId: 'web3_experience', choices: ['LT_1Y'] }] }, { token: u.accessToken });
-    expect([mixed.status, mixed.body.message]).toEqual([400, 'COHORT_ANSWERS_INVALID']);
+    expect([mixed.status, mixed.body.message]).toEqual([400, ['property web3Experience should not exist']]);
     const ok = await e2e.post(`/cohorts/${cohortId}/applications`, { ...fixed, answers: [{ questionId: 'web3_experience', choices: ['GT_3Y'] }, { questionId: textId, text: ' Injective ' }] }, { token: u.accessToken });
     expect(ok.status).toBe(201);
     expect(ok.body.answers).toEqual([
@@ -260,22 +283,45 @@ describeDb('cohort recruitment over HTTP (e2e)', () => {
     expect(list.body.items[0].answers).toHaveLength(2);
     expect((await e2e.get(`/admin/cohorts/${cohortId}/applications?questionId=bad%20id&optionId=x`, asAdmin)).status).toBe(400);
 
-    // the old FE body (no answers) still works for a user on the legacy path
+    // a stored legacy-shape row (pre-0021) still reads with synthesized answers and the deprecated response fields
     const legacyUser = await e2e.loginOnboarded();
-    const legacy = await e2e.post(`/cohorts/${cohortId}/applications`, body(), { token: legacyUser.accessToken });
-    expect(legacy.status).toBe(201);
-    expect(legacy.body.answers.map((a: { questionId: string }) => a.questionId)).toEqual(['web3_experience', 'interest_areas', 'activity_type']);
-    expect(legacy.body.web3Experience).toBe('Y1_3');
+    const legacyId = await insertLegacy(cohortId, legacyUser.userId, { activityType: 'STUDENT', interestAreas: ['RESEARCHER'] });
+    const legacy = await e2e.get('/cohorts/applications/me', { token: legacyUser.accessToken });
+    expect(legacy.body[0].id).toBe(legacyId);
+    expect(legacy.body[0].answers.map((a: { questionId: string }) => a.questionId)).toEqual(['web3_experience', 'interest_areas', 'activity_type']);
+    expect(legacy.body[0].web3Experience).toBe('Y1_3');
+    // a fixed-only PATCH on it keeps the legacy row; an old-field PATCH is a DTO 400
+    expect((await e2e.patch(`/cohorts/applications/${legacyId}`, { intro: 'still legacy' }, { token: legacyUser.accessToken })).body)
+      .toMatchObject({ intro: 'still legacy', activityType: 'STUDENT', interestAreas: ['RESEARCHER'] });
+    expect((await e2e.patch(`/cohorts/applications/${legacyId}`, { activityType: 'KOL' }, { token: legacyUser.accessToken })).status).toBe(400);
+  });
+
+  it('the old (pre-#69) application body is refused with a plain DTO validation 400 on POST and PATCH, and writes nothing', async () => {
+    const cohortId = await openCohort();
+    const u = await e2e.loginOnboarded();
+    const old = await e2e.post(`/cohorts/${cohortId}/applications`, { ...OLD_BODY, activityType: 'OTHER', activityTypeOther: 'farmer', interestOther: null }, { token: u.accessToken });
+    expect(old.status).toBe(400);
+    expect(old.body).toMatchObject({ statusCode: 400, error: 'Bad Request' });
+    expect(Array.isArray(old.body.message)).toBe(true);
+    for (const field of OLD_FIELDS) expect(old.body.message).toContain(`property ${field} should not exist`);
+    expect(old.body.message).toEqual(expect.arrayContaining([expect.stringMatching(/^answers /)]));
+    expect((await e2e.db.query(`SELECT 1 FROM cohort_application WHERE cohort_id = $1 AND user_id = $2`, [cohortId, u.userId])).rowCount).toBe(0);
+
+    const id: string = (await e2e.post(`/cohorts/${cohortId}/applications`, body(), { token: u.accessToken })).body.id;
+    for (const field of OLD_FIELDS) {
+      const res = await e2e.patch(`/cohorts/applications/${id}`, { [field]: null }, { token: u.accessToken });
+      expect([res.status, res.body.message]).toEqual([400, [`property ${field} should not exist`]]);
+    }
   });
 
   it('CSV export: headers, BOM, filters, escaping and formula-injection neutralization', async () => {
     const cohortId = await openCohort();
     const u = await e2e.loginOnboarded();
-    const evil = await e2e.post(`/cohorts/${cohortId}/applications`, body({
+    // a legacy-shape row (pre-0021 data) whose free-text "other" details start with formula characters
+    const evilId = await insertLegacy(cohortId, u.userId, {
       displayName: '=HYPERLINK("http://evil.example","click")', intro: '@SUM(1+1)\nsecond, "line"', activityType: 'OTHER', activityTypeOther: '+cmd|calc', interestAreas: ['OTHER'], interestOther: '-2+3',
-    }), { token: u.accessToken });
-    expect(evil.status).toBe(201);
-    await e2e.post(`/admin/cohort-applications/${evil.body.id}/review`, { decision: 'REJECTED', note: '=1+1' }, asAdmin);
+    });
+    await e2e.post(`/admin/cohort-applications/${evilId}/review`, { decision: 'REJECTED', note: '=1+1' }, asAdmin);
 
     const res = await e2e.get(`/admin/cohorts/${cohortId}/applications.csv`, asAdmin);
     expect(res.status).toBe(200);

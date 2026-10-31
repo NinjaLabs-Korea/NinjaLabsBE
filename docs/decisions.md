@@ -73,7 +73,7 @@
 | 항목 | 결정 | 근거 / 비고 |
 |---|---|---|
 | **[결정 2026-10-31] 지원서 질문은 기수마다 편집** | 고정: `displayName`, `telegram`, `twitter`, `intro`(컬럼, 항상 필수). 나머지는 `cohort.questions`(JSONB, 0021)를 운영자가 `PUT /admin/cohorts/:id/questions`로 통째로 편집. 기본 질문은 Web3 경력 + 참여하고 싶은 분야(기타 상세)이고 "현재 활동 유형"은 폐기(소속은 intro에) | 고정 필드는 검색(`q`), 핸들 정규화/CHECK, 심사 화면이 의존한다. 답변은 쓰는 순간 질문 라벨을 복사한 **스냅샷**이라 질문을 고쳐도 낸 지원서는 안 바뀐다. 옛 행은 읽을 때 합성(`legacyAnswers`), 쓰기 모양은 `chk_cohort_application_answer_shape`가 옛/새 형식 중 하나로 강제 |
-| 옛 지원서 본문 호환 | `answers` 없이 옛 필드(`web3Experience` 등)를 보내는 본문은 계속 받아 옛 컬럼에 쓴다 (deprecated) | FE 질문 폼(FE-1) 릴리스 전 구 FE가 운영 중이라 BE를 먼저 배포한다. **FE-1 배포 뒤 정리**: DTO의 옛 필드, `legacyOfInput`, 옛 PATCH 분기, 응답의 deprecated 필드, 별칭 필터(`interestArea`, `activityType`)를 지운다 |
+| 옛 지원서 본문 호환 | **[2026-10-31 요청 본문 경로 제거]** FE 릴리스 #69(질문 폼) 운영 반영 뒤 DTO의 옛 필드, `legacyOfInput`, `normalizeOtherDetails`, 옛 PATCH 분기를 지웠다. 옛 본문은 400 DTO 검증 실패(forbidNonWhitelisted). 옛 형식 행의 읽기 합성(`legacyAnswers`), 0021 CHECK, 응답의 deprecated 필드, 별칭 필터(`interestArea`, `activityType`)는 남긴다 | 운영 DB에 옛 형식 행이 남아 있어 읽기 쪽은 필요하다. 응답 deprecated 필드와 별칭 필터는 요청 본문이 아니라 이번 범위 밖(운영 FE는 별칭 필터를 쓰지 않는다): 지울지는 따로 정한다 |
 | 지갑 충돌 코드 분리 | `WALLET_LINKED_TO_OTHER_ACCOUNT`(주소가 다른 계정에), `ACCOUNT_ALREADY_HAS_WALLET`(내 대표 지갑이 이미 있음). `WALLET_ALREADY_LINKED`는 알 수 없는 제약 충돌의 폴백 | 제약 이름(`uq_wallet_chain_address_active` / `uq_wallet_primary_per_user`)으로 구분. 새 코드를 아는 FE가 먼저 배포돼야 한다 |
 | 보상 미지급 문구 | 사용자/운영자에게 보이는 말은 "보상 미지급"(ko), 내부 식별자(`forfeit*`, `SUBMISSION_AWARD_FORFEITED`, 코멘트 접두사 `forfeited:`)는 그대로 | 옛 표현은 돈·법적 어조가 세서 쓰지 않는다. `CANCELLED` payout은 항상 "지급 취소"로 쓴다 |
 

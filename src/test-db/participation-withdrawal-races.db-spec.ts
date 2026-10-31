@@ -72,8 +72,8 @@ describeDb('participation and account withdrawal races', () => {
       const { id } = await cohortAdmin.create(adminId, { name: unique('race-') });
       await cohortAdmin.transition(id, 'OPEN', adminId);
       const input = {
-        displayName: 'Applicant', telegram: '@ninja', twitter: '@ninja', web3Experience: 'Y1_3',
-        activityType: 'DEVELOPER', interestAreas: ['DEVELOPER'], intro: 'Joining the cohort.',
+        displayName: 'Applicant', telegram: '@ninja', twitter: '@ninja', intro: 'Joining the cohort.',
+        answers: [{ questionId: 'web3_experience', choices: ['Y1_3'] }, { questionId: 'interest_areas', choices: ['DEVELOPER'] }],
       };
       participate = async () => cohorts.apply(id, userId, input) as Promise<{ id: string }>;
       rows = async () => (await db.query<{ id: string; status: string }>(

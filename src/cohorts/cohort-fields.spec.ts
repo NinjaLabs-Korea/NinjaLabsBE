@@ -1,11 +1,13 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { CohortApplicationFields, UpdateCohortApplicationDto, normalizeHandle, normalizeOtherDetails } from './cohort-fields';
+import { CohortApplicationFields, UpdateCohortApplicationDto, normalizeHandle } from './cohort-fields';
 
 const valid = {
-  displayName: '  홍길동 ', telegram: 'https://t.me/ninja_kr', twitter: '@Ninja_KR', web3Experience: 'Y1_3',
-  activityType: 'DEVELOPER', interestAreas: ['DEVELOPER', 'KOL', 'DEVELOPER'], intro: ' hello ',
+  displayName: '  홍길동 ', telegram: 'https://t.me/ninja_kr', twitter: '@Ninja_KR', intro: ' hello ',
+  answers: [{ questionId: 'web3_experience', choices: ['Y1_3'] }, { questionId: 'interest_areas', choices: ['DEVELOPER', 'KOL'] }],
 };
+/** 옛 FE 본문 (FE 릴리스 #69 전): 이제 DTO 에 없는 필드라 forbidNonWhitelisted 로 거절된다 */
+const LEGACY_BODY = { web3Experience: 'Y1_3', activityType: 'OTHER', activityTypeOther: 'farmer', interestAreas: ['DEVELOPER', 'OTHER'], interestOther: 'art' };
 async function check<T extends object>(cls: new () => T, plain: object) {
   const dto = plainToInstance(cls, plain);
   return { dto, errors: (await validate(dto, { whitelist: true, forbidNonWhitelisted: true })).map((e) => e.property) };
@@ -43,16 +45,16 @@ describe('handle normalization', () => {
 });
 
 describe('CohortApplicationFields', () => {
-  it('normalizes and accepts a valid application (handles, trimmed text, de-duplicated interest areas)', async () => {
+  it('normalizes and accepts a valid application (handles, trimmed text)', async () => {
     const { dto, errors } = await check(CohortApplicationFields, valid);
     expect(errors).toEqual([]);
-    expect(dto).toMatchObject({ displayName: '홍길동', telegram: '@ninja_kr', twitter: '@Ninja_KR', intro: 'hello', interestAreas: ['DEVELOPER', 'KOL'] });
+    expect(dto).toMatchObject({ displayName: '홍길동', telegram: '@ninja_kr', twitter: '@Ninja_KR', intro: 'hello' });
   });
 
   it.each([
     ['telegram', 'abc'], ['telegram', 'a b c d e'], ['telegram', '1abcde'], ['twitter', 'x'.repeat(16)], ['twitter', 'bad-handle'],
-    ['web3Experience', 'GT_10Y'], ['activityType', 'NINJA'], ['interestAreas', []], ['interestAreas', ['STUDENT']], ['interestAreas', 'DEVELOPER'],
-    ['displayName', '   '], ['displayName', 'x'.repeat(61)], ['intro', '   '], ['intro', 'x'.repeat(1001)], ['activityTypeOther', 'x'.repeat(61)],
+    ['answers', undefined], ['answers', null], ['answers', 'web3_experience'],
+    ['displayName', '   '], ['displayName', 'x'.repeat(61)], ['intro', '   '], ['intro', 'x'.repeat(1001)],
   ])('rejects %s = %j', async (field, value) => {
     const { errors } = await check(CohortApplicationFields, { ...valid, [field]: value });
     expect(errors).toContain(field);
@@ -73,62 +75,44 @@ describe.each([['create', CohortApplicationFields], ['update', UpdateCohortAppli
   it.each([
     ['displayName', '\u200B\u200B'], ['displayName', 'ab\u202Ecd'], ['displayName', 'a\nb'], ['displayName', '\u3164\u2800'],
     ['intro', '\u200B\u200B\u200B'], ['intro', 'hi \u202E evil'], ['intro', 'x\u2066y'],
-    ['activityTypeOther', 'a\u202Eb'], ['interestOther', 'a\nb'],
   ])('rejects %s = %j', async (field, value) => {
     expect((await run({ [field]: value })).errors).toContain(field);
   });
   it('accepts Korean/emoji names with ZWJ and multi-line intro', async () => {
-    const { errors, dto } = await run({ displayName: '홍길동 👩‍💻', intro: 'line1\nline2\r\n\nline4', activityTypeOther: ' farmer ' });
+    const { errors } = await run({ displayName: '홍길동 👩‍💻', intro: 'line1\nline2\r\n\nline4' });
     expect(errors).toEqual([]);
-    expect(dto).toMatchObject({ activityTypeOther: 'farmer' });
-  });
-  it('treats invisible-only other details as blank (null)', async () => {
-    const { errors, dto } = await run({ activityTypeOther: '\u200B', interestOther: '\u3164' });
-    expect(errors).toEqual([]);
-    expect(dto).toMatchObject({ activityTypeOther: null, interestOther: null });
   });
 });
 
 describe('UpdateCohortApplicationDto', () => {
   it('everything is optional but NOT NULL fields reject null', async () => {
     expect((await check(UpdateCohortApplicationDto, {})).errors).toEqual([]);
-    for (const field of ['displayName', 'telegram', 'twitter', 'web3Experience', 'activityType', 'interestAreas', 'intro']) {
+    for (const field of ['displayName', 'telegram', 'twitter', 'answers', 'intro']) {
       expect((await check(UpdateCohortApplicationDto, { [field]: null })).errors).toContain(field);
     }
-    expect((await check(UpdateCohortApplicationDto, { activityTypeOther: null, interestOther: null })).errors).toEqual([]);
   });
 });
 
-describe('normalizeOtherDetails', () => {
-  const base = { activityType: 'DEVELOPER', interestAreas: ['KOL'] };
-  it('drops details that are not selected', () => {
-    expect(normalizeOtherDetails({ ...base, activityTypeOther: 'x', interestOther: 'y' })).toMatchObject({ activityTypeOther: null, interestOther: null });
+describe('old (pre-#69) body is no longer accepted', () => {
+  const fixed = { displayName: '홍길동', telegram: '@ninja_kr', twitter: '@ninja', intro: 'hello' };
+  it('create: the old fields alone are a DTO validation error on answers plus every old field', async () => {
+    const { errors } = await check(CohortApplicationFields, { ...fixed, ...LEGACY_BODY });
+    expect(errors.sort()).toEqual(['activityType', 'activityTypeOther', 'answers', 'interestAreas', 'interestOther', 'web3Experience']);
   });
-  it('keeps trimmed details when OTHER is selected', () => {
-    expect(normalizeOtherDetails({ activityType: 'OTHER', activityTypeOther: ' farmer ', interestAreas: ['OTHER'], interestOther: ' art ' }))
-      .toMatchObject({ activityTypeOther: 'farmer', interestOther: 'art' });
-  });
-  it('treats invisible-only details as missing', () => {
-    expect(() => normalizeOtherDetails({ activityType: 'OTHER', activityTypeOther: '\u200B', interestAreas: ['KOL'] })).toThrow('COHORT_OTHER_DETAIL_REQUIRED');
-  });
-  it('requires details when OTHER is selected (COHORT_OTHER_DETAIL_REQUIRED)', () => {
-    expect(() => normalizeOtherDetails({ ...base, activityType: 'OTHER' })).toThrow('COHORT_OTHER_DETAIL_REQUIRED');
-    expect(() => normalizeOtherDetails({ ...base, interestAreas: ['KOL', 'OTHER'], interestOther: '  ' })).toThrow('COHORT_OTHER_DETAIL_REQUIRED');
+  it.each(Object.keys(LEGACY_BODY))('create and update: %s next to answers is forbidden (even null)', async (field) => {
+    expect((await check(CohortApplicationFields, { ...valid, [field]: LEGACY_BODY[field as keyof typeof LEGACY_BODY] })).errors).toEqual([field]);
+    expect((await check(UpdateCohortApplicationDto, { [field]: null })).errors).toEqual([field]);
   });
 });
 
-describe('answers (new body shape)', () => {
+describe('answers body', () => {
   const fixed = { displayName: '홍길동', telegram: '@ninja_kr', twitter: '@ninja', intro: 'hello' };
   const answers = [{ questionId: 'web3_experience', choices: ['Y1_3'] }, { questionId: 'why', text: '이유' }, { questionId: 'x', choices: ['OTHER'], other: '직접' }];
 
-  it('accepts a body with answers and no legacy fields, on create and update', async () => {
+  it('accepts a body with answers, on create and update; an empty answers array is a valid shape', async () => {
     expect((await check(CohortApplicationFields, { ...fixed, answers })).errors).toEqual([]);
+    expect((await check(CohortApplicationFields, { ...fixed, answers: [] })).errors).toEqual([]);
     expect((await check(UpdateCohortApplicationDto, { answers })).errors).toEqual([]);
-  });
-
-  it('legacy fields are optional on create (deprecated) but still validated when sent', async () => {
-    expect((await check(CohortApplicationFields, { ...fixed, web3Experience: 'LT_1Y', activityType: 'KOL', interestAreas: ['KOL'] })).errors).toEqual([]);
-    expect((await check(CohortApplicationFields, { ...fixed, web3Experience: 'nope' })).errors).toEqual(['web3Experience']);
   });
 
   it('checks the answer shape: id pattern, unique choices, 20 choices, 30 answers, no extra keys, answers not null', async () => {

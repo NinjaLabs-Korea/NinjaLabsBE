@@ -19,8 +19,15 @@ import { describeDb } from './describe-db';
 import { auditActions, createDb, createUser, TEST_JWT_SECRET, testConfig, testSslEnv, unique } from './harness';
 
 const base = {
-  displayName: '홍길동', telegram: '@ninja_kr', twitter: '@ninja_kr', web3Experience: 'Y1_3', activityType: 'DEVELOPER',
-  interestAreas: ['DEVELOPER', 'KOL'], intro: 'I want to build on Injective.',
+  displayName: '홍길동', telegram: '@ninja_kr', twitter: '@ninja_kr', intro: 'I want to build on Injective.',
+  answers: [{ questionId: 'web3_experience', choices: ['Y1_3'] }, { questionId: 'interest_areas', choices: ['DEVELOPER', 'KOL'] }],
+};
+/** 기본 질문 답변: 관심 분야만 바꿔서 (OTHER 상세는 other) */
+const answersWith = (areas: string[], other?: string) =>
+  [{ questionId: 'web3_experience', choices: ['Y1_3'] }, { questionId: 'interest_areas', choices: areas, ...(other === undefined ? {} : { other }) }];
+type LegacyRow = {
+  displayName?: string; telegram?: string; twitter?: string; intro?: string;
+  web3Experience: string; activityType: string; activityTypeOther?: string | null; interestAreas: string[]; interestOther?: string | null;
 };
 const HOUR = 3_600_000;
 
@@ -56,6 +63,19 @@ describeDb('cohort recruitment on a real database', () => {
     return id;
   }
 
+  /**
+   * 옛 형식(0021 전) 지원서 행을 DB 에 직접 심는다. API 는 더 이상 옛 본문을 받지 않지만 운영 DB 에는 이 모양의 행이 남아 있어
+   * 읽기 합성(legacyAnswers), 필터, CSV, 고정 필드 PATCH 가 계속 다뤄야 한다.
+   */
+  async function insertLegacy(cohortId: string, userId: string, v: LegacyRow): Promise<string> {
+    const r = await db.query<{ id: string }>(
+      `INSERT INTO cohort_application (cohort_id, user_id, display_name, telegram, twitter, intro, web3_experience, activity_type, activity_type_other, interest_areas, interest_other)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[], $11) RETURNING id`,
+      [cohortId, userId, v.displayName ?? '홍길동', v.telegram ?? '@ninja_kr', v.twitter ?? '@ninja_kr', v.intro ?? 'I want to build on Injective.',
+        v.web3Experience, v.activityType, v.activityTypeOther ?? null, v.interestAreas, v.interestOther ?? null]);
+    return r.rows[0].id;
+  }
+
   describe('GET /cohorts/current', () => {
     it('is null without an OPEN cohort and ignores DRAFT/CLOSED', async () => {
       await admin.create(adminId, { name: unique('draft-') });
@@ -81,8 +101,9 @@ describeDb('cohort recruitment on a real database', () => {
     it('stores a normalized application and returns the applicant view without review fields', async () => {
       const cohortId = await openCohort();
       const userId = await createUser(db);
-      const out = await apps.apply(cohortId, userId, { ...base, activityType: 'OTHER', activityTypeOther: ' farmer ' }) as Record<string, any>;
-      expect(out).toMatchObject({ cohortId, status: 'SUBMITTED', activityTypeOther: 'farmer', interestOther: null, editable: true, withdrawable: true });
+      const out = await apps.apply(cohortId, userId, { ...base, answers: answersWith(['OTHER'], ' farmer ') }) as Record<string, any>;
+      expect(out).toMatchObject({ cohortId, status: 'SUBMITTED', editable: true, withdrawable: true });
+      expect(out.answers[1]).toMatchObject({ questionId: 'interest_areas', other: 'farmer' });
       expect(out).not.toHaveProperty('reviewNote');
       expect(await auditActions(db, 'cohort_application', out.id)).toEqual(['COHORT_APPLICATION_SUBMITTED']);
     });
@@ -145,18 +166,19 @@ describeDb('cohort recruitment on a real database', () => {
       expect(JSON.stringify(list)).not.toContain('private operator note');
     });
 
-    it('update merges fields and re-checks OTHER details; only the owner, only SUBMITTED, only while accepting', async () => {
+    it('update merges fields and re-checks withDetail answers; only the owner, only SUBMITTED, only while accepting', async () => {
       const cohortId = await openCohort();
       const me = await createUser(db);
       const other = await createUser(db);
       const { id } = await apps.apply(cohortId, me, base) as { id: string };
 
       await expect(apps.update(id, other, { intro: 'x' })).rejects.toMatchObject({ message: 'COHORT_APPLICATION_NOT_FOUND' });
-      await expect(apps.update(id, me, { interestAreas: ['OTHER'] })).rejects.toMatchObject({ message: 'COHORT_OTHER_DETAIL_REQUIRED' });
-      const ok = await apps.update(id, me, { intro: 'edited', interestAreas: ['OTHER'], interestOther: 'robotics' }) as Record<string, any>;
-      expect(ok).toMatchObject({ intro: 'edited', interestAreas: ['OTHER'], interestOther: 'robotics', displayName: base.displayName });
-      const back = await apps.update(id, me, { interestAreas: ['KOL'] }) as Record<string, any>;
-      expect(back.interestOther).toBeNull();
+      await expect(apps.update(id, me, { answers: answersWith(['OTHER']) })).rejects.toMatchObject({ message: 'COHORT_OTHER_DETAIL_REQUIRED' });
+      const ok = await apps.update(id, me, { intro: 'edited', answers: answersWith(['OTHER'], 'robotics') }) as Record<string, any>;
+      expect(ok).toMatchObject({ intro: 'edited', displayName: base.displayName });
+      expect(ok.answers[1]).toMatchObject({ other: 'robotics' });
+      const back = await apps.update(id, me, { answers: answersWith(['KOL'], 'dropped') }) as Record<string, any>;
+      expect(back.answers[1].other).toBeNull();
 
       await appAdmin.review(id, 'REJECTED', null, adminId);
       await expect(apps.update(id, me, { intro: 'late' })).rejects.toMatchObject({ message: 'COHORT_APPLICATION_NOT_SUBMITTED' });
@@ -239,9 +261,11 @@ describeDb('cohort recruitment on a real database', () => {
         const row = await apps.apply(cohortId, userId, { ...base, ...over }) as { id: string };
         return { userId, id: row.id };
       };
-      const a = await mk(`dev_${tag}`, { displayName: '50%_off', activityType: 'DEVELOPER', interestAreas: ['DEVELOPER'] });
-      const b = await mk(`kol_${tag}`, { displayName: 'Bob', telegram: '@bob_tele', activityType: 'KOL', interestAreas: ['KOL', 'BIZDEV'] });
-      const c = await mk(`stu_${tag}`, { displayName: '=HYPERLINK("http://evil")', twitter: '@carol_x', activityType: 'STUDENT', interestAreas: ['RESEARCHER'], intro: 'line1\nline2 "quoted", and a comma' });
+      const a = await mk(`dev_${tag}`, { displayName: '50%_off', answers: answersWith(['DEVELOPER']) });
+      // b 는 옛 형식(0021 전) 행: 옛 별칭 필터(activityType, interestArea)가 옛 컬럼에서 찾는다
+      const bUser = await createUser(db, { nickname: `kol_${tag}` });
+      const b = { userId: bUser, id: await insertLegacy(cohortId, bUser, { displayName: 'Bob', telegram: '@bob_tele', web3Experience: 'Y1_3', activityType: 'KOL', interestAreas: ['KOL', 'BIZDEV'] }) };
+      const c = await mk(`stu_${tag}`, { displayName: '=HYPERLINK("http://evil")', twitter: '@carol_x', answers: answersWith(['RESEARCHER']), intro: 'line1\nline2 "quoted", and a comma' });
       await appAdmin.review(c.id, 'ACCEPTED', '+cmd|calc', adminId);
       return { cohortId, tag, a, b, c };
     }
@@ -381,19 +405,37 @@ describeDb('cohort recruitment on a real database', () => {
       expect((await rowOf(out.id)).answers).toHaveLength(2);
       await expect(apps.apply(cohortId, await createUser(db), { ...fixed, answers: [answers()[0]] })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
       await expect(apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(['OTHER']) })).rejects.toMatchObject({ message: 'COHORT_OTHER_DETAIL_REQUIRED' });
-      await expect(apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(), web3Experience: 'LT_1Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
     });
 
-    it('legacy-shape POST still works, writes legacy columns with empty answers and its response has synthesized answers', async () => {
+    it('a stored legacy-shape row (pre-0021) reads as synthesized answers; a fixed-only PATCH keeps it legacy; an answers PATCH converts it', async () => {
       const cohortId = await openCohort();
-      const out = await apps.apply(cohortId, await createUser(db), { ...fixed, ...{ web3Experience: 'LT_1Y', activityType: 'STUDENT', interestAreas: ['RESEARCHER'] } }) as Record<string, any>;
-      expect(await rowOf(out.id)).toMatchObject({ web3_experience: 'LT_1Y', activity_type: 'STUDENT', interest_areas: ['RESEARCHER'], answers: [] });
+      const userId = await createUser(db);
+      const id = await insertLegacy(cohortId, userId, { web3Experience: 'LT_1Y', activityType: 'STUDENT', interestAreas: ['RESEARCHER'] });
+      const [out] = await apps.mine(userId) as Record<string, any>[];
+      expect(out.id).toBe(id);
       expect(out.answers.map((a: any) => a.questionId)).toEqual(['web3_experience', 'interest_areas', 'activity_type']);
       expect(out.answers[2].choices).toEqual([{ id: 'STUDENT', label: { ko: '학생', en: 'Student', zh: '学生' } }]);
-      expect(out.web3Experience).toBe('LT_1Y');
-      // a legacy PATCH on a legacy row works; answers on a legacy row convert it to the new shape; legacy fields on a new-shape row are refused
-      expect(await apps.update(out.id, (await db.query<{ user_id: string }>(`SELECT user_id FROM cohort_application WHERE id = $1`, [out.id])).rows[0].user_id, { activityType: 'KOL' }))
-        .toMatchObject({ activityType: 'KOL' });
+      expect(out.web3Experience).toBe('LT_1Y'); // deprecated response fields stay for old rows
+
+      const kept = await apps.update(id, userId, { intro: 'edited intro' }) as Record<string, any>;
+      expect(kept.intro).toBe('edited intro');
+      expect(await rowOf(id)).toMatchObject({ web3_experience: 'LT_1Y', activity_type: 'STUDENT', interest_areas: ['RESEARCHER'], answers: [] });
+      expect(kept.answers.map((a: any) => a.questionId)).toEqual(['web3_experience', 'interest_areas', 'activity_type']);
+
+      const converted = await apps.update(id, userId, { answers: answersWith(['KOL']) }) as Record<string, any>;
+      expect(await rowOf(id)).toMatchObject({ web3_experience: null, activity_type: null, activity_type_other: null, interest_areas: null, interest_other: null });
+      expect(converted.answers.map((a: any) => a.questionId)).toEqual(['web3_experience', 'interest_areas']);
+    });
+
+    it('re-applying after withdrawing a legacy-shape row writes the new shape on the same row', async () => {
+      const cohortId = await openCohort();
+      const userId = await createUser(db);
+      const id = await insertLegacy(cohortId, userId, { web3Experience: 'GT_3Y', activityType: 'OTHER', activityTypeOther: 'farmer', interestAreas: ['OTHER'], interestOther: 'art' });
+      await apps.withdraw(id, userId);
+      const again = await apps.apply(cohortId, userId, { ...fixed, answers: answersWith(['DEVELOPER']) }) as Record<string, any>;
+      expect(again).toMatchObject({ id, status: 'SUBMITTED' });
+      expect(await rowOf(id)).toMatchObject({ web3_experience: null, activity_type: null, activity_type_other: null, interest_areas: null, interest_other: null });
+      expect((await rowOf(id)).answers).toHaveLength(2);
     });
 
     it('PATCH: answers replace everything and null the legacy columns; a fixed-only PATCH keeps stored answers even after the form changed', async () => {
@@ -405,7 +447,6 @@ describeDb('cohort recruitment on a real database', () => {
       expect(kept.intro).toBe('edited intro');
       expect(kept.answers.map((a: any) => a.questionId)).toEqual(['web3_experience', 'interest_areas']); // not re-checked against the new form
       await expect(apps.update(id, userId, { answers: answers() })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' }); // validated against the CURRENT questions
-      await expect(apps.update(id, userId, { web3Experience: 'LT_1Y' })).rejects.toMatchObject({ message: 'COHORT_ANSWERS_INVALID' });
       const replaced = await apps.update(id, userId, { answers: [{ questionId: (await cohorts.current())!.questions[0].id, text: '새 답' }] }) as Record<string, any>;
       expect(replaced.answers).toHaveLength(1);
       expect(replaced.answers[0]).toMatchObject({ text: '새 답', choices: null });
@@ -430,7 +471,8 @@ describeDb('cohort recruitment on a real database', () => {
 
     it('filters: questionId+optionId match both legacy and new rows; the old aliases still work; a lone param is ignored', async () => {
       const cohortId = await openCohort();
-      const legacy = await apps.apply(cohortId, await createUser(db), { ...fixed, web3Experience: 'GT_3Y', activityType: 'KOL', interestAreas: ['DEVELOPER', 'KOL'] }) as { id: string };
+      const legacyUser = await createUser(db);
+      const legacy = { id: await insertLegacy(cohortId, legacyUser, { web3Experience: 'GT_3Y', activityType: 'KOL', interestAreas: ['DEVELOPER', 'KOL'] }) };
       const fresh = await apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(['DEVELOPER']) }) as { id: string };
       const other = await apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(['BIZDEV']) }) as { id: string };
       const ids = async (f: Parameters<CohortApplicationAdminService['list']>[1]) => (await appAdmin.list(cohortId, f)).items.map((i) => i.id).sort();
@@ -447,7 +489,8 @@ describeDb('cohort recruitment on a real database', () => {
 
     it('CSV: fixed 9 + current question labels + other_answers + review columns; legacy activity_type lands in other_answers', async () => {
       const cohortId = await openCohort();
-      const legacy = await apps.apply(cohortId, await createUser(db), { ...fixed, web3Experience: 'LT_1Y', activityType: 'OTHER', activityTypeOther: '디자이너', interestAreas: ['KOL', 'OTHER'], interestOther: 'UX' }) as { id: string };
+      const legacyUser = await createUser(db);
+      const legacy = { id: await insertLegacy(cohortId, legacyUser, { web3Experience: 'LT_1Y', activityType: 'OTHER', activityTypeOther: '디자이너', interestAreas: ['KOL', 'OTHER'], interestOther: 'UX' }) };
       const fresh = await apps.apply(cohortId, await createUser(db), { ...fixed, answers: answers(['DEVELOPER']) }) as { id: string };
       const csv = await appAdmin.csv(cohortId, {});
       const lines = csv.slice(1).split('\r\n').filter(Boolean);

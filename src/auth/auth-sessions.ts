@@ -6,6 +6,7 @@ import { isIP } from 'net';
 import { QueryResult } from 'pg';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { decryptGraceToken, encryptGraceToken, REFRESH_REUSE_GRACE } from './refresh-grace';
+import { activeUserSql } from '../users/active-user';
 
 /**
  * 자체 세션(access JWT + refresh 토큰)의 단일 출처 — 발급, 회전(refresh), 재사용 감지 사슬 폐기, 로그아웃.
@@ -16,7 +17,7 @@ import { decryptGraceToken, encryptGraceToken, REFRESH_REUSE_GRACE } from './ref
  *   - refresh 회전·30초 유예·재사용 감지 규칙 → refresh / revokeChain. 유예 사본 암호화와 창 길이는 refresh-grace.ts.
  *   - auth_session에 적는 컬럼 → saveSession (`$6` 이중 캐스트 주의 — 아래 주석). 수명(JWT_REFRESH_TTL) 해석은 refresh-ttl.ts.
  *   - 사슬 홉 상한 → MAX_REVOKE_CHAIN_HOPS.
- * 회전/로그인 시 "유저가 ACTIVE인가"는 각 SQL의 `u.status = 'ACTIVE' AND u.deleted_at IS NULL` 조건이다.
+ * 회전/로그인 시 "유저가 ACTIVE인가"는 각 SQL의 `activeUserSql('u')` 조건이다(users/active-user.ts).
  */
 
 /**
@@ -98,8 +99,7 @@ export class AuthSessions {
             AND s.user_id = u.id
             AND s.revoked_at IS NULL
             AND s.expires_at > now()
-            AND u.status = 'ACTIVE'
-            AND u.deleted_at IS NULL
+            AND ${activeUserSql('u')}
           RETURNING s.user_id, u.is_admin`,
         [hash],
       );
@@ -123,8 +123,7 @@ export class AuthSessions {
             AND s.grace_refresh_token IS NOT NULL
             AND s.revoked_at IS NULL
             AND s.expires_at > now()
-            AND u.status = 'ACTIVE'
-            AND u.deleted_at IS NULL`,
+            AND ${activeUserSql('u')}`,
         [hash],
       );
       const graced = successor.rowCount === 1

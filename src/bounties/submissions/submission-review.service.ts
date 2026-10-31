@@ -4,6 +4,7 @@ import { DatabaseService } from '../../common/database/database.service';
 import { BountyStatusPolicy } from '../bounty-status';
 import { SubmissionDecision, SubmissionStatusPolicy } from '../submission-status';
 import { recordReviews } from './system-review';
+import { activeUserSql } from '../../users/active-user';
 
 /** 운영자의 제출물 심사 — 심사 시작/수정 요청/승인/반려와 리비전별 심사 기록 */
 @Injectable()
@@ -31,7 +32,7 @@ export class SubmissionReviewService {
           `SELECT u.id FROM bounty_submission s
              LEFT JOIN agent a ON a.id = s.agent_id
              JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id)
-                  AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
+                  AND ${activeUserSql('u')}
             WHERE s.id = $1
             FOR SHARE OF u`,
           [submissionId],

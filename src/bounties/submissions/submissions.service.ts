@@ -10,6 +10,7 @@ import { payoutStatusSql } from '../../rewards/payout-status';
 import { BountyActor } from '../bounty-actor';
 import { BountyStatus, BountyStatusPolicy } from '../bounty-status';
 import { SubmissionStatus, SubmissionStatusPolicy } from '../submission-status';
+import { ownedAgentIdsSql } from '../../agents/owned-agents';
 
 export interface SubmitInput {
   submissionUrl: string;
@@ -170,7 +171,7 @@ export class SubmissionsService {
          LEFT JOIN LATERAL (SELECT id, decision, comment FROM submission_review WHERE submission_id = s.id
                             ORDER BY created_at DESC LIMIT 1) review ON true
         WHERE s.submitter_user_id = $1
-           OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL))
+           OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'live')})
         ORDER BY s.submitted_at DESC`,
       [userId],
     );

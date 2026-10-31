@@ -10,6 +10,8 @@ import { DatabaseService } from '../common/database/database.service';
 import { PAYABLE_REWARD_STATUSES, rewardHeadroomSql, TERMINAL_PAYOUT_STATUSES } from '../rewards/payout-status';
 import { disconnectAllWalletsOfUser } from '../wallets/wallet-disconnection';
 import { normalizeNickname, WITHDRAWN_NICKNAME_PREFIX } from './nickname';
+import { ownedAgentIdsSql } from '../agents/owned-agents';
+import { activeUserSql } from './active-user';
 
 /**
  * 승인됐지만 아직 payout이 요청되지 않은(그래서 아직 받을 수 있는) 보상 — 하나라도 있으면 탈퇴를 막는다 (409 WITHDRAWAL_BLOCKED_PENDING_REWARDS).
@@ -28,7 +30,7 @@ SELECT count(*)::int AS n
   JOIN bounty_reward rw ON rw.bounty_id = s.bounty_id AND rw.status = ANY($3::text[])
  WHERE s.status = 'APPROVED'
    AND (s.submitter_user_id = $1
-        OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1)))
+        OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'including-deleted')}))
    AND NOT EXISTS (SELECT 1 FROM payout p WHERE p.bounty_reward_id = rw.id AND p.submission_id = s.id)
    AND ${rewardHeadroomSql('rw', 'p')}`;
 
@@ -74,7 +76,7 @@ export class AccountWithdrawalService {
     await this.db.tx(async (tx) => {
       const user = await tx.query<{ nickname: string }>(
         `SELECT nickname FROM "user"
-          WHERE id = $1 AND deleted_at IS NULL AND status = 'ACTIVE'
+          WHERE id = $1 AND ${activeUserSql('')}
           FOR UPDATE`,
         [userId],
       );
@@ -89,7 +91,7 @@ export class AccountWithdrawalService {
            JOIN bounty_submission s ON s.id = p.submission_id
           WHERE p.status <> ALL($2::text[])
             AND (s.submitter_user_id = $1
-                 OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1))
+                 OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'including-deleted')})
                  OR p.recipient_wallet_id = ANY(ARRAY(SELECT id FROM wallet WHERE user_id = $1)))`,
         [userId, [...TERMINAL_PAYOUT_STATUSES]],
       );

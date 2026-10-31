@@ -6,6 +6,7 @@ import {
   agentApiKeyPrefix,
   hashAgentApiKey,
 } from './agent-api-key';
+import { activeUserSql } from '../users/active-user';
 
 interface AgentApiKeyRow {
   api_key_id: string;
@@ -50,7 +51,7 @@ export class AgentApiKeyService {
          JOIN agent a ON a.id = k.agent_id
          JOIN "user" u ON u.id = a.owner_user_id
         WHERE k.key_prefix = $1 AND a.deleted_at IS NULL
-          AND u.status = 'ACTIVE' AND u.deleted_at IS NULL`,
+          AND ${activeUserSql('u')}`,
       [agentApiKeyPrefix(rawKey)],
     );
 

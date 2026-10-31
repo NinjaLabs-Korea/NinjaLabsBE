@@ -21,6 +21,8 @@ import { AccessTokenVerifier, legacyAccessTokenCutoff, SessionUser } from './acc
 import { GoogleOAuthFlow, OAuthState } from './google-oauth.flow';
 import { normalizeRefreshTtl, refreshTtlSeconds } from './refresh-ttl';
 import { UserStatusCache } from './user-status-cache';
+import { activeUserSql } from '../users/active-user';
+import { primaryWalletSql } from '../wallets/primary-wallet';
 
 // SessionUser는 컨트롤러·가드 등 여러 모듈이 이 경로로 import한다 — 정의는 access-token.verifier.ts 한 곳
 export type { SessionUser } from './access-token.verifier';
@@ -139,7 +141,7 @@ export class AuthService {
 
     const wallet = await this.db.query(
       `SELECT address, verified_at FROM wallet
-        WHERE user_id = $1 AND is_primary = true AND disconnected_at IS NULL`,
+        WHERE user_id = $1 AND ${primaryWalletSql('')}`,
       [userId],
     );
     const nft = await this.db.query(
@@ -251,7 +253,7 @@ export class AuthService {
     let active = this.userStatusCache.get(userId, now);
     if (active === undefined) {
       const r = await this.db.query(
-        `SELECT 1 FROM "user" WHERE id = $1 AND status = 'ACTIVE' AND deleted_at IS NULL`,
+        `SELECT 1 FROM "user" WHERE id = $1 AND ${activeUserSql('')}`,
         [userId],
       );
       active = r.rowCount === 1;

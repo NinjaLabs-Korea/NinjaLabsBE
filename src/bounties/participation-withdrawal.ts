@@ -1,5 +1,6 @@
 import { QueryRunner } from '../common/database/database.service';
 import { SubmissionStatusPolicy } from './submission-status';
+import { ownedAgentIdsSql } from '../agents/owned-agents';
 
 /**
  * 회원 탈퇴 시 bounty_submission / bounty_application 정리 — 호출자(users/account-withdrawal.service.ts)의 트랜잭션 안에서 실행한다.
@@ -19,14 +20,14 @@ export async function withdrawOpenParticipationOfUser(tx: QueryRunner, userId: s
     `UPDATE bounty_submission SET status = 'WITHDRAWN'
       WHERE status = ANY($2::text[])
         AND (submitter_user_id = $1
-             OR agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1)))`,
+             OR agent_id = ANY(${ownedAgentIdsSql('$1', 'including-deleted')}))`,
     [userId, SubmissionStatusPolicy.unresolvedStatuses()],
   );
   await tx.query(
     `UPDATE bounty_application SET status = 'WITHDRAWN'
       WHERE status = 'PENDING'
         AND (applicant_user_id = $1
-             OR agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1)))`,
+             OR agent_id = ANY(${ownedAgentIdsSql('$1', 'including-deleted')}))`,
     [userId],
   );
 }

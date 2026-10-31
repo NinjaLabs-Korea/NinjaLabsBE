@@ -12,6 +12,7 @@ import { isEvmAddress, signatureSchemeFor } from '../common/crypto/wallet-signat
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { NftsService } from '../nfts/nfts.service';
+import { primaryWalletSql } from './primary-wallet';
 import { ONBOARDING_STEP } from '../users/onboarding-step';
 
 /**
@@ -189,7 +190,7 @@ export class WalletsService {
     const r = await this.db.query(
       `SELECT id, chain, address, verified_at, created_at
          FROM wallet
-        WHERE user_id = $1 AND is_primary = true AND disconnected_at IS NULL`,
+        WHERE user_id = $1 AND ${primaryWalletSql('')}`,
       [userId],
     );
     return r.rows[0] ?? null;

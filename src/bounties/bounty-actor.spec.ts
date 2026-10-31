@@ -1,5 +1,6 @@
 import { BountyActor } from './bounty-actor';
 import { createMockDb, normalizeSql } from '../test-support/mock-db';
+import { activeUserSql } from '../users/active-user';
 
 describe('BountyActor', () => {
   it('maps a user to user columns', () => {
@@ -34,8 +35,8 @@ describe('BountyActor', () => {
       expect(mock.txQuery).toHaveBeenCalledTimes(1);
       const [sql, params] = mock.txQuery.mock.calls[0];
       expect(normalizeSql(sql)).toContain(kind === 'USER'
-        ? "deleted_at IS NULL AND status = 'ACTIVE' FOR SHARE"
-        : "u.deleted_at IS NULL AND u.status = 'ACTIVE' FOR SHARE OF u");
+        ? `${activeUserSql('')} FOR SHARE`
+        : `${activeUserSql('u')} FOR SHARE OF u`);
       expect(params).toEqual([actor().id]);
     });
 

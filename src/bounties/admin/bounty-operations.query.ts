@@ -5,6 +5,7 @@ import { allowsPayoutSelfApproval, PAYOUT_ALLOW_SELF_APPROVAL_ENV } from '../../
 import { allocatedPayoutSumSql, rewardCapSql } from '../../rewards/payout-status';
 import { BountyStatusPolicy } from '../bounty-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
+import { primaryWalletSql } from '../../wallets/primary-wallet';
 
 /** 운영 화면(FE /admin/operations) 읽기 모델 — 쓰기 명령은 BountyAdminService가 맡는다. */
 @Injectable()
@@ -48,7 +49,7 @@ export class BountyOperationsQuery {
                 COALESCE(a.name, u.nickname) AS actor_name,
                 CASE WHEN s.agent_id IS NULL THEN 'USER' ELSE 'AGENT' END AS actor_kind,
                 owner.id AS user_id, owner.nickname, s.agent_id, a.name AS agent_name,
-                (SELECT w.address FROM wallet w WHERE w.user_id = owner.id AND w.is_primary = true AND w.disconnected_at IS NULL
+                (SELECT w.address FROM wallet w WHERE w.user_id = owner.id AND ${primaryWalletSql('w')}
                   LIMIT 1) AS recipient_wallet_address,
                 review.comment AS review_comment,
                 COALESCE((SELECT json_agg(json_build_object('revision_no', r.revision_no,

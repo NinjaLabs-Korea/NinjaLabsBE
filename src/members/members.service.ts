@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
+import { activeUserSql } from '../users/active-user';
 
 @Injectable()
 export class MembersService {
@@ -17,7 +18,7 @@ export class MembersService {
                        FILTER (WHERE l.id IS NOT NULL), '[]') AS links
          FROM "user" u
          LEFT JOIN user_link l ON l.user_id = u.id
-        WHERE u.is_member = true AND u.deleted_at IS NULL AND u.status = 'ACTIVE'
+        WHERE u.is_member = true AND ${activeUserSql('u')}
           AND u.onboarding_completed_at IS NOT NULL
         GROUP BY u.id
         ORDER BY u.member_display_order NULLS LAST, u.created_at`,

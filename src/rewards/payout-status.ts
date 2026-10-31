@@ -16,8 +16,9 @@
  * 정적 가드(test-support/status-literals.spec.ts)가 src에서 payout 상태 집합 리터럴과 상한식 LEAST(…, deposited_amount)를
  * 이 파일 밖에서 쓰지 못하게 막는다.
  *
- * 의존성 없는 모듈이다 (users/submissions 경로가 rewards.service → nfts → ESM SDK를 끌어오지 않게).
+ * 의존성 없는 모듈이다 (users/submissions 경로가 rewards.service → nfts → ESM SDK를 끌어오지 않게). 같은 성격의 SQL 조각 파일(agents/owned-agents.ts)만 import한다.
  */
+import { participantUserIdSql } from '../agents/owned-agents';
 
 /** payout 테이블 CHECK와 같은 전체 상태 (supabase/migrations/0006_rewards.sql — payout-status.spec.ts가 대조) */
 export const PAYOUT_ROW_STATUSES = ['REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING', 'PAID', 'FAILED', 'CANCELLED'] as const;
@@ -112,7 +113,7 @@ export function rewardHeadroomSql(rw = 'rw', p = 'p'): string {
 export function recipientActiveSql(submission = 's'): string {
   const s = alias(submission, 'recipientActiveSql');
   return `EXISTS (SELECT 1 FROM "user" rcp WHERE rcp.deleted_at IS NULL
-                     AND rcp.id = COALESCE(${s}.submitter_user_id, (SELECT ax.owner_user_id FROM agent ax WHERE ax.id = ${s}.agent_id)))`;
+                     AND rcp.id = ${participantUserIdSql(s, 'submitter_user_id', 'ax')})`;
 }
 
 /**

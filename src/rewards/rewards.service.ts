@@ -13,6 +13,7 @@ import {
   allocatedPayoutSumSql, AWAITING_APPROVAL_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardCapSql, SENDABLE_PAYOUT_STATUSES, sqlStatusList,
   UNSETTLED_PAYOUT_STATUSES,
 } from './payout-status';
+import { primaryWalletSql } from '../wallets/primary-wallet';
 
 /**
  * MVP 보상 흐름 (ERD §10)
@@ -108,7 +109,7 @@ export class RewardsService {
            JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id)
                 AND u.deleted_at IS NULL
            JOIN wallet w ON w.user_id = u.id
-                AND w.is_primary = true AND w.disconnected_at IS NULL
+                AND ${primaryWalletSql('w')}
           WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2
           FOR UPDATE OF s FOR SHARE OF u`,
         [submissionId, reward.rows[0].bounty_id],

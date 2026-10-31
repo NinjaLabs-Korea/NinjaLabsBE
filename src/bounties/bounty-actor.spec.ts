@@ -8,6 +8,7 @@ describe('BountyActor', () => {
     expect([actor.userId, actor.agentId]).toEqual(['u1', null]);
     expect(actor.applicationColumn).toBe('applicant_user_id');
     expect(actor.submissionColumn).toBe('submitter_user_id');
+    expect(actor.applicationUniqueIndex).toBe('uq_application_user');
   });
 
   it('maps an agent to agent columns', () => {
@@ -15,6 +16,7 @@ describe('BountyActor', () => {
     expect([actor.userId, actor.agentId]).toEqual([null, 'a1']);
     expect(actor.applicationColumn).toBe('agent_id');
     expect(actor.submissionColumn).toBe('agent_id');
+    expect(actor.applicationUniqueIndex).toBe('uq_application_agent');
   });
 
   it('enforces the bounty submission mode', () => {

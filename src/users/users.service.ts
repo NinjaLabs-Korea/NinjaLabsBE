@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { AuditAction } from '../audit/audit-actions';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
@@ -17,7 +18,7 @@ export const nicknameKeySql = (expr: string) => `lower(${expr} COLLATE "und-x-ic
 
 /** 닉네임을 이미 정한 사람의 다음 변경까지 기다려야 하는 시간 - 이름이 곧 신원(공개 프로필 URL, 멤버 표시)이라 빠른 양도·선점을 막는다 */
 export const NICKNAME_CHANGE_COOLDOWN_HOURS = 24;
-export const NICKNAME_CHANGED_AUDIT_ACTION = 'USER_NICKNAME_CHANGED';
+export const NICKNAME_CHANGED_AUDIT_ACTION = 'USER_NICKNAME_CHANGED' satisfies AuditAction;
 
 @Injectable()
 export class UsersService {

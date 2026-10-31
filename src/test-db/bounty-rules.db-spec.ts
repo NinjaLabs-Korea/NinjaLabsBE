@@ -342,7 +342,7 @@ describeDb('bounty rules on a real database', () => {
       const service = {
         record: async (actor: string | undefined, act: string, type: string, id: string, runner?: unknown) => {
           if (act === action && id === entityId) { parked.resolve(); await release.promise; }
-          return audit.record(actor, act, type, id, runner as never);
+          return audit.record(actor, act as never, type as never, id, runner as never);
         },
       } as unknown as AuditService;
       return { service, parked: parked.promise, release: () => release.resolve() };
@@ -523,7 +523,7 @@ describeDb('bounty rules on a real database', () => {
       const parkingAuditService = {
         record: async (actor: string | undefined, act: string, type: string, id: string, runner?: unknown) => {
           if (act === 'PAYOUT_REQUESTED') { firstPayout.resolve(id); parked.resolve(); await release.promise; }
-          return audit.record(actor, act, type, id, runner as never);
+          return audit.record(actor, act as never, type as never, id, runner as never);
         },
       } as unknown as AuditService;
       const t1 = new RewardsService(db, nfts, parkingAuditService, testConfig()).requestPayout(rewardId, winners[0], '600', adminId);

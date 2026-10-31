@@ -33,8 +33,11 @@ const DEADLINE_ENFORCED: readonly string[] = [
   BountyStatus.OPEN,
 ];
 
+/** 운영자 전이의 도착 상태 - DRAFT로 돌아가는 전이는 없다. 감사 action `BOUNTY_<도착 상태>`의 집합이기도 하다(audit/audit-actions.ts) */
+export type BountyTransitionTarget = Exclude<BountyStatus, typeof BountyStatus.DRAFT>;
+
 /** 운영자가 수동으로 일으킬 수 있는 상태 전이 */
-const TRANSITIONS: Readonly<Record<string, readonly BountyStatus[]>> = {
+const TRANSITIONS: Readonly<Record<string, readonly BountyTransitionTarget[]>> = {
   [BountyStatus.DRAFT]: [BountyStatus.FUNDING_PENDING, BountyStatus.OPEN, BountyStatus.CANCELLED],
   [BountyStatus.FUNDING_PENDING]: [BountyStatus.OPEN, BountyStatus.CANCELLED],
   [BountyStatus.OPEN]: [BountyStatus.SUBMISSION_CLOSED, BountyStatus.CANCELLED],
@@ -57,7 +60,7 @@ export const BountyStatusPolicy = {
   enforcesFutureDeadline: (status: string): boolean => DEADLINE_ENFORCED.includes(status),
   /** 운영 화면이 버튼으로 보여 줄, 현재 상태에서 운영자가 일으킬 수 있는 전이 목록 (전이표 순서) */
   transitionsFrom: (from: string): readonly string[] => TRANSITIONS[from] ?? [],
-  canTransition: (from: string, to: string): boolean =>
+  canTransition: (from: string, to: string): to is BountyTransitionTarget =>
     (TRANSITIONS[from] as readonly string[] | undefined)?.includes(to) ?? false,
   stampColumnFor: (to: string): string | undefined =>
     TRANSITION_STAMP_COLUMN[to as BountyStatus],

@@ -1,5 +1,7 @@
 import { BeforeApplicationShutdown, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+// 유예 창 길이는 refresh 회전(auth-sessions.ts)과 같은 상수 하나만 쓴다. refresh-grace.ts는 node crypto만 의존한다
+import { REFRESH_REUSE_GRACE } from '../../auth/refresh-grace';
 import { DatabaseService } from '../database/database.service';
 import { SingleFlightTask } from '../lifecycle/single-flight-task';
 import { errorText } from '../logging/log-safe';
@@ -13,7 +15,7 @@ import { errorText } from '../logging/log-safe';
  *   throttler_storage               창(expires_at)과 차단(blocked_until)이 모두 지난 rate limit 카운터 (THROTTLER_STORAGE=postgres일 때만 행이 생긴다,
  *                                   지난 행은 다음 요청이 어차피 새 창으로 덮어쓰므로 지워도 동작이 같다 — 한 번 오고 다시 안 오는 IP/토큰 해시가 쌓이지 않게)
  * 5분마다 clearGraceCopies():
- *   auth_session.grace_refresh_token  30초 재사용 유예 창이 지난 암호화 후속 토큰 사본 — 평문 해시만 둔다는 원칙의 예외라 최대 ~5분만 남게 한다
+ *   auth_session.grace_refresh_token  재사용 유예 창(REFRESH_REUSE_GRACE, 30초)이 지난 암호화 후속 토큰 사본 — 평문 해시만 둔다는 원칙의 예외라 최대 ~5분만 남게 한다
  *                                     (예전엔 매시라 최대 1시간 남았다). refresh는 창 밖 사본을 어차피 쓰지 않는다
  * 두 크론은 각자 한 번에 하나만 돌고, 종료 시 새 실행을 막고 진행 중인 실행을 기다린다 (SingleFlightTask).
  */
@@ -79,7 +81,7 @@ export class MaintenanceService implements BeforeApplicationShutdown {
     try {
       const graces = await this.db.query(
         `UPDATE auth_session SET grace_refresh_token = NULL
-          WHERE grace_refresh_token IS NOT NULL AND prev_rotated_at < now() - interval '30 seconds'`,
+          WHERE grace_refresh_token IS NOT NULL AND prev_rotated_at < now() - interval '${REFRESH_REUSE_GRACE}'`,
       );
       if (graces.rowCount) this.logger.log(`grace copies cleared: ${graces.rowCount}`);
     } catch (err) {

@@ -12,6 +12,7 @@ import { JwtService } from '@nestjs/jwt';
 import { randomBytes } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
+import { ONBOARDING_STEP } from '../users/onboarding-step';
 import { JWT_SECRET } from './jwt-secret';
 import { AuthSessions } from './auth-sessions';
 import { LoginCodes } from './login-codes';
@@ -185,7 +186,7 @@ export class AuthService {
     try {
       const created = await this.db.query(
         `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step)
-         VALUES ($1, $2, $3, '', 2)
+         VALUES ($1, $2, $3, '', ${ONBOARDING_STEP.WALLET})
          RETURNING id, is_admin, onboarding_step, onboarding_completed_at`,
         [googleId, email, `user_${randomBytes(4).toString('hex')}`],
       );

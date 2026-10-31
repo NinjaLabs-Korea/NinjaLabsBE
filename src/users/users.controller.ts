@@ -28,6 +28,7 @@ import { Trim } from '../common/validation/trim';
 import { HasNoBidiOverride, HasVisibleText } from '../common/validation/visible-text';
 import { AccountWithdrawalService } from './account-withdrawal.service';
 import { IsNotReservedNickname, IsNotStaticFileNickname, NICKNAME, NormalizeNickname, NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH } from './nickname';
+import { ONBOARDING_STEP } from './onboarding-step';
 import { UsersService } from './users.service';
 
 export { NICKNAME } from './nickname';
@@ -113,7 +114,7 @@ export class UsersController {
         rid,
         traceId,
         userId: req.user.userId,
-        onboardingStep: 4,
+        onboardingStep: ONBOARDING_STEP.PROFILE_SAVED,
       });
       return result;
     } catch (caught) {

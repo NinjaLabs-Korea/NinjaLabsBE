@@ -53,7 +53,6 @@ export const PAYABLE_REWARD_STATUSES = ['FUNDED', 'PARTIALLY_PAID', 'PAID'] as c
 
 /** 제출 하나의 지급 상태(응답 값) — `GET /users/:nickname` completedBounties[].payoutStatus, `GET /submissions/me` payment_status */
 export const PAYOUT_STATUSES = ['PAID', 'PARTIALLY_PAID', 'PENDING', 'NONE'] as const;
-export type PayoutStatus = (typeof PAYOUT_STATUSES)[number];
 
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 

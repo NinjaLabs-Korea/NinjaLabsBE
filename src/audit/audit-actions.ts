@@ -72,7 +72,6 @@ export const AUDIT_ACTIONS = {
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
-export type AuditEntityType = (typeof AUDIT_ACTIONS)[AuditAction];
 
 /**
  * 서버 코드가 아니라 운영 스크립트(`scripts/*.js`)와 runbook 수동 SQL만 쓰는 action. JS/SQL이라 위 타입을 import할 수 없어 따로 둔다

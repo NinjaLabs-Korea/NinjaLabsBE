@@ -154,5 +154,3 @@ export const ERROR_CODES = {
   REFERENCE_NOT_FOUND: { statuses: [400], ko: '참조하는 대상 행이 없다 (FK 위반)' },
   DATABASE_UNAVAILABLE: { statuses: [503], ko: 'DB 연결 풀/응답 타임아웃·연결 끊김/거부 (재시도 가능)' },
 } as const satisfies Record<string, ErrorCodeEntry>;
-
-export type ErrorCode = keyof typeof ERROR_CODES;

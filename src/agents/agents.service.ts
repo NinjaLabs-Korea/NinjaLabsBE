@@ -15,6 +15,7 @@ import { isEvmAddress, signatureSchemeFor } from '../common/crypto/wallet-signat
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { BountyActor } from '../bounties/bounty-actor';
+import { completedWinSql } from '../bounties/completed-wins';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 import { revokeActiveAgentKeys } from './agent-revocation';
 
@@ -353,8 +354,8 @@ export class AgentsService {
                    ELSE k.status END AS key_status,
               k.expires_at AS key_expires_at,
               (SELECT count(*)::int FROM bounty_submission s
-                 JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL -- 공개 프로필 completedBounties와 같은 기준: 삭제된 바운티는 세지 않는다
-                WHERE s.agent_id = a.id AND s.status = 'APPROVED') AS completed_bounties
+                 JOIN bounty b ON b.id = s.bounty_id
+                WHERE s.agent_id = a.id AND ${completedWinSql('s', 'b')}) AS completed_bounties -- 공개 프로필 completedBounties와 같은 기준
          FROM agent a
          LEFT JOIN LATERAL (
               SELECT id, key_prefix, status, expires_at FROM agent_api_key

@@ -107,6 +107,23 @@ export function rewardHeadroomSql(rw = 'rw', p = 'p'): string {
 }
 
 /**
+ * 보상 `<rw>`에서 제출 `<s>`에 payout을 새로 요청할 수 있나(보상 상태 조건 제외): 그 (보상, 제출)에 payout 행이 **하나도** 없고 보상에 여유분이 남았다.
+ * "지급 요청 가능"의 단일 출처다. 쓰는 곳:
+ *   - payoutStatusSql (b) 갈래: 아직 요청 안 된 몫도 owed로 센다(+ 수령자 미탈퇴)
+ *   - users/account-withdrawal.service.ts PENDING_REWARD_SQL: 받을 수 있는 보상이 남았으면 탈퇴 차단(+ 진행 중 바운티)
+ *   - rewards.service.ts requestPayout은 같은 규칙을 명령형으로 검사한다: (보상, 제출) 행이 있으면 상태 무관 409 PAYOUT_ALREADY_REQUESTED,
+ *     배정 합 + 금액 > 상한이면 400 PAYOUT_EXCEEDS_AVAILABLE_REWARD(금액 1이면 여유분 > 0과 같다). 두 쪽의 일치는
+ *     src/test-db/completed-win-payout-requestable.db-spec.ts가 시나리오별로 대조한다. 규칙을 바꾸면 셋을 같이.
+ * 보상 상태(PAYABLE_REWARD_STATUSES)는 호출부가 붙인다(PENDING_REWARD_SQL은 바인딩, payoutStatusSql은 리터럴 목록). 별칭은 식별자만.
+ */
+export function payoutRequestableSql(rw = 'rw', submission = 's', p = 'p'): string {
+  const r = alias(rw, 'payoutRequestableSql');
+  const s = alias(submission, 'payoutRequestableSql');
+  const x = alias(p, 'payoutRequestableSql');
+  return `NOT EXISTS (SELECT 1 FROM payout ${x} WHERE ${x}.bounty_reward_id = ${r}.id AND ${x}.submission_id = ${s}.id) AND ${rewardHeadroomSql(r, x)}`;
+}
+
+/**
  * 제출 `<s>`의 수령자(제출자, 에이전트 제출이면 그 소유자)가 탈퇴하지 않았나 — requestPayout의 수령자 조건(u.deleted_at IS NULL)과 같다.
  * 지갑 조건은 넣지 않는다: 지갑은 다시 연결할 수 있지만 탈퇴는 되돌릴 수 없다.
  */
@@ -147,8 +164,7 @@ export function payoutStatusSql(submission = 's', bounty = 'b'): string {
                   WHERE rw.bounty_id = ${b}.id
                     AND rw.status IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})
                     AND (EXISTS (SELECT 1 FROM payout px WHERE ${mine} AND px.status IN (${sqlStatusList(ALLOCATED_PAYOUT_STATUSES)}))
-                         OR (NOT EXISTS (SELECT 1 FROM payout px WHERE ${mine})
-                             AND ${rewardHeadroomSql('rw', 'px')}
+                         OR (${payoutRequestableSql('rw', s, 'px')}
                              AND ${recipientActiveSql(s)}))) owed)`;
 }
 

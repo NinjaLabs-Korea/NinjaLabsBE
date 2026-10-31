@@ -3,24 +3,24 @@ import { join, relative } from 'path';
 import { listSourceFiles } from './source-files';
 
 /**
- * 정적 가드 — 제출/지원서/payout 상태 **집합**을 문자열 리터럴로 새로 만들지 못하게 한다 (README "코드 배치 규칙").
+ * 정적 가드 - 제출/지원서/payout 상태 **집합**을 문자열 리터럴로 새로 만들지 못하게 한다 (README "코드 배치 규칙").
  *
  * 규칙 집합(심사 가능·미결·확정 등)은 bounties/submission-status.ts, bounties/application-status.ts가 단일 출처다.
- * payout 상태 집합(진행 중·종료·배정·미정산 등)과 배정 상한식 LEAST(…amount, …deposited_amount)는 rewards/payout-status.ts가 단일 출처다 —
+ * payout 상태 집합(진행 중·종료·배정·미정산 등)과 배정 상한식 LEAST(…amount, …deposited_amount)는 rewards/payout-status.ts가 단일 출처다 -
  * 새 규칙이 필요하면 그 파일에 상수/헬퍼를 추가하고 SQL에는 sqlStatusList()/헬퍼로 렌더링한다.
  * 상태 리터럴 두 개 이상이 나란히 놓인 TS 배열(`['SUBMITTED', 'RESUBMITTED', …]`)이나 SQL IN 목록(`IN ('SUBMITTED','IN_REVIEW')`)은
- * 그 규칙의 사본이므로 실패시킨다 — 정책 helper(+ SQL은 `= ANY($n::text[])` 바인딩)를 쓰도록 고친다.
- * 바운티 상태 집합과 공개 노출 조건은 bounties/bounty-status.ts(BountyStatusPolicy, publicBountySql)가 단일 출처다 —
+ * 그 규칙의 사본이므로 실패시킨다 - 정책 helper(+ SQL은 `= ANY($n::text[])` 바인딩)를 쓰도록 고친다.
+ * 바운티 상태 집합과 공개 노출 조건은 bounties/bounty-status.ts(BountyStatusPolicy, publicBountySql)가 단일 출처다 -
  * `status NOT IN ('DRAFT', 'FUNDING_PENDING')` 같은 공개 필터 사본은 열리기 전에 취소된 바운티를 공개했다.
  * 단일 값 비교(`status = 'APPROVED'`)는 허용한다 (정책 파일 머리 주석 참고).
  * 보상/NFT 상태처럼 값이 겹쳐도 다른 도메인 집합(예 `IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')`)은 앞 두 값이 같은 목록에 없어 걸리지 않는다.
  * NFT 상태 집합(부모 준비, attach 대상, 민팅 완료)과 재큐 SQL은 nfts/nft-status.ts가 단일 출처다 - 집합 사본은 위와 같이 실패시키고,
  * MINTING/MINTED/ATTACHING/ATTACHED 리터럴은 단일 값이어도 그 파일 밖에서 쓰지 못한다(NFT_BARE_ALLOWED만 예외). PENDING/FAILED는
  * 다른 도메인(잡, 지급)과 겹쳐 단독 검사를 하지 않는다.
- * 앞 두 값만 본다 — 두 값이 같은 도메인 목록에 있으면 그 도메인의 집합 사본으로 본다.
+ * 앞 두 값만 본다 - 두 값이 같은 도메인 목록에 있으면 그 도메인의 집합 사본으로 본다.
  */
 const SUBMISSION_STATUS = '(?:SUBMITTED|RESUBMITTED|IN_REVIEW|REVISION_REQUESTED|APPROVED|REJECTED|WITHDRAWN|PENDING)';
-/** payout.status 전체 (rewards/payout-status.ts PAYOUT_ROW_STATUSES — 그 파일의 스펙이 마이그레이션 CHECK와 대조한다) */
+/** payout.status 전체 (rewards/payout-status.ts PAYOUT_ROW_STATUSES - 그 파일의 스펙이 마이그레이션 CHECK와 대조한다) */
 const PAYOUT_STATUS = '(?:REQUESTED|AWAITING_MULTISIG_APPROVAL|APPROVED|BROADCASTING|PAID|FAILED|CANCELLED)';
 /** bounty.status 전체 (bounties/bounty-status.ts BountyStatus) */
 const BOUNTY_STATUS = '(?:DRAFT|FUNDING_PENDING|OPEN|SUBMISSION_CLOSED|IN_REVIEW|COMPLETED|CANCELLED)';
@@ -31,11 +31,11 @@ const NFT_STATUS = '(?:MINTING|MINTED|ATTACHING|ATTACHED)';
 const NFT_BARE = new RegExp(`'${NFT_STATUS}'`);
 const setLiteral = (status: string) => new RegExp(`(?:\\[|\\bIN\\s*\\()\\s*'${status}'\\s*,\\s*'${status}'`, 'i');
 const SET_LITERALS = [setLiteral(SUBMISSION_STATUS), setLiteral(PAYOUT_STATUS), setLiteral(BOUNTY_STATUS), setLiteral(COHORT_APPLICATION_STATUS), setLiteral(NFT_STATUS)];
-/** 배정 상한식 사본 — rewardCapSql()을 쓴다 */
+/** 배정 상한식 사본 - rewardCapSql()을 쓴다 */
 const CAP_LITERAL = /LEAST\(\s*(?:\w+\.)?amount\s*,\s*(?:\w+\.)?deposited_amount\s*\)/i;
 /** NFT 상태 규칙의 출처 파일 (POLICY_FILES와 NFT_BARE_ALLOWED가 같은 문자열을 쓰도록 한 곳에 둔다) */
 const NFT_POLICY_FILE = 'nfts/nft-status.ts';
-/** 규칙의 출처 파일 — 여기서만 리터럴 집합을 쓴다 */
+/** 규칙의 출처 파일 - 여기서만 리터럴 집합을 쓴다 */
 const POLICY_FILES = ['bounties/bounty-status.ts', 'bounties/submission-status.ts', 'bounties/application-status.ts', 'rewards/payout-status.ts', 'cohorts/cohort-status.ts', NFT_POLICY_FILE];
 /**
  * NFT 상태 단일 리터럴을 허용하는 파일. 워커는 상태 전이를 직접 쓰는 곳이라(`SET status = 'MINTED'`, `nft.status === 'ATTACHED'`)
@@ -80,7 +80,7 @@ describe('submission/application/payout/bounty status sets come from the policy 
     expect(findStatusSetLiterals(`SELECT LEAST(amount, deposited_amount) FROM bounty_reward`)).toEqual([1]);
   });
 
-  it('flags bounty status sets — e.g. the old public filter that leaked bounties cancelled before they opened (use publicBountySql)', () => {
+  it('flags bounty status sets - e.g. the old public filter that leaked bounties cancelled before they opened (use publicBountySql)', () => {
     expect(findStatusSetLiterals(`AND b.status NOT IN ('DRAFT', 'FUNDING_PENDING')`)).toEqual([1]);
     expect(findStatusSetLiterals(`const conds = [\`b.deleted_at IS NULL\`, \`b.status NOT IN ('DRAFT','FUNDING_PENDING')\`];`)).toEqual([1]);
     expect(findStatusSetLiterals(`WHERE status IN ('OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW')`)).toEqual([1]);

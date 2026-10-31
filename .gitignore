@@ -3,7 +3,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# env — 절대 커밋 금지
+# env - 절대 커밋 금지
 .env
 .env.*
 !.env.example

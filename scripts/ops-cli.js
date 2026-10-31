@@ -1,5 +1,5 @@
 /**
- * 운영 스크립트(scripts/grant-admin.js, scripts/requeue-nft-jobs.js, scripts/record-refund.js, scripts/forfeit-award.js) 공용 — 접속, 인자, 확인 프롬프트.
+ * 운영 스크립트(scripts/grant-admin.js, scripts/requeue-nft-jobs.js, scripts/record-refund.js, scripts/forfeit-award.js) 공용 - 접속, 인자, 확인 프롬프트.
  *
  * 접속은 scripts/migrate.js와 같은 규칙이다: DATABASE_URL + sslOptions()(DATABASE_CA_CERT가 있으면 인증서 검증, PGSSLMODE=disable이면 TLS 끔).
  * 운영 DB에 붙을 때는 Railway 변수와 같은 DATABASE_URL / DATABASE_CA_CERT를 셸에 넣고 실행한다 (docs/runbook.md "운영 스크립트").
@@ -9,7 +9,7 @@ const { createInterface } = require('readline');
 const { poolTimeoutOptions, sslOptions } = require('./migrate');
 const { errorText } = require('./ops-alert');
 
-/** 레포 루트 .env를 읽는다 (이미 셸에 있는 값은 덮어쓰지 않는다 — dotenv 기본 동작) */
+/** 레포 루트 .env를 읽는다 (이미 셸에 있는 값은 덮어쓰지 않는다 - dotenv 기본 동작) */
 function loadDotEnv() {
   require('dotenv').config({ path: join(__dirname, '..', '.env') });
 }
@@ -43,7 +43,7 @@ function parseArgs(argv, known) {
 
 /**
  * 값을 받는 옵션(`--name <value>`)을 parseArgs(불리언 플래그만) 전에 떼어 낸다. 나머지 인자는 rest로 그대로 돌려준다.
- * 값이 없거나(`--reason`이 마지막 인자) `--`로 시작하면, 또는 같은 옵션이 두 번 오면 throw — 오타가 다른 옵션을 값으로 삼키지 않게.
+ * 값이 없거나(`--reason`이 마지막 인자) `--`로 시작하면, 또는 같은 옵션이 두 번 오면 throw - 오타가 다른 옵션을 값으로 삼키지 않게.
  * @param {string[]} argv
  * @param {string[]} names 값 옵션 이름 (`--` 없이)
  * @returns {{ values: Record<string, string>, rest: string[] }}
@@ -67,7 +67,7 @@ function extractValueOptions(argv, names) {
 }
 
 /**
- * 터미널에서 정확히 `yes`를 입력해야 true. 표준 입력이 TTY가 아니면(파이프/CI) 묻지 않고 false — 비대화형 실행은 `--yes`를 명시한다.
+ * 터미널에서 정확히 `yes`를 입력해야 true. 표준 입력이 TTY가 아니면(파이프/CI) 묻지 않고 false - 비대화형 실행은 `--yes`를 명시한다.
  * @param {string} question
  */
 async function promptYes(question) {
@@ -81,7 +81,7 @@ async function promptYes(question) {
   }
 }
 
-/** 운영자에게 그대로 보여 줄 예상된 실패 (exit 1) — 그 밖의 에러는 FAIL로 출력된다 */
+/** 운영자에게 그대로 보여 줄 예상된 실패 (exit 1) - 그 밖의 에러는 FAIL로 출력된다 */
 class OpsError extends Error {
   constructor(code, message) {
     super(message);
@@ -92,7 +92,7 @@ class OpsError extends Error {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * `if (require.main === module) runCli(run)` — .env 로드 → Pool → run(argv, { pool }) → 종료 코드로 exit.
+ * `if (require.main === module) runCli(run)` - .env 로드 → Pool → run(argv, { pool }) → 종료 코드로 exit.
  * 예상된 실패는 run()이 코드로 돌려주고(1/2), 그 밖의 예외는 FAIL 한 줄과 exit 1.
  */
 async function runCli(run) {

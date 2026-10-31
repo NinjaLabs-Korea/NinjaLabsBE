@@ -10,7 +10,7 @@ import {
 } from './google-id-token.verifier';
 
 /**
- * Google OAuth 왕복의 단일 출처 — state 발급/검증, 동의 화면 URL, code → 구글 프로필 교환.
+ * Google OAuth 왕복의 단일 출처 - state 발급/검증, 동의 화면 URL, code → 구글 프로필 교환.
  * AuthService의 issueOauthState / verifyOauthState / buildGoogleAuthUrl / exchangeGoogleCode가 이 클래스에 위임한다.
  *
  * 여기를 고치는 경우:
@@ -20,7 +20,7 @@ import {
  * 받은 프로필로 유저를 찾거나 만드는 것은 여기가 아니라 AuthService.upsertGoogleUser다.
  */
 
-/** Google 토큰 엔드포인트를 기다리는 최대 시간 — 넘기면 503 GOOGLE_UNAVAILABLE (콜백 요청이 무한정 매달리지 않게) */
+/** Google 토큰 엔드포인트를 기다리는 최대 시간 - 넘기면 503 GOOGLE_UNAVAILABLE (콜백 요청이 무한정 매달리지 않게) */
 export const GOOGLE_TOKEN_TIMEOUT_MS = 10_000;
 
 /**
@@ -35,12 +35,12 @@ export interface OAuthState {
   codeChallenge: string;
 }
 
-/** PKCE S256 code_challenge 형식 (base64url sha256 = 43자) — state 발급과 검증이 같은 규칙을 쓴다 */
+/** PKCE S256 code_challenge 형식 (base64url sha256 = 43자) - state 발급과 검증이 같은 규칙을 쓴다 */
 const CODE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 
 export class GoogleOAuthFlow {
   /**
-   * @param logger AuthService의 로거를 그대로 받는다 — 로그 컨텍스트가 `AuthService`로 유지된다 (e2e identity-edges가 이 컨텍스트로 찾는다)
+   * @param logger AuthService의 로거를 그대로 받는다 - 로그 컨텍스트가 `AuthService`로 유지된다 (e2e identity-edges가 이 컨텍스트로 찾는다)
    */
   constructor(
     private readonly jwt: JwtService,
@@ -50,7 +50,7 @@ export class GoogleOAuthFlow {
   ) {}
 
   /**
-   * Google 관련 env는 앞뒤 공백을 떼고 쓴다 — 기동 검사(requireProductionAuthUrls·requireGoogleClientSecret)가 이미 trim해서 보기 때문에,
+   * Google 관련 env는 앞뒤 공백을 떼고 쓴다 - 기동 검사(requireProductionAuthUrls·requireGoogleClientSecret)가 이미 trim해서 보기 때문에,
    * 대시보드에 붙여 넣다 생긴 끝의 개행/공백은 검사를 통과한 채 client_id·redirect_uri·client_secret 불일치로 모든 로그인을 깨뜨렸다.
    */
   private googleEnv(key: 'GOOGLE_CLIENT_ID' | 'GOOGLE_CLIENT_SECRET' | 'GOOGLE_CALLBACK_URL'): string {
@@ -64,11 +64,11 @@ export class GoogleOAuthFlow {
   }
 
   /**
-   * CSRF 방어용 state — 서명된 단기 JWT라 서버 측 저장소/쿠키 없이 검증 가능.
+   * CSRF 방어용 state - 서명된 단기 JWT라 서버 측 저장소/쿠키 없이 검증 가능.
    * 콜백에서 서명·만료·용도(p)를 확인한다.
    */
   async issueOauthState(traceId: string | undefined, redirectUrl: string, codeChallenge: string): Promise<string> {
-    // typeof: `?codeChallenge[]=<43자>`는 배열로 들어오는데 RegExp.test가 문자열로 바꿔 통과시킨다 — state의 c가 배열이 되어 콜백(구글 왕복 뒤)에서야 AUTH_FAILED로 깨졌다
+    // typeof: `?codeChallenge[]=<43자>`는 배열로 들어오는데 RegExp.test가 문자열로 바꿔 통과시킨다 - state의 c가 배열이 되어 콜백(구글 왕복 뒤)에서야 AUTH_FAILED로 깨졌다
     if (typeof codeChallenge !== 'string' || !CODE_CHALLENGE.test(codeChallenge)) {
       throw new UnauthorizedException('INVALID_CODE_CHALLENGE');
     }
@@ -145,7 +145,7 @@ export class GoogleOAuthFlow {
         signal: AbortSignal.timeout(GOOGLE_TOKEN_TIMEOUT_MS),
       });
     } catch (err) {
-      // 네트워크 오류·타임아웃은 코드 탓이 아니다 — id_token JWKS 조회 실패와 같이 503 (콜백은 어느 쪽이든 #error=AUTH_FAILED)
+      // 네트워크 오류·타임아웃은 코드 탓이 아니다 - id_token JWKS 조회 실패와 같이 503 (콜백은 어느 쪽이든 #error=AUTH_FAILED)
       this.logger.warn(`Google token endpoint unavailable: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`);
       throw new ServiceUnavailableException('GOOGLE_UNAVAILABLE');
     }
@@ -155,7 +155,7 @@ export class GoogleOAuthFlow {
 
     // id_token 서명을 Google JWKS로 검증한다 (google-auth-library: 서명·만료·audience).
     // 그 위에 iss/aud/sub/email/email_verified 클레임을 한 번 더 확인한다.
-    // 검증 실패(서명/만료/audience)는 401, Google JWKS를 못 받아온 것(네트워크/비2xx)은 503 — 토큰 탓이 아니다.
+    // 검증 실패(서명/만료/audience)는 401, Google JWKS를 못 받아온 것(네트워크/비2xx)은 503 - 토큰 탓이 아니다.
     let claims: GoogleIdTokenClaims | undefined;
     try {
       claims = await this.googleVerifier.verify(body.id_token, this.googleClientId());

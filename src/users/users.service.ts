@@ -31,7 +31,7 @@ export class UsersService {
   ) {}
 
   /**
-   * 닉네임 사용 가능 여부 (활성 유저 기준, 대소문자 무시) — "available"은 "지금 저장하면 받아 준다"는 뜻이다.
+   * 닉네임 사용 가능 여부 (활성 유저 기준, 대소문자 무시) - "available"은 "지금 저장하면 받아 준다"는 뜻이다.
    * 그래서 프로필 저장과 같은 trim을 한 값으로 찾고, 저장이 거부할 값(길이·문자 규칙·예약어, 문자열이 아닌 반복 쿼리 파라미터)은
    * 조회 없이 사용 불가로 답한다 (예전에는 `" taken "`·`""`·`".ninja"`를 available로 답해 저장에서 409/400이 났다).
    */
@@ -44,12 +44,12 @@ export class UsersService {
     return r.rowCount === 0;
   }
 
-  /** 온보딩 3단계 — 프로필 저장 (닉네임/태그/자기소개 전부 필수) */
+  /** 온보딩 3단계 - 프로필 저장 (닉네임/태그/자기소개 전부 필수) */
   async completeProfile(userId: string, nickname: string, bio: string, tags: string[]) {
     try {
       return await this.doCompleteProfile(userId, nickname, bio, tags);
     } catch (err: unknown) {
-      // 중복검사~저장 사이 레이스: unique 인덱스가 최종 방어선. 닉네임 인덱스 충돌만 NICKNAME_TAKEN — 다른 유니크 충돌(user_tag PK 등)은 그대로 둔다
+      // 중복검사~저장 사이 레이스: unique 인덱스가 최종 방어선. 닉네임 인덱스 충돌만 NICKNAME_TAKEN - 다른 유니크 충돌(user_tag PK 등)은 그대로 둔다
       if (isUniqueViolation(err, NICKNAME_UNIQUE_INDEX)) {
         throw new ConflictException('NICKNAME_TAKEN');
       }
@@ -84,7 +84,7 @@ export class UsersService {
           WHERE id = $1 AND deleted_at IS NULL`,
         [userId, nickname, bio],
       );
-      // 동시 탈퇴가 먼저 커밋됐으면 0행이다 — 탈퇴자 행에 태그를 다시 심고 성공으로 답하지 않는다
+      // 동시 탈퇴가 먼저 커밋됐으면 0행이다 - 탈퇴자 행에 태그를 다시 심고 성공으로 답하지 않는다
       if (!updated.rowCount) throw new NotFoundException('USER_NOT_FOUND');
       if (renamed) {
         // 이전 이름은 바로 풀려 다른 사람이 가져갈 수 있다 - 누가 언제 무엇에서 무엇으로 바꿨는지 남긴다 (닉네임은 공개 정보)
@@ -99,7 +99,7 @@ export class UsersService {
   }
 
   /**
-   * 온보딩 완료 플래그 — 프로필 저장(3단계, onboarding_step 4)을 마친 유저만. 그 전에는 임시 닉네임(`user_xxxx`)·빈 자기소개·태그 없음인 채로
+   * 온보딩 완료 플래그 - 프로필 저장(3단계, onboarding_step 4)을 마친 유저만. 그 전에는 임시 닉네임(`user_xxxx`)·빈 자기소개·태그 없음인 채로
    * "온보딩 완료"가 되고 공개 프로필로 노출되므로 409 PROFILE_REQUIRED. 이미 완료한 유저는 첫 완료 시각을 유지한 채 멱등.
    */
   async completeOnboarding(userId: string) {
@@ -141,7 +141,7 @@ export class UsersService {
     // 본인 + 소유 에이전트의 APPROVED 제출 (공개 프로필은 승인 기준 그대로다. highlights stats의 builders는 지급됐거나 완료된 바운티의 승인 제출자만 센다), soft delete 바운티 제외.
     // rewards는 바운티에 걸린 보상이 아니라 이 제출에 실제 PAID된 payout 목록이다 (금액은 최소 단위 정수 문자열).
     // postedRewards는 바운티에 걸린 보상(bounty_reward) 목록(같은 원소 모양), payoutStatus는 /submissions/me의 payment_status와 같은 SQL
-    // (rewards/payout-status.ts — 이 제출에 지급될 보상 기준 PAID / PARTIALLY_PAID / PENDING / NONE). FE가 "지급 대기"를 0 INJ와 구분해 보여준다.
+    // (rewards/payout-status.ts - 이 제출에 지급될 보상 기준 PAID / PARTIALLY_PAID / PENDING / NONE). FE가 "지급 대기"를 0 INJ와 구분해 보여준다.
     const completedBounties = await this.db.query(
       `SELECT b.id, b.title, b.category, s.reviewed_at AS completed_at,
               COALESCE(json_agg(json_build_object(
@@ -163,7 +163,7 @@ export class UsersService {
       [u.id],
     );
 
-    // 공개 프로필에는 검증을 마친 ACTIVE 에이전트만 — PENDING_VERIFICATION(서명 없이 남의 지갑 주소를 적어 둘 수 있다)·SUSPENDED·REVOKED의
+    // 공개 프로필에는 검증을 마친 ACTIVE 에이전트만 - PENDING_VERIFICATION(서명 없이 남의 지갑 주소를 적어 둘 수 있다)·SUSPENDED·REVOKED의
     // 이름/지갑 주소를 공개 API로 내보내지 않는다 (FE도 ACTIVE만 그린다). 폐기 전에 승인된 제출은 위 completedBounties(본인 + 소유 에이전트)에 그대로 남는다.
     // soft delete된 바운티는 공개 프로필 어디에도 나오지 않는다 (completedBounties와 같은 completedWinSql 기준을 FILTER에 건다),
     // NFT는 남기되 그 바운티 제목은 NULL이 된다 (FE는 제목 없는 NFT를 "Ninja NFT"로 보여준다)

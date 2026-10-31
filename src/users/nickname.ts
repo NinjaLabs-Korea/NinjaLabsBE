@@ -2,10 +2,10 @@ import { Transform } from 'class-transformer';
 import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
 
 /**
- * 닉네임 규칙 — URL 경로 `/users/:nickname`에 그대로 쓰인다.
+ * 닉네임 규칙 - URL 경로 `/users/:nickname`에 그대로 쓰인다.
  *   - 유니코드 문자/숫자와 `_ . -`만, 공백 불가. 결합 문자(\p{M}: 힌디어 모음 기호·비라마, 태국어 성조·모음 기호, 악센트)는 글자 뒤에 연속 3개까지 허용 (없으면 `हिन्दी`·`ไทยแลนด์`를 쓸 수 없다)
  *   - 처음은 문자/숫자, 끝은 문자/숫자/결합 문자 (`.ninja`, `ninja-`, `...`, `--` 불가 → 경로 세그먼트 `.`/`..`·구분자 혼동 방지)
- *   - 한글 채움 문자(U+115F, U+1160, U+3164, U+FFA0)는 불가 — 범주가 문자(Lo)라 정규식을 통과하지만 화면에는 빈칸으로 그려져 "보이지 않는 이름"이 된다
+ *   - 한글 채움 문자(U+115F, U+1160, U+3164, U+FFA0)는 불가 - 범주가 문자(Lo)라 정규식을 통과하지만 화면에는 빈칸으로 그려져 "보이지 않는 이름"이 된다
  *   - 화면에 그려지지 않는 Default_Ignorable_Code_Point(결합 자소 결합자 U+034F, 크메르 U+17B4/17B5, 몽골 변이 선택자 U+180B-180F 등)는 불가 - \p{M}이라 결합 문자 허용으로 열리지만 `coreni<U+034F>nja`가 `coreninja`와 똑같이 보여 기존 멤버·예약어를 사칭하고, 예약어 골격·`lower(nickname)` 유일성은 이 문자를 지우지 않는다
  *   - 변이 선택자(\p{Variation_Selector}, U+FE00-FE0F 등)는 불가 - \p{M}이라 결합 문자 허용으로 열리지만 이모지 꾸밈용이고 보이지 않는다 (MaxChars도 U+FE0F를 길이에서 뺀다)
  *   - 전각/반각 문자(U+FF00 블록)와 수학용 영숫자(U+1D400 블록)는 불가 - `ａｄｍｉｎ`처럼 NFKC로 라틴 글자가 되는 모양만 같은 문자로 예약어·기존 이름을 사칭한다
@@ -16,8 +16,8 @@ import { buildMessage, ValidateBy, ValidationOptions } from 'class-validator';
  *     키릴 전용·그리스 전용 이름은 기존대로 허용하고 예약어 골격(CONFUSABLE_TO_LATIN)으로 사칭만 막는다. 목록을 바꾸면 FE src/lib/nickname.ts도 같이.
  *   - 길이 2~50 (DTO의 @Length)
  *   - 라우트와 충돌하는 예약어(`me`, `check-nickname`, `admin`, `new`, `edit`)는 대소문자 무관 거부
- *   - 탈퇴 익명화 이름의 접두사 `withdrawn_`(대소문자 무관)도 거부 — 남은 제출/payout 기록에 표시되는 탈퇴자 이름을 사칭하지 못하게
- *   - 정적 파일 확장자(`.png`, `.json`, … — STATIC_FILE_EXTENSIONS)로 끝나는 이름 거부 (대소문자 무관)
+ *   - 탈퇴 익명화 이름의 접두사 `withdrawn_`(대소문자 무관)도 거부 - 남은 제출/payout 기록에 표시되는 탈퇴자 이름을 사칭하지 못하게
+ *   - 정적 파일 확장자(`.png`, `.json`, … - STATIC_FILE_EXTENSIONS)로 끝나는 이름 거부 (대소문자 무관)
  */
 export const NICKNAME = /^(?!.*[\p{Default_Ignorable_Code_Point}\u115F\u1160\u3164\uFFA0\p{Variation_Selector}\uFF00-\uFFEF\u{1D400}-\u{1D7FF}])(?!.*[\u0131\u0237\u0250-\u02FF\u1D00-\u1DBF\u2100-\u218F\uA730-\uA7FF\uAB30-\uAB6F])(?!(?=.*[A-Za-z\u00C0-\u024F])(?=.*[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Coptic}\p{Script=Armenian}\p{Script=Cherokee}\p{Script=Lisu}\p{Script=Georgian}\p{Script=Canadian_Aboriginal}\p{Script=Tifinagh}\p{Script=Vai}\p{Script=Glagolitic}\p{Script=Osage}\p{Script=Deseret}\p{Script=Adlam}\p{Script=Runic}\p{Script=Ogham}]))(?!.*\p{M}{4})(?!.*[_.-]\p{M})[\p{L}\p{N}][\p{L}\p{N}\p{M}_.-]*[\p{L}\p{N}\p{M}]$/u;
 
@@ -27,18 +27,18 @@ export const RESERVED_NICKNAMES: readonly string[] = ['me', 'check-nickname', 'a
 export const WITHDRAWN_NICKNAME_PREFIX = 'withdrawn_';
 
 /**
- * FE proxy가 정적 파일로 보고 locale 미들웨어를 건너뛰는 확장자 — 이걸로 끝나는 닉네임은 접두사 없는 프로필 링크(`/users/ninja.png`)가 깨진다.
- * NinjaLabsFE/src/proxy.ts의 `config.matcher` 안 `.*\\.(?:ico|png|…)$` 그룹과 **정확히 같은 목록**이어야 한다 — 한쪽을 바꾸면 다른 쪽도 바꾼다.
+ * FE proxy가 정적 파일로 보고 locale 미들웨어를 건너뛰는 확장자 - 이걸로 끝나는 닉네임은 접두사 없는 프로필 링크(`/users/ninja.png`)가 깨진다.
+ * NinjaLabsFE/src/proxy.ts의 `config.matcher` 안 `.*\\.(?:ico|png|…)$` 그룹과 **정확히 같은 목록**이어야 한다 - 한쪽을 바꾸면 다른 쪽도 바꾼다.
  */
 export const STATIC_FILE_EXTENSIONS: readonly string[] = [
   'ico', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'avif', 'txt', 'xml', 'json', 'js', 'css', 'map', 'woff', 'woff2', 'ttf',
 ];
 
-/** `/\.(ico|png|…)$/i` — 정적 파일 확장자로 끝나는가 (대소문자 무관) */
+/** `/\.(ico|png|…)$/i` - 정적 파일 확장자로 끝나는가 (대소문자 무관) */
 export const STATIC_FILE_SUFFIX = new RegExp(`\\.(${STATIC_FILE_EXTENSIONS.join('|')})$`, 'i');
 
 /**
- * 닉네임의 정규형 — 앞뒤 공백 제거 + 유니코드 NFC. 한글 자모(U+1100…)로 풀어 쓴 "한"과 완성형 "한"은 화면에서 구별되지 않지만
+ * 닉네임의 정규형 - 앞뒤 공백 제거 + 유니코드 NFC. 한글 자모(U+1100…)로 풀어 쓴 "한"과 완성형 "한"은 화면에서 구별되지 않지만
  * 다른 문자열이라 `lower(nickname)` 유니크 인덱스가 둘을 따로 받아 줬다(사칭). 저장·중복검사·조회·탈퇴 확인 모두 이 값으로 비교한다.
  */
 export function normalizeNickname(value: string): string {
@@ -76,12 +76,12 @@ export function isReservedNickname(value: unknown): boolean {
   return RESERVED_NICKNAMES.includes(normalized) || normalized.startsWith(WITHDRAWN_NICKNAME_PREFIX);
 }
 
-/** CompleteProfileDto의 길이 규칙 (@Length(2, 50) — class-validator는 코드 포인트 단위로 센다) */
+/** CompleteProfileDto의 길이 규칙 (@Length(2, 50) - class-validator는 코드 포인트 단위로 센다) */
 export const NICKNAME_MIN_LENGTH = 2;
 export const NICKNAME_MAX_LENGTH = 50;
 
 /**
- * POST /users/me/profile 이 받아 줄 닉네임인가 — 같은 trim 뒤 길이·문자 규칙·예약어·정적 파일 확장자를 본다 (중복 여부는 DB가 판단).
+ * POST /users/me/profile 이 받아 줄 닉네임인가 - 같은 trim 뒤 길이·문자 규칙·예약어·정적 파일 확장자를 본다 (중복 여부는 DB가 판단).
  * check-nickname은 이걸 통과해야만 "available"이라고 답한다: 저장이 거부할 값을 사용 가능하다고 말하지 않는다.
  */
 export function isSavableNickname(value: unknown): value is string {
@@ -91,10 +91,10 @@ export function isSavableNickname(value: unknown): value is string {
   return length >= NICKNAME_MIN_LENGTH && length <= NICKNAME_MAX_LENGTH && NICKNAME.test(nickname) && !isReservedNickname(nickname) && !endsWithStaticFileExtension(nickname);
 }
 
-/** DTO 변환 — 닉네임 입력을 normalizeNickname으로 (문자열이 아니면 그대로 두어 @IsString이 거부한다) */
+/** DTO 변환 - 닉네임 입력을 normalizeNickname으로 (문자열이 아니면 그대로 두어 @IsString이 거부한다) */
 export const NormalizeNickname = () => Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? normalizeNickname(value) : value));
 
-/** DTO 데코레이터 — 예약어면 거부 (대소문자 무관) */
+/** DTO 데코레이터 - 예약어면 거부 (대소문자 무관) */
 export const IsNotReservedNickname = (options?: ValidationOptions) =>
   ValidateBy(
     {
@@ -107,7 +107,7 @@ export const IsNotReservedNickname = (options?: ValidationOptions) =>
     options,
   );
 
-/** DTO 데코레이터 — 정적 파일 확장자로 끝나면 거부 (대소문자 무관) */
+/** DTO 데코레이터 - 정적 파일 확장자로 끝나면 거부 (대소문자 무관) */
 export const IsNotStaticFileNickname = (options?: ValidationOptions) =>
   ValidateBy(
     {

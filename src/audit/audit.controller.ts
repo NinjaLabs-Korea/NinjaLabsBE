@@ -16,7 +16,7 @@ export class AuditLogsQueryDto {
 export class AuditController {
   constructor(private readonly audit: AuditService) {}
 
-  /** GET /admin/audit-logs?entityType=&entityId=&page= — 감사 로그 조회 → `{ items, page, pageSize, total }` (30건/페이지) */
+  /** GET /admin/audit-logs?entityType=&entityId=&page= - 감사 로그 조회 → `{ items, page, pageSize, total }` (30건/페이지) */
   @Get()
   list(@Query() query: AuditLogsQueryDto) {
     return this.audit.list({ page: query.page ?? 1, entityType: query.entityType, entityId: query.entityId });

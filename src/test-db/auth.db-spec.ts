@@ -42,7 +42,7 @@ describeDb('auth sessions on a real database', () => {
     const second = await auth.refresh(first.refreshToken);
     const [successor] = (await sessionRows(user.id)).filter((row) => row.prev_refresh_token_hash === sha256(first.refreshToken));
     expect(successor.grace_refresh_token).not.toBeNull();
-    // same secret, same plaintext — but sealed for a different row id
+    // same secret, same plaintext - but sealed for a different row id
     await db.query(`UPDATE auth_session SET grace_refresh_token = $2 WHERE refresh_token_hash = $1`,
       [sha256(second.refreshToken), encryptGraceToken(TEST_JWT_SECRET, randomUUID(), second.refreshToken)]);
     await expect(auth.refresh(first.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
@@ -57,7 +57,7 @@ describeDb('auth sessions on a real database', () => {
     // second login finds the same active row
     await expect(auth.upsertGoogleUser(googleId, email)).resolves.toMatchObject({ id: user.id });
 
-    // saveSession through the pool — both $6 references of the INSERT must deduce one type (42P08 otherwise)
+    // saveSession through the pool - both $6 references of the INSERT must deduce one type (42P08 otherwise)
     const first = await auth.issueSession(user.id, false, '127.0.0.1', 'jest');
     expect(first.refreshToken).toMatch(/^[A-Za-z0-9_-]{64}$/);
     await expect(auth.verifyAccessToken(first.accessToken)).resolves.toEqual({ userId: user.id, isAdmin: false });
@@ -97,7 +97,7 @@ describeDb('auth sessions on a real database', () => {
   it('a session whose expires_at has passed is rejected by the SQL predicate (expires_at > now()): 401, no successor row, old row consumed', async () => {
     const user = await auth.upsertGoogleUser(unique('google-'), `${unique()}@example.test`);
     const session = await auth.issueSession(user.id, false);
-    // the row is otherwise perfectly valid (not revoked, ACTIVE user) — only the expiry moved into the past
+    // the row is otherwise perfectly valid (not revoked, ACTIVE user) - only the expiry moved into the past
     await db.query(`UPDATE auth_session SET expires_at = now() - interval '1 second' WHERE refresh_token_hash = $1`, [sha256(session.refreshToken)]);
     await expect(auth.refresh(session.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
     const rows = await sessionRows(user.id);
@@ -161,7 +161,7 @@ describeDb('auth sessions on a real database', () => {
   });
 
   it('a late replay of T1 while the owner is mid-rotation of T2 (uncommitted) still revokes the successor S3 once that rotation commits', async () => {
-    // Reviewer scenario: a single recursive-CTE UPDATE only sees its statement snapshot — S3 (inserted by the uncommitted rotation)
+    // Reviewer scenario: a single recursive-CTE UPDATE only sees its statement snapshot - S3 (inserted by the uncommitted rotation)
     // is invisible and S2 is skipped after the lock wait (already revoked), so S3 used to survive. revokeChain now walks the chain
     // hop by hop under FOR UPDATE: it waits on S2's row lock and the next hop's fresh snapshot sees the committed S3.
     const user = await auth.upsertGoogleUser(unique('google-'), `${unique()}@example.test`);
@@ -186,7 +186,7 @@ describeDb('auth sessions on a real database', () => {
       await xMayCommit;
     });
 
-    // attacker replays T1 (outside the grace window) while X is still open — it must block on S2's row lock
+    // attacker replays T1 (outside the grace window) while X is still open - it must block on S2's row lock
     const attack = auth.refresh(t1.refreshToken).then(() => 'ok' as const, (err: Error) => err.message);
     const deadline = Date.now() + 10_000;
     for (;;) {

@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 
 /**
- * 온체인 tx 해시 — EVM과 Injective(Tendermint) 모두 32바이트 hex다. `0x` 접두사는 선택.
+ * 온체인 tx 해시 - EVM과 Injective(Tendermint) 모두 32바이트 hex다. `0x` 접두사는 선택.
  * 저장 전에는 항상 소문자 + `0x` 접두사로 정규화해 uq_bounty_reward_deposit_tx(0014)와 markPaid의 재사용 조회가
  * 같은 해시의 대소문자·접두사 변형을 하나로 본다.
  */

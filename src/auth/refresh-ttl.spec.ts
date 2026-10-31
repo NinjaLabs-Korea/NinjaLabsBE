@@ -9,7 +9,7 @@ import {
 } from './refresh-ttl';
 
 /**
- * JWT_REFRESH_TTL 규칙 문서 — 문법(`<정수>[공백]<단위>`), 단위 정규화, 허용 범위(60초~90일), 미설정 기본값(14d).
+ * JWT_REFRESH_TTL 규칙 문서 - 문법(`<정수>[공백]<단위>`), 단위 정규화, 허용 범위(60초~90일), 미설정 기본값(14d).
  * 규칙을 바꾸면 refresh-ttl.ts와 이 표를 함께 고친다.
  */
 describe('normalizeRefreshTtl (JWT_REFRESH_TTL grammar)', () => {
@@ -43,7 +43,7 @@ describe('normalizeRefreshTtl (JWT_REFRESH_TTL grammar)', () => {
 });
 
 /**
- * JWT_ACCESS_TTL 규칙 문서 — 문법은 JWT_REFRESH_TTL과 같고, 결과는 jsonwebtoken `expiresIn`에 넘길 **초**(숫자), 허용 범위 60초~60분, 미설정 기본값 15m.
+ * JWT_ACCESS_TTL 규칙 문서 - 문법은 JWT_REFRESH_TTL과 같고, 결과는 jsonwebtoken `expiresIn`에 넘길 **초**(숫자), 허용 범위 60초~60분, 미설정 기본값 15m.
  */
 describe('accessTtlSeconds (JWT_ACCESS_TTL grammar)', () => {
   it.each([

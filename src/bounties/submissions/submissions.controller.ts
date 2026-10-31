@@ -17,7 +17,7 @@ import { HasVisibleText } from '../../common/validation/visible-text';
 import { IsPublicHttpUrl } from '../../common/validation/url';
 import { SubmissionsService } from './submissions.service';
 
-/** 사람(POST /bounties/:id/submissions)과 에이전트(agent-api)가 같은 규칙을 쓴다 — AgentSubmitDto가 이 클래스를 상속한다 */
+/** 사람(POST /bounties/:id/submissions)과 에이전트(agent-api)가 같은 규칙을 쓴다 - AgentSubmitDto가 이 클래스를 상속한다 */
 export class SubmitDto {
   @IsPublicHttpUrl()
   submissionUrl!: string;
@@ -46,7 +46,7 @@ export class SubmitDto {
 export class SubmissionsController {
   constructor(private readonly submissions: SubmissionsService) {}
 
-  /** POST /bounties/:id/submissions — 제출/재제출 (재제출 시 리비전 증가) */
+  /** POST /bounties/:id/submissions - 제출/재제출 (재제출 시 리비전 증가) */
   @Post('bounties/:id/submissions')
   submit(
     @Param('id', ParseUUIDPipe) bountyId: string,
@@ -61,7 +61,7 @@ export class SubmissionsController {
     });
   }
 
-  /** GET /submissions/me — 내 제출 내역 */
+  /** GET /submissions/me - 내 제출 내역 */
   @Get('submissions/me')
   mine(@Req() req: Request & { user: SessionUser }) {
     return this.submissions.mySubmissions(req.user.userId);

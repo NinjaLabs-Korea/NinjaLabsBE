@@ -9,7 +9,7 @@ import { NFT_JOB_PAGE_SIZE, NftJobsAdminService } from './nft-jobs-admin.service
 const jobId = '11111111-1111-4111-8111-111111111111';
 const nftId = '22222222-2222-4222-8222-222222222222';
 
-/** `db.query` (autocommit) and `tx.query` are separate mocks — the retry must run entirely inside the transaction */
+/** `db.query` (autocommit) and `tx.query` are separate mocks - the retry must run entirely inside the transaction */
 function setup(txRows: { job: number }) {
   const dbQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
     if (sql.includes('count(*)')) return { rowCount: 1, rows: [{ total: 42 }] };

@@ -30,7 +30,7 @@ const SCRIPTS = join(__dirname, '..', '..', 'scripts');
 const exec = promisify(execFile);
 
 /**
- * 운영 스크립트(scripts/grant-admin.js, scripts/requeue-nft-jobs.js, scripts/mainnet-preflight.sql) — docs/runbook.md.
+ * 운영 스크립트(scripts/grant-admin.js, scripts/requeue-nft-jobs.js, scripts/mainnet-preflight.sql) - docs/runbook.md.
  * "마지막 운영자"와 `--all`은 데이터베이스 전체를 보므로 공유 테스트 DB가 아니라 이 파일 전용 데이터베이스를 새로 만든다 (migrate-lock 스펙과 같은 방식).
  */
 describeDb('ops scripts on a real database', () => {
@@ -56,7 +56,7 @@ describeDb('ops scripts on a real database', () => {
     try { await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`); } finally { await admin.end(); }
   });
 
-  /** run()을 로그 수집과 함께 — prompt 기본값은 "no" (확인 없이 쓰지 않음을 검증) */
+  /** run()을 로그 수집과 함께 - prompt 기본값은 "no" (확인 없이 쓰지 않음을 검증) */
   async function invoke(
     script: typeof grantAdmin,
     argv: string[],
@@ -202,7 +202,7 @@ describeDb('ops scripts on a real database', () => {
   });
 
   describe('scripts/requeue-nft-jobs.js', () => {
-    /** 5회 실패해 FAILED로 고정된 잡 — mintedTokenId가 있으면 민팅은 끝나고 attach가 실패한 자식 */
+    /** 5회 실패해 FAILED로 고정된 잡 - mintedTokenId가 있으면 민팅은 끝나고 attach가 실패한 자식 */
     async function failedJob(jobType = 'MINT_PARENT', mintedTokenId?: string) {
       const user = await createUser();
       const wallet = await pool.query<{ id: string }>(
@@ -472,7 +472,7 @@ describeDb('ops scripts on a real database', () => {
   }
 
   /**
-   * docs/runbook.md §7.4의 수동 payout SQL 템플릿을 문서에서 그대로 꺼내 실 스키마에 돌린다 — 컬럼/상태 값/재계산이 코드와 어긋나면 여기서 깨진다.
+   * docs/runbook.md §7.4의 수동 payout SQL 템플릿을 문서에서 그대로 꺼내 실 스키마에 돌린다 - 컬럼/상태 값/재계산이 코드와 어긋나면 여기서 깨진다.
    * (`POST /admin/payouts`는 같은 보상·제출물의 payout이 있으면 상태와 무관하게 409라 "취소 후 재요청"이 불가능하다는 것이 템플릿의 전제)
    */
   describe('docs/runbook.md manual payout SQL', () => {
@@ -547,7 +547,7 @@ describeDb('ops scripts on a real database', () => {
       opsBounties = new BountyAdminService(opsDb, new AuditService(opsDb), new BountyLifecycleService(), new RewardTokenResolver(config));
     });
     afterAll(async () => opsDb.onApplicationShutdown());
-    /** 테스트마다 다른 64자리 hex — 같은 DB 안에서 환불 증빙 해시는 재사용할 수 없다 */
+    /** 테스트마다 다른 64자리 hex - 같은 DB 안에서 환불 증빙 해시는 재사용할 수 없다 */
     const freshTx = () => `0x${(++counter).toString(16).padStart(64, 'a')}`;
 
     async function seedRefund(options: { bounty?: string; reward?: string; payouts?: string[]; deposited?: number } = {}) {
@@ -701,7 +701,7 @@ describeDb('ops scripts on a real database', () => {
     describe('cancel with an approved winner still owed (docs/decisions.md 2026-10-25)', () => {
       const OWED = 'Record completed payments for all approved winners and finish every pending payout.';
 
-      /** IN_REVIEW bounty, funded 1000 reward, one approved winner — with a payout of `payout` status (or none) */
+      /** IN_REVIEW bounty, funded 1000 reward, one approved winner - with a payout of `payout` status (or none) */
       async function seedOwed(payout: string | null) {
         const admin = await createUser({ isAdmin: true });
         const bounty = await pool.query<{ id: string }>(
@@ -798,7 +798,7 @@ describeDb('ops scripts on a real database', () => {
         expect((await auditRows('bounty', bounty.rows[0].id)).map((r) => r.action)).toEqual(['BOUNTY_CANCELLED']);
       });
 
-      // other routes to the same outcome (sponsor refunded a winner's share) — multi-reward, agent winners, wallet-less winners,
+      // other routes to the same outcome (sponsor refunded a winner's share) - multi-reward, agent winners, wallet-less winners,
       // FAILED payouts, maxWinners raised after the reward closed, headroom freed by a runbook award cancel, SUBMISSION_CLOSED reopen
       async function seedBounty(maxWinners: number, rewards: Array<{ amount: number; status?: string; denom?: string }>) {
         const admin = await createUser({ isAdmin: true });
@@ -841,7 +841,7 @@ describeDb('ops scripts on a real database', () => {
           [rewardId, w.submissionId, w.walletId, amount, status, unique('probe-'), adminId])).rows[0].id;
       }
 
-      it('multi-reward — paid on reward 1 but still owed on reward 2 blocks the cancel', async () => {
+      it('multi-reward - paid on reward 1 but still owed on reward 2 blocks the cancel', async () => {
         const { bountyId, rewardIds: [r1], adminId } = await seedBounty(1, [{ amount: 1000 }, { amount: 500, denom: 'peggy0xusdt' }]);
         const w = await approvedWinner(bountyId);
         await payout(r1, w, 1000, 'PAID', adminId);
@@ -869,7 +869,7 @@ describeDb('ops scripts on a real database', () => {
         await expectCancelBlocked(bountyId, adminId);
       });
 
-      it('maxWinners raised after the reward closed PAID — the new winner with headroom blocks the cancel', async () => {
+      it('maxWinners raised after the reward closed PAID - the new winner with headroom blocks the cancel', async () => {
         const { bountyId, rewardIds: [r1], adminId } = await seedBounty(1, [{ amount: 1000 }]);
         const a = await approvedWinner(bountyId);
         await payout(r1, a, 400, 'PAID', adminId);
@@ -912,7 +912,7 @@ describeDb('ops scripts on a real database', () => {
   });
 
   /**
-   * scripts/forfeit-award.js — 지갑 없는 수상자(requestPayout 404)는 "받을 몫이 남은" 것으로 세져(다시 연결할 수 있으므로) COMPLETED·CANCELLED가
+   * scripts/forfeit-award.js - 지갑 없는 수상자(requestPayout 404)는 "받을 몫이 남은" 것으로 세져(다시 연결할 수 있으므로) COMPLETED·CANCELLED가
    * 둘 다 막힌다. 연락이 끊긴 경우 운영자가 이 스크립트로 보상 미지급 처리를 하면 바운티를 닫고, 취소 → 환불 → 삭제까지 갈 수 있다 (runbook §7.4).
    */
   describe('scripts/forfeit-award.js', () => {

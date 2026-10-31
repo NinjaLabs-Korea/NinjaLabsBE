@@ -11,7 +11,7 @@ export type QueryRunner = {
 };
 
 type ErrorLogger = Pick<Logger, 'error'>;
-/** 체크아웃된 클라이언트의 'error' 이벤트 구독 (PoolClient는 EventEmitter) — 스펙의 최소 대역은 생략할 수 있다 */
+/** 체크아웃된 클라이언트의 'error' 이벤트 구독 (PoolClient는 EventEmitter) - 스펙의 최소 대역은 생략할 수 있다 */
 type ErrorEvents = {
   on?(event: 'error', listener: (err: Error) => void): unknown;
   removeListener?(event: 'error', listener: (err: Error) => void): unknown;
@@ -19,7 +19,7 @@ type ErrorEvents = {
 
 /**
  * 유휴 연결이 끊기면(Postgres/Supabase 재시작, idle timeout, 네트워크 단절) pg Pool이 'error'를 emit한다.
- * 리스너가 없으면 Node가 uncaught 'error' 이벤트로 프로세스를 종료한다 — 풀은 끊긴 클라이언트를 버리고
+ * 리스너가 없으면 Node가 uncaught 'error' 이벤트로 프로세스를 종료한다 - 풀은 끊긴 클라이언트를 버리고
  * 다음 요청에서 새로 연결하므로 로그만 남기면 된다.
  */
 export function attachPoolErrorHandler(pool: Pick<Pool, 'on'>, logger: ErrorLogger): void {
@@ -84,9 +84,9 @@ export class DatabaseService implements OnApplicationShutdown {
       connectionString: config.get<string>('DATABASE_URL'),
       max: 10,
       // Supabase는 TLS 필수 (로컬 Postgres 개발 시 PGSSLMODE=disable).
-      // DATABASE_CA_CERT가 있으면 서버 인증서를 검증한다 — database-ssl.ts
+      // DATABASE_CA_CERT가 있으면 서버 인증서를 검증한다 - database-ssl.ts
       ssl: databaseSslOptions(ssl),
-      // 연결/풀 대기/문장/응답 타임아웃 — 블랙홀 DB나 풀 고갈이 요청을 무한히 붙잡지 않게 (pool-timeouts.ts)
+      // 연결/풀 대기/문장/응답 타임아웃 - 블랙홀 DB나 풀 고갈이 요청을 무한히 붙잡지 않게 (pool-timeouts.ts)
       ...databaseTimeoutOptions({
         DB_CONNECTION_TIMEOUT_MS: config.get<string>('DB_CONNECTION_TIMEOUT_MS'),
         DB_STATEMENT_TIMEOUT_MS: config.get<string>('DB_STATEMENT_TIMEOUT_MS'),
@@ -102,7 +102,7 @@ export class DatabaseService implements OnApplicationShutdown {
     return this.pool.query<T>(text, params as any[]);
   }
 
-  /** 트랜잭션 헬퍼 — 콜백이 throw하면 자동 롤백 */
+  /** 트랜잭션 헬퍼 - 콜백이 throw하면 자동 롤백 */
   async tx<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     return runInTransaction(await this.pool.connect(), fn, DatabaseService.logger);
   }

@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { NextFunction, Request, Response } from 'express';
 
 export const REQUEST_ID_HEADER = 'X-Request-Id';
-/** 들어오는 X-Request-Id 허용 형식 — 로그 줄/응답 헤더에 그대로 쓰이므로 공백·CR/LF·구분자를 허용하지 않는다 */
+/** 들어오는 X-Request-Id 허용 형식 - 로그 줄/응답 헤더에 그대로 쓰이므로 공백·CR/LF·구분자를 허용하지 않는다 */
 export const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{8,64}$/;
 
 type WithRequestId = Request & { requestId?: string };
@@ -20,12 +20,12 @@ export function requestIdMiddleware(req: Request, res: Response, next: NextFunct
   next();
 }
 
-/** 요청 ID(미들웨어를 거치지 않은 요청이면 undefined) — 구조화 로그의 `rid` 필드용 */
+/** 요청 ID(미들웨어를 거치지 않은 요청이면 undefined) - 구조화 로그의 `rid` 필드용 */
 export function requestIdOf(req: Request | undefined): string | undefined {
   return (req as WithRequestId | undefined)?.requestId;
 }
 
-/** 로그 줄 접미사 — 미들웨어를 거치지 않은 요청(단위 테스트 등)에는 빈 문자열 */
+/** 로그 줄 접미사 - 미들웨어를 거치지 않은 요청(단위 테스트 등)에는 빈 문자열 */
 export function ridSuffix(req: Request | undefined): string {
   const id = requestIdOf(req);
   return id ? ` rid=${id}` : '';

@@ -22,7 +22,7 @@ export class NftJobsAdminController {
     return this.jobs.list({ status: query.status ?? 'FAILED', page: query.page ?? 1 });
   }
 
-  /** POST /admin/nft-jobs/:id/retry — FAILED → PENDING (retry_count 0), 감사 NFT_JOB_RETRIED. 아니면 404 NFT_JOB_NOT_FOUND_OR_NOT_FAILED */
+  /** POST /admin/nft-jobs/:id/retry - FAILED → PENDING (retry_count 0), 감사 NFT_JOB_RETRIED. 아니면 404 NFT_JOB_NOT_FOUND_OR_NOT_FAILED */
   @Post(':id/retry')
   retry(@Param('id', ParseUUIDPipe) jobId: string, @Req() req: AuthedRequest) {
     return this.jobs.retry(jobId, req.user.userId);

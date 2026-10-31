@@ -4,7 +4,7 @@ import { listSourceFiles } from '../test-support/source-files';
 import { SHUTDOWN_DRAIN_TIMEOUT_MS } from '../common/lifecycle/single-flight-task';
 
 /**
- * production 배포 설정(.railway/railway.ts)의 오리진 허용 목록에 개발용 오리진이 섞이지 않았는지 — 텍스트로 검사한다
+ * production 배포 설정(.railway/railway.ts)의 오리진 허용 목록에 개발용 오리진이 섞이지 않았는지 - 텍스트로 검사한다
  * (railway/iac는 ESM이라 jest로 실행하지 않는다). 로컬 오리진은 .env로만 준다 (README "로컬 오리진").
  */
 describe('.railway/railway.ts production origins', () => {
@@ -53,7 +53,7 @@ describe('.railway/railway.ts production origins', () => {
 });
 
 /**
- * 코드가 읽는 env 키가 전부 railway.ts에 있는지 — IaC는 선언형이라 railway.ts에 없는 키를 대시보드에서만 넣으면
+ * 코드가 읽는 env 키가 전부 railway.ts에 있는지 - IaC는 선언형이라 railway.ts에 없는 키를 대시보드에서만 넣으면
  * `railway config apply`가 지울 수 있다 (docs/runbook.md §1). 의도적으로 빼는 키는 아래 목록에 사유와 함께 둔다.
  */
 describe('.railway/railway.ts covers every env key the code reads', () => {

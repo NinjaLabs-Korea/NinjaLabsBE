@@ -19,7 +19,7 @@ class PingController {
 }
 
 /**
- * THROTTLER_STORAGE=postgres — 레플리카 두 대(각자 pg Pool을 가진 별도 Nest 앱)가 throttler_storage 한 버킷을 나눠 쓰는지,
+ * THROTTLER_STORAGE=postgres - 레플리카 두 대(각자 pg Pool을 가진 별도 Nest 앱)가 throttler_storage 한 버킷을 나눠 쓰는지,
  * upsert 하나가 동시 요청에서도 정확히 limit개만 통과시키는지, 창/차단 만료와 정리 크론을 실 Postgres에서 확인한다.
  */
 describeDb('Postgres throttler storage shared across instances', () => {
@@ -28,7 +28,7 @@ describeDb('Postgres throttler storage shared across instances', () => {
   afterAll(async () => db.onApplicationShutdown());
 
   async function bootInstance(limit: number, tracker: string): Promise<{ app: INestApplication; url: string }> {
-    const own = createDb(); // 인스턴스마다 자기 풀 — 레플리카와 같다
+    const own = createDb(); // 인스턴스마다 자기 풀 - 레플리카와 같다
     @Global()
     @Module({ providers: [{ provide: DatabaseService, useValue: own }], exports: [DatabaseService] })
     class InstanceDatabaseModule {}
@@ -37,7 +37,7 @@ describeDb('Postgres throttler storage shared across instances', () => {
       imports: [
         ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true, load: [() => ({ NODE_ENV: 'production', THROTTLER_STORAGE: 'postgres' })] }),
         InstanceDatabaseModule,
-        // 테스트 실행마다 고유한 tracker — 공유 DB의 이전 실행 행과 섞이지 않게
+        // 테스트 실행마다 고유한 tracker - 공유 DB의 이전 실행 행과 섞이지 않게
         throttlerModule([{ ttl: 60_000, limit, getTracker: () => tracker }]),
       ],
       controllers: [PingController],
@@ -59,14 +59,14 @@ describeDb('Postgres throttler storage shared across instances', () => {
       for (const url of [a.url, b.url, a.url, b.url]) statuses.push((await fetch(url)).status);
       expect(statuses).toEqual([200, 200, 200, 200]);
 
-      // 각 인스턴스만 보면 2회씩이지만 공유 버킷은 4회 — 5번째는 어느 쪽이든 429
+      // 각 인스턴스만 보면 2회씩이지만 공유 버킷은 4회 - 5번째는 어느 쪽이든 429
       const blocked = await fetch(b.url);
       expect(blocked.status).toBe(429);
       expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
       expect((await fetch(a.url)).status).toBe(429);
 
       const remaining = (await fetch(a.url)).headers.get('x-ratelimit-remaining');
-      expect(remaining).toBeNull(); // still blocked — 429 has no X-RateLimit-* headers
+      expect(remaining).toBeNull(); // still blocked - 429 has no X-RateLimit-* headers
     } finally {
       await a.app.close(); // closes each instance's pool too (DatabaseService.onApplicationShutdown)
       await b.app.close();

@@ -4,9 +4,9 @@ import { join } from 'path';
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'supabase', 'migrations');
 
 /**
- * 유닛 스펙용 — 마이그레이션의 `CREATE TABLE <table> (` 안에서 `status ... CHECK (status IN (...))` 값 목록을 꺼낸다.
+ * 유닛 스펙용 - 마이그레이션의 `CREATE TABLE <table> (` 안에서 `status ... CHECK (status IN (...))` 값 목록을 꺼낸다.
  * 상태 정책 파일(bounties/*-status.ts)의 값 집합이 DB CHECK와 같은지 검사하는 데 쓴다.
- * 이후 마이그레이션이 같은 테이블의 status CHECK를 바꾸면(ALTER ... CHECK) 이 헬퍼가 그걸 읽지 못하므로 던진다 — 그때 헬퍼를 고친다.
+ * 이후 마이그레이션이 같은 테이블의 status CHECK를 바꾸면(ALTER ... CHECK) 이 헬퍼가 그걸 읽지 못하므로 던진다 - 그때 헬퍼를 고친다.
  */
 export function statusCheckValues(table: string): string[] {
   const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();

@@ -2,7 +2,7 @@ import { hasVisibleText, isPlainDisplayText } from '../common/validation/visible
 import { FORFEITABLE_BOUNTY_STATUSES, ForfeitAdminRow, ForfeitSubmissionRow, normalizeReason, REASON_MAX, reasonProblem, refusalReason, reviewComment } from '../../scripts/forfeit-award';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
 
-/** scripts/forfeit-award.js의 순수 함수 — 실 DB 동작(잠금, 한 트랜잭션, 감사 행)은 src/test-db/ops-scripts.db-spec.ts */
+/** scripts/forfeit-award.js의 순수 함수 - 실 DB 동작(잠금, 한 트랜잭션, 감사 행)은 src/test-db/ops-scripts.db-spec.ts */
 describe('scripts/forfeit-award.js (pure helpers)', () => {
   const admin: ForfeitAdminRow = { id: 'a', is_admin: true, status: 'ACTIVE', deleted: false };
   const submission: ForfeitSubmissionRow = {

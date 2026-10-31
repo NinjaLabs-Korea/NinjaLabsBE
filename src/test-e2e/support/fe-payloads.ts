@@ -1,7 +1,7 @@
 import { parseUnits } from 'ethers';
 
 /**
- * 요청 본문을 FE가 만드는 그대로 만든다 — NinjaLabsFE/src/lib/api/admin.ts · api-client.ts의 매핑을 옮긴 것.
+ * 요청 본문을 FE가 만드는 그대로 만든다 - NinjaLabsFE/src/lib/api/admin.ts · api-client.ts의 매핑을 옮긴 것.
  * JSON.stringify가 undefined 키를 버리고, 지운 URL은 null로 간다(FE 주석: 생략하면 PATCH가 옛 값을 유지한다).
  * FE 매핑이 바뀌면 여기도 같이 바꾼다 (이 파일이 BE DTO와 FE 계약 사이의 e2e 고정점이다).
  */
@@ -47,7 +47,7 @@ export function saveAdminBountyBody(bounty: AdminBountyForm, create: boolean) {
 
 export type AdminPostForm = { slug: string; title: string; bodyMarkdown: string; category: string; status: 'published' | 'draft'; thumbnail: string | null; externalUrl: string | null };
 
-/** createAdminApi().saveAdminPost — category는 이미 코드값 */
+/** createAdminApi().saveAdminPost - category는 이미 코드값 */
 export function saveAdminPostBody(post: AdminPostForm, create: boolean, options?: { publish?: boolean }) {
   const publish = create ? post.status === 'published' : options?.publish;
   return JSON.parse(JSON.stringify({
@@ -75,7 +75,7 @@ export function setAdminMemberBody(input: { isMember: boolean; role?: 'Core' | '
   return JSON.parse(JSON.stringify({ ...input, ...(input.role ? { role: input.role.toUpperCase() } : {}) }));
 }
 
-/** BountyActionPanel apply/submit — 빈 선택 필드는 키째 빠진다 */
+/** BountyActionPanel apply/submit - 빈 선택 필드는 키째 빠진다 */
 export function applyBody(message: string, portfolioUrl = '') {
   return { message, ...(portfolioUrl ? { portfolioUrl } : {}) };
 }

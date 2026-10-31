@@ -1,10 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import { InjectiveNftClient } from './injective-nft.client';
 
-// @injectivelabs/sdk-ts는 ESM이라 jest(commonjs)에서 못 불러온다 — 생성자 인자만 기록하는 껍데기로 대체한다
+// @injectivelabs/sdk-ts는 ESM이라 jest(commonjs)에서 못 불러온다 - 생성자 인자만 기록하는 껍데기로 대체한다
 const wasmCtor = jest.fn();
 const broadcasterCtor = jest.fn();
-/** cw721 `owner_of` smart query — tests script its answer (resolved = token exists, rejected = contract/network error) */
+/** cw721 `owner_of` smart query - tests script its answer (resolved = token exists, rejected = contract/network error) */
 const fetchSmartContractState = jest.fn(async (..._args: unknown[]) => ({}));
 jest.mock('@injectivelabs/sdk-ts', () => ({
   ChainGrpcWasmApi: class { constructor(endpoint: string) { wasmCtor(endpoint); } fetchSmartContractState = (...args: unknown[]) => fetchSmartContractState(...args); },
@@ -111,7 +111,7 @@ describe('InjectiveNftClient configuration and mint', () => {
     [{ MASTER_WALLET_MNEMONIC: '', NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
     [{ MASTER_WALLET_MNEMONIC: 'm', NFT_CONTRACT_ADDRESS: ' \n' }, false],
     [{ MASTER_WALLET_MNEMONIC: '  ', NFT_CONTRACT_ADDRESS: 'inj1c' }, false],
-  ])('isConfigured(%j) is %s — the worker defers jobs unless both the mnemonic and the contract are set', (values, expected) => {
+  ])('isConfigured(%j) is %s - the worker defers jobs unless both the mnemonic and the contract are set', (values, expected) => {
     expect(new InjectiveNftClient(config(values)).isConfigured()).toBe(expected);
   });
 

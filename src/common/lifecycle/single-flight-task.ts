@@ -25,7 +25,7 @@ export class SingleFlightTask {
     return this.current !== null;
   }
 
-  /** stop()이 불렸는가 — 긴 작업이 단계 사이에서 확인한다 */
+  /** stop()이 불렸는가 - 긴 작업이 단계 사이에서 확인한다 */
   get isStopping(): boolean {
     return this.stopped;
   }

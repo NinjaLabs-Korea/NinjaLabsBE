@@ -1,5 +1,5 @@
 -- ============================================================
--- 0002_wallets.sql — 지갑 영역
+-- 0002_wallets.sql - 지갑 영역
 -- ERD v1 §4 (wallet, wallet_verification_challenge)
 --
 -- 설계 메모

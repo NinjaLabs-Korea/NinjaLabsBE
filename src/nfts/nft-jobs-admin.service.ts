@@ -3,7 +3,7 @@ import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { REQUEUE_JOB_SQL, RESTORE_NFT_AFTER_REQUEUE_SQL } from './nft-status';
 
-/** 운영자 NFT 잡 목록이 받는 상태 — SUCCEEDED/CANCELLED는 운영 대상이 아니라 목록에서 뺀다 */
+/** 운영자 NFT 잡 목록이 받는 상태 - SUCCEEDED/CANCELLED는 운영 대상이 아니라 목록에서 뺀다 */
 export const NFT_JOB_ADMIN_STATUSES = ['FAILED', 'PENDING', 'PROCESSING'] as const;
 export type NftJobAdminStatus = (typeof NFT_JOB_ADMIN_STATUSES)[number];
 export const NFT_JOB_PAGE_SIZE = 30;
@@ -11,7 +11,7 @@ export const NFT_JOB_PAGE_SIZE = 30;
 /**
  * 운영자 NFT 잡 콘솔 (GET /admin/nft-jobs, POST /admin/nft-jobs/:id/retry).
  *
- * 워커(NftJobWorker)는 MAX_RETRY번째 실패에서 잡을 FAILED, nft를 FAILED로 고정한다 — 이후는 "운영자 수동 재시도".
+ * 워커(NftJobWorker)는 MAX_RETRY번째 실패에서 잡을 FAILED, nft를 FAILED로 고정한다 - 이후는 "운영자 수동 재시도".
  * 재시도는 같은 잡 행을 되살린다 (새 잡을 만들지 않는다: 멱등 키 `mint-parent:` / `mint-child:` / `attach-child:`(nft-status.ts attachChildKey)가 이미 그 행을 가리킨다):
  *   nft_job  FAILED → PENDING, retry_count = 0, scheduled_at = now(), started_at/processed_at = NULL (last_error는 원인 확인용으로 남김)
  *   nft      FAILED → token_id가 있으면 MINTED(attach 실패, 이미 민팅된 토큰을 다시 민팅하지 않는다), 없으면 PENDING

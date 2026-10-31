@@ -13,7 +13,7 @@ import { isEvmAddress } from '../common/crypto/wallet-signature';
 import { requestIdOf } from '../common/http/request-id';
 import { WalletsService } from './wallets.service';
 
-// 모든 필드 IsString — 숫자/배열이 오면 서비스의 address.trim()이 TypeError를 던져 500이 됐다
+// 모든 필드 IsString - 숫자/배열이 오면 서비스의 address.trim()이 TypeError를 던져 500이 됐다
 class ChallengeDto {
   @IsString()
   @IsNotEmpty()
@@ -42,7 +42,7 @@ export class WalletsController {
 
   constructor(private readonly wallets: WalletsService) {}
 
-  /** POST /wallets/challenge — 서명용 nonce 발급 */
+  /** POST /wallets/challenge - 서명용 nonce 발급 */
   @Post('challenge')
   async challenge(@Req() req: Request & { user: SessionUser }, @Body() dto: ChallengeDto) {
     const traceId = requestTraceId(req.headers);
@@ -75,7 +75,7 @@ export class WalletsController {
     }
   }
 
-  /** POST /wallets/verify — 서명 검증 후 지갑 연결 (성공 시 NFT 민팅 잡 등록) */
+  /** POST /wallets/verify - 서명 검증 후 지갑 연결 (성공 시 NFT 민팅 잡 등록) */
   @Post('verify')
   async verify(@Req() req: Request & { user: SessionUser }, @Body() dto: VerifyDto) {
     const traceId = requestTraceId(req.headers);
@@ -113,7 +113,7 @@ export class WalletsController {
     }
   }
 
-  /** GET /wallets/me — 내 대표 지갑 조회 */
+  /** GET /wallets/me - 내 대표 지갑 조회 */
   @Get('me')
   me(@Req() req: Request & { user: SessionUser }) {
     return this.wallets.myWallet(req.user.userId);

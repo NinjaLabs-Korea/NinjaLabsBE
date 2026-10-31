@@ -12,7 +12,7 @@ import { AWAITING_APPROVAL_PAYOUT_STATUSES, sqlStatusList } from './payout-statu
  * 자동 송금(단일 서명 핫월렛 또는 멀티시그 브로드캐스트)을 도입하면
  * APPROVED 상태 payout을 집어 BROADCASTING → PAID로 진행시키는 로직이 여기 들어간다.
  * 48시간 넘게 승인되지 않은 payout이 있으면 운영 알림(`payout-unapproved-48h`, 30분 쿨다운)을 보낸다.
- * 한 번에 하나만 돌고, 종료 시 새 실행을 막고 진행 중인 실행을 기다린다 (SingleFlightTask) — 자동 송금이 들어오면 특히 중요하다.
+ * 한 번에 하나만 돌고, 종료 시 새 실행을 막고 진행 중인 실행을 기다린다 (SingleFlightTask) - 자동 송금이 들어오면 특히 중요하다.
  */
 @Injectable()
 export class PayoutWorker implements BeforeApplicationShutdown {
@@ -29,7 +29,7 @@ export class PayoutWorker implements BeforeApplicationShutdown {
     await this.monitoring.run(() => this.monitorOnce());
   }
 
-  /** 종료 훅 — 이 훅이 끝난 뒤에야 DB 풀이 닫힌다 (DatabaseService.onApplicationShutdown) */
+  /** 종료 훅 - 이 훅이 끝난 뒤에야 DB 풀이 닫힌다 (DatabaseService.onApplicationShutdown) */
   async beforeApplicationShutdown() {
     await this.monitoring.stop();
   }

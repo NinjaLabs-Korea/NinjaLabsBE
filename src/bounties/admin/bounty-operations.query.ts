@@ -7,7 +7,7 @@ import { BountyStatusPolicy } from '../bounty-status';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
 import { primaryWalletSql } from '../../wallets/primary-wallet';
 
-/** 운영 화면(FE /admin/operations) 읽기 모델 — 쓰기 명령은 BountyAdminService가 맡는다. */
+/** 운영 화면(FE /admin/operations) 읽기 모델 - 쓰기 명령은 BountyAdminService가 맡는다. */
 @Injectable()
 export class BountyOperationsQuery {
   constructor(
@@ -17,10 +17,10 @@ export class BountyOperationsQuery {
   ) {}
 
   /**
-   * 운영 화면(FE /admin/operations) 한 번에 필요한 데이터 — Admin-only; never expose review notes or wallets publicly.
+   * 운영 화면(FE /admin/operations) 한 번에 필요한 데이터 - Admin-only; never expose review notes or wallets publicly.
    *   applications / submissions: 신원(actor_kind USER|AGENT, user_id = 지원자 또는 에이전트 소유자, nickname, agent_id/agent_name),
    *     submissions는 지급 받을 지갑(recipient_wallet_address: 소유자의 활성 primary 지갑, 없으면 null → payout 요청이 404)과
-   *     최신 리비전(current_revision_no + revisions[0]) — 심사 요청의 revisionNo 낙관적 검사에 그대로 쓴다.
+   *     최신 리비전(current_revision_no + revisions[0]) - 심사 요청의 revisionNo 낙관적 검사에 그대로 쓴다.
    *   rewards: allocated_amount = 취소 아닌 payout 합계, cap = LEAST(amount, deposited_amount) (requestPayout과 같은 배정 상한)
    *   payouts: requested_by/approved_by(+닉네임), requested_by_me (= 요청자가 지금 보는 운영자 → 2인 규칙상 승인 불가)
    *   lifecycle: blockers(영문, 전이 400 본문과 같음) + blockerDetails(코드) + allowedTransitions(BountyStatusPolicy 전이표)

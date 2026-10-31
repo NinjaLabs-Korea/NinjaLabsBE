@@ -1,7 +1,7 @@
 {
   "name": "ninjalabs-backend",
   "version": "0.1.0",
-  "description": "Ninja Labs backend — builder community & bounty marketplace for the Injective ecosystem (NestJS + Supabase PostgreSQL)",
+  "description": "Ninja Labs backend - builder community & bounty marketplace for the Injective ecosystem (NestJS + Supabase PostgreSQL)",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {

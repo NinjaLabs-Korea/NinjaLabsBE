@@ -25,7 +25,7 @@ describe('PaginationQueryDto', () => {
   });
 });
 
-describe('PaginationQueryDto — query-string edge cases (values arrive as strings)', () => {
+describe('PaginationQueryDto - query-string edge cases (values arrive as strings)', () => {
   it.each([
     [{ page: '100000' }, []],
     [{ page: '100001' }, ['page']],
@@ -40,7 +40,7 @@ describe('PaginationQueryDto — query-string edge cases (values arrive as strin
     [{ page: '-0' }, ['page']],
     [{ page: '9'.repeat(400) }, ['page']],
     [{ page: ['1', '2'] }, ['page']], // repeated ?page=1&page=2
-    [{ page: '0x10' }, []], // Number('0x10') = 16 — harmless, still bounded
+    [{ page: '0x10' }, []], // Number('0x10') = 16 - harmless, still bounded
     [{ page: '1_000' }, ['page']],
   ])('%p → failed %p', async (query, failed) => {
     expect(await failedFields(query)).toEqual(failed);

@@ -4,11 +4,11 @@ import { completedBountySql, completedWinSql } from '../bounties/completed-wins'
 import { MINTED_OR_LATER, sqlIn } from '../nfts/nft-status';
 import { rewardTokenDecimals } from '../rewards/reward-token-decimals';
 
-/** 토큰별 지급 완료(PAID) 보상 합계 — amount 는 base unit 정수 문자열 (DECIMAL(78,0) 합이라 Number 로 바꾸지 않는다) */
+/** 토큰별 지급 완료(PAID) 보상 합계 - amount 는 base unit 정수 문자열 (DECIMAL(78,0) 합이라 Number 로 바꾸지 않는다) */
 export type PaidTotal = {
   symbol: string;
   tokenType: string;
-  /** 서버가 모르는 심볼이면 null — 클라이언트는 그 항목을 표시하지 않는다 */
+  /** 서버가 모르는 심볼이면 null - 클라이언트는 그 항목을 표시하지 않는다 */
   decimals: number | null;
   amount: string;
 };
@@ -22,7 +22,7 @@ export type HallOfFameStats = {
   paidTotals: PaidTotal[];
 };
 
-/** /hall-of-fame/stats 집계 캐시 수명 — 공개 랜딩이 매 조회마다 네 개의 count 를 돌리지 않도록 인스턴스별 인메모리로 60초 둔다 */
+/** /hall-of-fame/stats 집계 캐시 수명 - 공개 랜딩이 매 조회마다 네 개의 count 를 돌리지 않도록 인스턴스별 인메모리로 60초 둔다 */
 export const STATS_CACHE_TTL_MS = 60_000;
 
 @Injectable()
@@ -32,7 +32,7 @@ export class HighlightsService {
 
   constructor(private readonly db: DatabaseService) {}
 
-  /** Hall of Fame — 운영자 큐레이션 하이라이트 (공개) */
+  /** Hall of Fame - 운영자 큐레이션 하이라이트 (공개) */
   async list() {
     const r = await this.db.query(
       `SELECT id, type, title, description, image_url, link_url, display_order, published_at
@@ -44,13 +44,13 @@ export class HighlightsService {
   }
 
   /**
-   * 누적 지표 — 네 개의 count 를 한 문장으로, 토큰별 지급 총액(paidTotals)을 다른 한 문장으로 (병렬) 집계하고 **인스턴스별 인메모리 캐시**에 60초(STATS_CACHE_TTL_MS) 둔다.
+   * 누적 지표 - 네 개의 count 를 한 문장으로, 토큰별 지급 총액(paidTotals)을 다른 한 문장으로 (병렬) 집계하고 **인스턴스별 인메모리 캐시**에 60초(STATS_CACHE_TTL_MS) 둔다.
    * 공개 랜딩이 호출하는 경로라 트래픽이 집계 비용을 그대로 DB 에 전달했다. 지표는 운영자 전이(COMPLETED)·민팅 뒤에 바뀌는 느린 값이라
    * 최대 60초 늦게 보여도 되고(docs/api-contract.md), 캐시가 비어 있는 동안의 동시 호출은 한 번의 쿼리를 공유한다(stampede 방지).
-   * 인스턴스가 여럿이면 각자 캐시를 가지므로 인스턴스마다 최대 60초 차이가 날 수 있다 — 정확한 일관성이 필요해지면 스냅샷 테이블로 전환.
+   * 인스턴스가 여럿이면 각자 캐시를 가지므로 인스턴스마다 최대 60초 차이가 날 수 있다 - 정확한 일관성이 필요해지면 스냅샷 테이블로 전환.
    * 공개 목록과 같은 기준으로, 관리자가 삭제(soft delete)한 바운티와 그에 딸린 제출·NFT는 제외한다.
-   * paidTotals 는 status = 'PAID' payout 만 더한다 — 토큰 단위가 서로 달라 bounty_reward 의 (심볼, 토큰 유형)별로 묶고 합을 base unit 문자열로 돌려준다.
-   * sponsors 는 대소문자·앞뒤 공백만 다른 이름("Acme" / "acme ")을 한 후원사로 센다 — 운영자가 손으로 입력하는 값이라 표기가 흔들리고, paidTotals 의 심볼 병합(upper)과 같은 기준이다.
+   * paidTotals 는 status = 'PAID' payout 만 더한다 - 토큰 단위가 서로 달라 bounty_reward 의 (심볼, 토큰 유형)별로 묶고 합을 base unit 문자열로 돌려준다.
+   * sponsors 는 대소문자·앞뒤 공백만 다른 이름("Acme" / "acme ")을 한 후원사로 센다 - 운영자가 손으로 입력하는 값이라 표기가 흔들리고, paidTotals 의 심볼 병합(upper)과 같은 기준이다.
    * builders는 사람(submitter_user_id)과 에이전트(agent_id) 제출자를 모두 센다 (0005 chk_submission_actor: 둘 중 하나만 채워짐).
    * "Builders rewarded"라는 공개 문구와 맞도록 승인(APPROVED)만으로는 세지 않는다: 완료(COMPLETED)된 바운티의 승인 제출자이거나 그 제출에 PAID payout이 있는 사람만.
    * (승인은 됐지만 아직 아무것도 지급되지 않았고 바운티도 끝나지 않은 사람, 취소된 바운티의 미지급 승인자는 제외.)

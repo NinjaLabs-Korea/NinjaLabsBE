@@ -13,7 +13,7 @@ describe('MaxChars (Postgres VARCHAR length = code points)', () => {
   it('counts astral characters once and variation selectors as their own code point, like char_length()', () => {
     expect(charLength('😀😀')).toBe(2);
     expect(charLength('❤️')).toBe(2); // U+2764 U+FE0F
-    // class-validator's MaxLength drops U+FE0F from the count — the reason this validator exists
+    // class-validator's MaxLength drops U+FE0F from the count - the reason this validator exists
     expect(maxLength('❤️'.repeat(3), 5)).toBe(true);
   });
 

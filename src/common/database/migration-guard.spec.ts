@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { assertNoTransactionControl, findTransactionControl, MIGRATIONS_DIR, migrationFiles } from '../../../scripts/migrate';
 
-/** scripts/migrate.js — 최상위 트랜잭션 제어문 검사 (실 DB 동작은 src/test-db/migrate-runner.db-spec.ts) */
+/** scripts/migrate.js - 최상위 트랜잭션 제어문 검사 (실 DB 동작은 src/test-db/migrate-runner.db-spec.ts) */
 describe('findTransactionControl', () => {
   it.each([
     ['BEGIN;', [{ line: 1, keyword: 'BEGIN' }]],

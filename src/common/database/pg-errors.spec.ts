@@ -42,7 +42,7 @@ describe('pg-errors', () => {
   });
 });
 
-describe('asClientError — only request-caused Postgres errors become 400', () => {
+describe('asClientError - only request-caused Postgres errors become 400', () => {
   it.each([
     ['22021 NUL byte', { code: '22021' }, 'INVALID_CHARACTER'],
     ['22P05 untranslatable', { code: '22P05' }, 'INVALID_CHARACTER'],
@@ -66,7 +66,7 @@ describe('asClientError — only request-caused Postgres errors become 400', () 
     ['23503 with a non-string detail', { code: '23503', detail: { text: 'is not present in table' } }],
     ['23503 still referenced', { code: '23503', detail: 'Key (id)=(x) is still referenced from table "nft".' }],
     ['23505 unique', { code: '23505' }],
-    ['22001 too long (validation should have caught it — a server bug, stays 500)', { code: '22001' }],
+    ['22001 too long (validation should have caught it - a server bug, stays 500)', { code: '22001' }],
     ['22003 out of range', { code: '22003' }],
     ['an HttpException', new BadRequestException('X')],
   ])('%s passes through unchanged', (_label, err) => {
@@ -74,7 +74,7 @@ describe('asClientError — only request-caused Postgres errors become 400', () 
   });
 });
 
-describe('asHttpError — DB connection/response timeouts become 503 DATABASE_UNAVAILABLE', () => {
+describe('asHttpError - DB connection/response timeouts become 503 DATABASE_UNAVAILABLE', () => {
   it.each([
     'timeout exceeded when trying to connect',
     'Connection terminated due to connection timeout',
@@ -106,7 +106,7 @@ describe('asHttpError — DB connection/response timeouts become 503 DATABASE_UN
 
   it('does not treat a client-side socket reset or other SQLSTATEs as a database outage', () => {
     for (const err of [
-      Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }), // a browser abandoning an upload — not ours to blame on the DB
+      Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }), // a browser abandoning an upload - not ours to blame on the DB
       pgError({ code: '40P01' }), // deadlock_detected stays a 500
       pgError({ code: '23505' }),
     ]) {

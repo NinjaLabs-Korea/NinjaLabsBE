@@ -4,7 +4,7 @@ import { E2eApp, multipart, PNG_1x1, Session, startApp } from './support/harness
 
 const badRequest = (message: string) => ({ statusCode: 400, error: 'Bad Request', message });
 
-// i. media — admin multipart upload (FE: FormData with one `file` part) + public immutable reads
+// i. media - admin multipart upload (FE: FormData with one `file` part) + public immutable reads
 describeDb('media over HTTP (e2e)', () => {
   let e2e: E2eApp;
   let admin: Session;

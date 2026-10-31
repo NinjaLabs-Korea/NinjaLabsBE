@@ -9,7 +9,7 @@ import { DatabaseService, QueryRunner } from '../common/database/database.servic
  * - Ninja 부모 NFT: 지갑 연결(verify) 성공 시 enqueueParentMint 호출
  * - 완료 자식 NFT: 제출물 APPROVED + payout 이후 enqueueChildMint 호출
  * - 실제 온체인 실행은 nft_job 큐 + NftJobWorker가 담당 (API 흐름과 분리)
- * - CW-721 Nestable 컨트랙트는 2팀 산출물 — 주소는 NFT_CONTRACT_ADDRESS env
+ * - CW-721 Nestable 컨트랙트는 2팀 산출물 - 주소는 NFT_CONTRACT_ADDRESS env
  */
 @Injectable()
 export class NftsService {
@@ -18,7 +18,7 @@ export class NftsService {
     private readonly config: ConfigService,
   ) {}
 
-  /** CW-721 컨트랙트 주소 — 배포 전이면 자리표시값으로 레코드만 쌓아 둔다 */
+  /** CW-721 컨트랙트 주소 - 배포 전이면 자리표시값으로 레코드만 쌓아 둔다 */
   private contractAddress(): string {
     return this.config.get<string>('NFT_CONTRACT_ADDRESS')?.trim() || 'PENDING_CONTRACT_DEPLOY';
   }
@@ -72,7 +72,7 @@ export class NftsService {
       `SELECT id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`,
       [userId],
     )) as QueryResult<{ id: string }>;
-    // 부모 NFT 미보유(지갑 미연결 등)면 부모부터 재유도 — decisions.md 참고
+    // 부모 NFT 미보유(지갑 미연결 등)면 부모부터 재유도 - decisions.md 참고
     const parentId = parent.rowCount ? parent.rows[0].id : null;
 
     const nft = (await tx.query(

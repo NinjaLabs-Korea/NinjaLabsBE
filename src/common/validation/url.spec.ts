@@ -86,13 +86,13 @@ describe('URL field validators', () => {
     expect(isSitePath(value)).toBe(false);
   });
 
-  describe('isSafeUrl (lenient rule for update DTOs — legacy rows must keep passing PATCH)', () => {
+  describe('isSafeUrl (lenient rule for update DTOs - legacy rows must keep passing PATCH)', () => {
     it.each([
       'https://ninjalabs.xyz/bounties/1', 'http://localhost:3000/x', 'HTTPS://cdn.example/a.png?x=1#y',
       mediaPath, '/uploads/legacy-cover.png', '/images/a b.png', '/bounties/../admin', '/x%2fy', '/', '/bounties?page=2',
-      // legacy scheme-less values typed before the strict rule — not executable, the FE never renders them as links
+      // legacy scheme-less values typed before the strict rule - not executable, the FE never renders them as links
       'ninjalabs.xyz/x.png', 'www.example.com', 'cdn.example.co.kr:8443/a.png?v=1', 'Img.Example/T.PNG#x',
-      // a backslash after the authority is accepted by the strict create rule too — an update must keep accepting it
+      // a backslash after the authority is accepted by the strict create rule too - an update must keep accepting it
       'https://cdn.example/a\\b.png', 'https://cdn.example/a.png#x\\y',
     ])('accepts %p', (value) => {
       expect(isSafeUrl(value)).toBe(true);

@@ -2,11 +2,11 @@ import { serializeSignDoc, StdSignDoc } from '@cosmjs/amino';
 import { PrivateKey, PublicKey } from '@injectivelabs/sdk-ts';
 
 /**
- * ADR-36 (signArbitrary) 서명 검증 — Injective 전용
+ * ADR-36 (signArbitrary) 서명 검증 - Injective 전용
  *
  * Keplr/Leap의 signArbitrary는 아래 형태의 StdSignDoc을 amino 규칙(키 정렬 + HTML escape)으로
  * 직렬화한 뒤 서명한다. Injective는 eth 계열 체인이라 해시는 sha256이 아닌 **keccak256**,
- * 주소 파생도 keccak(uncompressed pubkey)[12:] 방식 — 두 처리 모두 sdk-ts 헬퍼가 담당한다.
+ * 주소 파생도 keccak(uncompressed pubkey)[12:] 방식 - 두 처리 모두 sdk-ts 헬퍼가 담당한다.
  */
 export function buildAdr36SignDoc(signer: string, message: string): StdSignDoc {
   return {
@@ -30,8 +30,8 @@ export function buildAdr36SignDoc(signer: string, message: string): StdSignDoc {
 /**
  * @param address     서명자가 주장하는 inj1... 주소
  * @param message     서명 대상 원문 (challenge message)
- * @param publicKeyB64 압축 secp256k1 공개키 (base64 — Keplr signArbitrary 응답의 pub_key.value)
- * @param signatureB64 64바이트 r||s 서명 (base64 — 응답의 signature)
+ * @param publicKeyB64 압축 secp256k1 공개키 (base64 - Keplr signArbitrary 응답의 pub_key.value)
+ * @param signatureB64 64바이트 r||s 서명 (base64 - 응답의 signature)
  * @returns 공개키가 주소와 일치하고 서명이 유효하면 true
  */
 export function verifyAdr36Signature(

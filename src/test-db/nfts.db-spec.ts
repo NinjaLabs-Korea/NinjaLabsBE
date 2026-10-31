@@ -8,7 +8,7 @@ import { createDb, createPrimaryWallet, createUser, testConfig, unique } from '.
 
 jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
 
-/** 운영 알림 대역 — 호출만 기록한다 (nft-worker.db-spec와 같은 방식) */
+/** 운영 알림 대역 - 호출만 기록한다 (nft-worker.db-spec와 같은 방식) */
 const opsAlerts = () => ({ notify: jest.fn(async () => true) }) as unknown as AlertService;
 
 /**
@@ -23,7 +23,7 @@ describeDb('nft enqueue and worker recovery on a real database', () => {
     db = createDb();
     nfts = new NftsService(db, testConfig());
   });
-  // the worker claims any due job — park whatever other tests left behind so each test sees only its own jobs
+  // the worker claims any due job - park whatever other tests left behind so each test sees only its own jobs
   beforeEach(async () => {
     await db.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE status IN ('PENDING', 'PROCESSING')`);
   });

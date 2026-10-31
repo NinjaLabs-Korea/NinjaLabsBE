@@ -26,7 +26,7 @@ describe('AgentsService EVM registration', () => {
 
   /**
    * `db.query` (outside the tx) only ever serves the "my own PENDING row on this wallet" lookup after a unique violation. It answers from
-   * `pending` by the predicates the statement actually carries: the wallet always, the owner only while `owner_user_id = $1` is present —
+   * `pending` by the predicates the statement actually carries: the wallet always, the owner only while `owner_user_id = $1` is present -
    * so dropping the owner predicate hands back someone else's pending row and the 409 cases below fail.
    */
   function createService(pending: PendingRow[] = []) {
@@ -136,7 +136,7 @@ describe('AgentsService EVM registration', () => {
     expect(db.query).not.toHaveBeenCalled();
   });
 
-  it('returns the existing pending challenge after a rejected signature retry — looked up by (owner, wallet) outside the rolled-back tx', async () => {
+  it('returns the existing pending challenge after a rejected signature retry - looked up by (owner, wallet) outside the rolled-back tx', async () => {
     const signer = Wallet.createRandom();
     const { db, service } = createService([{ id: agentId, owner_user_id: ownerUserId, wallet_address: signer.address }]);
     const registerQuery = registerTxQuery({ insert: { code: '23505', constraint: 'uq_agent_wallet' } });
@@ -182,7 +182,7 @@ describe('AgentsService EVM registration', () => {
     expect(db.query.mock.calls[0][1]).toEqual([ownerUserId, signer.address, 'market-agent', null]);
   });
 
-  it("keeps the caller's own REVOKED agent on the same wallet (no soft delete — its history stays visible) and registers a new one", async () => {
+  it("keeps the caller's own REVOKED agent on the same wallet (no soft delete - its history stays visible) and registers a new one", async () => {
     const { db, service } = createService();
     const signer = Wallet.createRandom();
     const oldId = '33333333-3333-4333-8333-333333333333';
@@ -311,7 +311,7 @@ describe('AgentsService EVM registration', () => {
     const injAddress = getInjectiveAddress(injSigner.address);
     const publicKey = Buffer.from(injSigner.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64');
     await service.register(ownerUserId, 'inj-agent', undefined, publicKey, injAddress);
-    // $2 is cast identically in both positions — a bare + cast mix is a 42P08 at parse time on a real Postgres
+    // $2 is cast identically in both positions - a bare + cast mix is a 42P08 at parse time on a real Postgres
     const lookup = registerQuery.mock.calls.find(([sql]) => sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')"));
     expect(lookup?.[0]).toContain('($2::text IS NOT NULL AND public_key = $2::text)');
     expect(lookup?.[1]).toEqual([injAddress, publicKey]);
@@ -342,7 +342,7 @@ describe('AgentsService EVM registration', () => {
     await expect(service.verifyAndIssueKey(ownerUserId, agentId, signature)).rejects.toMatchObject({
       message: 'INVALID_SIGNATURE',
     });
-    // Only the locking SELECT ran — no ACTIVE transition and no key insert.
+    // Only the locking SELECT ran - no ACTIVE transition and no key insert.
     expect(txQuery).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
   });

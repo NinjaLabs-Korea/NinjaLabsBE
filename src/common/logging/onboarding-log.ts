@@ -12,7 +12,7 @@ function safeDetails(details: LogDetails): LogDetails {
 }
 
 /**
- * 타입은 문자열|숫자|불리언|null이지만 쿼리 파라미터가 그대로 넘어오는 호출처(`?trace[a]=…`, `?error=a&error=b`)에서는 Express가 배열/객체를 준다 —
+ * 타입은 문자열|숫자|불리언|null이지만 쿼리 파라미터가 그대로 넘어오는 호출처(`?trace[a]=…`, `?error=a&error=b`)에서는 Express가 배열/객체를 준다 -
  * 그대로 두면 문자열 상한 없이 중첩 구조가 로그 한 줄에 실린다. 객체는 JSON 문자열로 바꿔 같은 상한을 적용한다.
  */
 function safeValue(value: unknown): boolean | number | string | null | undefined {
@@ -33,7 +33,7 @@ export function onboardingLog(logger: Logger, event: string, details: LogDetails
   logger.log(`[onboarding] ${JSON.stringify({ event, ...safeDetails(details) })}`);
 }
 
-/** 예상된 4xx(닉네임 중복·확인 불일치·Turnstile 거절 등 사용자 실수)는 warn, 5xx와 예기치 못한 예외만 error — error 레벨 필터에 장애만 남기려는 규칙 */
+/** 예상된 4xx(닉네임 중복·확인 불일치·Turnstile 거절 등 사용자 실수)는 warn, 5xx와 예기치 못한 예외만 error - error 레벨 필터에 장애만 남기려는 규칙 */
 export function onboardingError(
   logger: Logger,
   event: string,

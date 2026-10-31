@@ -22,7 +22,7 @@ export class NoticesController {
     return this.notices.list(query.page ?? 1, query.pageSize ?? 10, query.category, query.sort);
   }
 
-  /** GET /notices/:id — 공지 상세 (공개) */
+  /** GET /notices/:id - 공지 상세 (공개) */
   @Throttle(PUBLIC_READ_IP_THROTTLE)
   @Get(':id')
   detail(@Param('id', ParseUUIDPipe) id: string) {

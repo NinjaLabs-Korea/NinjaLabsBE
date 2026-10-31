@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
 import { publicBountySql } from './bounty-status';
 
-/** 공개 상세 응답의 bounty 컬럼 — 목록(list)의 컬럼 + 본문·심사 텍스트·진행 시각 */
+/** 공개 상세 응답의 bounty 컬럼 - 목록(list)의 컬럼 + 본문·심사 텍스트·진행 시각 */
 export const PUBLIC_DETAIL_COLUMNS = [
   'id', 'title', 'summary', 'description', 'requirements', 'evaluation_criteria', 'sponsor_name', 'category', 'status',
   'application_required', 'submission_mode', 'cover_image_url', 'max_winners',
@@ -13,7 +13,7 @@ export const PUBLIC_DETAIL_COLUMNS = [
 export class BountiesService {
   constructor(private readonly db: DatabaseService) {}
 
-  /** 공개 바운티 목록 — 한 번이라도 OPEN된 바운티만 노출 (publicBountySql: DRAFT/FUNDING_PENDING과 열리기 전에 취소된 바운티 제외) */
+  /** 공개 바운티 목록 - 한 번이라도 OPEN된 바운티만 노출 (publicBountySql: DRAFT/FUNDING_PENDING과 열리기 전에 취소된 바운티 제외) */
   async list(page = 1, pageSize = 12, category?: string, status?: string) {
     const offset = (page - 1) * pageSize;
 
@@ -58,10 +58,10 @@ export class BountiesService {
   }
 
   /**
-   * 바운티 상세 (공개) — 명시적 컬럼 목록. `b.*`는 내부 컬럼(created_by·sponsor_user_id = 운영자/유저 id, deleted_at)까지 공개 응답에 실었다.
+   * 바운티 상세 (공개) - 명시적 컬럼 목록. `b.*`는 내부 컬럼(created_by·sponsor_user_id = 운영자/유저 id, deleted_at)까지 공개 응답에 실었다.
    * FE(NinjaLabsFE src/lib/bounties.ts BountyDetailRow)가 읽는 필드는 전부 남아 있다. 새 컬럼은 공개해도 되는지 확인한 뒤 여기 추가한다.
-   * 노출 조건은 목록과 같은 publicBountySql — 비공개 바운티는 없는 바운티와 같은 404다.
-   * 보상·첨부는 상관 서브쿼리로 모은다 — 두 테이블을 JOIN한 뒤 `json_agg(DISTINCT …)`로 곱집합을 걷으면 같은 모양의 보상 두 개(심볼·금액·상태 동일)가 하나로 합쳐졌다.
+   * 노출 조건은 목록과 같은 publicBountySql - 비공개 바운티는 없는 바운티와 같은 404다.
+   * 보상·첨부는 상관 서브쿼리로 모은다 - 두 테이블을 JOIN한 뒤 `json_agg(DISTINCT …)`로 곱집합을 걷으면 같은 모양의 보상 두 개(심볼·금액·상태 동일)가 하나로 합쳐졌다.
    */
   async detail(id: string) {
     const r = await this.db.query(

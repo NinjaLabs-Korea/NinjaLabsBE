@@ -1,5 +1,5 @@
 /**
- * 최소 쿠키 유틸 — `cookie-parser` 의존성 없이 요청의 Cookie 헤더를 읽고 Set-Cookie 값을 만든다.
+ * 최소 쿠키 유틸 - `cookie-parser` 의존성 없이 요청의 Cookie 헤더를 읽고 Set-Cookie 값을 만든다.
  * 이 서비스가 읽는 쿠키는 `ninja_rt` 하나뿐이다 (auth/session-cookie.ts).
  */
 

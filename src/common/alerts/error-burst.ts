@@ -1,5 +1,5 @@
 /**
- * 슬라이딩 윈도우 버스트 감지 — `windowMs` 안에 `threshold`건을 **넘으면**(threshold+1번째) true.
+ * 슬라이딩 윈도우 버스트 감지 - `windowMs` 안에 `threshold`건을 **넘으면**(threshold+1번째) true.
  * 마지막 threshold+1개 시각만 들고 있으므로 초당 수천 건이 와도 메모리는 일정하다.
  */
 export class ErrorBurstDetector {

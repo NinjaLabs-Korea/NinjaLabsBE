@@ -17,7 +17,7 @@ const adminServicesFor = (db: unknown) => {
 };
 import { ApplicationsService } from '../applications/applications.service';
 
-/** `db.query` (autocommit) and `tx.query` are separate mocks — transitions and reviews must never issue a statement outside the transaction */
+/** `db.query` (autocommit) and `tx.query` are separate mocks - transitions and reviews must never issue a statement outside the transaction */
 function dbWith(txQuery: jest.Mock) {
   const dbQuery = jest.fn();
   return { dbQuery, db: createMockDb({ query: dbQuery, txQuery }).database };

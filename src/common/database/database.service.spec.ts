@@ -59,7 +59,7 @@ describe('runInTransaction', () => {
   });
 });
 
-describe('runInTransaction — failures outside the callback', () => {
+describe('runInTransaction - failures outside the callback', () => {
   const logger = () => ({ error: jest.fn() });
 
   it('BEGIN failing (dead connection) never runs the callback, rethrows the BEGIN error and discards the client', async () => {
@@ -134,7 +134,7 @@ describe('DatabaseService', () => {
 
   it('closes its pool in onApplicationShutdown (after HTTP drain), never in the earlier onModuleDestroy/beforeApplicationShutdown hooks', async () => {
     const db = new DatabaseService(config({ DATABASE_URL: 'postgresql://u@127.0.0.1:1/x', PGSSLMODE: 'disable' }));
-    // Nest calls hooks by method name — an earlier hook here would end the pool while workers drain and requests finish
+    // Nest calls hooks by method name - an earlier hook here would end the pool while workers drain and requests finish
     expect('onModuleDestroy' in db).toBe(false);
     expect('beforeApplicationShutdown' in db).toBe(false);
     const pool = (db as unknown as { pool: { ended: boolean } }).pool;
@@ -144,8 +144,8 @@ describe('DatabaseService', () => {
   });
 });
 
-describe('runInTransaction — socket errors on the checked-out client', () => {
-  /** pg-pool detaches its idle 'error' listener while a client is checked out — an unhandled 'error' event kills the process */
+describe('runInTransaction - socket errors on the checked-out client', () => {
+  /** pg-pool detaches its idle 'error' listener while a client is checked out - an unhandled 'error' event kills the process */
   function emitterClient() {
     return Object.assign(new EventEmitter(), { query: jest.fn().mockResolvedValue({}), release: jest.fn() });
   }

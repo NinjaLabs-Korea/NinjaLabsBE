@@ -3,7 +3,7 @@ import { OAuth2Client, TokenPayload } from 'google-auth-library';
 
 export type GoogleIdTokenClaims = Pick<TokenPayload, 'iss' | 'aud' | 'sub' | 'email' | 'email_verified'>;
 
-/** Google JWKS를 받아오지 못해 검증 자체를 못 한 경우 — 토큰이 잘못된 것이 아니므로 호출자는 503으로 매핑한다 */
+/** Google JWKS를 받아오지 못해 검증 자체를 못 한 경우 - 토큰이 잘못된 것이 아니므로 호출자는 503으로 매핑한다 */
 export class GoogleVerifierUnavailableError extends Error {
   constructor(message: string, readonly cause?: unknown) {
     super(message);
@@ -17,10 +17,10 @@ const CERTS_FETCH_FAILED = /^Failed to retrieve verification certificates/;
 const NETWORK_CODE = /^(ECONN[A-Z]+|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|ERR_NETWORK)$/;
 
 /**
- * Google id_token 서명 검증 — google-auth-library가 Google JWKS를 받아 캐시하고
+ * Google id_token 서명 검증 - google-auth-library가 Google JWKS를 받아 캐시하고
  * 서명·만료·audience를 확인한다. 클레임(iss/sub/email_verified) 해석은 AuthService가 한다.
  *
- * 검증 실패(서명/만료/audience — 라이브러리는 평범한 Error에 메시지로 돌려준다)는 그대로 던지고,
+ * 검증 실패(서명/만료/audience - 라이브러리는 평범한 Error에 메시지로 돌려준다)는 그대로 던지고,
  * JWKS 조회 실패(네트워크, DNS, 인증서 엔드포인트 비2xx)는 GoogleVerifierUnavailableError로 구분한다.
  */
 @Injectable()

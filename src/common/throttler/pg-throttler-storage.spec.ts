@@ -49,7 +49,7 @@ describe('PgThrottlerStorage', () => {
   });
 
   it.each(['timeout exceeded when trying to connect', 'Connection terminated due to connection timeout', 'Query read timeout'])(
-    'fails open when the pool times out (%s) — a stalled DB never blocks or 500s the throttled request',
+    'fails open when the pool times out (%s) - a stalled DB never blocks or 500s the throttled request',
     async (message) => {
       const { storage, query } = setup();
       query.mockRejectedValue(new Error(message));

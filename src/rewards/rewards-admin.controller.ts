@@ -6,7 +6,7 @@ import { TOKEN_AMOUNT } from '../common/validation/token-amount';
 import { RewardsService } from './rewards.service';
 import { MaxChars } from '../common/validation/max-chars';
 
-// txHash 형식(32바이트 hex)은 서비스가 검사해 400 INVALID_TX_HASH로 응답한다 — common/validation/tx-hash.ts
+// txHash 형식(32바이트 hex)은 서비스가 검사해 400 INVALID_TX_HASH로 응답한다 - common/validation/tx-hash.ts
 class ConfirmDepositDto {
   @IsString() @Matches(/\S/) @MaxChars(255) txHash!: string;
   @IsString() @Matches(TOKEN_AMOUNT) depositedAmount!: string;

@@ -123,7 +123,7 @@ describe('AuthService OAuth state', () => {
   });
 });
 
-describe('AuthService.exchangeGoogleCode — token endpoint and claim edge cases', () => {
+describe('AuthService.exchangeGoogleCode - token endpoint and claim edge cases', () => {
   const clientId = 'cid.apps.googleusercontent.com';
   const claims = { iss: 'https://accounts.google.com', aud: clientId, sub: 'google-sub', email: 'a@b.com', email_verified: true };
   const originalFetch = global.fetch;
@@ -225,7 +225,7 @@ describe('AuthService.exchangeGoogleCode — token endpoint and claim edge cases
   });
 });
 
-describe('AuthService.upsertGoogleUser — first login', () => {
+describe('AuthService.upsertGoogleUser - first login', () => {
   it('creates the user at onboarding step 2 with a temporary user_<8 hex> nickname and returns the inserted row', async () => {
     const created = { id: userId, is_admin: false, onboarding_step: 2, onboarding_completed_at: null };
     const query = jest.fn()
@@ -242,7 +242,7 @@ describe('AuthService.upsertGoogleUser — first login', () => {
   });
 });
 
-describe('AuthService.exchangeLoginCode — format guard', () => {
+describe('AuthService.exchangeLoginCode - format guard', () => {
   const good = { code: 'c'.repeat(43), verifier: 'v'.repeat(43) };
   it.each([
     ['a 42-char code', 'c'.repeat(42), good.verifier],

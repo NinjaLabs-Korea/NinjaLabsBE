@@ -14,7 +14,7 @@ import { createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_DB_URL_ENV,
 jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
 
 /**
- * 2026-10-25 삭제 가드(입금액 전체) · record-refund(PAID 포함) · scripts/forfeit-award.js의 교차 검증 —
+ * 2026-10-25 삭제 가드(입금액 전체) · record-refund(PAID 포함) · scripts/forfeit-award.js의 교차 검증 -
  * 다중 보상, 보상 미지급 처리 뒤 지갑 연결, 에이전트 제출, 동시 실행(바운티 행 잠금 직렬화)에서 돈/상태 규칙이 깨지지 않는지.
  */
 describeDb('refund / delete / forfeit across rules and races', () => {
@@ -72,7 +72,7 @@ describeDb('refund / delete / forfeit across rules and races', () => {
   }
   const rewardStatus = async (id: string) => (await db.query<{ status: string }>(`SELECT status FROM bounty_reward WHERE id = $1`, [id])).rows[0].status;
 
-  it('multi-reward: over-deposit on reward 1 + untouched reward 2 — delete 409 until both refunded', async () => {
+  it('multi-reward: over-deposit on reward 1 + untouched reward 2 - delete 409 until both refunded', async () => {
     const { bountyId, rewardIds: [r1, r2], adminId, admin2 } = await seed(1, [{ amount: 100, deposited: 150 }, { amount: 500, deposited: 500, denom: 'peggy0xusdt' }]);
     const w = await winner(bountyId);
     await pay(r1, w.sid, '100', adminId, admin2);
@@ -80,7 +80,7 @@ describeDb('refund / delete / forfeit across rules and races', () => {
     expect(await rewardStatus(r1)).toBe('PAID');
     expect(await rewardStatus(r2)).toBe('PAID'); // maxWinners 1 reached
     await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ status: 409 });
-    // IN_REVIEW → OPEN(재오픈) → CANCELLED — 수상자는 다 받았으므로 UNPAID_WINNERS가 없다
+    // IN_REVIEW → OPEN(재오픈) → CANCELLED - 수상자는 다 받았으므로 UNPAID_WINNERS가 없다
     await bounties.transition(bountyId, 'OPEN', adminId);
     await expect(bounties.transition(bountyId, 'CANCELLED', adminId)).resolves.toMatchObject({ status: 'CANCELLED' });
     const a = await run(recordRefund, [r1, '--tx', fakeTxHash(), '--yes']);
@@ -130,7 +130,7 @@ describeDb('refund / delete / forfeit across rules and races', () => {
   });
 
   for (let i = 0; i < 2; i += 1) {
-    it(`forfeit vs concurrent requestPayout (round ${i}) — exactly one wins, no deadlock`, async () => {
+    it(`forfeit vs concurrent requestPayout (round ${i}) - exactly one wins, no deadlock`, async () => {
       const { bountyId, rewardIds: [r1], adminId } = await seed(1, [{ amount: 100, deposited: 100 }]);
       const w = await winner(bountyId);
       const holder = await pool.connect();

@@ -2,7 +2,7 @@ import { describeDb } from '../test-db/describe-db';
 import { AdminBountyForm, applyBody, saveAdminBountyBody, submitBody } from './support/fe-payloads';
 import { DAY, E2eApp, isoIn, startApp, txHash } from './support/harness';
 
-// DELETE /users/me — FE /account danger zone: confirm nickname → withdraw → POST /auth/logout → home
+// DELETE /users/me - FE /account danger zone: confirm nickname → withdraw → POST /auth/logout → home
 describeDb('account withdrawal over HTTP (e2e)', () => {
   let e2e: E2eApp;
   beforeAll(async () => { e2e = await startApp(); });

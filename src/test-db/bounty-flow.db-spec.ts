@@ -25,7 +25,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
   let submissions: SubmissionsService;
   let submissionReview: SubmissionReviewService;
   let adminId: string;
-  /** second admin — the two-person rule forbids the requesting admin (adminId) from approving their own payout */
+  /** second admin - the two-person rule forbids the requesting admin (adminId) from approving their own payout */
   let approverId: string;
 
   beforeAll(async () => {
@@ -225,7 +225,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
 
     const first = await applications.apply(bountyId, builderId, 'first try', 'https://x.test/old');
     await expect(applications.withdraw(first.id, builderId)).resolves.toEqual({ id: first.id, status: 'WITHDRAWN' });
-    // simulate leftover review fields (e.g. an older review cycle) — re-application must clear them
+    // simulate leftover review fields (e.g. an older review cycle) - re-application must clear them
     await db.query(`UPDATE bounty_application SET reviewed_by = $2, reviewed_at = now(), review_note = 'old note', applied_at = now() - interval '1 day' WHERE id = $1`, [first.id, adminId]);
 
     const reopened = await applications.apply(bountyId, builderId, 'second try');
@@ -388,7 +388,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
 
   /**
    * 지급 취소/풀 소진 뒤에도 바운티를 끝낼 수 있다 - 규칙은 rewards/payout-status.ts (OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql).
-   *   - 취소된(CANCELLED) payout은 진행 중이 아니고, 그 수상자는 받을 몫이 없다(NONE) — 같은 (보상, 제출)로 다시 요청할 수 없으므로.
+   *   - 취소된(CANCELLED) payout은 진행 중이 아니고, 그 수상자는 받을 몫이 없다(NONE) - 같은 (보상, 제출)로 다시 요청할 수 없으므로.
    *   - 다른 수상자가 풀을 다 가져간 승인 제출도 받을 몫이 없다(NONE).
    *   - 여유분이 남은 승인 제출, FAILED payout이 걸린 제출은 받을 몫이 남은 것이라 COMPLETED를 막는다 (PENDING).
    */
@@ -418,7 +418,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       return payout.id;
     }
 
-    /** docs/runbook.md §7.4 "수상 자체를 취소" SQL 그대로 (payout id만 치환) — 문서의 절차가 실제로 바운티를 끝낼 수 있게 두는지 검사한다 */
+    /** docs/runbook.md §7.4 "수상 자체를 취소" SQL 그대로 (payout id만 치환) - 문서의 절차가 실제로 바운티를 끝낼 수 있게 두는지 검사한다 */
     async function runbookCancel(payoutId: string) {
       await db.tx(async (tx) => {
         const cancelled = await tx.query(`UPDATE payout SET status = 'CANCELLED', last_error = 'award withdrawn'
@@ -439,7 +439,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       });
     }
 
-    /** /submissions/me payment_status 와 GET /users/:nickname completedBounties[].payoutStatus — 둘 다 payoutStatusSql */
+    /** /submissions/me payment_status 와 GET /users/:nickname completedBounties[].payoutStatus - 둘 다 payoutStatusSql */
     async function shownStatus(who: { userId: string; nickname: string; submissionId: string }) {
       const mine = (await submissions.mySubmissions(who.userId)).find((row) => row.id === who.submissionId);
       const profile = await new UsersService(db, new AuditService(db)).publicProfile(who.nickname);
@@ -510,16 +510,16 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     });
 
     /**
-     * 적대적 검토 — payout 상태 집합을 한 곳(rewards/payout-status.ts)으로 모은 뒤에도 의도한 세 가지
+     * 적대적 검토 - payout 상태 집합을 한 곳(rewards/payout-status.ts)으로 모은 뒤에도 의도한 세 가지
      * (COMPLETED의 진행 중 payout 수, COMPLETED의 받을 몫 남은 승인 제출 수, 취소 ⇒ NONE) 밖의 규칙은 그대로인지 확인한다.
      */
     describe('adversarial: only the three intended rules moved', () => {
-      /** runbook §7.4 취소 SQL의 FAILED 변형 — WHERE만 'FAILED'로 바꾼다 (온체인 미송금 확인 뒤, runbook 주석 참고) */
+      /** runbook §7.4 취소 SQL의 FAILED 변형 - WHERE만 'FAILED'로 바꾼다 (온체인 미송금 확인 뒤, runbook 주석 참고) */
       async function cancelFailed(payoutId: string) {
         const r = await db.query(`UPDATE payout SET status = 'CANCELLED', last_error = 'never sent' WHERE id = $1 AND status = 'FAILED'`, [payoutId]);
         expect(r.rowCount).toBe(1);
       }
-      /** scripts/record-refund.js의 runner 자리(pg Pool)에 DatabaseService.query를 넘긴다 — 같은 (text, params) 호출만 쓴다 */
+      /** scripts/record-refund.js의 runner 자리(pg Pool)에 DatabaseService.query를 넘긴다 - 같은 (text, params) 호출만 쓴다 */
       const asScriptRunner = () => ({ query: (text: string, params?: unknown[]) => db.query(text, params) }) as unknown as Parameters<typeof inspectReward>[0];
       const fail = (payoutId: string) => db.query(`UPDATE payout SET status = 'FAILED' WHERE id = $1`, [payoutId]);
 
@@ -574,7 +574,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
         const bPayout = await rewards.requestPayout(rewardId, b.submissionId, '500', adminId);
         expect(await shownStatus(c)).toEqual({ me: 'NONE', profile: ['NONE'] }); // pool fully allocated
         await runbookCancel(bPayout.id);
-        expect(await shownStatus(c)).toEqual({ me: 'PENDING', profile: ['PENDING'] }); // 500 released — C can now be requested
+        expect(await shownStatus(c)).toEqual({ me: 'PENDING', profile: ['PENDING'] }); // 500 released - C can now be requested
         await toInReview(bountyId);
         await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).rejects.toMatchObject(UNPAID);
         await pay(rewardId, c.submissionId, '500');
@@ -700,7 +700,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       ]));
       expect(fulfilled).toHaveLength(1);
       expect(rejected).toHaveLength(1);
-      // the loser waited on the bounty/reward row locks, re-ran the duplicate check and saw the winner's row — it never reached uq_payout_idempotency
+      // the loser waited on the bounty/reward row locks, re-ran the duplicate check and saw the winner's row - it never reached uq_payout_idempotency
       expect(rejected[0]).toBeInstanceOf(ConflictException);
       expect(rejected[0].message).toBe('PAYOUT_ALREADY_REQUESTED');
       const rows = await db.query<{ id: string; amount: string }>(`SELECT id, amount::text FROM payout WHERE submission_id = $1`, [submissionId]);
@@ -730,8 +730,8 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     });
 
     /**
-     * A RewardsService whose PAYOUT_PAID audit step parks the transaction of `payoutId` (everything before it — the PAID UPDATE,
-     * the child NFT job, advanceRewardStatus — has run but is uncommitted) until `release` resolves. `parked` resolves on arrival.
+     * A RewardsService whose PAYOUT_PAID audit step parks the transaction of `payoutId` (everything before it - the PAID UPDATE,
+     * the child NFT job, advanceRewardStatus - has run but is uncommitted) until `release` resolves. `parked` resolves on arrival.
      */
     function parkedMarkPaid(payoutId: string) {
       const parked = deferred<void>();
@@ -752,12 +752,12 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       const hash = fakeTxHash();
 
       // T1 records the hash on bounty A and parks before committing. T2 then records the same hash on bounty B: it must block on the
-      // per-hash advisory lock (T1's PAID row is invisible to it until T1 commits — without the lock T2's reuse check sees nothing and both commit).
+      // per-hash advisory lock (T1's PAID row is invisible to it until T1 commits - without the lock T2's reuse check sees nothing and both commit).
       const { service: parkedService, parked, release } = parkedMarkPaid(payouts[0]);
       const t1 = parkedService.markPaid(payouts[0], hash, adminId);
       await parked;
       const t2 = rewards.markPaid(payouts[1], hash.toLowerCase(), adminId).then(() => 'paid' as const, (err: Error) => err);
-      // either T2 is now waiting on the advisory lock (correct), or it already finished (lock missing) — release T1 in both cases and judge below
+      // either T2 is now waiting on the advisory lock (correct), or it already finished (lock missing) - release T1 in both cases and judge below
       await Promise.race([waitForLockWaiter(db, 'the second markPaid to block on the hash advisory lock'), t2]);
       release();
 
@@ -770,7 +770,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       expect((await db.query<{ status: string }>(`SELECT status FROM payout WHERE id = $1`, [payouts[1]])).rows[0].status).toBe('APPROVED'); // rolled back, can be paid with its own hash
     });
 
-    it('markPaid of two winners overlapping inside advanceRewardStatus: the reward ends PAID — the reward FOR UPDATE makes the second recomputation see the first payout', async () => {
+    it('markPaid of two winners overlapping inside advanceRewardStatus: the reward ends PAID - the reward FOR UPDATE makes the second recomputation see the first payout', async () => {
       const { rewardId, winners } = await openBountyWithWinners(2, '1000');
       const payouts = [await approvedPayout(rewardId, winners[0], '500'), await approvedPayout(rewardId, winners[1], '500')];
 

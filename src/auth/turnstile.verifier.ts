@@ -6,13 +6,13 @@ import { OriginAllowlist } from '../common/origin-allowlist';
 import { feRedirectAllowlist } from './fe-origins';
 
 export const TURNSTILE_SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
-/** siteverify 응답을 기다리는 최대 시간 — 넘기면 503 TURNSTILE_UNAVAILABLE (로그인 버튼이 무한정 매달리지 않게) */
+/** siteverify 응답을 기다리는 최대 시간 - 넘기면 503 TURNSTILE_UNAVAILABLE (로그인 버튼이 무한정 매달리지 않게) */
 export const TURNSTILE_TIMEOUT_MS = 5_000;
-/** Cloudflare 문서상 토큰 최대 길이 — 넘으면 siteverify를 부르지 않고 400 */
+/** Cloudflare 문서상 토큰 최대 길이 - 넘으면 siteverify를 부르지 않고 400 */
 export const TURNSTILE_TOKEN_MAX = 2048;
 
 /**
- * Cloudflare siteverify의 error-codes 중 **우리 쪽(시크릿/Cloudflare) 문제**인 것 — 토큰 탓이 아니므로 400이 아니라 503으로 답하고 error 로그.
+ * Cloudflare siteverify의 error-codes 중 **우리 쪽(시크릿/Cloudflare) 문제**인 것 - 토큰 탓이 아니므로 400이 아니라 503으로 답하고 error 로그.
  * (invalid-input-response / timeout-or-duplicate / missing-input-response 등 나머지는 토큰 문제 → 400). 시크릿 설정 오류를 400으로 두면 모든 로그인이 "토큰이 잘못됐다"로 보이고 error 로그/알림도 없다
  */
 const SERVER_SIDE_ERROR_CODES = new Set([
@@ -23,17 +23,17 @@ const SERVER_SIDE_ERROR_CODES = new Set([
   'internal-error',
 ]);
 
-/** FE 위젯이 렌더할 때 넣는 action (NinjaLabsFE `TurnstileWidget` — `action: "login"`). 다른 action의 토큰은 이 로그인에 쓸 수 없다 */
+/** FE 위젯이 렌더할 때 넣는 action (NinjaLabsFE `TurnstileWidget` - `action: "login"`). 다른 action의 토큰은 이 로그인에 쓸 수 없다 */
 export const TURNSTILE_EXPECTED_ACTION = 'login';
 
 type SiteverifyResponse = { success?: unknown; 'error-codes'?: unknown; hostname?: unknown; action?: unknown };
 
 /**
- * Cloudflare Turnstile 서버측 검증 — 로그인 시작(GET /auth/google)의 봇 방지.
+ * Cloudflare Turnstile 서버측 검증 - 로그인 시작(GET /auth/google)의 봇 방지.
  *
- *   - `TURNSTILE_SECRET_KEY` 미설정: 검사 생략(로컬/개발/e2e). production이면 기동 시 warn 1회 — 봇 방지 없이 열려 있다는 뜻이다.
+ *   - `TURNSTILE_SECRET_KEY` 미설정: 검사 생략(로컬/개발/e2e). production이면 기동 시 warn 1회 - 봇 방지 없이 열려 있다는 뜻이다.
  *   - 설정됨: 토큰이 없거나 길이 초과 → 400 TURNSTILE_FAILED (siteverify 호출 없음).
- *     siteverify `success:true` + `hostname`이 로그인 FE 오리진(AUTH_SUCCESS_REDIRECT의 오리진 + AUTH_ALLOWED_REDIRECT_ORIGINS — fe-origins.ts,
+ *     siteverify `success:true` + `hostname`이 로그인 FE 오리진(AUTH_SUCCESS_REDIRECT의 오리진 + AUTH_ALLOWED_REDIRECT_ORIGINS - fe-origins.ts,
  *     returnTo 검증과 같은 목록)의 호스트 + `action === 'login'` → 통과.
  *     `success:false`(만료/재사용/위조 토큰), 또는 성공이어도 hostname/action 불일치(같은 사이트 키를 쓰는 다른 사이트·다른 위젯에서 받은 토큰을
  *     재사용) → 400 TURNSTILE_FAILED.
@@ -93,7 +93,7 @@ export class TurnstileVerifier implements OnModuleInit {
       const hostname = typeof result.hostname === 'string' ? result.hostname : '';
       const action = typeof result.action === 'string' ? result.action : '';
       if (this.allowedHosts.allowsHostname(hostname) && action === TURNSTILE_EXPECTED_ACTION) return;
-      // 호스트 이름·action은 사이트 식별값이라 비밀이 아니다 — 원인 구분용으로 남긴다 (CR/LF 이스케이프 + 상한)
+      // 호스트 이름·action은 사이트 식별값이라 비밀이 아니다 - 원인 구분용으로 남긴다 (CR/LF 이스케이프 + 상한)
       this.logger.log(`Turnstile token rejected: hostname/action mismatch (hostname=${logSafe(hostname || '-', 100)}, action=${logSafe(action || '-', 50)})`);
       throw new BadRequestException('TURNSTILE_FAILED');
     }

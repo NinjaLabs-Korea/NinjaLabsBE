@@ -10,7 +10,7 @@ import { AuthModule } from './auth.module';
 import { AuthService } from './auth.service';
 import { JWT_SECRET } from './jwt-secret';
 
-/** AuthModule은 전역 DatabaseModule을 기대한다 — 여기서는 SQL을 치지 않으므로 빈 대역을 전역으로 제공한다 */
+/** AuthModule은 전역 DatabaseModule을 기대한다 - 여기서는 SQL을 치지 않으므로 빈 대역을 전역으로 제공한다 */
 @Global()
 @Module({ providers: [{ provide: DatabaseService, useValue: {} }], exports: [DatabaseService] })
 class FakeDatabaseModule {}
@@ -19,7 +19,7 @@ const ENV_KEYS = [
   'JWT_SECRET', 'JWT_ACCESS_TTL', 'NODE_ENV', 'GOOGLE_CLIENT_SECRET', 'JWT_REFRESH_TTL',
   'GOOGLE_CLIENT_ID', 'GOOGLE_CALLBACK_URL', 'AUTH_SUCCESS_REDIRECT',
 ] as const;
-/** production 로그인 플로우 공개값 (railway.ts가 넣는 것) — requireProductionAuthUrls가 요구한다 */
+/** production 로그인 플로우 공개값 (railway.ts가 넣는 것) - requireProductionAuthUrls가 요구한다 */
 const PROD_PUBLIC = 'NODE_ENV=production\nGOOGLE_CLIENT_ID=id.apps.googleusercontent.com\nGOOGLE_CALLBACK_URL=https://api.example.com/auth/google/callback\nAUTH_SUCCESS_REDIRECT=https://fe.example.com/\n';
 const STRONG_SECRET = 'file-secret-from-dotenv-'.padEnd(48, 'x');
 
@@ -55,7 +55,7 @@ describe('AuthModule boots its secrets from the .env ConfigModule loads (not imp
     try {
       await app.init();
     } catch (err) {
-      // Nest 11 close() re-awaits the failed init — swallow that echo, surface the original boot error
+      // Nest 11 close() re-awaits the failed init - swallow that echo, surface the original boot error
       await app.close().catch(() => undefined);
       throw err;
     }
@@ -88,7 +88,7 @@ describe('AuthModule boots its secrets from the .env ConfigModule loads (not imp
     expect(exp - iat).toBe(900);
   });
 
-  it('refuses to boot on a unitless JWT_ACCESS_TTL (jsonwebtoken would read `900` as 900 ms — every access token expired at issue)', async () => {
+  it('refuses to boot on a unitless JWT_ACCESS_TTL (jsonwebtoken would read `900` as 900 ms - every access token expired at issue)', async () => {
     await expect(boot(`JWT_SECRET=${STRONG_SECRET}\nJWT_ACCESS_TTL=900\n`)).rejects.toThrow(/JWT_ACCESS_TTL must be "<integer> <unit>"/);
   });
 

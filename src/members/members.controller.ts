@@ -7,7 +7,7 @@ import { MembersService } from './members.service';
 export class MembersController {
   constructor(private readonly members: MembersService) {}
 
-  /** GET /members — 닌자랩스 공식 멤버 리스트 (공개) */
+  /** GET /members - 닌자랩스 공식 멤버 리스트 (공개) */
   @Throttle(PUBLIC_READ_IP_THROTTLE)
   @Get()
   list() {

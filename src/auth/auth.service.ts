@@ -30,7 +30,7 @@ import { primaryWalletSql } from '../wallets/primary-wallet';
  */
 export const GOOGLE_USER_UNIQUE_INDEXES = ['uq_user_google_id', 'uq_user_email'] as const;
 
-// SessionUser는 컨트롤러·가드 등 여러 모듈이 이 경로로 import한다 — 정의는 access-token.verifier.ts 한 곳
+// SessionUser는 컨트롤러·가드 등 여러 모듈이 이 경로로 import한다 - 정의는 access-token.verifier.ts 한 곳
 export type { SessionUser } from './access-token.verifier';
 export type { OAuthState } from './google-oauth.flow';
 
@@ -59,7 +59,7 @@ export type MeResponse = {
  * 5. 브라우저 challenge에 연결된 일회용 코드 전달 (URL에 세션 토큰 없음)
  * 6. POST /auth/exchange로 코드를 소비하고 세션 발급, refresh는 해시만 저장
  *
- * AuthService는 **창구(facade)**다 — 컨트롤러·가드·탈퇴 서비스가 보는 공개 메서드와 생성자 시그니처를 고정하고, 실제 규칙은
+ * AuthService는 **창구(facade)**다 - 컨트롤러·가드·탈퇴 서비스가 보는 공개 메서드와 생성자 시그니처를 고정하고, 실제 규칙은
  * 아래 협력자에 있다. 규칙을 고칠 때는 이 파일이 아니라 해당 파일을 연다:
  *   - Google state / 동의 URL / code 교환          → google-oauth.flow.ts   (id_token 서명 검증: google-id-token.verifier.ts)
  *   - 일회용 로그인 코드 발급·소비                  → login-codes.ts
@@ -68,29 +68,29 @@ export type MeResponse = {
  *   - JWT_REFRESH_TTL 해석                          → refresh-ttl.ts
  *   - AuthGuard 유저 상태 캐시(30초)                → user-status-cache.ts
  * 이 파일에 직접 남은 규칙은 유저 조회/생성(getMe, upsertGoogleUser)과 assertActiveUser의 "ACTIVE" SQL뿐이다.
- * 협력자는 Nest provider가 아닌 일반 클래스로, 생성자에서 만든다 — 그래서 `new AuthService(db, jwt, config, secret)` 하나로 스펙이 전부 조립된다.
+ * 협력자는 Nest provider가 아닌 일반 클래스로, 생성자에서 만든다 - 그래서 `new AuthService(db, jwt, config, secret)` 하나로 스펙이 전부 조립된다.
  */
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  /** JWT_REFRESH_TTL을 정규화한 Postgres interval 문자열 — 생성 시 검증해 잘못된 값이면 부팅이 실패한다 (JWT_SECRET과 동일) */
+  /** JWT_REFRESH_TTL을 정규화한 Postgres interval 문자열 - 생성 시 검증해 잘못된 값이면 부팅이 실패한다 (JWT_SECRET과 동일) */
   private readonly refreshTtl: string;
-  /** refreshTtl을 초로 — refresh 쿠키 Max-Age */
+  /** refreshTtl을 초로 - refresh 쿠키 Max-Age */
   readonly refreshTtlSeconds: number;
-  /** Google OAuth 왕복 (state, 동의 URL, code 교환) — google-oauth.flow.ts */
+  /** Google OAuth 왕복 (state, 동의 URL, code 교환) - google-oauth.flow.ts */
   private readonly oauth: GoogleOAuthFlow;
-  /** 세션 발급·회전·폐기 — auth-sessions.ts */
+  /** 세션 발급·회전·폐기 - auth-sessions.ts */
   private readonly sessions: AuthSessions;
-  /** OAuth 콜백 일회용 로그인 코드 — login-codes.ts */
+  /** OAuth 콜백 일회용 로그인 코드 - login-codes.ts */
   private readonly loginCodes: LoginCodes;
-  /** access JWT 검증 (레거시 전환기 포함) — access-token.verifier.ts */
+  /** access JWT 검증 (레거시 전환기 포함) - access-token.verifier.ts */
   private readonly accessTokens: AccessTokenVerifier;
-  /** AuthGuard용 유저 상태 캐시 (프로세스별, 30초) — user-status-cache.ts */
+  /** AuthGuard용 유저 상태 캐시 (프로세스별, 30초) - user-status-cache.ts */
   private readonly userStatusCache = new UserStatusCache();
 
   /**
    * @param graceSecret grace_refresh_token 암호화 키 재료 (refresh-grace.ts). JwtModule이 서명에 쓰는 것과 **같은 provider**(JWT_SECRET,
-   *   jwt-secret.ts)에서 주입받으므로 두 값이 어긋날 수 없다 — ConfigModule이 .env를 읽은 뒤 한 번만 계산된다.
+   *   jwt-secret.ts)에서 주입받으므로 두 값이 어긋날 수 없다 - ConfigModule이 .env를 읽은 뒤 한 번만 계산된다.
    */
   constructor(
     private readonly db: DatabaseService,
@@ -110,22 +110,22 @@ export class AuthService {
     this.loginCodes = new LoginCodes(this.db, this.sessions);
   }
 
-  /** CSRF 방어용 서명 state(10분 JWT) 발급 — google-oauth.flow.ts */
+  /** CSRF 방어용 서명 state(10분 JWT) 발급 - google-oauth.flow.ts */
   issueOauthState(traceId: string | undefined, redirectUrl: string, codeChallenge: string): Promise<string> {
     return this.oauth.issueOauthState(traceId, redirectUrl, codeChallenge);
   }
 
-  /** 콜백의 state 검증 → trace/redirect/PKCE challenge — google-oauth.flow.ts */
+  /** 콜백의 state 검증 → trace/redirect/PKCE challenge - google-oauth.flow.ts */
   verifyOauthState(state: string): Promise<OAuthState> {
     return this.oauth.verifyOauthState(state);
   }
 
-  /** Google 동의 화면 URL — google-oauth.flow.ts */
+  /** Google 동의 화면 URL - google-oauth.flow.ts */
   buildGoogleAuthUrl(state: string): string {
     return this.oauth.buildGoogleAuthUrl(state);
   }
 
-  /** code → 구글 프로필(google_id, email), id_token 서명·클레임 검증 포함 — google-oauth.flow.ts */
+  /** code → 구글 프로필(google_id, email), id_token 서명·클레임 검증 포함 - google-oauth.flow.ts */
   exchangeGoogleCode(code: string): Promise<{ googleId: string; email: string }> {
     return this.oauth.exchangeGoogleCode(code);
   }
@@ -203,7 +203,7 @@ export class AuthService {
       // uq_user_email / uq_user_google_id는 deleted_at IS NULL 행만 본다(0014). 그래도 같은 이메일/구글 계정의 활성 행과
       // 충돌하면(동시 첫 로그인, 또는 탈퇴 후 다른 google_id로 같은 이메일) 500 대신 409 → 콜백이 #error=AUTH_FAILED로 보낸다
       if (isUniqueViolation(err, GOOGLE_USER_UNIQUE_INDEXES)) {
-        // 같은 구글 계정의 동시 첫 로그인(두 콜백이 겹침)이면 상대가 방금 만든 행이 이제 보인다 — 그 유저로 로그인시킨다. 안 보이면 이메일 충돌이다
+        // 같은 구글 계정의 동시 첫 로그인(두 콜백이 겹침)이면 상대가 방금 만든 행이 이제 보인다 - 그 유저로 로그인시킨다. 안 보이면 이메일 충돌이다
         const raced = await this.findGoogleUser(googleId);
         if (raced) return raced;
         throw new ConflictException('ACCOUNT_CONFLICT');
@@ -221,38 +221,38 @@ export class AuthService {
     return found.rowCount ? found.rows[0] : undefined;
   }
 
-  /** OAuth 콜백용 60초 일회용 코드 발급 (브라우저 PKCE challenge에 묶임) — login-codes.ts */
+  /** OAuth 콜백용 60초 일회용 코드 발급 (브라우저 PKCE challenge에 묶임) - login-codes.ts */
   issueLoginCode(userId: string, codeChallenge: string): Promise<string> {
     return this.loginCodes.issueLoginCode(userId, codeChallenge);
   }
 
-  /** POST /auth/exchange — 코드를 원자적으로 소비하고 세션 발급 — login-codes.ts */
+  /** POST /auth/exchange - 코드를 원자적으로 소비하고 세션 발급 - login-codes.ts */
   exchangeLoginCode(code: string, codeVerifier: string, ip?: string, userAgent?: string) {
     return this.loginCodes.exchangeLoginCode(code, codeVerifier, ip, userAgent);
   }
 
-  /** JWT access + refresh 발급, refresh 해시만 저장 — auth-sessions.ts */
+  /** JWT access + refresh 발급, refresh 해시만 저장 - auth-sessions.ts */
   issueSession(userId: string, isAdmin: boolean, ip?: string, userAgent?: string) {
     return this.sessions.issue(userId, isAdmin, ip, userAgent);
   }
 
-  /** refresh 회전 + 30초 유예 + 재사용 감지 시 사슬 폐기 — auth-sessions.ts */
+  /** refresh 회전 + 30초 유예 + 재사용 감지 시 사슬 폐기 - auth-sessions.ts */
   refresh(refreshToken: string, ip?: string, userAgent?: string) {
     return this.sessions.refresh(refreshToken, ip, userAgent);
   }
 
-  /** 세션 폐기 (로그아웃) — auth-sessions.ts */
+  /** 세션 폐기 (로그아웃) - auth-sessions.ts */
   revoke(refreshToken: string) {
     return this.sessions.revoke(refreshToken);
   }
 
-  /** 이 프로세스의 유저 상태 캐시에서 한 유저를 지운다 — 탈퇴처럼 본인이 상태를 바꾼 직후 다음 요청부터 바로 반영되게 (다른 레플리카는 TTL ≤ 30초) */
+  /** 이 프로세스의 유저 상태 캐시에서 한 유저를 지운다 - 탈퇴처럼 본인이 상태를 바꾼 직후 다음 요청부터 바로 반영되게 (다른 레플리카는 TTL ≤ 30초) */
   forgetUserStatus(userId: string): void {
     this.userStatusCache.forget(userId);
   }
 
   /**
-   * access 토큰의 주인이 지금도 ACTIVE이고 삭제되지 않았는지 — 아니면 401 INVALID_ACCESS_TOKEN (FE는 refresh를 시도하고, refresh도 같은 조건으로
+   * access 토큰의 주인이 지금도 ACTIVE이고 삭제되지 않았는지 - 아니면 401 INVALID_ACCESS_TOKEN (FE는 refresh를 시도하고, refresh도 같은 조건으로
    * 거부되므로 세션을 비운다). 결과는 USER_STATUS_CACHE_TTL_MS 동안 캐시한다 (정지/삭제 반영 지연 ≤ 30초).
    */
   async assertActiveUser(userId: string, now = Date.now()): Promise<void> {
@@ -268,7 +268,7 @@ export class AuthService {
     if (!active) throw new UnauthorizedException('INVALID_ACCESS_TOKEN');
   }
 
-  /** access JWT → SessionUser (typ/sub 규칙과 레거시 전환기) — access-token.verifier.ts */
+  /** access JWT → SessionUser (typ/sub 규칙과 레거시 전환기) - access-token.verifier.ts */
   verifyAccessToken(token: string): Promise<SessionUser> {
     return this.accessTokens.verify(token);
   }

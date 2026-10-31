@@ -7,7 +7,7 @@ import { describeDb } from './describe-db';
 import { testSslEnv, unique } from './harness';
 
 /**
- * scripts/migrate.js는 실행 전체를 pg_advisory_lock(MIGRATION_LOCK_KEY)로 감싼다 — 겹친 두 배포가 같은 DDL을 두 번 돌리지 않도록.
+ * scripts/migrate.js는 실행 전체를 pg_advisory_lock(MIGRATION_LOCK_KEY)로 감싼다 - 겹친 두 배포가 같은 DDL을 두 번 돌리지 않도록.
  * advisory lock은 데이터베이스 단위이므로 테스트마다 빈 데이터베이스를 새로 만든다.
  */
 describeDb('scripts/migrate.js advisory lock', () => {

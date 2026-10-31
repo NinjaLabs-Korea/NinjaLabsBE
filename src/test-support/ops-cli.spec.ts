@@ -1,7 +1,7 @@
 import { run as recordRefund } from '../../scripts/record-refund';
 import { createPool, extractValueOptions, parseArgs, runCli, UUID_RE } from '../../scripts/ops-cli';
 
-/** scripts/ops-cli.js — 운영 스크립트(grant-admin / requeue-nft-jobs) 공용 파서. 실 DB 동작은 src/test-db/ops-scripts.db-spec.ts */
+/** scripts/ops-cli.js - 운영 스크립트(grant-admin / requeue-nft-jobs) 공용 파서. 실 DB 동작은 src/test-db/ops-scripts.db-spec.ts */
 describe('scripts/ops-cli.js', () => {
   it('splits flags from positional arguments', () => {
     expect(parseArgs(['grant', 'a@b.test', '--dry-run', '--yes'], ['dry-run', 'yes'])).toEqual({

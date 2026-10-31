@@ -28,8 +28,8 @@ export class SetMemberDto {
 }
 
 export class SearchUsersQueryDto {
-  // 이메일(320)·닉네임(50)보다 긴 검색어는 어떤 행과도 맞지 않는다 — 쿼리스트링으로 들어오는 수 KB짜리 ILIKE 패턴을 DB에 넘기지 않는다
-  // 앞뒤 공백은 지운다 — 복사해 붙인 "ninja@x.com "이 어떤 이메일과도 안 맞아 빈 목록이 되던 것 (공백만 있으면 빈 검색어 = 최신 가입순)
+  // 이메일(320)·닉네임(50)보다 긴 검색어는 어떤 행과도 맞지 않는다 - 쿼리스트링으로 들어오는 수 KB짜리 ILIKE 패턴을 DB에 넘기지 않는다
+  // 앞뒤 공백은 지운다 - 복사해 붙인 "ninja@x.com "이 어떤 이메일과도 안 맞아 빈 목록이 되던 것 (공백만 있으면 빈 검색어 = 최신 가입순)
   @IsOptional() @Trim() @IsString() @MaxChars(320)
   q?: string;
 
@@ -42,7 +42,7 @@ export class SearchUsersQueryDto {
 export class MemberAdminController {
   constructor(private readonly members: MemberAdminService) {}
 
-  /** GET /admin/users?q=&page= — 30건/페이지, 응답은 배열 (FE 계약 유지) */
+  /** GET /admin/users?q=&page= - 30건/페이지, 응답은 배열 (FE 계약 유지) */
   @Get()
   searchUsers(@Query() query: SearchUsersQueryDto) {
     return this.members.searchUsers(query.q ?? '', query.page ?? 1);

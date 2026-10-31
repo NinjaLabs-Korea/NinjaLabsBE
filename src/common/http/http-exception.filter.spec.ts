@@ -198,16 +198,16 @@ describe('HttpExceptionFilter - request context edge cases', () => {
   it.each([
     [{ statusCode: 399, message: 'm' }, 500], [{ statusCode: 400, message: 'm' }, 400], [{ statusCode: 499, message: 'm' }, 499], [{ statusCode: 500, message: 'm' }, 500],
     [{ statusCode: NaN, message: 'm' }, 500], [{ statusCode: 404, status: 'x', message: 'm' }, 404], [{ status: 409, statusCode: 500, message: 'm' }, 500], [undefined, 500],
-    // 응답은 message와 statusCode가 있어야 그 상태로 나간다 (Nest isHttpError) — 없으면 500
+    // 응답은 message와 statusCode가 있어야 그 상태로 나간다 (Nest isHttpError) - 없으면 500
     [{ statusCode: 422 }, 500], [{ statusCode: 502, message: 'm' }, 502],
-    // gaxios·undici류는 상류 응답의 status만 싣는다 — 응답은 500이므로 로그도 5xx여야 한다
+    // gaxios·undici류는 상류 응답의 status만 싣는다 - 응답은 500이므로 로그도 5xx여야 한다
     [{ status: 400, message: 'm' }, 500], [{ status: 404, message: 'm' }, 500],
   ])('statusOf(%p) → %p', (carried, status) => {
     expect(HttpExceptionFilter.statusOf(carried)).toBe(status);
   });
 });
 
-/** 실제 BaseExceptionFilter 경로 — 기본 구현이 남기던 `ExceptionsHandler` error 로그가 없어야 한다 */
+/** 실제 BaseExceptionFilter 경로 - 기본 구현이 남기던 `ExceptionsHandler` error 로그가 없어야 한다 */
 describe('HttpExceptionFilter - unknown throwables (real Nest base filter)', () => {
   const reply = jest.fn();
   const adapter = { isHeadersSent: jest.fn(() => false), reply, end: jest.fn() };

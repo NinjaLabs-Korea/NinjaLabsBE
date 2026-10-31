@@ -13,12 +13,12 @@ export class MemberAdminService {
 
   static readonly PAGE_SIZE = 30;
 
-  /** ILIKE 패턴 메타문자(%, _, \)를 이스케이프 — 검색어가 와일드카드로 해석되지 않게 한다 */
+  /** ILIKE 패턴 메타문자(%, _, \)를 이스케이프 - 검색어가 와일드카드로 해석되지 않게 한다 */
   static likePattern(q: string): string {
     return `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
   }
 
-  /** 이메일/닉네임으로 유저 검색 — 30건씩, 빈 검색어면 최신 가입순 (FE UserDirectory가 1페이지를 "최근 30명"으로 쓴다) */
+  /** 이메일/닉네임으로 유저 검색 - 30건씩, 빈 검색어면 최신 가입순 (FE UserDirectory가 1페이지를 "최근 30명"으로 쓴다) */
   async searchUsers(q: string, page = 1) {
     const pageSize = MemberAdminService.PAGE_SIZE;
     const r = await this.db.query(
@@ -35,7 +35,7 @@ export class MemberAdminService {
     return r.rows;
   }
 
-  /** 멤버 지정/해제 + 역할/노출순서 — 변경과 감사 로그를 한 트랜잭션으로 */
+  /** 멤버 지정/해제 + 역할/노출순서 - 변경과 감사 로그를 한 트랜잭션으로 */
   async setMember(userId: string, isMember: boolean, role?: string, displayOrder?: number, adminId?: string) {
     return this.db.tx(async (tx) => {
       // 지정만 막는다(해제는 언제나 가능): 온보딩을 마치지 않은 유저는 임시 닉네임·빈 프로필이고 공개 프로필(/users/:nickname)도 404라

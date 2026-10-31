@@ -5,7 +5,7 @@ import { join } from 'path';
 import type { Pool } from 'pg';
 import { applyMigrations } from '../../../scripts/migrate';
 
-/** scripts/migrate.js applyMigrations — 연결이 실행 도중 끊기는 경우 (정상 경로는 src/test-db/migrate-runner.db-spec.ts) */
+/** scripts/migrate.js applyMigrations - 연결이 실행 도중 끊기는 경우 (정상 경로는 src/test-db/migrate-runner.db-spec.ts) */
 describe('applyMigrations when the connection dies mid-run', () => {
   let dir: string;
   beforeEach(() => {
@@ -21,7 +21,7 @@ describe('applyMigrations when the connection dies mid-run', () => {
       if (text.startsWith('SELECT pg_try_advisory_lock')) return { rows: [{ ok: true }] };
       if (text.startsWith('SELECT 1 FROM _migrations')) return { rowCount: 0, rows: [] };
       if (text === 'SELECT 1;') {
-        // pg는 활성 쿼리를 reject하면서 클라이언트에 'error'도 emit한다 — 리스너가 없으면 uncaught exception
+        // pg는 활성 쿼리를 reject하면서 클라이언트에 'error'도 emit한다 - 리스너가 없으면 uncaught exception
         client.emit('error', dropped);
         throw dropped;
       }

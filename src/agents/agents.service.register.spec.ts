@@ -190,7 +190,7 @@ describe('AgentsService.register input validation', () => {
 });
 
 describe('AgentsService.verifyAndIssueKey guards', () => {
-  it('404 AGENT_NOT_FOUND when the agent is not the caller\'s (or deleted) — scoped by (id, owner)', async () => {
+  it('404 AGENT_NOT_FOUND when the agent is not the caller\'s (or deleted) - scoped by (id, owner)', async () => {
     const { service, txQuery } = setup({ verifyRow: null });
     const error = await service.verifyAndIssueKey(ownerUserId, agentId, '0xsig').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(NotFoundException);
@@ -237,7 +237,7 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
     const activate = txQuery.mock.calls.find(([sql]) => sql.includes("SET status = 'ACTIVE'"))!;
     expect(activate[1]).toEqual([agentId, INJ_PUBKEY]);
     const insert = txQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO agent_api_key'))!;
-    // only the lookup prefix and the sha256 are stored — never the raw key
+    // only the lookup prefix and the sha256 are stored - never the raw key
     expect(insert[1]).toEqual([agentId, agentApiKeyPrefix(verified.apiKey), hashAgentApiKey(verified.apiKey)]);
     expect(insert[1]).not.toContain(verified.apiKey);
   });

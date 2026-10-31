@@ -147,10 +147,10 @@ export class SubmissionsService {
   }
 
   /**
-   * 내 제출 내역 — 본인 제출 + 내가 소유한 에이전트의 제출. 각 행에 agent {id, name} | null.
-   * payment_status는 rewards/payout-status.ts payoutStatusSql(공개 프로필 payoutStatus와 같은 SQL)인데, 그 식은 **승인된 제출** 전용이다 —
+   * 내 제출 내역 - 본인 제출 + 내가 소유한 에이전트의 제출. 각 행에 agent {id, name} | null.
+   * payment_status는 rewards/payout-status.ts payoutStatusSql(공개 프로필 payoutStatus와 같은 SQL)인데, 그 식은 **승인된 제출** 전용이다 -
    * APPROVED가 아닌 제출(심사 중·반려·scripts/forfeit-award.js로 보상 미지급 처리된 수상)은 받을 몫이 없으므로 'NONE'으로 고정한다.
-   * (식을 그대로 쓰면 여유분이 남은 입금 보상이 있는 동안 반려된 제출도 'PENDING' — "지급 대기"로 보인다.)
+   * (식을 그대로 쓰면 여유분이 남은 입금 보상이 있는 동안 반려된 제출도 'PENDING' - "지급 대기"로 보인다.)
    * bounty_status/submission_deadline/has_review는 덧붙인 필드다: 바운티 취소로 자동 반려된 제출(REJECTED + has_review false + CANCELLED)을 운영자 반려와 구분하는 데 쓴다.
    * 취소 전이(bounty-admin.service)는 미결 제출마다 코멘트 없는 REJECT 심사 행을 남기므로 "행이 있다"만으로는 구분되지 않는다:
    * 취소된 바운티의 코멘트 없는 REJECT 행은 시스템 정리로 보고 has_review에서 뺀다 (취소 전에 운영자가 코멘트 없이 반려한 건도 같이 false가 되는 것은 감수한다).

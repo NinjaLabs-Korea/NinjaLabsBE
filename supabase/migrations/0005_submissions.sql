@@ -1,5 +1,5 @@
 -- ============================================================
--- 0005_submissions.sql — 제출 및 수정 이력 영역
+-- 0005_submissions.sql - 제출 및 수정 이력 영역
 -- ERD v1 §9 (bounty_submission, submission_revision,
 --            submission_attachment, submission_review)
 --

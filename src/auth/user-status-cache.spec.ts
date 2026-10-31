@@ -1,7 +1,7 @@
 import { USER_STATUS_CACHE_MAX, USER_STATUS_CACHE_TTL_MS, UserStatusCache } from './user-status-cache';
 
 /**
- * 유저 상태 캐시 규칙 문서 — 결과는 30초 동안만 믿고(그 뒤엔 DB 재확인), 상한을 넘으면 가장 오래 넣은 항목부터 버린다.
+ * 유저 상태 캐시 규칙 문서 - 결과는 30초 동안만 믿고(그 뒤엔 DB 재확인), 상한을 넘으면 가장 오래 넣은 항목부터 버린다.
  * DB 조회와 401 변환은 AuthService.assertActiveUser 몫 (auth.guard.spec.ts).
  */
 describe('UserStatusCache', () => {

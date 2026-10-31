@@ -1,5 +1,5 @@
 -- ============================================================
--- 0009_platform.sql — 감사 로그 / 플랫폼 설정
+-- 0009_platform.sql - 감사 로그 / 플랫폼 설정
 -- ERD v1 §13~14 (audit_log, platform_setting)
 --
 -- 주의: OAuth 토큰, refresh token 원문, private key, API key 원문,

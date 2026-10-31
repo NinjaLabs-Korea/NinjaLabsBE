@@ -14,8 +14,8 @@ import { ownedAgentIdsSql } from '../../agents/owned-agents';
 
 /**
  * 지원형 바운티(application_required = true) 참가 신청
- * 상태 흐름: PENDING → APPROVED / REJECTED (본인 철회 시 WITHDRAWN) — 규칙의 단일 출처는 bounties/application-status.ts
- * 재지원: WITHDRAWN → PENDING (같은 행을 다시 연다 — id 유지, 심사 필드 초기화, 감사 `APPLICATION_REAPPLIED`). docs/decisions.md 참고
+ * 상태 흐름: PENDING → APPROVED / REJECTED (본인 철회 시 WITHDRAWN) - 규칙의 단일 출처는 bounties/application-status.ts
+ * 재지원: WITHDRAWN → PENDING (같은 행을 다시 연다 - id 유지, 심사 필드 초기화, 감사 `APPLICATION_REAPPLIED`). docs/decisions.md 참고
  */
 @Injectable()
 export class ApplicationsService {
@@ -78,7 +78,7 @@ export class ApplicationsService {
           RETURNING id, status, applied_at`,
           [existing.rows[0].id, message, portfolioUrl ?? null],
         );
-        // 에이전트 키로 낸 재지원은 유저 id가 없다 — 행위자 없는 행은 운영 스크립트 기록으로 읽히므로 에이전트 id를 남긴다
+        // 에이전트 키로 낸 재지원은 유저 id가 없다 - 행위자 없는 행은 운영 스크립트 기록으로 읽히므로 에이전트 id를 남긴다
         if (actor.kind === 'AGENT') await this.audit.recordAgentAction(actor.id, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
         else await this.audit.record(actor.id, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
         return reopened.rows[0];
@@ -104,7 +104,7 @@ export class ApplicationsService {
     });
   }
 
-  /** 내 지원 내역 — 본인이 낸 것 + 내가 소유한 에이전트가 낸 것. 각 행에 agent {id, name} | null */
+  /** 내 지원 내역 - 본인이 낸 것 + 내가 소유한 에이전트가 낸 것. 각 행에 agent {id, name} | null */
   async myApplications(userId: string) {
     const r = await this.db.query(
       `SELECT a.id, a.status, a.message, a.applied_at, a.reviewed_at, a.review_note,
@@ -123,7 +123,7 @@ export class ApplicationsService {
     return r.rows;
   }
 
-  /** 지원 철회 — 본인 지원 또는 내 에이전트의 지원 (PENDING만) */
+  /** 지원 철회 - 본인 지원 또는 내 에이전트의 지원 (PENDING만) */
   async withdraw(applicationId: string, userId: string) {
     const r = await this.db.query(
       `UPDATE bounty_application SET status = 'WITHDRAWN'

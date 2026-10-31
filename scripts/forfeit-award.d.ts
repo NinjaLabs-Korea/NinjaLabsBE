@@ -1,4 +1,4 @@
-// scripts/forfeit-award.js의 타입 선언 — src/test-db/ops-scripts.db-spec.ts가 실 DB로, src/test-support/forfeit-award.spec.ts가 순수 함수를 검증한다.
+// scripts/forfeit-award.js의 타입 선언 - src/test-db/ops-scripts.db-spec.ts가 실 DB로, src/test-support/forfeit-award.spec.ts가 순수 함수를 검증한다.
 import type { Pool } from 'pg';
 import type { OpsRun } from './ops-cli';
 

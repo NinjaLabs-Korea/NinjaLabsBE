@@ -99,7 +99,7 @@ describe('SubmissionsService submit rules', () => {
 
   /**
    * Answers by statement shape. `existing` is the caller's current submission row (or none), `approvedApplication` the id of an
-   * APPROVED application of this actor (or none) — the lookup itself must filter `status = 'APPROVED'`.
+   * APPROVED application of this actor (or none) - the lookup itself must filter `status = 'APPROVED'`.
    */
   function setup(bounty: Record<string, unknown> | null, options: { existing?: { status: string; current_revision_no: number }; approvedApplication?: string; onboarded?: boolean } = {}) {
     const query = jest.fn(async (sql: string, _params?: unknown[]) => {

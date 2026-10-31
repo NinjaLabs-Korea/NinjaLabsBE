@@ -5,7 +5,7 @@ import { E2eApp, startApp, UUID } from './support/harness';
 
 const badRequest = (message: string | string[]) => ({ statusCode: 400, error: 'Bad Request', message });
 
-// f. onboarding — FE flow: Google login (step 2) → wallet (step 3) → profile (step 4) → complete
+// f. onboarding - FE flow: Google login (step 2) → wallet (step 3) → profile (step 4) → complete
 describeDb('onboarding over HTTP (e2e)', () => {
   let e2e: E2eApp;
   beforeAll(async () => { e2e = await startApp(); });
@@ -141,7 +141,7 @@ describeDb('onboarding over HTTP (e2e)', () => {
     const forged = `ghost\r\n[onboarding] {"event":"forged"}${'x'.repeat(2000)}`;
     expect((await e2e.get(`/users/${encodeURIComponent(forged)}`)).status).toBe(404);
     const lines = e2e.linesFor('UsersController').filter((line) => line.includes('ghost'));
-    expect(lines).toHaveLength(1); // failed only — no requested/succeeded lines on this hot public read
+    expect(lines).toHaveLength(1); // failed only - no requested/succeeded lines on this hot public read
     expect(lines[0]).toMatch(/"rid":"[0-9a-f-]{36}"/);
     for (const line of lines) {
       expect(line).not.toMatch(/[\r\n]/);
@@ -174,7 +174,7 @@ describeDb('onboarding over HTTP (e2e)', () => {
         expect((await check(invalid)).body).toEqual({ available: false });
       }
       expect((await e2e.get('/users/check-nickname')).body).toEqual({ available: false });
-      // a repeated query parameter arrives as an array — answered, never a 500
+      // a repeated query parameter arrives as an array - answered, never a 500
       const repeated = await e2e.get(`/users/check-nickname?nickname=${nickname}&nickname=other`);
       expect(repeated.status).toBe(200);
       expect(repeated.body).toEqual({ available: false });

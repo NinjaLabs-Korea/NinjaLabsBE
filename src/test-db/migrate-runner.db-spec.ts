@@ -6,7 +6,7 @@ import { applyMigrations, findTransactionControl, MIGRATIONS_DIR, migrationFiles
 import { describeDb } from './describe-db';
 import { TEST_DB_URL_ENV, testSslEnv, unique } from './harness';
 
-/** scripts/migrate.js applyMigrations — idempotency, per-file atomicity, ordering and notice forwarding (the advisory lock is in migrate-lock.db-spec.ts) */
+/** scripts/migrate.js applyMigrations - idempotency, per-file atomicity, ordering and notice forwarding (the advisory lock is in migrate-lock.db-spec.ts) */
 describeDb('scripts/migrate.js runner', () => {
   const adminUrl = process.env.TEST_DATABASE_URL!;
   const ssl = sslOptions(testSslEnv());
@@ -114,7 +114,7 @@ describeDb('scripts/migrate.js runner', () => {
       message: expect.stringContaining('0003_commit.sql:3 COMMIT'),
     });
     expect(log).toEqual([]);
-    // not even _migrations was created — the check runs before connecting
+    // not even _migrations was created - the check runs before connecting
     expect((await db.query(`SELECT to_regclass('_migrations')::text AS t`)).rows[0].t).toBeNull();
     expect((await db.query(`SELECT to_regclass('runner_guard_ok')::text AS a, to_regclass('runner_commit')::text AS b`)).rows[0]).toEqual({ a: null, b: null });
 

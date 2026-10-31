@@ -6,13 +6,13 @@ import { USER_STATUS_CACHE_MAX } from './user-status-cache';
 import { createMockDb } from '../test-support/mock-db';
 
 /**
- * 실제 JwtService로 서명한 토큰을 AuthGuard에 넣어 본다 — OAuth state JWT는 같은 시크릿으로 서명되지만
+ * 실제 JwtService로 서명한 토큰을 AuthGuard에 넣어 본다 - OAuth state JWT는 같은 시크릿으로 서명되지만
  * typ: 'access'가 없으므로 Bearer로 제시되면 401이어야 한다.
  */
 describe('AuthGuard token type binding', () => {
   const userId = '11111111-1111-4111-8111-111111111111';
   const jwt = new JwtService({ secret: 'test-secret-test-secret-test-secret!', signOptions: { expiresIn: '5m' } });
-  // 유저 상태 확인(assertActiveUser)은 활성 유저로 답한다 — 비활성/캐시는 아래 별도 describe
+  // 유저 상태 확인(assertActiveUser)은 활성 유저로 답한다 - 비활성/캐시는 아래 별도 describe
   const service = new AuthService(
     createMockDb({ query: jest.fn().mockResolvedValue({ rowCount: 1, rows: [{}] }) }).database,
     jwt,
@@ -47,7 +47,7 @@ describe('AuthGuard token type binding', () => {
 
   // TODO(remove after 2026-11-30): flip back to a rejection together with the legacy branch in AuthService.verifyAccessToken
   it('still accepts a legacy access token issued before typ existed (no typ, no p, string sub) if it predates this process', async () => {
-    // exp = iat + expiresIn이라 기본 5m이면 프로세스가 4분 넘게 돈 뒤(부하가 큰 CI·로컬 전체 실행) 이 토큰은 만료로 거부된다 — 만료는 이 테스트의 주제가 아니다
+    // exp = iat + expiresIn이라 기본 5m이면 프로세스가 4분 넘게 돈 뒤(부하가 큰 CI·로컬 전체 실행) 이 토큰은 만료로 거부된다 - 만료는 이 테스트의 주제가 아니다
     const legacy = await jwt.signAsync({ sub: userId, adm: true, iat: Math.floor(performance.timeOrigin / 1000) - 60 }, { expiresIn: '1d' });
     const { executionContext, request } = context(`Bearer ${legacy}`);
     await expect(guard.canActivate(executionContext)).resolves.toBe(true);

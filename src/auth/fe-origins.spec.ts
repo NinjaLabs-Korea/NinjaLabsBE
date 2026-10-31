@@ -8,7 +8,7 @@ describe('authSuccessRedirectUrl / feRedirectAllowlist', () => {
     expect(feRedirectAllowlist(configWith({ NODE_ENV: 'development' })).allows('http://localhost:3000')).toBe(true);
   });
 
-  it('never falls back to localhost in production (boot refuses an unset value — requireProductionAuthUrls)', () => {
+  it('never falls back to localhost in production (boot refuses an unset value - requireProductionAuthUrls)', () => {
     expect(authSuccessRedirectUrl(configWith({ NODE_ENV: 'production' }))).toBe('');
     expect(feRedirectAllowlist(configWith({ NODE_ENV: 'production' })).allows('http://localhost:3000')).toBe(false);
   });
@@ -26,7 +26,7 @@ describe('authSuccessRedirectUrl / feRedirectAllowlist', () => {
     expect(prod.allows('http://127.0.0.1:3001')).toBe(false);
     expect(prod.allows('https://fe-two.example.com')).toBe(true);
     expect(prod.allows('https://fe.example.com')).toBe(true);
-    // the Turnstile hostname check shares this list — a localhost-hosted widget token must not pass in production either
+    // the Turnstile hostname check shares this list - a localhost-hosted widget token must not pass in production either
     expect(prod.allowsHostname('localhost')).toBe(false);
     const dev = feRedirectAllowlist(configWith({ NODE_ENV: 'development', AUTH_ALLOWED_REDIRECT_ORIGINS }));
     expect(dev.allows('http://localhost:3000')).toBe(true);

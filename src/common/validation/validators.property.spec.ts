@@ -11,12 +11,12 @@ import { normalizeTxHash, TX_HASH } from './tx-hash';
 import { isHttpUrl, isMediaPath, isSafeUrl, isSitePath } from './url';
 
 /**
- * Property-style table tests for every input validator — adversarial inputs (homoglyphs, invisible and bidi characters, encodings,
+ * Property-style table tests for every input validator - adversarial inputs (homoglyphs, invisible and bidi characters, encodings,
  * boundary lengths) plus seeded generated inputs checked against an independent oracle, and a timing guard so a regex change that
  * introduces catastrophic backtracking fails here instead of pinning a CPU on a public route.
  */
 
-/** Deterministic PRNG (mulberry32) — generated cases are reproducible; the seed is in the test name */
+/** Deterministic PRNG (mulberry32) - generated cases are reproducible; the seed is in the test name */
 function prng(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -40,9 +40,9 @@ function generate(random: () => number, alphabet: readonly string[], maxParts: n
 }
 
 /**
- * Fails if `fn` takes longer than `budgetMs` on its fastest of `runs` attempts — the budget is far above the measured time (a few ms locally, 53ms best-of-3 on a loaded CI runner), while a
+ * Fails if `fn` takes longer than `budgetMs` on its fastest of `runs` attempts - the budget is far above the measured time (a few ms locally, 53ms best-of-3 on a loaded CI runner), while a
  * super-linear blow-up takes seconds, so only that trips it. Best-of-N because runner noise (GC, parallel jest workers) only ever adds time, while catastrophic
- * backtracking is slow on every run. (CI flaked twice on the linear `charLength` at 70.9ms and 53.3ms against a 50ms budget — 2026-10-25; budget raised to 250ms.)
+ * backtracking is slow on every run. (CI flaked twice on the linear `charLength` at 70.9ms and 53.3ms against a 50ms budget - 2026-10-25; budget raised to 250ms.)
  */
 function expectFast(label: string, fn: () => unknown, budgetMs = 250, runs = 5): void {
   let best = Infinity;
@@ -51,12 +51,12 @@ function expectFast(label: string, fn: () => unknown, budgetMs = 250, runs = 5):
     fn();
     best = Math.min(best, performance.now() - started);
   }
-  if (best > budgetMs) throw new Error(`${label} took ${best.toFixed(1)}ms on its fastest of ${runs} runs (budget ${budgetMs}ms) — possible ReDoS`);
+  if (best > budgetMs) throw new Error(`${label} took ${best.toFixed(1)}ms on its fastest of ${runs} runs (budget ${budgetMs}ms) - possible ReDoS`);
 }
 
 const MEDIA = '/media/11111111-1111-4111-8111-111111111111';
 
-describe('URL validators — adversarial table', () => {
+describe('URL validators - adversarial table', () => {
   it.each([
     // [input, isHttpUrl, isSitePath, isSafeUrl, isMediaPath]
     ['https://ninjalabs.xyz', true, false, true, false],
@@ -65,14 +65,14 @@ describe('URL validators — adversarial table', () => {
     ['https://[::1]:3000/', true, false, true, false], // IPv6 literal
     ['http://a', true, false, true, false], // single-label host (require_tld: false for localhost previews)
     ['https://example.com:99999', false, false, false, false], // port out of range
-    ['https://example.com:0', false, false, true, false], // port 0: URL accepts, isURL rejects — lenient rule keeps legacy
+    ['https://example.com:0', false, false, true, false], // port 0: URL accepts, isURL rejects - lenient rule keeps legacy
     ['https://exa mple.com', false, false, false, false],
     ['https://example.com/ ', false, false, false, false],
     [' https://example.com', false, false, false, false],
     ['https://example.com#\n', false, false, false, false],
     ['https://a..b', false, false, true, false],
     ['https://-a.com', false, false, true, false],
-    ['https://example.com\\@evil.com', false, false, false, false], // backslash — WHATWG reads it as a path separator
+    ['https://example.com\\@evil.com', false, false, false, false], // backslash - WHATWG reads it as a path separator
     ['https://evil.com\\.example.com', false, false, false, false],
     ['https://user@evil.com', false, false, false, false],
     ['https://ninjalabs.xyz%40evil.com@evil.com', false, false, false, false],
@@ -92,7 +92,7 @@ describe('URL validators — adversarial table', () => {
     ['/media/11111111-1111-4111-8111-11111111111g', false, true, true, false],
     ['/a/%2E/b', false, false, true, false],
     ['/a/%2e%2E', false, false, true, false],
-    ['/a/%c0%ae%c0%ae/b', false, false, true, false], // overlong UTF-8 dot — malformed percent sequence
+    ['/a/%c0%ae%c0%ae/b', false, false, true, false], // overlong UTF-8 dot - malformed percent sequence
     ['/a/.%00./', false, false, true, false],
     ['/;/..', false, false, true, false],
     ['/..%3b/', false, false, true, false],
@@ -120,7 +120,7 @@ describe('URL validators — adversarial table', () => {
     expect([isSafeUrl(site(2048)), isSafeUrl(site(2049))]).toEqual([true, false]);
   });
 
-  it('every strict-rule value also passes the lenient update rule (seed 7) — an update must never reject what create accepted', () => {
+  it('every strict-rule value also passes the lenient update rule (seed 7) - an update must never reject what create accepted', () => {
     const random = prng(7);
     const alphabet = ['a', 'Z', '0', '-', '_', '.', '..', '/', '//', '?', '#', '=', '&', '%2e', '%2f', '%41', '%', ';', ':', '@', '\\', ' ', '\t', '\u0000', '😀', 'é'];
     const prefixes = ['https://a.com', 'http://localhost:3000', '/', '/media/', 'https://', 'cdn.example', ''];
@@ -162,7 +162,7 @@ describe('URL validators — adversarial table', () => {
   });
 });
 
-describe('nickname — adversarial table', () => {
+describe('nickname - adversarial table', () => {
   it.each([
     ['ab', true],
     ['a', false],
@@ -174,7 +174,7 @@ describe('nickname — adversarial table', () => {
     ['٣٣', true], // Arabic-Indic digits are \p{N}
     ['Ⅻx', false], // Roman numeral block U+2100-218F looks like Latin letters: rejected
     ['a.b-c_d', true],
-    ['a..b', true], // inner dots are fine — only leading/trailing dots make "." / ".." segments
+    ['a..b', true], // inner dots are fine - only leading/trailing dots make "." / ".." segments
     ['😀😀', false], // emoji is neither \p{L} nor \p{N}
     ['❤\ufe0f❤\ufe0f', false], // U+FE0F is a mark, not allowed
     ['ninja\u0301', true], // composes to á under NFC
@@ -208,7 +208,7 @@ describe('nickname — adversarial table', () => {
     expect(isSavableNickname(input)).toBe(false);
   });
 
-  /** check-nickname answers "available" only for values POST /users/me/profile would store — the two must never disagree */
+  /** check-nickname answers "available" only for values POST /users/me/profile would store - the two must never disagree */
   async function dtoAccepts(nickname: string): Promise<boolean> {
     const errors = await validate(plainToInstance(CompleteProfileDto, { nickname, bio: 'b', tags: ['DEV'] }));
     return !errors.some((error) => error.property === 'nickname');
@@ -250,7 +250,7 @@ describe('nickname — adversarial table', () => {
   });
 });
 
-describe('tx hash — adversarial table', () => {
+describe('tx hash - adversarial table', () => {
   const hex = 'ab'.repeat(32);
 
   it.each([
@@ -294,7 +294,7 @@ describe('tx hash — adversarial table', () => {
   });
 });
 
-describe('token amount — adversarial table', () => {
+describe('token amount - adversarial table', () => {
   it.each([
     ['1', true], ['10', true], ['1'.repeat(30), true], ['9'.repeat(30), true], ['1'.repeat(31), false], ['1'.repeat(54), false],
     ['0', false], ['00', false], ['01', false], ['1'.repeat(78), false], ['9'.repeat(78), false], ['-1', false], ['+1', false], ['1.0', false], ['1e18', false],
@@ -317,7 +317,7 @@ describe('token amount — adversarial table', () => {
   });
 });
 
-describe('MaxChars — counts code points like Postgres char_length()', () => {
+describe('MaxChars - counts code points like Postgres char_length()', () => {
   class Probe { @MaxChars(5) value!: unknown; }
   const passes = async (value: unknown) => (await validate(plainToInstance(Probe, { value }))).length === 0;
 
@@ -328,7 +328,7 @@ describe('MaxChars — counts code points like Postgres char_length()', () => {
     ['❤\ufe0f❤\ufe0f❤\ufe0f', 6, false], // class-validator MaxLength would count 3 and pass it
     ['\ufe0f'.repeat(5), 5, true],
     ['\ufe0f'.repeat(6), 6, false],
-    ['\ufe0e'.repeat(6), 6, false], // text presentation selector — also dropped by validator.js isLength
+    ['\ufe0e'.repeat(6), 6, false], // text presentation selector - also dropped by validator.js isLength
     ['😀'.repeat(5), 5, true], // astral = one code point (two UTF-16 units)
     ['😀'.repeat(6), 6, false],
     ['👨\u200d👩\u200d👧', 5, true], // ZWJ family: 3 emoji + 2 ZWJ = 5 code points, one grapheme
@@ -363,7 +363,7 @@ describe('MaxChars — counts code points like Postgres char_length()', () => {
   });
 });
 
-describe('MaxPgInt — Postgres INTEGER upper bound', () => {
+describe('MaxPgInt - Postgres INTEGER upper bound', () => {
   class Probe { @Type(() => Number) @IsInt() @MaxPgInt() value!: number; }
   const failures = async (value: unknown) =>
     (await validate(plainToInstance(Probe, { value }))).flatMap((error) => Object.keys(error.constraints ?? {})).sort();
@@ -380,7 +380,7 @@ describe('MaxPgInt — Postgres INTEGER upper bound', () => {
     ['1e10', ['max']],
     [Infinity, ['isInt', 'max']],
     [1.5, ['isInt']],
-    ['abc', ['isInt', 'max']], // NaN fails both — class-validator's max() is `value <= max`, false for NaN
+    ['abc', ['isInt', 'max']], // NaN fails both - class-validator's max() is `value <= max`, false for NaN
     ['0x7fffffff', []], // hex string → 2147483647 via Number()
     ['0x80000000', ['max']],
   ])('%p → failed constraints %p', async (value, expected) => {

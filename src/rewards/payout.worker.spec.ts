@@ -19,7 +19,7 @@ describe('PayoutWorker.monitor', () => {
     expect(sql).toContain("requested_at < now() - interval '48 hours'");
     expect(warn).toHaveBeenCalledWith('3 payout(s) pending multisig approval for over 48h');
     expect(alerts.notify).toHaveBeenCalledWith('payout-unapproved-48h', expect.stringContaining('3 payout(s) pending multisig approval for over 48h'));
-    // payouts live under /admin/operations (per bounty) — the FE has no /admin/payouts page
+    // payouts live under /admin/operations (per bounty) - the FE has no /admin/payouts page
     expect((alerts.notify.mock.calls[0] as unknown as string[])[1]).toContain('/admin/operations');
   });
 
@@ -31,7 +31,7 @@ describe('PayoutWorker.monitor', () => {
   });
 });
 
-describe('PayoutWorker — overlap and shutdown', () => {
+describe('PayoutWorker - overlap and shutdown', () => {
   it('skips an overlapping tick, waits for the in-flight check on shutdown, and runs nothing afterwards', async () => {
     let release!: () => void;
     const query = jest.fn()

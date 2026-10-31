@@ -81,8 +81,8 @@ export class WalletsService {
       '此签名不会发起交易，也不会产生 gas 费用。',
     ].join('\n');
 
-    // 같은 (user, wallet)의 미사용 challenge는 지우고 새로 발급 — 열린 challenge는 항상 최대 1개 (만료 행 정리는 MaintenanceService 크론).
-    // 같은 (user, wallet)의 동시 발급은 트랜잭션 범위 advisory lock으로 직렬화한다 — 두 요청이 서로의 DELETE를 보지 못한 채 INSERT하면 2개가 열린다
+    // 같은 (user, wallet)의 미사용 challenge는 지우고 새로 발급 - 열린 challenge는 항상 최대 1개 (만료 행 정리는 MaintenanceService 크론).
+    // 같은 (user, wallet)의 동시 발급은 트랜잭션 범위 advisory lock으로 직렬화한다 - 두 요청이 서로의 DELETE를 보지 못한 채 INSERT하면 2개가 열린다
     return this.db.tx(async (tx) => {
       await tx.query(
         `SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text))`,
@@ -137,7 +137,7 @@ export class WalletsService {
           throw new UnauthorizedException('INVALID_SIGNATURE');
         }
 
-        // 소비는 조건부 UPDATE로 — 조회와 소비 사이에 만료됐거나(경계) 이미 쓰였으면 0행 → 400 CHALLENGE_EXPIRED
+        // 소비는 조건부 UPDATE로 - 조회와 소비 사이에 만료됐거나(경계) 이미 쓰였으면 0행 → 400 CHALLENGE_EXPIRED
         const consumed = await tx.query(
           `UPDATE wallet_verification_challenge SET used_at = now()
             WHERE id = $1 AND used_at IS NULL AND expires_at > now()
@@ -158,7 +158,7 @@ export class WalletsService {
           `INSERT INTO wallet (user_id, chain, address, public_key, is_primary, verified_at)
            VALUES ($1, 'INJECTIVE', $2, $3, true, now())
            RETURNING id`,
-          // 검증된 키만 저장한다 — EIP-191은 서명에서 복원한 키, ADR-36은 주소와 대조된 키. 클라이언트가 덧붙인 publicKey를 그대로 믿지 않는다
+          // 검증된 키만 저장한다 - EIP-191은 서명에서 복원한 키, ADR-36은 주소와 대조된 키. 클라이언트가 덧붙인 publicKey를 그대로 믿지 않는다
           [userId, injectiveAddress, verified.publicKey],
         );
         const stepped = await tx.query(
@@ -166,16 +166,16 @@ export class WalletsService {
             WHERE id = $1 AND deleted_at IS NULL`,
           [userId],
         );
-        // 동시 탈퇴(유저 행을 먼저 잠그고 지갑을 해제한다)가 커밋됐으면 0행이다 — 이 UPDATE가 탈퇴 커밋을 기다렸다 재평가하기 때문에 위의 지갑 INSERT를
+        // 동시 탈퇴(유저 행을 먼저 잠그고 지갑을 해제한다)가 커밋됐으면 0행이다 - 이 UPDATE가 탈퇴 커밋을 기다렸다 재평가하기 때문에 위의 지갑 INSERT를
         // 되돌릴 수 있다. 그냥 두면 탈퇴한 유저의 연결된 지갑이 남아 그 주소가 부분 유니크 인덱스를 영구히 점유한다
         if (!stepped.rowCount) throw new NotFoundException('USER_NOT_FOUND');
-        // 부모 NFT 민팅 잡을 지갑 저장과 같은 트랜잭션에서 등록 (멱등) — 커밋 뒤 크래시로 잡만 빠지는 일이 없다
+        // 부모 NFT 민팅 잡을 지갑 저장과 같은 트랜잭션에서 등록 (멱등) - 커밋 뒤 크래시로 잡만 빠지는 일이 없다
         await this.nfts.enqueueParentMintInTransaction(tx, userId, w.rows[0].id);
       });
     } catch (err: unknown) {
       // 부분 유니크 인덱스 충돌: 주소가 이미 다른 계정에 연결됐거나 내 대표 지갑이 이미 있음. 그 밖의 23505(이름 없는 것 포함)는 그대로 던진다
       if (isUniqueViolation(err, [WALLET_ADDRESS_UNIQUE_INDEX, WALLET_PRIMARY_UNIQUE_INDEX])) {
-        // 이미 내 대표 지갑이 바로 이 주소면 충돌이 아니라 재시도다 — 첫 verify가 커밋됐는데 응답이 유실된 경우(서명은 위에서 방금 검증됐다).
+        // 이미 내 대표 지갑이 바로 이 주소면 충돌이 아니라 재시도다 - 첫 verify가 커밋됐는데 응답이 유실된 경우(서명은 위에서 방금 검증됐다).
         // 409로 답하면 온보딩이 이미 끝난 일을 실패로 보여 준다. 이 트랜잭션은 롤백됐지만 지갑·단계·민팅 잡은 첫 호출이 이미 남겼다
         const mine = await this.myWallet(userId);
         if (mine?.address === injectiveAddress) return mine;

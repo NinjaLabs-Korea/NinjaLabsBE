@@ -56,7 +56,9 @@ export const ERROR_CODES = {
   CHALLENGE_NOT_FOUND: { statuses: [400], ko: '발급된 지갑 challenge가 없다 (먼저 challenge 요청)' },
   CHALLENGE_EXPIRED: { statuses: [400], ko: 'challenge가 만료됐거나 이미 사용됐다' },
   INVALID_SIGNATURE: { statuses: [401], ko: '서명 검증에 실패했다 (지갑 연결·에이전트 등록 공통)' },
-  WALLET_ALREADY_LINKED: { statuses: [409], ko: '이 주소가 이미 다른 계정에 연결됐거나, 내 대표 지갑이 이미 있다 (부분 유니크 인덱스 충돌)' },
+  WALLET_LINKED_TO_OTHER_ACCOUNT: { statuses: [409], ko: '이 주소가 이미 다른 계정에 연결돼 있다' },
+  ACCOUNT_ALREADY_HAS_WALLET: { statuses: [409], ko: '이 계정에 이미 다른 대표 지갑이 연결돼 있다' },
+  WALLET_ALREADY_LINKED: { statuses: [409], ko: '지갑 유니크 충돌(제약 이름 미상). 구 FE 호환용, 새 코드는 WALLET_LINKED_TO_OTHER_ACCOUNT / ACCOUNT_ALREADY_HAS_WALLET' },
 
   // ── 에이전트 ──
   INVALID_AGENT_WALLET_ADDRESS: { statuses: [400], ko: '에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다)' },
@@ -132,7 +134,9 @@ export const ERROR_CODES = {
   COHORT_APPLICATION_NOT_FOUND: { statuses: [404], ko: '기수 지원서가 없거나 내 것이 아니다 (남의 지원서도 같은 404)' },
   COHORT_APPLICATION_NOT_SUBMITTED: { statuses: [409], ko: 'SUBMITTED가 아니라 수정·철회할 수 없다 (이미 심사됨/철회됨)' },
   COHORT_APPLICATION_WITHDRAWN: { statuses: [409], ko: '철회된 지원서라 심사할 수 없다' },
-  COHORT_OTHER_DETAIL_REQUIRED: { statuses: [400], ko: '활동 유형 또는 관심 분야에 OTHER를 골랐는데 상세(activityTypeOther/interestOther)가 비었다' },
+  COHORT_OTHER_DETAIL_REQUIRED: { statuses: [400], ko: '상세 입력(withDetail) 선택지를 골랐는데 other가 비었다 (구 본문: 활동 유형 또는 관심 분야에 OTHER를 골랐는데 activityTypeOther/interestOther가 빔)' },
+  COHORT_QUESTIONS_INVALID: { statuses: [400], ko: '기수 질문 목록이 규칙에 맞지 않는다 (모르는 id, 중복 id, 선택지 수, withDetail 둘 이상 등)' },
+  COHORT_ANSWERS_INVALID: { statuses: [400], ko: '지원서 답변이 지금 질문과 맞지 않는다 (없는 질문/선택지, 필수 미응답, 형식, 옛/새 본문 혼용)' },
   COHORT_INVALID_WINDOW: { statuses: [400], ko: '접수 종료(closesAt)가 시작(opensAt)보다 늦지 않다' },
   COHORT_INVALID_TRANSITION: { statuses: [400], ko: '허용되지 않는 기수 상태 전이다 (DRAFT->OPEN->CLOSED, CLOSED->OPEN만)' },
   COHORT_ALREADY_OPEN: { statuses: [409], ko: '다른 기수가 이미 OPEN이다 (동시에 열린 기수는 하나)' },

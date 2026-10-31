@@ -154,14 +154,14 @@ describe('WalletsService challenge lookup', () => {
     expect(txRan(STMT.consume)).toBe(0);
   });
 
-  it('maps a unique violation on the wallet INSERT (uq_wallet_chain_address_active / uq_wallet_primary_per_user) to 409 WALLET_ALREADY_LINKED', async () => {
-    const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_chain_address_active"'), { code: '23505' });
+  it('maps a unique violation on the wallet INSERT (uq_wallet_chain_address_active) to 409 WALLET_LINKED_TO_OTHER_ACCOUNT', async () => {
+    const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_chain_address_active"'), { code: '23505', constraint: 'uq_wallet_chain_address_active' });
     const { db, txRan, nfts, signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, duplicate);
     db.query.mockResolvedValue({ rowCount: 0, rows: [] }); // the user has no wallet of their own: a real conflict
     const signature = await signer.signMessage('m');
     const error = await run(signature).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ConflictException);
-    expect((error as ConflictException).message).toBe('WALLET_ALREADY_LINKED');
+    expect((error as ConflictException).message).toBe('WALLET_LINKED_TO_OTHER_ACCOUNT');
     // nothing after the failed INSERT ran (the rollback of the challenge consumption is asserted on a real database)
     expect(txRan(STMT.walletInsert)).toBe(1);
     expect(txRan(STMT.onboarding)).toBe(0);
@@ -171,7 +171,7 @@ describe('WalletsService challenge lookup', () => {
   });
 
   it('answers a verify retry for the wallet the user already linked with that wallet instead of 409 (first response lost)', async () => {
-    const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_primary_per_user"'), { code: '23505' });
+    const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_primary_per_user"'), { code: '23505', constraint: 'uq_wallet_primary_per_user' });
     const { db, nfts, signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, duplicate);
     const linked = { id: 'wallet-id', chain: 'INJECTIVE', address: mockCanonicalInjectiveAddress };
     db.query.mockResolvedValue({ rowCount: 1, rows: [linked] });
@@ -181,9 +181,17 @@ describe('WalletsService challenge lookup', () => {
   });
 
   it("still answers 409 when the user's own wallet is a different address", async () => {
-    const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_primary_per_user"'), { code: '23505' });
+    const duplicate = Object.assign(new Error('duplicate key value violates unique constraint "uq_wallet_primary_per_user"'), { code: '23505', constraint: 'uq_wallet_primary_per_user' });
     const { db, signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, duplicate);
     db.query.mockResolvedValue({ rowCount: 1, rows: [{ id: 'other', address: 'inj1someoneelse' }] });
+    const signature = await signer.signMessage('m');
+    await expect(run(signature)).rejects.toMatchObject({ message: 'ACCOUNT_ALREADY_HAS_WALLET' });
+  });
+
+  it('keeps WALLET_ALREADY_LINKED as the fallback for a unique violation on an unknown constraint', async () => {
+    const duplicate = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_something_else' });
+    const { db, signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, duplicate);
+    db.query.mockResolvedValue({ rowCount: 0, rows: [] });
     const signature = await signer.signMessage('m');
     await expect(run(signature)).rejects.toMatchObject({ message: 'WALLET_ALREADY_LINKED' });
   });

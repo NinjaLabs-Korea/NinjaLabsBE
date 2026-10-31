@@ -15,7 +15,7 @@ jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} 
 
 /**
  * 2026-10-25 삭제 가드(입금액 전체) · record-refund(PAID 포함) · scripts/forfeit-award.js의 교차 검증 —
- * 다중 보상, 몰수 뒤 지갑 연결, 에이전트 제출, 동시 실행(바운티 행 잠금 직렬화)에서 돈/상태 규칙이 깨지지 않는지.
+ * 다중 보상, 보상 미지급 처리 뒤 지갑 연결, 에이전트 제출, 동시 실행(바운티 행 잠금 직렬화)에서 돈/상태 규칙이 깨지지 않는지.
  */
 describeDb('refund / delete / forfeit across rules and races', () => {
   const db = createDb();

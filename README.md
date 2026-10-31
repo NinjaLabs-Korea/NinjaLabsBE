@@ -24,7 +24,7 @@ src/
   wallets/             지갑 연결 challenge/verify (nonce 서명 방식)
   members/             공식 멤버 탭 (공개) + 운영자 멤버 지정
   notices/             공지/소식 (공개 읽기, 행사 날짜 event_date) + 운영자 공지 관리
-  cohorts/             기수(다음 기수) 모집: 공개 현재 기수, 지원서 제출/수정/철회, 운영자 기수 관리·심사·CSV
+  cohorts/             기수(다음 기수) 모집: 공개 현재 기수와 지원서 질문(기수마다 편집, cohort-questions.ts), 지원서 제출/수정/철회, 운영자 기수 관리·질문 편집·심사·CSV
   highlights/          Hall of Fame 큐레이션 + 자동 집계 지표 + 운영자 관리
   media/               관리자 이미지 업로드 + 공개 immutable 조회
   bounties/            바운티 목록/상세 + applications + submissions(리비전)
@@ -50,7 +50,7 @@ scripts/migrate.js     Supabase CLI 없이 쓰는 마이그레이션 러너 (app
 scripts/ops-alert.js   웹훅 전송 함수 postOpsAlert (절대 throw 안 함) — migrate.js와 src/common/alerts가 공유
 scripts/grant-admin.js       운영자 권한 부여/회수 (이메일, --dry-run, 확인 프롬프트, 감사 행) — docs/runbook.md §3
 scripts/requeue-nft-jobs.js  FAILED nft_job 수동 재시도 (id 또는 --all, --dry-run) — docs/runbook.md §7.3
-scripts/forfeit-award.js     지급할 수 없는 승인 수상 몰수 (APPROVED → REJECTED, 심사 기록 + 감사 행) — docs/runbook.md §7.4
+scripts/forfeit-award.js     지급할 수 없는 승인 수상의 보상 미지급 처리 (APPROVED → REJECTED, 심사 기록 + 감사 행) - docs/runbook.md §7.4
 scripts/mainnet-preflight.sql 메인넷 전환 전 읽기 전용 점검 (psql) — docs/runbook.md §8
 scripts/find-static-ext-nicknames.sql 정적 파일 확장자로 끝나는 기존 닉네임 목록 (psql, 읽기 전용) — docs/runbook.md §2
 scripts/ops-cli.js           운영 스크립트 공용 (migrate.js와 같은 접속 규칙, 인자, 프롬프트)

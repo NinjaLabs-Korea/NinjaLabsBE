@@ -173,6 +173,9 @@ export class WalletsService {
         // 409로 답하면 온보딩이 이미 끝난 일을 실패로 보여 준다. 이 트랜잭션은 롤백됐지만 지갑·단계·민팅 잡은 첫 호출이 이미 남겼다
         const mine = await this.myWallet(userId);
         if (mine?.address === injectiveAddress) return mine;
+        // 어느 제약이 걸렸는지로 두 경우를 나눈다: (a) 이 주소가 다른 계정에 연결됨, (b) 이 계정에 이미 다른 대표 지갑이 있음. 그 밖의 유니크 충돌은 구 코드로 둔다
+        if (isUniqueViolation(err, 'uq_wallet_chain_address_active')) throw new ConflictException('WALLET_LINKED_TO_OTHER_ACCOUNT');
+        if (isUniqueViolation(err, 'uq_wallet_primary_per_user')) throw new ConflictException('ACCOUNT_ALREADY_HAS_WALLET');
         throw new ConflictException('WALLET_ALREADY_LINKED');
       }
       throw err;

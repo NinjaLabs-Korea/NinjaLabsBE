@@ -110,7 +110,7 @@ describeDb('wallet challenge/verify on a real database', () => {
     expect(row.rows).toEqual([{ public_key: signer.signingKey.compressedPublicKey }]);
   });
 
-  it('the same wallet cannot be linked to a second account (409 WALLET_ALREADY_LINKED, nothing persisted)', async () => {
+  it('the same wallet cannot be linked to a second account (409 WALLET_LINKED_TO_OTHER_ACCOUNT, nothing persisted)', async () => {
     const signer = Wallet.createRandom();
     const first = await createUser(db);
     const c1 = await wallets.createChallenge(first, signer.address);
@@ -119,11 +119,23 @@ describeDb('wallet challenge/verify on a real database', () => {
     const second = await createUser(db, { onboarded: false });
     const c2 = await wallets.createChallenge(second, signer.address);
     await expect(wallets.verifySignature(second, signer.address, await signer.signMessage(c2.message)))
-      .rejects.toMatchObject({ message: 'WALLET_ALREADY_LINKED' });
+      .rejects.toMatchObject({ message: 'WALLET_LINKED_TO_OTHER_ACCOUNT' });
     const user = await db.query<{ onboarding_step: number }>(`SELECT onboarding_step FROM "user" WHERE id = $1`, [second]);
     expect(user.rows[0].onboarding_step).toBe(2);
     const nft = await db.query(`SELECT 1 FROM nft WHERE owner_user_id = $1`, [second]);
     expect(nft.rowCount).toBe(0);
+  });
+
+  it('a second, different address for an account that already has a primary wallet is 409 ACCOUNT_ALREADY_HAS_WALLET', async () => {
+    const userId = await createUser(db);
+    const first = Wallet.createRandom();
+    const c1 = await wallets.createChallenge(userId, first.address);
+    await wallets.verifySignature(userId, first.address, await first.signMessage(c1.message));
+    const second = Wallet.createRandom();
+    const c2 = await wallets.createChallenge(userId, second.address);
+    await expect(wallets.verifySignature(userId, second.address, await second.signMessage(c2.message)))
+      .rejects.toMatchObject({ message: 'ACCOUNT_ALREADY_HAS_WALLET' });
+    expect((await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [userId])).rowCount).toBe(1);
   });
 
   it('re-verifying the wallet the user already linked returns it (retry after a lost response) and queues no second mint job', async () => {
@@ -162,7 +174,7 @@ describeDb('wallet challenge/verify on a real database', () => {
     const second = await createUser(db, { onboarded: false });
     const c2 = await wallets.createChallenge(second, signer.address);
     await expect(wallets.verifySignature(second, signer.address, await signer.signMessage(c2.message)))
-      .rejects.toMatchObject({ message: 'WALLET_ALREADY_LINKED' });
+      .rejects.toMatchObject({ message: 'WALLET_LINKED_TO_OTHER_ACCOUNT' });
     expect(await openChallenges(second)).toBe(1); // the consume UPDATE was rolled back with the failed wallet INSERT
     expect((await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [second])).rowCount).toBe(0);
     expect((await db.query(`SELECT 1 FROM nft_job j JOIN nft n ON n.id = j.nft_id WHERE n.owner_user_id = $1`, [second])).rowCount).toBe(0);

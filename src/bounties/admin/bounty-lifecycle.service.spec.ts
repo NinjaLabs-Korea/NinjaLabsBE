@@ -105,7 +105,7 @@ describe('BountyLifecycleService.blockers', () => {
     expect(sql).toContain(`status NOT IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})) AS unfunded`);
     // unpaid = 진행 중 payout만 (CANCELLED/FAILED/PAID는 아님 — 수동 취소한 payout이 COMPLETED를 영구히 막지 않게)
     expect(sql).toContain("p.status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING')) AS unpaid");
-    // unawarded = 응답의 payoutStatus가 PENDING/PARTIALLY_PAID인 승인 제출 (보상 소진·수상 취소는 막지 않는다)
+    // unawarded = 응답의 payoutStatus가 PENDING/PARTIALLY_PAID인 승인 제출 (보상 소진·지급 취소는 막지 않는다)
     expect(sql).toContain(`s.status = 'APPROVED' AND ${owesUnpaidRewardSql('s', 'b')}) AS unawarded`);
   });
 });

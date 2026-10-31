@@ -1,10 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
-import { Transform } from 'class-transformer';
-import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsIn, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { ArrayMaxSize, ArrayNotEmpty, ArrayUnique, IsArray, IsIn, IsNotEmpty, IsOptional, IsString, Matches, ValidateNested } from 'class-validator';
 import { MaxChars } from '../common/validation/max-chars';
 import { IsOptionalNotNull } from '../common/validation/optional-not-null';
 import { NullIfBlank, Trim } from '../common/validation/trim';
 import { HasNoBidiOverride, HasVisibleText, IsPlainDisplayText, NullIfInvisible, hasVisibleText } from '../common/validation/visible-text';
+import { ANSWERS_MAX, LONG_TEXT_MAX, OPTION_MAX, OTHER_MAX, QUESTION_ID_PATTERN } from './cohort-questions';
 import { ACTIVITY_TYPES, INTEREST_AREAS, OTHER, WEB3_EXPERIENCES } from './cohort-status';
 
 /**
@@ -19,6 +20,8 @@ import { ACTIVITY_TYPES, INTEREST_AREAS, OTHER, WEB3_EXPERIENCES } from './cohor
  * 텍스트 규칙 (생성/수정 DTO 공용, `common/validation/visible-text.ts`):
  *   displayName: 보이는 글자 필수, 줄바꿈·제어·방향 제어·제로폭 문자 거부 (ZWJ/ZWNJ는 허용: 이모지, 한글 외 문자).
  *   intro: 보이는 글자 필수, 방향 임베딩/오버라이드(RLO 등) 거부, 줄바꿈은 허용.
+ *   answers: 기수 질문(cohort.questions)에 대한 답변. 모양만 여기서 보고(AnswerInputDto), 질문과 맞는지는 cohort-questions.ts validateAnswers 가 본다.
+ *   옛 필드(web3Experience, activityType, activityTypeOther, interestAreas, interestOther)는 deprecated: 옛 FE 본문 호환용으로 남겨 두며 FE-1 배포 뒤 정리에서 지운다.
  *   activityTypeOther / interestOther: 한 줄 표시용이라 displayName과 같은 문자 거부, 보이는 글자가 없으면 빈 값으로 보고
  *   "기타" 선택 시 COHORT_OTHER_DETAIL_REQUIRED.
  */
@@ -55,6 +58,14 @@ export function normalizeHandle(raw: unknown, urlPattern: RegExp): unknown {
 export const NormalizeTelegram = () => Transform(({ value }: { value: unknown }) => normalizeHandle(value, TELEGRAM_URL));
 export const NormalizeTwitter = () => Transform(({ value }: { value: unknown }) => normalizeHandle(value, TWITTER_URL));
 
+/** 질문 하나에 대한 답변 입력 (모양만). 글 답변은 text, 선택 답변은 choices(+ 상세 입력 other) */
+export class AnswerInputDto {
+  @IsString() @Matches(QUESTION_ID_PATTERN) questionId!: string;
+  @IsOptional() @IsString() @MaxChars(LONG_TEXT_MAX) text?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(OPTION_MAX) @ArrayUnique() @IsString({ each: true }) @Matches(QUESTION_ID_PATTERN, { each: true }) choices?: string[];
+  @IsOptional() @IsString() @MaxChars(OTHER_MAX) other?: string | null;
+}
+
 /** 배열을 집합으로: 중복 제거(순서 유지). 배열이 아니면 그대로 (IsArray 가 거절) */
 const UniqueArray = () => Transform(({ value }: { value: unknown }) => (Array.isArray(value) ? [...new Set(value)] : value));
 
@@ -63,11 +74,17 @@ export class CohortApplicationFields {
   @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(60) displayName!: string;
   @NormalizeTelegram() @IsString() @Matches(TELEGRAM_HANDLE, { message: 'telegram must be a valid Telegram username (5-32 letters, digits or _)' }) telegram!: string;
   @NormalizeTwitter() @IsString() @Matches(TWITTER_HANDLE, { message: 'twitter must be a valid X (Twitter) username (1-15 letters, digits or _)' }) twitter!: string;
-  @IsIn(WEB3_EXPERIENCES) web3Experience!: string;
-  @IsIn(ACTIVITY_TYPES) activityType!: string;
-  /** activityType 이 OTHER 일 때만 의미가 있고 그때는 필수 (assertOtherDetails), 아니면 무시하고 NULL 로 저장 */
+  /** 새 본문: 기수 질문에 대한 답변 (최대 30개). 옛 필드와 함께 보내면 400 COHORT_ANSWERS_INVALID */
+  @IsOptionalNotNull() @IsArray() @ArrayMaxSize(ANSWERS_MAX) @ValidateNested({ each: true }) @Type(() => AnswerInputDto) answers?: AnswerInputDto[];
+  /** @deprecated 옛 FE 본문. answers 가 없을 때만 받고 셋(web3Experience, activityType, interestAreas)이 모두 있어야 한다 */
+  @IsOptionalNotNull() @IsIn(WEB3_EXPERIENCES) web3Experience?: string;
+  /** @deprecated */
+  @IsOptionalNotNull() @IsIn(ACTIVITY_TYPES) activityType?: string;
+  /** @deprecated activityType 이 OTHER 일 때만 의미가 있고 그때는 필수 (normalizeOtherDetails), 아니면 무시하고 NULL 로 저장 */
   @IsOptional() @NullIfBlank() @NullIfInvisible() @IsString() @IsPlainDisplayText() @MaxChars(60) activityTypeOther?: string | null;
-  @UniqueArray() @IsArray() @ArrayNotEmpty() @ArrayMaxSize(INTEREST_AREAS.length) @IsIn(INTEREST_AREAS, { each: true }) interestAreas!: string[];
+  /** @deprecated */
+  @IsOptionalNotNull() @UniqueArray() @IsArray() @ArrayNotEmpty() @ArrayMaxSize(INTEREST_AREAS.length) @IsIn(INTEREST_AREAS, { each: true }) interestAreas?: string[];
+  /** @deprecated */
   @IsOptional() @NullIfBlank() @NullIfInvisible() @IsString() @IsPlainDisplayText() @MaxChars(60) interestOther?: string | null;
   @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxChars(1000) intro!: string;
 }
@@ -77,19 +94,32 @@ export class UpdateCohortApplicationDto {
   @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @IsPlainDisplayText() @MaxChars(60) displayName?: string;
   @IsOptionalNotNull() @NormalizeTelegram() @IsString() @Matches(TELEGRAM_HANDLE, { message: 'telegram must be a valid Telegram username (5-32 letters, digits or _)' }) telegram?: string;
   @IsOptionalNotNull() @NormalizeTwitter() @IsString() @Matches(TWITTER_HANDLE, { message: 'twitter must be a valid X (Twitter) username (1-15 letters, digits or _)' }) twitter?: string;
+  /** 보내면 전체 교체: 지금 질문 기준으로 검증한다. 안 보내면 저장된 답변을 그대로 둔다 */
+  @IsOptionalNotNull() @IsArray() @ArrayMaxSize(ANSWERS_MAX) @ValidateNested({ each: true }) @Type(() => AnswerInputDto) answers?: AnswerInputDto[];
+  /** @deprecated 옛 FE 본문 (옛 형식 행에만 통한다) */
   @IsOptionalNotNull() @IsIn(WEB3_EXPERIENCES) web3Experience?: string;
+  /** @deprecated */
   @IsOptionalNotNull() @IsIn(ACTIVITY_TYPES) activityType?: string;
+  /** @deprecated */
   @IsOptional() @NullIfBlank() @NullIfInvisible() @IsString() @IsPlainDisplayText() @MaxChars(60) activityTypeOther?: string | null;
+  /** @deprecated */
   @IsOptionalNotNull() @UniqueArray() @IsArray() @ArrayNotEmpty() @ArrayMaxSize(INTEREST_AREAS.length) @IsIn(INTEREST_AREAS, { each: true }) interestAreas?: string[];
+  /** @deprecated */
   @IsOptional() @NullIfBlank() @NullIfInvisible() @IsString() @IsPlainDisplayText() @MaxChars(60) interestOther?: string | null;
   @IsOptionalNotNull() @Trim() @IsString() @IsNotEmpty() @HasVisibleText() @HasNoBidiOverride() @MaxChars(1000) intro?: string;
 }
 
-export type CohortApplicationValues = {
-  displayName: string; telegram: string; twitter: string; web3Experience: string;
-  activityType: string; activityTypeOther: string | null;
-  interestAreas: string[]; interestOther: string | null; intro: string;
+/** 옛 형식 필드 묶음 (deprecated 본문과 옛 형식 행) */
+export type LegacyAnswerValues = {
+  web3Experience: string; activityType: string; activityTypeOther: string | null; interestAreas: string[]; interestOther: string | null;
 };
+export type CohortApplicationValues = { displayName: string; telegram: string; twitter: string; intro: string } & LegacyAnswerValues;
+
+/** 본문에 옛 형식 필드가 하나라도 있나 (null 도 "보냈다"로 센다: 섞어 보낸 것을 잡는다) */
+export const LEGACY_FIELD_KEYS = ['web3Experience', 'activityType', 'activityTypeOther', 'interestAreas', 'interestOther'] as const;
+export function hasLegacyFields(body: object): boolean {
+  return LEGACY_FIELD_KEYS.some((key) => (body as Record<string, unknown>)[key] !== undefined);
+}
 
 const visibleOrNull = (value?: string | null) => (hasVisibleText(value) ? (value as string).trim() : null);
 

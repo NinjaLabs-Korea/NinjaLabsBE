@@ -116,3 +116,28 @@ describe('normalizeOtherDetails', () => {
     expect(() => normalizeOtherDetails({ ...base, interestAreas: ['KOL', 'OTHER'], interestOther: '  ' })).toThrow('COHORT_OTHER_DETAIL_REQUIRED');
   });
 });
+
+describe('answers (new body shape)', () => {
+  const fixed = { displayName: '홍길동', telegram: '@ninja_kr', twitter: '@ninja', intro: 'hello' };
+  const answers = [{ questionId: 'web3_experience', choices: ['Y1_3'] }, { questionId: 'why', text: '이유' }, { questionId: 'x', choices: ['OTHER'], other: '직접' }];
+
+  it('accepts a body with answers and no legacy fields, on create and update', async () => {
+    expect((await check(CohortApplicationFields, { ...fixed, answers })).errors).toEqual([]);
+    expect((await check(UpdateCohortApplicationDto, { answers })).errors).toEqual([]);
+  });
+
+  it('legacy fields are optional on create (deprecated) but still validated when sent', async () => {
+    expect((await check(CohortApplicationFields, { ...fixed, web3Experience: 'LT_1Y', activityType: 'KOL', interestAreas: ['KOL'] })).errors).toEqual([]);
+    expect((await check(CohortApplicationFields, { ...fixed, web3Experience: 'nope' })).errors).toEqual(['web3Experience']);
+  });
+
+  it('checks the answer shape: id pattern, unique choices, 20 choices, 30 answers, no extra keys, answers not null', async () => {
+    expect((await check(CohortApplicationFields, { ...fixed, answers: [{ questionId: 'bad id!' }] })).errors).toEqual(['answers']);
+    expect((await check(CohortApplicationFields, { ...fixed, answers: [{ questionId: 'a', choices: ['x', 'x'] }] })).errors).toEqual(['answers']);
+    expect((await check(CohortApplicationFields, { ...fixed, answers: [{ questionId: 'a', choices: Array.from({ length: 21 }, (_, i) => `c${i}`) }] })).errors).toEqual(['answers']);
+    expect((await check(CohortApplicationFields, { ...fixed, answers: Array.from({ length: 31 }, (_, i) => ({ questionId: `q${i}` })) })).errors).toEqual(['answers']);
+    expect((await check(CohortApplicationFields, { ...fixed, answers: [{ questionId: 'a', extra: 1 }] })).errors).toEqual(['answers']);
+    expect((await check(CohortApplicationFields, { ...fixed, answers: [{ questionId: 'a', other: 'x'.repeat(61) }] })).errors).toEqual(['answers']);
+    expect((await check(UpdateCohortApplicationDto, { answers: null })).errors).toEqual(['answers']);
+  });
+});

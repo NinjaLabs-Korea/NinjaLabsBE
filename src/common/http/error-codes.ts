@@ -58,7 +58,6 @@ export const ERROR_CODES = {
   INVALID_SIGNATURE: { statuses: [401], ko: '서명 검증에 실패했다 (지갑 연결·에이전트 등록 공통)' },
   WALLET_LINKED_TO_OTHER_ACCOUNT: { statuses: [409], ko: '이 주소가 이미 다른 계정에 연결돼 있다' },
   ACCOUNT_ALREADY_HAS_WALLET: { statuses: [409], ko: '이 계정에 이미 다른 대표 지갑이 연결돼 있다' },
-  WALLET_ALREADY_LINKED: { statuses: [409], ko: '지갑 유니크 충돌(제약 이름 미상). 구 FE 호환용, 새 코드는 WALLET_LINKED_TO_OTHER_ACCOUNT / ACCOUNT_ALREADY_HAS_WALLET' },
 
   // ── 에이전트 ──
   INVALID_AGENT_WALLET_ADDRESS: { statuses: [400], ko: '에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다)' },

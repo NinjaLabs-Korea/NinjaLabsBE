@@ -15,6 +15,9 @@ import {
 } from './payout-status';
 import { primaryWalletSql } from '../wallets/primary-wallet';
 
+/** bounty_reward.deposit_tx_hash의 부분 유니크 인덱스(0014). confirmDeposit의 23505는 이 이름일 때만 TX_HASH_ALREADY_USED다 */
+export const DEPOSIT_TX_UNIQUE_INDEX = 'uq_bounty_reward_deposit_tx';
+
 /**
  * MVP 보상 흐름 (ERD §10)
  *   스폰서 선입금(멀티시그) → 운영자 입금 확인 → 바운티 OPEN
@@ -250,14 +253,16 @@ export class RewardsService {
   }
 
   /**
-   * uq_bounty_reward_deposit_tx(0014) 충돌 → 409 TX_HASH_ALREADY_USED. confirmDeposit 전용 — 그 흐름에 다른 유니크 충돌은 없다.
+   * uq_bounty_reward_deposit_tx(0014) 충돌 → 409 TX_HASH_ALREADY_USED. confirmDeposit 전용.
+   * 이 인덱스 이름일 때만 바꾼다: 지금 그 흐름에 다른 유니크 충돌은 없지만, 나중에 생긴 충돌(예: 감사 기록 쪽 인덱스)을 "해시 재사용"으로 숨기면
+   * 운영자가 다른 해시로 다시 시도하게 되므로 그대로 던져 500으로 드러낸다.
    * payout 쪽은 유니크 인덱스가 없고 markPaid가 조회로 판단한다 (같은 바운티 재사용 허용).
    */
   private async rejectReusedTxHash<T>(run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (err: unknown) {
-      if (isUniqueViolation(err)) throw new ConflictException('TX_HASH_ALREADY_USED');
+      if (isUniqueViolation(err, DEPOSIT_TX_UNIQUE_INDEX)) throw new ConflictException('TX_HASH_ALREADY_USED');
       throw err;
     }
   }

@@ -15,6 +15,10 @@ import { NftsService } from '../nfts/nfts.service';
 import { primaryWalletSql } from './primary-wallet';
 import { ONBOARDING_STEP } from '../users/onboarding-step';
 
+/** wallet의 부분 유니크 인덱스(0002): 주소는 플랫폼 전체에서 1개, 유저당 활성 대표 지갑 1개. verifySignature는 이 둘의 23505만 409로 바꾼다 */
+export const WALLET_ADDRESS_UNIQUE_INDEX = 'uq_wallet_chain_address_active';
+export const WALLET_PRIMARY_UNIQUE_INDEX = 'uq_wallet_primary_per_user';
+
 /**
  * 지갑 연결 흐름 (온보딩 2단계)
  *
@@ -169,16 +173,15 @@ export class WalletsService {
         await this.nfts.enqueueParentMintInTransaction(tx, userId, w.rows[0].id);
       });
     } catch (err: unknown) {
-      // 부분 유니크 인덱스 충돌: 주소가 이미 다른 계정에 연결됐거나 내 대표 지갑이 이미 있음
-      if (isUniqueViolation(err)) {
+      // 부분 유니크 인덱스 충돌: 주소가 이미 다른 계정에 연결됐거나 내 대표 지갑이 이미 있음. 그 밖의 23505(이름 없는 것 포함)는 그대로 던진다
+      if (isUniqueViolation(err, [WALLET_ADDRESS_UNIQUE_INDEX, WALLET_PRIMARY_UNIQUE_INDEX])) {
         // 이미 내 대표 지갑이 바로 이 주소면 충돌이 아니라 재시도다 — 첫 verify가 커밋됐는데 응답이 유실된 경우(서명은 위에서 방금 검증됐다).
         // 409로 답하면 온보딩이 이미 끝난 일을 실패로 보여 준다. 이 트랜잭션은 롤백됐지만 지갑·단계·민팅 잡은 첫 호출이 이미 남겼다
         const mine = await this.myWallet(userId);
         if (mine?.address === injectiveAddress) return mine;
-        // 어느 제약이 걸렸는지로 두 경우를 나눈다: (a) 이 주소가 다른 계정에 연결됨, (b) 이 계정에 이미 다른 대표 지갑이 있음. 그 밖의 유니크 충돌은 구 코드로 둔다
-        if (isUniqueViolation(err, 'uq_wallet_chain_address_active')) throw new ConflictException('WALLET_LINKED_TO_OTHER_ACCOUNT');
-        if (isUniqueViolation(err, 'uq_wallet_primary_per_user')) throw new ConflictException('ACCOUNT_ALREADY_HAS_WALLET');
-        throw new ConflictException('WALLET_ALREADY_LINKED');
+        // 어느 제약이 걸렸는지로 두 경우를 나눈다: (a) 이 주소가 다른 계정에 연결됨, (b) 이 계정에 이미 다른 대표 지갑이 있음
+        if (isUniqueViolation(err, WALLET_ADDRESS_UNIQUE_INDEX)) throw new ConflictException('WALLET_LINKED_TO_OTHER_ACCOUNT');
+        throw new ConflictException('ACCOUNT_ALREADY_HAS_WALLET');
       }
       throw err;
     }

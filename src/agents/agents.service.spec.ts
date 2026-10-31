@@ -139,7 +139,7 @@ describe('AgentsService EVM registration', () => {
   it('returns the existing pending challenge after a rejected signature retry — looked up by (owner, wallet) outside the rolled-back tx', async () => {
     const signer = Wallet.createRandom();
     const { db, service } = createService([{ id: agentId, owner_user_id: ownerUserId, wallet_address: signer.address }]);
-    const registerQuery = registerTxQuery({ insert: { code: '23505' } });
+    const registerQuery = registerTxQuery({ insert: { code: '23505', constraint: 'uq_agent_wallet' } });
     db.tx.mockImplementation(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
       callback({ query: registerQuery }));
 
@@ -171,7 +171,7 @@ describe('AgentsService EVM registration', () => {
   ])('keeps the 409 after a unique violation when there is %s (the pending lookup is scoped to owner AND wallet)', async (_label, pending) => {
     const signer = Wallet.createRandom();
     const { db, service } = createService(pending(signer.address));
-    const registerQuery = registerTxQuery({ insert: { code: '23505' } });
+    const registerQuery = registerTxQuery({ insert: { code: '23505', constraint: 'uq_agent_wallet' } });
     db.tx.mockImplementation(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
       callback({ query: registerQuery }));
 
@@ -291,7 +291,7 @@ describe('AgentsService EVM registration', () => {
     const { db, service } = createService([{ id: agentId, owner_user_id: ownerUserId, wallet_address: signer.address }]);
     const registerQuery = registerTxQuery({
       revoked: [{ id: agentId, owner_user_id: ownerUserId, status: 'PENDING_VERIFICATION', abandoned: true }],
-      insert: { code: '23505' },
+      insert: { code: '23505', constraint: 'uq_agent_wallet' },
     });
     db.tx.mockImplementation(async (callback: (tx: { query: typeof registerQuery }) => Promise<unknown>) =>
       callback({ query: registerQuery }));

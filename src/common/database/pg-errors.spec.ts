@@ -13,6 +13,17 @@ describe('pg-errors', () => {
     expect(isUniqueViolation(pgError({ code: '23503' }))).toBe(false);
   });
 
+  it('isUniqueViolation accepts an explicit list of constraints and never matches a 23505 without a name', () => {
+    const names = ['uq_user_google_id', 'uq_user_email'] as const;
+    expect(isUniqueViolation(pgError({ code: '23505', constraint: 'uq_user_email' }), names)).toBe(true);
+    expect(isUniqueViolation(pgError({ code: '23505', constraint: 'uq_user_google_id' }), names)).toBe(true);
+    expect(isUniqueViolation(pgError({ code: '23505', constraint: 'uq_user_nickname_active' }), names)).toBe(false);
+    expect(isUniqueViolation(pgError({ code: '23505' }), names)).toBe(false);
+    expect(isUniqueViolation(pgError({ code: '23505' }), 'uq_user_email')).toBe(false);
+    expect(isUniqueViolation(pgError({ code: '23503', constraint: 'uq_user_email' }), names)).toBe(false);
+    expect(isUniqueViolation(pgError({ code: '23505', constraint: 'uq_user_email' }), [])).toBe(false);
+  });
+
   it('isForeignKeyViolation narrows to one constraint when given a name', () => {
     const fk = pgError({ code: '23503', constraint: 'fk_highlight_bounty' });
     expect(isForeignKeyViolation(fk, 'fk_highlight_bounty')).toBe(true);

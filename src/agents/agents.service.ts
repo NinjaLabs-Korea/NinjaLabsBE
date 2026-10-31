@@ -20,6 +20,12 @@ import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 import { revokeActiveAgentKeys } from './agent-revocation';
 
 /**
+ * 에이전트 등록 INSERT가 부딪힐 수 있는 지갑·공개키 부분 유니크 인덱스(0014, `deleted_at IS NULL AND status <> 'REVOKED'`).
+ * register()는 이 둘의 23505만 "이미 등록됨"(내 PENDING 행 갱신 또는 409)으로 처리하고 다른 충돌은 그대로 던진다.
+ */
+export const AGENT_REGISTRATION_UNIQUE_INDEXES = ['uq_agent_wallet', 'uq_agent_public_key'] as const;
+
+/**
  * AI 에이전트 등록 (ERD §12, 기획 PART 2-4)
  *
  * 등록 검증: 유저가 "내 에이전트"임을 지갑 서명으로 증명
@@ -91,7 +97,7 @@ export class AgentsService {
         verificationMessage: AgentsService.verificationMessage(r.rows[0].id, ownerUserId),
       };
     } catch (err: unknown) {
-      if (isUniqueViolation(err)) {
+      if (isUniqueViolation(err, AGENT_REGISTRATION_UNIQUE_INDEXES)) {
         // 같은 지갑으로 다시 등록하면 새로 입력한 이름·설명이 이긴다 - 예전엔 첫 등록의 값을 말없이 유지해 사용자가 바꾼 이름이 버려졌다.
         // 아직 검증 전(PENDING_VERIFICATION)인 내 행만 고친다 (검증된 에이전트의 이름은 이 경로로 바뀌지 않는다)
         const pending = await this.db.query<{ id: string }>(

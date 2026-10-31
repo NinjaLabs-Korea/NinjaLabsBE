@@ -154,9 +154,9 @@ describe('AgentsService.register input validation', () => {
     expect(db.tx).not.toHaveBeenCalled();
   });
 
-  it('a unique violation with no own PENDING row on that wallet is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED', async () => {
+  it.each(['uq_agent_wallet', 'uq_agent_public_key'])('a unique violation on %s with no own PENDING row on that wallet is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED', async (constraint) => {
     const signer = Wallet.createRandom();
-    const { service, query } = setup({ insertError: Object.assign(new Error('dup'), { code: '23505' }) });
+    const { service, query } = setup({ insertError: Object.assign(new Error('dup'), { code: '23505', constraint }) });
     const error = await service.register(ownerUserId, 'bot', undefined, undefined, signer.address).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as Error).message).toBe('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
@@ -165,10 +165,20 @@ describe('AgentsService.register input validation', () => {
 
   it('re-registering the same pending wallet applies the new name and description to the existing row and returns its id', async () => {
     const signer = Wallet.createRandom();
-    const { service, query } = setup({ insertError: Object.assign(new Error('dup'), { code: '23505' }), pendingAfterConflict: true });
+    const { service, query } = setup({ insertError: Object.assign(new Error('dup'), { code: '23505', constraint: 'uq_agent_wallet' }), pendingAfterConflict: true });
     await expect(service.register(ownerUserId, 'Renamed Bot', 'new description', undefined, signer.address)).resolves.toMatchObject({ agentId: 'own-pending', status: 'PENDING_VERIFICATION' });
     expect(query.mock.calls[0][0]).toContain('UPDATE agent SET name = $3, description = $4');
     expect(query.mock.calls[0][1]).toEqual([ownerUserId, signer.address, 'Renamed Bot', 'new description']);
+  });
+
+  it.each([
+    ['another unique index', 'uq_agent_api_key_hash'],
+    ['no constraint name', undefined],
+  ])('rethrows a unique violation from %s unchanged (no pending lookup, no 409 mask)', async (_what, constraint) => {
+    const boom = Object.assign(new Error('dup'), { code: '23505', constraint });
+    const { service, query } = setup({ insertError: boom, pendingAfterConflict: true });
+    await expect(service.register(ownerUserId, 'bot', undefined, undefined, Wallet.createRandom().address)).rejects.toBe(boom);
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('rethrows non-unique database errors unchanged (no pending lookup, no 409 mask)', async () => {

@@ -14,5 +14,3 @@ export const ONBOARDING_STEP = {
   /** 프로필(닉네임·자기소개·태그)을 저장했다 - 온보딩 완료 플래그를 찍을 수 있고, 이후 닉네임 변경은 쿨다운·감사 대상 */
   PROFILE_SAVED: 4,
 } as const;
-
-export type OnboardingStep = (typeof ONBOARDING_STEP)[keyof typeof ONBOARDING_STEP];

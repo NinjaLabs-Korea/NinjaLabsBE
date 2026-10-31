@@ -69,7 +69,7 @@ export class SubmissionReviewService {
         [submissionId, newStatus],
       );
       await recordReviews(tx, [submissionId], adminId, decision as SubmissionDecision, comment?.trim() || null);
-      await this.audit.record(adminId, `SUBMISSION_${decision}`, 'bounty_submission', submissionId, tx);
+      await this.audit.record(adminId, `SUBMISSION_${decision as SubmissionDecision}`, 'bounty_submission', submissionId, tx);
       // APPROVE 시 후속 흐름(payout 요청 → NFT 민팅)은 rewards/nfts 모듈에서 별도 호출
       return { id: submissionId, status: newStatus };
     });

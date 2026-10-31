@@ -5,13 +5,18 @@ import { validate } from 'class-validator';
 import { Pool } from 'pg';
 import { AuditService } from '../audit/audit.service';
 import { asClientError } from '../common/database/pg-errors';
-import { DatabaseService } from '../common/database/database.service';
+import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { charLength, MaxChars } from '../common/validation/max-chars';
 import { PG_INT_MAX } from '../common/validation/optional-not-null';
 import { TOKEN_AMOUNT } from '../common/validation/token-amount';
 import { describeDb } from './describe-db';
 import { createDb, createUser, TEST_DB_URL_ENV, unique } from './harness';
 import { sslOptions } from '../../scripts/migrate';
+
+/** 카탈로그 밖의 임의 action/entity로 감사 테이블 동작만 보는 프로브 - 서비스 코드는 AuditAction 타입으로만 부른다 */
+function rawRecord(audit: AuditService) {
+  return audit.record.bind(audit) as (actorId: string | undefined, action: string, entityType: string, entityId: string, runner?: QueryRunner) => Promise<void>;
+}
 
 /** The validators and the DatabaseService plumbing checked against what Postgres actually does — not against our own assumptions */
 describeDb('common plumbing on a real database', () => {
@@ -154,7 +159,7 @@ describeDb('common plumbing on a real database', () => {
     });
 
     it('a write pointing at a missing row (23503 "is not present") → 400 REFERENCE_NOT_FOUND', async () => {
-      const err = await new AuditService(db).record('00000000-0000-4000-8000-000000000000', 'X', 'bounty', '00000000-0000-4000-8000-000000000001')
+      const err = await new AuditService(db).record('00000000-0000-4000-8000-000000000000', 'BOUNTY_UPDATED', 'bounty', '00000000-0000-4000-8000-000000000001')
         .catch((caught: unknown) => caught);
       expect(pgCode(err)).toBe('23503');
       expect(asClientError(err)).toEqual(new BadRequestException('REFERENCE_NOT_FOUND'));
@@ -162,7 +167,7 @@ describeDb('common plumbing on a real database', () => {
 
     it('deleting a row that is still referenced (23503 "still referenced") stays a server error', async () => {
       const userId = await createUser(db);
-      await new AuditService(db).record(userId, 'X', 'user', userId);
+      await new AuditService(db).record(userId, 'USER_NICKNAME_CHANGED', 'user', userId);
       const err = await db.query('DELETE FROM "user" WHERE id = $1', [userId]).catch((caught: unknown) => caught);
       expect(pgCode(err)).toBe('23503');
       expect(asClientError(err)).toBe(err);
@@ -174,10 +179,10 @@ describeDb('common plumbing on a real database', () => {
       const audit = new AuditService(db);
       const entityId = '11111111-1111-4111-8111-' + unique().slice(0, 12).padEnd(12, '0');
       await db.tx(async (client) => {
-        await audit.record(undefined, 'ROLLED_BACK', 'probe', entityId, client);
+        await rawRecord(audit)(undefined, 'ROLLED_BACK', 'probe', entityId, client);
         throw new Error('abort');
       }).catch(() => undefined);
-      await audit.record(undefined, 'SYSTEM', 'probe', entityId);
+      await rawRecord(audit)(undefined, 'SYSTEM', 'probe', entityId);
       const rows = await db.query<{ action: string; actor_user_id: string | null }>(
         'SELECT action, actor_user_id FROM audit_log WHERE entity_id = $1', [entityId]);
       expect(rows.rows).toEqual([{ action: 'SYSTEM', actor_user_id: null }]);
@@ -188,8 +193,8 @@ describeDb('common plumbing on a real database', () => {
       const actor = await createUser(db);
       const entityType = unique('probe-');
       const entityId = '22222222-2222-4222-8222-' + unique().slice(0, 12).padEnd(12, '0');
-      for (let i = 0; i < 31; i++) await audit.record(actor, `A${String(i).padStart(2, '0')}`, entityType, entityId);
-      await audit.record(actor, 'OTHER', entityType, '33333333-3333-4333-8333-333333333333');
+      for (let i = 0; i < 31; i++) await rawRecord(audit)(actor, `A${String(i).padStart(2, '0')}`, entityType, entityId);
+      await rawRecord(audit)(actor, 'OTHER', entityType, '33333333-3333-4333-8333-333333333333');
 
       const first = await audit.list({ page: 1, entityType, entityId });
       const second = await audit.list({ page: 2, entityType, entityId });

@@ -19,7 +19,7 @@ import { auditActions, createDb, createPrimaryWallet, createUser, deferred, fake
 
 /**
  * Bounty status walk, lifecycle blockers from real rows, the revision flow across the deadline, and the races the row locks /
- * advisory locks exist for — on a real Postgres with the real services (bounty-flow.db-spec.ts covers the happy money path).
+ * advisory locks exist for - on a real Postgres with the real services (bounty-flow.db-spec.ts covers the happy money path).
  */
 describeDb('bounty rules on a real database', () => {
   let db: DatabaseService;
@@ -517,7 +517,7 @@ describeDb('bounty rules on a real database', () => {
       const { bountyId, rewardId } = await openFunded({ maxWinners: 2, amount: '1000' });
       const winners = [await approvedSubmission(bountyId), await approvedSubmission(bountyId)];
       const firstPayout = deferred<string>();
-      // park T1 right after its INSERT (at the PAYOUT_REQUESTED audit) — its 600 is allocated but invisible to T2 without the row locks
+      // park T1 right after its INSERT (at the PAYOUT_REQUESTED audit) - its 600 is allocated but invisible to T2 without the row locks
       const parked = deferred<void>();
       const release = deferred<void>();
       const parkingAuditService = {
@@ -600,7 +600,7 @@ describeDb('bounty rules on a real database', () => {
   });
 
   /**
-   * 삭제 가드는 배정 상한이 아니라 입금액 전체를 본다 (docs/decisions.md 삭제 정책 2026-10-25) — 초과 입금분, 그리고 max_winners를 채워
+   * 삭제 가드는 배정 상한이 아니라 입금액 전체를 본다 (docs/decisions.md 삭제 정책 2026-10-25) - 초과 입금분, 그리고 max_winners를 채워
    * 보상이 PAID로 닫혔지만 상한보다 적게 지급된 잔액은 멀티시그에 남은 돈이다. 정산 경로: CANCELLED → scripts/record-refund.js(PAID 보상도 받는다) → 삭제.
    */
   describe('delete guard counts the whole deposit; record-refund settles a PAID reward with money left', () => {
@@ -634,11 +634,11 @@ describeDb('bounty rules on a real database', () => {
       await rewards.confirmDeposit(rewardId, fakeTxHash(), '150', adminId);
       await bounties.transition(bountyId, 'OPEN', adminId);
       await payInFull(rewardId, await approvedSubmission(bountyId), '100');
-      expect(await rewardStatus(rewardId)).toBe('PAID'); // cap LEAST(100, 150) fully paid — the old guard let this delete through
+      expect(await rewardStatus(rewardId)).toBe('PAID'); // cap LEAST(100, 150) fully paid - the old guard let this delete through
       await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ status: 409, message: 'BOUNTY_HAS_OPEN_FUNDS' });
       await toInReview(bountyId);
       await expect(bounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
-      // the excess is never allocatable (cap unchanged) — refund is the only way out. Reopen (needs a future deadline) → CANCELLED
+      // the excess is never allocatable (cap unchanged) - refund is the only way out. Reopen (needs a future deadline) → CANCELLED
       await bounties.update(bountyId, { submissionDeadline: inDays(3) }, adminId);
       await bounties.transition(bountyId, 'OPEN', adminId);
       await bounties.transition(bountyId, 'CANCELLED', adminId);
@@ -666,7 +666,7 @@ describeDb('bounty rules on a real database', () => {
       await expect(bounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
     });
 
-    it('a fully paid over-deposited COMPLETED bounty stays undeletable (409) and record-refund refuses it — pending COMPLETED-leftover decision', async () => {
+    it('a fully paid over-deposited COMPLETED bounty stays undeletable (409) and record-refund refuses it - pending COMPLETED-leftover decision', async () => {
       const bountyId = await createBounty({ amount: '100' });
       const rewardId = await rewardOf(bountyId);
       await rewards.confirmDeposit(rewardId, fakeTxHash(), '150', adminId);

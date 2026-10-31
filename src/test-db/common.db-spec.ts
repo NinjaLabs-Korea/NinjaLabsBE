@@ -18,7 +18,7 @@ function rawRecord(audit: AuditService) {
   return audit.record.bind(audit) as (actorId: string | undefined, action: string, entityType: string, entityId: string, runner?: QueryRunner) => Promise<void>;
 }
 
-/** The validators and the DatabaseService plumbing checked against what Postgres actually does — not against our own assumptions */
+/** The validators and the DatabaseService plumbing checked against what Postgres actually does - not against our own assumptions */
 describeDb('common plumbing on a real database', () => {
   let db: DatabaseService;
   beforeAll(() => { db = createDb(); });
@@ -62,7 +62,7 @@ describeDb('common plumbing on a real database', () => {
       expect((await db.query('SELECT 1 FROM tx_probe WHERE id = $1', [other])).rowCount).toBe(0);
     });
 
-    it('returns clients to the pool after failures — 30 failing transactions on a 10-client pool do not exhaust it', async () => {
+    it('returns clients to the pool after failures - 30 failing transactions on a 10-client pool do not exhaust it', async () => {
       for (let i = 0; i < 30; i++) {
         await db.tx(async (client) => { await client.query('SELECT 1/0'); }).catch(() => undefined);
       }

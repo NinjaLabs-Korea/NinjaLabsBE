@@ -12,7 +12,7 @@ function bountyForm(overrides: Partial<AdminBountyForm> = {}): AdminBountyForm {
   };
 }
 
-// e. validation — global ValidationPipe {whitelist, forbidNonWhitelisted, transform} against the bodies the FE really sends
+// e. validation - global ValidationPipe {whitelist, forbidNonWhitelisted, transform} against the bodies the FE really sends
 describeDb('validation over HTTP (e2e)', () => {
   let e2e: E2eApp;
   let admin: Session;
@@ -164,7 +164,7 @@ describeDb('validation over HTTP (e2e)', () => {
           const res = await e2e.patch(path, { title }, asAdmin());
           expect([path, res.body]).toEqual([path, badRequest(['title must be shorter than or equal to 200 characters'])]);
         }
-        // 200 astral characters (400 UTF-16 units) fit VARCHAR(200) — legacy emoji titles still save
+        // 200 astral characters (400 UTF-16 units) fit VARCHAR(200) - legacy emoji titles still save
         expect((await e2e.patch(path, { title: '😀'.repeat(200) }, asAdmin())).status).toBe(200);
       }
       expect((await e2e.patch(`/admin/bounties/${bounty}`, { sponsorName: 's'.repeat(101) }, asAdmin())).body)

@@ -14,13 +14,13 @@ import { TEST_DB_URL_ENV } from '../../test-db/harness';
 import { FakeGoogle, FakeInjectiveNftClient, FakeTurnstile, GOOGLE_CLIENT_ID_E2E, TURNSTILE_SITEVERIFY_URL_E2E } from './fakes';
 
 /**
- * HTTP e2e 하네스 — `npm run test:e2e` (jest.e2e.config.js).
+ * HTTP e2e 하네스 - `npm run test:e2e` (jest.e2e.config.js).
  *
  * 진짜 AppModule 전체를 main.ts와 같은 `configureApp()`(src/app-setup.ts)으로 구성해 `listen(0)` 하고, node:http로 요청을 보낸다.
  * DB는 test-db와 같은 global-setup이 만든 새 데이터베이스(모든 마이그레이션 적용). 바꾸는 것은 외부 I/O뿐이다 (support/fakes.ts):
  * Google 토큰 엔드포인트(fetch 가로채기) + id_token 검증기, Injective 민팅 클라이언트. 그 밖의 외부 fetch는 테스트를 실패시킨다.
  *
- * 환경: ConfigModule은 process.env를 .env보다 우선하므로, 앱이 읽는 키를 **전부** 여기서 덮어쓴다 — 개발자의 .env(실제 시크릿·DB)가
+ * 환경: ConfigModule은 process.env를 .env보다 우선하므로, 앱이 읽는 키를 **전부** 여기서 덮어쓴다 - 개발자의 .env(실제 시크릿·DB)가
  * 새어 들어오지 않는다. TRUST_PROXY=1이라 요청마다 기본으로 무작위 X-Forwarded-For를 붙여 IP별 throttler 버킷을 나눈다
  * (한 파일의 요청이 전역 120/min에 걸리지 않게). throttling 스펙은 `ip`를 직접 지정한다.
  *
@@ -92,7 +92,7 @@ class CapturingLogger implements LoggerService {
 export type HttpResponse<T = any> = { status: number; headers: IncomingHttpHeaders; text: string; body: T };
 export type RequestOptions = {
   headers?: Record<string, string>;
-  /** JSON 본문 — FE처럼 JSON.stringify(undefined 키는 사라진다) + content-type */
+  /** JSON 본문 - FE처럼 JSON.stringify(undefined 키는 사라진다) + content-type */
   json?: unknown;
   /** 원시 본문 (multipart 등) */
   body?: Buffer | string;
@@ -114,7 +114,7 @@ export class E2eApp {
   readonly google = new FakeGoogle();
   readonly chain = new FakeInjectiveNftClient();
   readonly turnstile = new FakeTurnstile();
-  /** close()에서 로그에 나타나지 않아야 하는 값 — 발급된 토큰·키·코드가 자동으로 쌓인다 */
+  /** close()에서 로그에 나타나지 않아야 하는 값 - 발급된 토큰·키·코드가 자동으로 쌓인다 */
   readonly secrets = new Set<string>(Object.values(E2E_SECRETS));
   app!: NestExpressApplication;
   db!: DatabaseService;
@@ -176,7 +176,7 @@ export class E2eApp {
         if (line.message.includes(secret)) leaks.push(`${secret.slice(0, 10)}… in [${line.context}] ${line.message.slice(0, 200)}`);
       }
     }
-    // 니모닉은 단어 일부만 새어도 유출 — 연속 3단어 이상을 찾는다
+    // 니모닉은 단어 일부만 새어도 유출 - 연속 3단어 이상을 찾는다
     const words = E2E_SECRETS.MASTER_WALLET_MNEMONIC.split(' ');
     for (let i = 0; i + 3 <= words.length; i++) {
       const run = words.slice(i, i + 3).join(' ');
@@ -247,7 +247,7 @@ export class E2eApp {
     return { googleUrl, state, callback, location: String(callback.headers.location ?? '') };
   }
 
-  /** 전체 로그인 — 세션 토큰과 /auth/me의 id */
+  /** 전체 로그인 - 세션 토큰과 /auth/me의 id */
   async login(identity: { sub?: string; email?: string } = {}): Promise<Session> {
     const sub = identity.sub ?? `g-${randomBytes(6).toString('hex')}`;
     const email = identity.email ?? `${sub}@example.test`;
@@ -281,7 +281,7 @@ export class E2eApp {
     for (const value of [body?.accessToken, body?.refreshToken, body?.apiKey]) if (value) this.secrets.add(value);
   }
 
-  /** 운영자 — 로그인 전에 is_admin 유저 행을 만들어 둔다 (JWT의 adm 클레임은 발급 시점 스냅샷) */
+  /** 운영자 - 로그인 전에 is_admin 유저 행을 만들어 둔다 (JWT의 adm 클레임은 발급 시점 스냅샷) */
   async loginAdmin(): Promise<Session> {
     const sub = `g-admin-${randomBytes(6).toString('hex')}`;
     await this.db.query(
@@ -291,7 +291,7 @@ export class E2eApp {
     return this.login({ sub, email: `${sub}@example.test` });
   }
 
-  /** 프로필 저장 + 지갑 연결(실제 EIP-191 서명) — payout을 받을 수 있는 빌더 */
+  /** 프로필 저장 + 지갑 연결(실제 EIP-191 서명) - payout을 받을 수 있는 빌더 */
   async onboard(session: Session, nickname = `b_${randomBytes(4).toString('hex')}`): Promise<{ nickname: string; signer: HDNodeWallet; walletAddress: string }> {
     const profile = await this.post('/users/me/profile', { nickname, bio: 'builder bio', tags: ['DEV'] }, { token: session.accessToken });
     if (profile.status !== 201) throw new Error(`profile → ${profile.status} ${profile.text}`);

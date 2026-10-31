@@ -6,7 +6,7 @@ import { describeDb } from './describe-db';
 import { createDb, createUser, unique } from './harness';
 
 /**
- * Public list reads on a real database — the filters, ordering and JSON aggregation that a mock DB cannot check.
+ * Public list reads on a real database - the filters, ordering and JSON aggregation that a mock DB cannot check.
  * The test database is shared across suites, so every assertion is scoped to rows this suite created.
  */
 describeDb('public lists (members, hall of fame, notices) on a real database', () => {
@@ -89,7 +89,7 @@ describeDb('public lists (members, hall of fame, notices) on a real database', (
 
   describe('NoticesService.list', () => {
     it('pages a category with a correct total, disjoint pages and no drafts or deleted rows', async () => {
-      // the category may hold rows from other suites — compare against the count before this test
+      // the category may hold rows from other suites - compare against the count before this test
       const before = (await new NoticesService(db).list(1, 50, 'INJECTIVE_ECOSYSTEM')).total;
       const tag = unique('n-');
       const published: string[] = [];

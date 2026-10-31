@@ -6,7 +6,7 @@ import { SubmissionDecision, SubmissionStatus, SubmissionStatusPolicy } from '..
 import { recordReviews } from '../submissions/system-review';
 import { participantUserIdSql } from '../../agents/owned-agents';
 
-/** 전이 차단 사유 코드 — 운영 화면(FE admin.operations.blockers.<code>)이 이 코드로 번역한다. 추가 시 FE 메시지도 함께. */
+/** 전이 차단 사유 코드 - 운영 화면(FE admin.operations.blockers.<code>)이 이 코드로 번역한다. 추가 시 FE 메시지도 함께. */
 export type LifecycleBlockerCode =
   | 'DEADLINE_PASSED'
   | 'REWARDS_UNFUNDED'
@@ -21,19 +21,19 @@ type LifecycleBlocker = { code: LifecycleBlockerCode; count?: number; message: s
  * 바운티 상태 전이 차단 사유(blockers) 계산.
  * 운영 화면 표시와 실제 전이 검증이 같은 규칙을 쓰도록 이 서비스 하나만 사용한다.
  *
- * COMPLETED의 UNPAID_WINNERS는 두 가지를 센다 (규칙은 rewards/payout-status.ts — 여기서 상태 목록을 새로 쓰지 말 것):
- *   unpaid    진행 중 payout(OPEN_PAYOUT_STATUSES) — 승인/송금이 끝나지 않았다. CANCELLED/FAILED/PAID는 세지 않는다.
- *   unawarded 아직 받을 몫이 남은 승인 제출 (owesUnpaidRewardSql — 응답의 payoutStatus가 PENDING/PARTIALLY_PAID인 것과 같은 규칙).
- *             보상 풀이 다른 수상자에게 다 배정됐거나(여유분 없음), 수상이 취소된(CANCELLED payout만 있는) 제출은 막지 않는다 —
+ * COMPLETED의 UNPAID_WINNERS는 두 가지를 센다 (규칙은 rewards/payout-status.ts - 여기서 상태 목록을 새로 쓰지 말 것):
+ *   unpaid    진행 중 payout(OPEN_PAYOUT_STATUSES) - 승인/송금이 끝나지 않았다. CANCELLED/FAILED/PAID는 세지 않는다.
+ *   unawarded 아직 받을 몫이 남은 승인 제출 (owesUnpaidRewardSql - 응답의 payoutStatus가 PENDING/PARTIALLY_PAID인 것과 같은 규칙).
+ *             보상 풀이 다른 수상자에게 다 배정됐거나(여유분 없음), 수상이 취소된(CANCELLED payout만 있는) 제출은 막지 않는다 -
  *             승인은 되돌릴 수 없고 IN_REVIEW에서 CANCELLED로 바로 갈 수도 없어서(재오픈 IN_REVIEW → OPEN → CANCELLED만 있다),
  *             그런 제출로 막으면 바운티가 영영 끝나지 않는다.
- *             FAILED payout이 걸린 제출은 받을 몫이 남은 것이라 막는다 — 운영자가 온체인 미송금을 확인한 뒤 CANCELLED로 닫는다
+ *             FAILED payout이 걸린 제출은 받을 몫이 남은 것이라 막는다 - 운영자가 온체인 미송금을 확인한 뒤 CANCELLED로 닫는다
  *             (docs/runbook.md §7.4 "FAILED payout" 항목. 문서의 취소 SQL WHERE는 FAILED를 받지 않으므로 그 항목대로 바꿔 돌린다).
- *             미요청인데 수령자가 탈퇴한 제출도 막지 않는다 (requestPayout이 404 — payout-status.ts recipientActiveSql).
+ *             미요청인데 수령자가 탈퇴한 제출도 막지 않는다 (requestPayout이 404 - payout-status.ts recipientActiveSql).
  *
- * CANCELLED도 같은 UNPAID_WINNERS(같은 코드·문구 — FE 변경 없음)로 막는다. 전이표상 IN_REVIEW → OPEN(재오픈, 마감이 미래일 때 —
+ * CANCELLED도 같은 UNPAID_WINNERS(같은 코드·문구 - FE 변경 없음)로 막는다. 전이표상 IN_REVIEW → OPEN(재오픈, 마감이 미래일 때 -
  * 운영자가 update로 마감을 늘릴 수 있다) → CANCELLED가 열려 있는데, 취소 뒤 환불(scripts/record-refund.js)은 입금액 − PAID를
- * 돌려주므로 승인됐지만 아직 못 받은 수상자의 몫이 스폰서에게 돌아간다. 받을 몫이 남은 수상자가 있으면 취소할 수 없다 —
+ * 돌려주므로 승인됐지만 아직 못 받은 수상자의 몫이 스폰서에게 돌아간다. 받을 몫이 남은 수상자가 있으면 취소할 수 없다 -
  * 모두 지급하거나 runbook §7.4대로 수상을 취소(CANCELLED payout)한 뒤에 취소 → 환불한다 (docs/decisions.md "취소 시 환불").
  */
 @Injectable()
@@ -58,7 +58,7 @@ export class BountyLifecycleService {
         WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(OPEN_PAYOUT_STATUSES)})) AS unpaid,
       (SELECT count(*)::int FROM bounty_submission s JOIN bounty b ON b.id = s.bounty_id
         WHERE s.bounty_id = $1 AND s.status = 'APPROVED' AND ${owesUnpaidRewardSql('s', 'b')}) AS unawarded`,
-    // $2 미결 제출 상태 — 탈퇴 시 철회 대상과 같은 집합 (bounties/submission-status.ts)
+    // $2 미결 제출 상태 - 탈퇴 시 철회 대상과 같은 집합 (bounties/submission-status.ts)
     // 보상/payout 상태 목록은 rewards/payout-status.ts 상수를 리터럴로 렌더링한다 (지급 규칙을 바꾸려면 그 파일을 고친다)
     [bountyId, SubmissionStatusPolicy.unresolvedStatuses()]);
     const c = r.rows[0];
@@ -77,10 +77,10 @@ export class BountyLifecycleService {
     if (c.unpaid || c.unawarded) {
       const owed = 'Record completed payments for all approved winners and finish every pending payout.';
       add('COMPLETED', 'UNPAID_WINNERS', owed);
-      // 취소 뒤 환불은 입금액 − PAID — 남은 수상자 몫이 스폰서에게 돌아가지 않게 같은 규칙으로 막는다
+      // 취소 뒤 환불은 입금액 − PAID - 남은 수상자 몫이 스폰서에게 돌아가지 않게 같은 규칙으로 막는다
       add('CANCELLED', 'UNPAID_WINNERS', owed);
     }
-    // `blockers` (English sentences) is the transition's 400 body and the original operations field — kept verbatim.
+    // `blockers` (English sentences) is the transition's 400 body and the original operations field - kept verbatim.
     // `blockerDetails` carries the same list as stable codes (+ count) so the admin UI can localize it.
     const blockers = Object.fromEntries(Object.entries(details).map(([to, list]) => [to, list.map((item) => item.message)]));
     const blockerDetails = Object.fromEntries(Object.entries(details).map(([to, list]) =>

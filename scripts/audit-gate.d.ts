@@ -1,4 +1,4 @@
-// scripts/audit-gate.js의 타입 선언 — src/**/audit-gate.spec.ts가 사용한다.
+// scripts/audit-gate.js의 타입 선언 - src/**/audit-gate.spec.ts가 사용한다.
 export interface AuditAdvisory {
   id: string;
   pkg: string;

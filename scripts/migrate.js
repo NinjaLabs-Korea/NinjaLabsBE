@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 단순 마이그레이션 러너 — supabase/migrations/*.sql을 순서대로 실행한다.
+ * 단순 마이그레이션 러너 - supabase/migrations/*.sql을 순서대로 실행한다.
  *
  * Supabase CLI(supabase db push)를 쓸 수 있으면 그쪽을 권장.
  * 이 스크립트는 CLI 없이 DATABASE_URL만으로 돌릴 수 있는 대안이다.
@@ -8,7 +8,7 @@
  * 사용법: DATABASE_URL=postgresql://... npm run migrate
  * 적용된 파일은 _migrations 테이블에 기록되어 중복 실행되지 않는다.
  *
- * applyMigrations()는 실 DB 통합 테스트(src/test-db, `npm run test:db`)가 그대로 가져다 쓴다 —
+ * applyMigrations()는 실 DB 통합 테스트(src/test-db, `npm run test:db`)가 그대로 가져다 쓴다 -
  * 테스트가 적용하는 스키마와 운영이 적용하는 스키마가 같은 코드 경로를 지나도록.
  */
 const { readdirSync, readFileSync } = require('fs');
@@ -44,9 +44,9 @@ function assertDbTlsVerifiedInProduction(env) {
 }
 
 /**
- * migrate/운영 스크립트용 pg Pool 타임아웃 — src/common/database/pool-timeouts.ts와 같은 DB_CONNECTION_TIMEOUT_MS 규칙(기본 5000, 잘못된 값은 기본값).
+ * migrate/운영 스크립트용 pg Pool 타임아웃 - src/common/database/pool-timeouts.ts와 같은 DB_CONNECTION_TIMEOUT_MS 규칙(기본 5000, 잘못된 값은 기본값).
  * 블랙홀 DB에서 preDeploy가 무한히 매달리지 않고 실패(→ 배포 중단 + 알림)하게 한다.
- * statement_timeout / query_timeout은 **걸지 않는다** — 마이그레이션의 긴 DDL·백필, pg_advisory_lock 대기를 끊으면 안 된다.
+ * statement_timeout / query_timeout은 **걸지 않는다** - 마이그레이션의 긴 DDL·백필, pg_advisory_lock 대기를 끊으면 안 된다.
  */
 function poolTimeoutOptions(env) {
   const raw = String(env.DB_CONNECTION_TIMEOUT_MS || '').trim();
@@ -61,17 +61,17 @@ function migrationFiles(dir = MIGRATIONS_DIR) {
 }
 
 /**
- * 마이그레이션 파일 안의 최상위 트랜잭션 제어문 — applyMigrations()가 파일마다 BEGIN … COMMIT으로 감싸므로, 파일 안의 COMMIT 등은
+ * 마이그레이션 파일 안의 최상위 트랜잭션 제어문 - applyMigrations()가 파일마다 BEGIN … COMMIT으로 감싸므로, 파일 안의 COMMIT 등은
  * 그 트랜잭션을 일찍 끝내 "파일 하나 = 원자적 적용"을 깨뜨린다 (앞부분 DDL은 남고 파일은 기록되지 않아 재실행이 자기 잔재에 걸린다).
  */
 const TRANSACTION_CONTROL = new Set(['BEGIN', 'START', 'COMMIT', 'END', 'ROLLBACK', 'ABORT', 'PREPARE']);
-/** 이 키워드는 다음 단어가 TRANSACTION일 때만 제어문이다 (`START TRANSACTION`, `PREPARE TRANSACTION` — `PREPARE stmt AS …`는 아니다) */
+/** 이 키워드는 다음 단어가 TRANSACTION일 때만 제어문이다 (`START TRANSACTION`, `PREPARE TRANSACTION` - `PREPARE stmt AS …`는 아니다) */
 const NEEDS_TRANSACTION_WORD = new Set(['START', 'PREPARE']);
 
 /**
  * SQL 텍스트에서 최상위 트랜잭션 제어문(`BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`(= ROLLBACK), `PREPARE TRANSACTION`)을 찾는다.
- * 문장 경계(`;`)는 최상위에서만 센다 — `--` 주석, `/* *\/` 주석(중첩 포함), '문자열'(E'…'의 백슬래시 이스케이프 포함), "식별자",
- * 달러 인용 본문(`$$ … $$`, `$tag$ … $tag$` — DO 블록·함수 본문의 BEGIN … END)은 건너뛴다.
+ * 문장 경계(`;`)는 최상위에서만 센다 - `--` 주석, `/* *\/` 주석(중첩 포함), '문자열'(E'…'의 백슬래시 이스케이프 포함), "식별자",
+ * 달러 인용 본문(`$$ … $$`, `$tag$ … $tag$` - DO 블록·함수 본문의 BEGIN … END)은 건너뛴다.
  * SQL 표준 함수 본문(`BEGIN ATOMIC … END`)은 문장 중간의 BEGIN ATOMIC부터 짝이 맞는 END까지 한 문장으로 본다 (안의 CASE … END 포함).
  * 각 문장의 첫 키워드만 본다: `START`·`PREPARE`는 다음 단어가 TRANSACTION일 때만.
  * @param {string} sql
@@ -167,7 +167,7 @@ function findTransactionControl(sql) {
 }
 
 /**
- * 모든 마이그레이션 파일을 실행 전에 검사한다 — 하나라도 최상위 트랜잭션 제어문이 있으면 아무것도 실행/기록하지 않고 던진다.
+ * 모든 마이그레이션 파일을 실행 전에 검사한다 - 하나라도 최상위 트랜잭션 제어문이 있으면 아무것도 실행/기록하지 않고 던진다.
  * 이미 적용된 파일도 검사한다 (어느 파일이든 나쁘면 실행 전체 중단). 에러에는 `file`, `line`이 붙는다.
  * @param {string} [dir]
  */
@@ -189,17 +189,17 @@ function assertNoTransactionControl(dir = MIGRATIONS_DIR) {
 }
 
 /**
- * 마이그레이션 실행 전체를 감싸는 세션 수준 advisory lock 키 (임의의 고정 상수 — 다른 advisory lock 용도와 겹치지 않게 큰 값).
- * 두 배포(예: Railway preDeploy가 겹친 경우)가 동시에 migrate하면 둘 다 `_migrations`에서 같은 파일을 "미적용"으로 보고 같은 DDL을 두 번 돌린다 —
+ * 마이그레이션 실행 전체를 감싸는 세션 수준 advisory lock 키 (임의의 고정 상수 - 다른 advisory lock 용도와 겹치지 않게 큰 값).
+ * 두 배포(예: Railway preDeploy가 겹친 경우)가 동시에 migrate하면 둘 다 `_migrations`에서 같은 파일을 "미적용"으로 보고 같은 DDL을 두 번 돌린다 -
  * 하나는 실패하고 배포가 깨진다. 락을 잡은 쪽이 끝날 때까지 다른 쪽은 기다렸다가, 이미 적용된 파일을 skip한다.
  */
 const MIGRATION_LOCK_KEY = '7242031118431903';
 
 /**
  * 아직 적용되지 않은 마이그레이션을 순서대로 적용한다. 파일 하나가 트랜잭션 하나.
- * 먼저 모든 파일을 assertNoTransactionControl()로 검사한다 — 최상위 BEGIN/COMMIT 등이 있는 파일이 하나라도 있으면 DB에 붙기 전에 던진다
+ * 먼저 모든 파일을 assertNoTransactionControl()로 검사한다 - 최상위 BEGIN/COMMIT 등이 있는 파일이 하나라도 있으면 DB에 붙기 전에 던진다
  * (아무것도 실행하지 않고 `_migrations`에도 기록하지 않는다).
- * 실행 전체를 한 클라이언트(세션)에서 `pg_advisory_lock(MIGRATION_LOCK_KEY)`로 직렬화하고 finally에서 푼다 — 실패해도 락은 남지 않는다
+ * 실행 전체를 한 클라이언트(세션)에서 `pg_advisory_lock(MIGRATION_LOCK_KEY)`로 직렬화하고 finally에서 푼다 - 실패해도 락은 남지 않는다
  * (세션 락이라 프로세스가 죽어 연결이 끊겨도 Postgres가 푼다). 한 클라이언트만 쓰므로 `max: 1` 풀에서도 동작한다.
  * 실패하면 그 파일을 롤백하고 `{ file }`을 붙인 에러를 던진다 (CLI는 exit 1, 테스트는 실패).
  * @param {import('pg').Pool} pool
@@ -211,7 +211,7 @@ async function applyMigrations(pool, options = {}) {
   const log = options.log || (() => {});
   assertNoTransactionControl(dir);
   const client = await pool.connect();
-  // pg-pool은 체크아웃된 클라이언트에서 idle 'error' 리스너를 떼어낸다 — 실행 도중 소켓이 끊기면(DB 재시작·장애조치) 리스너 없는 'error'가
+  // pg-pool은 체크아웃된 클라이언트에서 idle 'error' 리스너를 떼어낸다 - 실행 도중 소켓이 끊기면(DB 재시작·장애조치) 리스너 없는 'error'가
   // uncaught exception이 되어 main()의 FAIL 출력과 운영 알림(alertMigrationFailure) 없이 프로세스가 죽는다. 받아서 폐기 사유로 쓴다
   let brokenClient;
   const onClientError = (e) => {
@@ -254,7 +254,7 @@ async function applyMigrations(pool, options = {}) {
         log(`apply ${file}`);
         applied.push(file);
       } catch (err) {
-        // 연결이 끊겼으면 ROLLBACK도 실패한다 — 서버가 이미 트랜잭션을 버렸고, 그 에러로 원래 에러(와 err.file)를 덮으면 안 된다
+        // 연결이 끊겼으면 ROLLBACK도 실패한다 - 서버가 이미 트랜잭션을 버렸고, 그 에러로 원래 에러(와 err.file)를 덮으면 안 된다
         await client.query('ROLLBACK').catch(() => {});
         err.file = file;
         throw err;
@@ -263,7 +263,7 @@ async function applyMigrations(pool, options = {}) {
     return { applied, skipped };
   } finally {
     try {
-      // 끊긴 연결에서는 unlock도 실패한다 — 세션 락은 연결이 끊기면 Postgres가 풀므로 삼키고, 던지던 에러를 덮지 않는다
+      // 끊긴 연결에서는 unlock도 실패한다 - 세션 락은 연결이 끊기면 Postgres가 풀므로 삼키고, 던지던 에러를 덮지 않는다
       if (locked && !brokenClient) await client.query('SELECT pg_advisory_unlock($1::bigint)', [MIGRATION_LOCK_KEY]).catch(() => {});
     } finally {
       client.off('notice', onNotice);
@@ -274,7 +274,7 @@ async function applyMigrations(pool, options = {}) {
 }
 
 /**
- * preDeploy 마이그레이션 실패 운영 알림 — OPS_ALERT_WEBHOOK_URL이 있으면 한 번 보낸다 (최대 5초).
+ * preDeploy 마이그레이션 실패 운영 알림 - OPS_ALERT_WEBHOOK_URL이 있으면 한 번 보낸다 (최대 5초).
  * 웹훅이 없거나 닿지 않으면 로그만 남긴다. 절대 throw하지 않는다 (scripts/ops-alert.js).
  */
 async function alertMigrationFailure(env, err) {

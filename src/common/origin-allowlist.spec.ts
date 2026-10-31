@@ -84,7 +84,7 @@ describe('OriginAllowlist', () => {
       expect(error.mock.calls[0][0]).toContain('custom preview domain');
       expect(error.mock.calls[2][0]).toContain('"https://preview-*.netlify.app"');
       expect(error.mock.calls[3][0]).toContain('"https://*.vercel.app"');
-      // Only the exact entry survives — the open patterns are dropped from the list entirely.
+      // Only the exact entry survives - the open patterns are dropped from the list entirely.
       expect(list.size).toBe(1);
       // The "team-scoped" pattern is exactly what an attacker project named ninjalabsfe-evil-team would match.
       expect(list.allows('https://ninjalabsfe-evil-team.vercel.app')).toBe(false);
@@ -143,7 +143,7 @@ describe('OriginAllowlist', () => {
   });
 });
 
-describe('OriginAllowlist — adversarial origins', () => {
+describe('OriginAllowlist - adversarial origins', () => {
   const list = OriginAllowlist.fromEnv('https://ninjalabs.xyz,https://preview-*.ninjalabs.xyz,http://localhost:3000');
 
   it.each([
@@ -184,7 +184,7 @@ describe('OriginAllowlist — adversarial origins', () => {
   });
 });
 
-describe('OriginAllowlist — entry parsing', () => {
+describe('OriginAllowlist - entry parsing', () => {
   let error: jest.SpyInstance;
   beforeEach(() => { error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined); });
   afterEach(() => jest.restoreAllMocks());
@@ -245,7 +245,7 @@ describe('OriginAllowlist — entry parsing', () => {
   });
 });
 
-describe('OriginAllowlist.allowsHostname (Turnstile siteverify hostname — no scheme/port)', () => {
+describe('OriginAllowlist.allowsHostname (Turnstile siteverify hostname - no scheme/port)', () => {
   const list = new OriginAllowlist([
     'https://ninjalabsfe.vercel.app',
     'http://localhost:3000',

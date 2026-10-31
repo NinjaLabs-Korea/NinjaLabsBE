@@ -30,7 +30,7 @@ describe('databaseSslOptions', () => {
     expect(options.ca).toHaveLength(rootCertificates.length + 1);
   });
 
-  it('scripts/migrate.js sslOptions (a copy — it cannot import TS) answers every env the same way', () => {
+  it('scripts/migrate.js sslOptions (a copy - it cannot import TS) answers every env the same way', () => {
     for (const env of [
       {},
       { PGSSLMODE: 'disable' },

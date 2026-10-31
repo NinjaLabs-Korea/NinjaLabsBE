@@ -212,16 +212,16 @@ describeDb('account withdrawal on a real database', () => {
   it('does not block on a submission whose payout was cancelled (requestPayout cannot re-request it)', async () => {
     const { builder, nickname, submissionId, rewardId } = await approvedWinner();
     const payout = await rewards.requestPayout(rewardId, submissionId, '1000', adminId);
-    await db.query(`UPDATE payout SET status = 'CANCELLED' WHERE id = $1`, [payout.id]); // manual ops action — no API sets it
+    await db.query(`UPDATE payout SET status = 'CANCELLED' WHERE id = $1`, [payout.id]); // manual ops action - no API sets it
     await expect(rewards.requestPayout(rewardId, submissionId, '1000', adminId)).rejects.toMatchObject({ message: 'PAYOUT_ALREADY_REQUESTED' });
     await expect(withdrawal.withdraw(builder, nickname)).resolves.toEqual({ ok: true });
   });
 
-  it('a FAILED payout does not block withdrawal (terminal, and it cannot be re-requested) — unchanged by the payout-status.ts refactor', async () => {
+  it('a FAILED payout does not block withdrawal (terminal, and it cannot be re-requested) - unchanged by the payout-status.ts refactor', async () => {
     const { builder, nickname, submissionId, rewardId } = await approvedWinner();
     const payout = await rewards.requestPayout(rewardId, submissionId, '1000', adminId);
     await expect(withdrawal.withdraw(builder, nickname)).rejects.toMatchObject({ message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
-    await db.query(`UPDATE payout SET status = 'FAILED' WHERE id = $1`, [payout.id]); // manual ops action — no API sets it
+    await db.query(`UPDATE payout SET status = 'FAILED' WHERE id = $1`, [payout.id]); // manual ops action - no API sets it
     await expect(withdrawal.withdraw(builder, nickname)).resolves.toEqual({ ok: true });
   });
 

@@ -55,7 +55,7 @@ export class NoticeAdminService {
     const expressions: string[] = [];
     if (input.publish !== undefined) {
       fields.push(['status', input.publish ? 'PUBLISHED' : 'DRAFT']);
-      // 최초 발행 시각은 유지 — 이미 발행된 공지를 다시 publish:true로 저장해도 published_at을 덮지 않는다
+      // 최초 발행 시각은 유지 - 이미 발행된 공지를 다시 publish:true로 저장해도 published_at을 덮지 않는다
       if (input.publish) expressions.push('published_at = COALESCE(published_at, now())');
       else fields.push(['published_at', null]);
     }
@@ -72,7 +72,7 @@ export class NoticeAdminService {
       }
     }
     if (!fields.length) {
-      // 바꿀 게 없는 PATCH도 없는/삭제된 공지는 404 — 존재하지 않는 id에 200 `{ id }`를 돌려주지 않는다
+      // 바꿀 게 없는 PATCH도 없는/삭제된 공지는 404 - 존재하지 않는 id에 200 `{ id }`를 돌려주지 않는다
       const exists = await this.db.query(`SELECT 1 FROM notice WHERE id = $1 AND deleted_at IS NULL`, [noticeId]);
       if (!exists.rowCount) throw new NotFoundException('NOTICE_NOT_FOUND');
       return { id: noticeId };

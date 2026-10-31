@@ -9,24 +9,24 @@ import { errorText, logSafe } from '../logging/log-safe';
 import { ridSuffix } from './request-id';
 
 /**
- * 전역 예외 필터 — 응답 포맷은 Nest 기본(BaseExceptionFilter)을 그대로 쓰고,
+ * 전역 예외 필터 - 응답 포맷은 Nest 기본(BaseExceptionFilter)을 그대로 쓰고,
  * 5xx만 method/path/status/에러명/메시지를 한 줄로 남긴다.
  * 본문·헤더·쿼리스트링·토큰은 절대 기록하지 않는다 (onboarding-log 원칙과 동일).
  *
  * HttpException이 아니어도 body-parser 오류(`entity.parse.failed` 400, `entity.too.large` 413)처럼
- * 숫자 `statusCode`(4xx)를 들고 오면 그 값으로 판단한다 — Nest 기본 필터도 그 상태로 응답하므로 에러 로그가 아니다.
+ * 숫자 `statusCode`(4xx)를 들고 오면 그 값으로 판단한다 - Nest 기본 필터도 그 상태로 응답하므로 에러 로그가 아니다.
  *
  * 5xx 버스트 알림: 5분 안에 5xx가 20건을 넘으면 AlertService로 `http-5xx-burst` 알림 (30분 쿨다운은 AlertService가). 알림에는 건수와
- * 마지막 요청의 method·**라우트 패턴**(`/bounties/:id` — 실제 경로가 아니다)·상태·에러 이름만 싣는다. 메시지·경로 값은 사용자 값이 섞일 수 있어 뺀다.
+ * 마지막 요청의 method·**라우트 패턴**(`/bounties/:id` - 실제 경로가 아니다)·상태·에러 이름만 싣는다. 메시지·경로 값은 사용자 값이 섞일 수 있어 뺀다.
  * 카운터는 인스턴스별 in-memory다.
  *
- * 로그는 이 필터의 한 줄(+ 스택 프레임)이 **전부**다 — Nest 기본 `BaseExceptionFilter.handleUnknownError`는 HttpException이 아닌 throwable을
+ * 로그는 이 필터의 한 줄(+ 스택 프레임)이 **전부**다 - Nest 기본 `BaseExceptionFilter.handleUnknownError`는 HttpException이 아닌 throwable을
  * 원본 그대로(`message` + `stack`) `ExceptionsHandler` error로 또 찍어, (1) 위 logSafe를 우회해 DB 오류 메시지가 인용한 요청 값의 CR/LF가 가짜 로그 줄이 되고
  * (2) 익명 클라이언트의 깨진 JSON 같은 4xx(body-parser)도 스택과 함께 error 레벨로 쌓였다. 아래 `handleUnknownError`가 응답은 같게 두고 그 로그만 뺀다.
  */
 const MAX_STACK_FRAMES = 12;
 
-/** 스택에서 `    at …` 프레임만 — 첫 줄(에러 메시지, 사용자 값이 섞일 수 있다)은 위 한 줄에 logSafe로 이미 있다 */
+/** 스택에서 `    at …` 프레임만 - 첫 줄(에러 메시지, 사용자 값이 섞일 수 있다)은 위 한 줄에 logSafe로 이미 있다 */
 function stackFrames(caught: unknown): string | undefined {
   if (!(caught instanceof Error) || typeof caught.stack !== 'string') return undefined;
   const frames = caught.stack.split('\n').filter((line) => /^\s+at /.test(line)).slice(0, MAX_STACK_FRAMES);
@@ -46,8 +46,8 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
   }
 
   /**
-   * HttpException이 아닌 throwable이 응답 상태로 들고 온 값 — Nest `BaseExceptionFilter.isHttpError`와 같은 기준이다: 비어 있지 않은 `message`와
-   * `statusCode`(정수 400–599). `status`는 보지 않는다 — body-parser는 둘 다 싣지만 gaxios·undici·SDK류는 상류 응답의 `status`(예: Google 토큰 엔드포인트 400)만
+   * HttpException이 아닌 throwable이 응답 상태로 들고 온 값 - Nest `BaseExceptionFilter.isHttpError`와 같은 기준이다: 비어 있지 않은 `message`와
+   * `statusCode`(정수 400–599). `status`는 보지 않는다 - body-parser는 둘 다 싣지만 gaxios·undici·SDK류는 상류 응답의 `status`(예: Google 토큰 엔드포인트 400)만
    * 싣고, 응답은 그 값을 쓰지 않고 500이다. 로그 판단이 `status`를 믿으면 실제 500이 4xx로 분류돼 로그·버스트 알림 없이 사라진다.
    */
   private static carriedStatus(exception: unknown): number | undefined {
@@ -56,14 +56,14 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
     return carried?.message && typeof code === 'number' && Number.isInteger(code) && code >= 400 && code <= 599 ? code : undefined;
   }
 
-  /** 로그 판단용 상태 — 실제로 응답에 나가는 상태와 같다: HttpException은 getStatus(), 그 외는 carriedStatus 또는 500 */
+  /** 로그 판단용 상태 - 실제로 응답에 나가는 상태와 같다: HttpException은 getStatus(), 그 외는 carriedStatus 또는 500 */
   static statusOf(exception: unknown): number {
     if (exception instanceof HttpException) return exception.getStatus();
     return HttpExceptionFilter.carriedStatus(exception) ?? 500;
   }
 
   catch(caught: unknown, host: ArgumentsHost) {
-    // 요청 값(NUL 등)을 DB가 거부한 것은 400, 풀 연결/응답 타임아웃은 503 DATABASE_UNAVAILABLE — pg-errors.ts asHttpError
+    // 요청 값(NUL 등)을 DB가 거부한 것은 400, 풀 연결/응답 타임아웃은 503 DATABASE_UNAVAILABLE - pg-errors.ts asHttpError
     const exception = asHttpError(caught);
     const status = HttpExceptionFilter.statusOf(exception);
     if (status >= 500) {
@@ -71,7 +71,7 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
       // 503 DATABASE_UNAVAILABLE처럼 바꾼 응답이어도 로그에는 원래 원인(pg 타임아웃 메시지)을 남긴다
       const name = caught instanceof Error ? caught.name : 'UnknownError';
       const message = errorText(caught);
-      // 경로·메시지는 사용자 값이 섞일 수 있다(DB 오류 메시지는 요청 값을 인용) — CR/LF 이스케이프 + 200자 상한 (logging/log-safe.ts)
+      // 경로·메시지는 사용자 값이 섞일 수 있다(DB 오류 메시지는 요청 값을 인용) - CR/LF 이스케이프 + 200자 상한 (logging/log-safe.ts)
       const line = `${logSafe(req?.method ?? '-', 16)} ${logSafe(req?.path ?? req?.url ?? '-')} ${status} ${logSafe(name, 100)}: ${logSafe(message)}${ridSuffix(req)}`;
       const frames = stackFrames(caught);
       if (frames) this.logger.error(line, frames);
@@ -89,7 +89,7 @@ export class HttpExceptionFilter extends BaseExceptionFilter {
   }
 
   /**
-   * HttpException이 아닌 throwable의 응답 — Nest 기본 구현과 같다(http-errors류 `statusCode`+`message`는 `{statusCode, message}`, 그 밖은 500 `Internal server error`).
+   * HttpException이 아닌 throwable의 응답 - Nest 기본 구현과 같다(http-errors류 `statusCode`+`message`는 `{statusCode, message}`, 그 밖은 500 `Internal server error`).
    * 다른 점은 기본 구현의 `ExceptionsHandler` error 로그를 남기지 않는 것뿐이다 (클래스 머리말). 5xx의 로그는 `catch()`가 남긴다.
    */
   handleUnknownError(exception: unknown, host: ArgumentsHost, applicationRef: AbstractHttpAdapter | HttpServer): void {

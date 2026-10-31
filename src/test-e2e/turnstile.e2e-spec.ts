@@ -3,7 +3,7 @@ import { E2eApp, FE_ORIGIN, PREVIEW_ORIGIN, randomIp, startApp } from './support
 
 const TURNSTILE_SECRET = '0x4AAAAAAA-e2e-turnstile-secret';
 
-// Cloudflare Turnstile on sign-in — TURNSTILE_SECRET_KEY set, siteverify faked at the fetch edge (support/fakes.ts FakeTurnstile)
+// Cloudflare Turnstile on sign-in - TURNSTILE_SECRET_KEY set, siteverify faked at the fetch edge (support/fakes.ts FakeTurnstile)
 describeDb('turnstile on GET /auth/google (e2e)', () => {
   let e2e: E2eApp;
   beforeAll(async () => { e2e = await startApp({ TURNSTILE_SECRET_KEY: TURNSTILE_SECRET }); });
@@ -12,7 +12,7 @@ describeDb('turnstile on GET /auth/google (e2e)', () => {
   const start = (params: Record<string, string>, ip = randomIp()) =>
     e2e.get(`/auth/google?${new URLSearchParams({ codeChallenge: E2eApp.pkce().challenge, ...params })}`, { ip });
 
-  /** A refused start is a 302 to the FE callback (the route is a top-level navigation — raw JSON would strand the user), never to Google */
+  /** A refused start is a 302 to the FE callback (the route is a top-level navigation - raw JSON would strand the user), never to Google */
   const expectBackToFe = (res: { status: number; headers: Record<string, unknown> }, code: string) => {
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe(`${FE_ORIGIN}/auth/callback#error=${code}`);

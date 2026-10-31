@@ -59,12 +59,12 @@ export class HighlightAdminService {
     const expressions: string[] = [];
     if (input.publish !== undefined) {
       fields.push(['is_published', input.publish]);
-      // 최초 발행 시각은 유지 — 이미 발행된 하이라이트를 다시 publish:true로 저장해도 published_at(목록 2차 정렬)을 덮지 않는다 (notice-admin과 같은 규칙)
+      // 최초 발행 시각은 유지 - 이미 발행된 하이라이트를 다시 publish:true로 저장해도 published_at(목록 2차 정렬)을 덮지 않는다 (notice-admin과 같은 규칙)
       if (input.publish) expressions.push('published_at = COALESCE(published_at, now())');
       else fields.push(['published_at', null]);
     }
     if (!fields.length) {
-      // 바꿀 게 없는 PATCH도 없는 하이라이트는 404 — 존재하지 않는 id에 200 `{ id }`를 돌려주지 않는다
+      // 바꿀 게 없는 PATCH도 없는 하이라이트는 404 - 존재하지 않는 id에 200 `{ id }`를 돌려주지 않는다
       const exists = await this.db.query(`SELECT 1 FROM platform_highlight WHERE id = $1`, [highlightId]);
       if (!exists.rowCount) throw new NotFoundException('HIGHLIGHT_NOT_FOUND');
       return { id: highlightId };

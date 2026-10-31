@@ -1,4 +1,4 @@
-// 실 Postgres 통합 테스트 — `npm run test:db` (TEST_DATABASE_URL 없으면 전부 skip). src/test-db/README 격인 harness.ts 참고.
+// 실 Postgres 통합 테스트 - `npm run test:db` (TEST_DATABASE_URL 없으면 전부 skip). src/test-db/README 격인 harness.ts 참고.
 /** @type {import('jest').Config} */
 // eslint-disable-next-line no-undef
 module.exports = {

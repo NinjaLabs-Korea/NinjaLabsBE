@@ -4,7 +4,7 @@ import { createMockDb } from '../test-support/mock-db';
 import { MembersController } from './members.controller';
 import { MembersService } from './members.service';
 
-/** Public list reads — the real-database behaviour (filters, ordering, link aggregation) is in src/test-db/public-lists.db-spec.ts */
+/** Public list reads - the real-database behaviour (filters, ordering, link aggregation) is in src/test-db/public-lists.db-spec.ts */
 function fakeDb(rows: unknown[]) {
   const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: rows.length, rows }));
   return { query, db: createMockDb({ query }).database };

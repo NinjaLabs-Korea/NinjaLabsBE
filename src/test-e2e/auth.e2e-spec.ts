@@ -7,7 +7,7 @@ const sha256 = (value: string) => createHash('sha256').update(value).digest('hex
 const claims = (jwt: string) => JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString('utf8'));
 const unauthorized = (message: string) => ({ statusCode: 401, error: 'Unauthorized', message });
 
-// b. auth — Google OAuth (faked at the network edge) → login code → PKCE exchange → JWT sessions
+// b. auth - Google OAuth (faked at the network edge) → login code → PKCE exchange → JWT sessions
 describeDb('auth over HTTP (e2e)', () => {
   let e2e: E2eApp;
   beforeAll(async () => { e2e = await startApp(); });
@@ -309,7 +309,7 @@ describeDb('auth over HTTP (e2e)', () => {
       expect(open.rows[0].n).toBe(1);
     });
 
-    it('without the header the cookie is ignored (CSRF): body mode as before — 400 for an empty body, a body token answers in the body with no Set-Cookie', async () => {
+    it('without the header the cookie is ignored (CSRF): body mode as before - 400 for an empty body, a body token answers in the body with no Set-Cookie', async () => {
       const { res, ip } = await cookieLogin();
       const token = issuedCookie(res);
       const noHeader = await e2e.post('/auth/refresh', {}, { ip, headers: { cookie: `ninja_rt=${token}` } });
@@ -360,7 +360,7 @@ describeDb('auth over HTTP (e2e)', () => {
       issuedCookie(next);
     });
 
-    it('CSRF: a cross-origin page cannot send X-Ninja-Session — the preflight from a non-allowlisted origin gets no ACAO (the FE origin does)', async () => {
+    it('CSRF: a cross-origin page cannot send X-Ninja-Session - the preflight from a non-allowlisted origin gets no ACAO (the FE origin does)', async () => {
       const preflight = (origin: string) => e2e.request('OPTIONS', '/auth/refresh', {
         headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type,x-ninja-session' },
       });

@@ -1,4 +1,4 @@
-// scripts/ops-cli.js의 타입 선언 — 운영 스크립트 공용 (src/test-db/ops-scripts.db-spec.ts, src/test-support/ops-cli.spec.ts).
+// scripts/ops-cli.js의 타입 선언 - 운영 스크립트 공용 (src/test-db/ops-scripts.db-spec.ts, src/test-support/ops-cli.spec.ts).
 import type { Pool } from 'pg';
 
 export declare function loadDotEnv(): void;

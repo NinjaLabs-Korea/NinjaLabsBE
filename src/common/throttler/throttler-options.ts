@@ -8,8 +8,8 @@ import { PgThrottlerStorage } from './pg-throttler-storage';
 export type ThrottlerStorageMode = 'postgres' | 'memory';
 
 /**
- * THROTTLER_STORAGE — `postgres`(레플리카 간 공유, 0016 throttler_storage) | `memory`(@nestjs/throttler 기본, 인스턴스별).
- * 미설정/빈 값이면 production은 postgres, 그 외(dev/test)는 memory — 유닛·e2e가 요청마다 DB를 치지 않게.
+ * THROTTLER_STORAGE - `postgres`(레플리카 간 공유, 0016 throttler_storage) | `memory`(@nestjs/throttler 기본, 인스턴스별).
+ * 미설정/빈 값이면 production은 postgres, 그 외(dev/test)는 memory - 유닛·e2e가 요청마다 DB를 치지 않게.
  * 그 밖의 값은 기동 거부 (오타로 조용히 인스턴스별 한도로 떨어지지 않게).
  */
 export function throttlerStorageMode(env: BootstrapEnv): ThrottlerStorageMode {
@@ -25,7 +25,7 @@ export function throttlerModuleOptions(throttlers: ThrottlerOptions[], mode: Thr
 }
 
 /**
- * 모든 `ThrottlerModule.forRoot` 자리(app.module 전역, agents.module agent-api, auth.module auth-token)에 이걸 쓴다 —
+ * 모든 `ThrottlerModule.forRoot` 자리(app.module 전역, agents.module agent-api, auth.module auth-token)에 이걸 쓴다 -
  * 저장소 선택이 한곳에 있어야 하나만 인스턴스별로 남는 일이 없다 (docs/security.md).
  */
 export function throttlerModule(throttlers: ThrottlerOptions[]): DynamicModule {

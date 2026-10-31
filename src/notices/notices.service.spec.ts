@@ -58,7 +58,7 @@ describe('NoticesService.list', () => {
     expect(countParams).toEqual([]);
   });
 
-  it('binds the category as a parameter ($3 in the list, $1 in the count) — never interpolated', async () => {
+  it('binds the category as a parameter ($3 in the list, $1 in the count) - never interpolated', async () => {
     const hostile = `EVENT' OR '1'='1`;
     const { query, service } = setup();
     await service.list(1, 10, hostile);

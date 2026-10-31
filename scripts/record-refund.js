@@ -1,40 +1,40 @@
 #!/usr/bin/env node
 /**
- * 취소된 바운티의 환불 기록 — 스폰서에게 멀티시그에서 환불 송금을 마친 뒤, 그 보상(bounty_reward)을 REFUNDED로 기록한다.
+ * 취소된 바운티의 환불 기록 - 스폰서에게 멀티시그에서 환불 송금을 마친 뒤, 그 보상(bounty_reward)을 REFUNDED로 기록한다.
  *
  *   node scripts/record-refund.js <reward-id> --tx <hash> [--dry-run] [--yes]
  *
- *   --tx       환불 송금 tx 해시 (32바이트 hex, 0x 선택 — src/common/validation/tx-hash.ts와 같은 정규화: 소문자 + 0x)
+ *   --tx       환불 송금 tx 해시 (32바이트 hex, 0x 선택 - src/common/validation/tx-hash.ts와 같은 정규화: 소문자 + 0x)
  *   --dry-run  검사 결과와 환불 금액만 출력하고 아무것도 쓰지 않는다
  *   --yes      확인 프롬프트를 건너뛴다 (비대화형 실행은 필수)
  *
  * 한 트랜잭션에서 (rewards.service.ts confirmDeposit과 같은 잠금 순서: bounty → bounty_reward):
  *   - 바운티가 CANCELLED, 보상이 FUNDED/PARTIALLY_PAID/PAID/REFUND_PENDING, PAID/CANCELLED/FAILED 밖의 payout이 없고, 입금액 − PAID 합계 > 0이어야 한다.
  *     PAID 보상도 받는다: 보상 PAID는 "수상자 몫 지급 끝"일 뿐 입금액을 다 썼다는 뜻이 아니다 (초과 입금, 또는 max_winners를 채웠지만
- *     상한보다 적게 지급) — 그 남은 돈 때문에 바운티 삭제가 409이므로 여기서 정산할 수 있어야 한다 (docs/decisions.md 삭제 정책 2026-10-25).
+ *     상한보다 적게 지급) - 그 남은 돈 때문에 바운티 삭제가 409이므로 여기서 정산할 수 있어야 한다 (docs/decisions.md 삭제 정책 2026-10-25).
  *     하나라도 어긋나면 아무것도 쓰지 않고 이유를 출력한다 (exit 1).
  *   - bounty_reward: status → REFUNDED.
  *   - audit_log: REWARD_REFUNDED (actor NULL, entity_type 'bounty_reward', after_data {txHash, refundedAmount = deposited − PAID 합계, source}).
- * 이 해시가 이미 입금(deposit_tx_hash)이나 지급(payout_tx_hash)으로 기록돼 있으면 거부한다 — 잘못 붙여 넣은 해시를 환불 증빙으로 남기지 않는다.
+ * 이 해시가 이미 입금(deposit_tx_hash)이나 지급(payout_tx_hash)으로 기록돼 있으면 거부한다 - 잘못 붙여 넣은 해시를 환불 증빙으로 남기지 않는다.
  * 반대 방향도 같다: 환불로 기록된 해시는 confirmDeposit/markPaid가 409 TX_HASH_ALREADY_USED로 거부한다 (해시별 advisory lock 공유).
  * 스키마 변경 없음. 환불 송금 자체는 이 스크립트가 하지 않는다 (docs/runbook.md §7.7).
- * 접속: DATABASE_URL (+ DATABASE_CA_CERT / PGSSLMODE) — scripts/migrate.js와 같은 규칙 (scripts/ops-cli.js).
+ * 접속: DATABASE_URL (+ DATABASE_CA_CERT / PGSSLMODE) - scripts/migrate.js와 같은 규칙 (scripts/ops-cli.js).
  */
 const { OpsError, UUID_RE, extractValueOptions, parseArgs, promptYes, runCli } = require('./ops-cli');
 
 const USAGE = 'usage: node scripts/record-refund.js <reward-id> --tx <hash> [--dry-run] [--yes]';
 const TX_HASH = /^(0x)?[0-9a-fA-F]{64}$/;
-/** 환불 기록을 받는 보상 상태 — src/rewards/payout-status.ts PAYABLE_REWARD_STATUSES + REFUND_PENDING (payout-status.spec.ts가 대조) */
+/** 환불 기록을 받는 보상 상태 - src/rewards/payout-status.ts PAYABLE_REWARD_STATUSES + REFUND_PENDING (payout-status.spec.ts가 대조) */
 const REFUNDABLE = ['FUNDED', 'PARTIALLY_PAID', 'PAID', 'REFUND_PENDING'];
 /**
- * payout 종료 상태 — 이 밖의 payout(진행 중)이 하나라도 있으면 거부한다.
+ * payout 종료 상태 - 이 밖의 payout(진행 중)이 하나라도 있으면 거부한다.
  * src/rewards/payout-status.ts TERMINAL_PAYOUT_STATUSES의 **사본**이다 (scripts는 src를 import하지 않는 독립 JS).
- * 규칙을 바꾸면 그 파일과 여기를 같이 고친다 — src/rewards/payout-status.spec.ts가 둘이 어긋나면 실패한다.
+ * 규칙을 바꾸면 그 파일과 여기를 같이 고친다 - src/rewards/payout-status.spec.ts가 둘이 어긋나면 실패한다.
  */
 const TERMINAL_PAYOUT_STATUSES = ['PAID', 'CANCELLED', 'FAILED'];
 const SOURCE = 'scripts/record-refund.js';
 
-/** src/common/validation/tx-hash.ts normalizeTxHash와 같은 규칙 — 틀리면 null */
+/** src/common/validation/tx-hash.ts normalizeTxHash와 같은 규칙 - 틀리면 null */
 function normalizeTxHash(raw) {
   if (typeof raw !== 'string' || !TX_HASH.test(raw.trim())) return null;
   return `0x${raw.trim().replace(/^0x/i, '').toLowerCase()}`;
@@ -97,7 +97,7 @@ async function recordRefund(pool, rewardId, hash) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // 같은 해시의 confirmDeposit/markPaid(rewards.service.ts)와 직렬화 — 같은 advisory lock 키. 환불 해시를 입금/송금 증빙으로도 쓰는 경쟁을 막는다
+    // 같은 해시의 confirmDeposit/markPaid(rewards.service.ts)와 직렬화 - 같은 advisory lock 키. 환불 해시를 입금/송금 증빙으로도 쓰는 경쟁을 막는다
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [hash]);
     const { reward, refundedAmount } = await inspectReward(client, rewardId, true);
     const reason = refusalReason(reward, refundedAmount) || (await hashInUse(client, hash));
@@ -120,14 +120,14 @@ async function recordRefund(pool, rewardId, hash) {
 }
 
 /**
- * CLI 본체 — 테스트가 pool/prompt/log를 주입해 그대로 돌린다. 종료 코드를 돌려준다.
+ * CLI 본체 - 테스트가 pool/prompt/log를 주입해 그대로 돌린다. 종료 코드를 돌려준다.
  * @param {string[]} argv
  * @param {{ pool: import('pg').Pool, prompt?: (q: string) => Promise<boolean>, log?: (line: string) => void }} deps
  */
 async function run(argv, deps) {
   const log = deps.log || console.log;
   const prompt = deps.prompt || promptYes;
-  // --tx는 값을 받는 옵션이라 parseArgs(불리언 플래그만)에 넘기기 전에 분리한다 — 값 없음/두 번 지정은 사용법 오류(exit 2)
+  // --tx는 값을 받는 옵션이라 parseArgs(불리언 플래그만)에 넘기기 전에 분리한다 - 값 없음/두 번 지정은 사용법 오류(exit 2)
   let parsed;
   let rawHash;
   try {

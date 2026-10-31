@@ -47,10 +47,10 @@ class RefreshDto {
   refreshToken?: string;
 }
 
-/** 본문 모드에서 refreshToken이 빠졌을 때 — 필수 필드였던 시절 ValidationPipe가 내던 메시지와 동일 (FE/스크립트 호환) */
+/** 본문 모드에서 refreshToken이 빠졌을 때 - 필수 필드였던 시절 ValidationPipe가 내던 메시지와 동일 (FE/스크립트 호환) */
 const REFRESH_TOKEN_REQUIRED = ['refreshToken should not be empty', 'refreshToken must be a string'];
 
-/** `GET /auth/google`가 FE 콜백 `#error=`로 그대로 전달하는 코드 — FE `ERROR_COPY.loginCallback.codes`에 전용 문구가 있는 것 (그 밖은 `AUTH_FAILED`) */
+/** `GET /auth/google`가 FE 콜백 `#error=`로 그대로 전달하는 코드 - FE `ERROR_COPY.loginCallback.codes`에 전용 문구가 있는 것 (그 밖은 `AUTH_FAILED`) */
 const START_FAILURE_CODES: ReadonlySet<string> = new Set(['TURNSTILE_FAILED', 'TURNSTILE_UNAVAILABLE']);
 
 class LoginCodeDto {
@@ -71,7 +71,7 @@ export class AuthController {
     private readonly turnstile: TurnstileVerifier,
   ) {}
 
-  /** returnTo 허용 목록 — env는 기동 뒤 바뀌지 않으므로 처음 쓸 때 한 번만 만든다 (요청마다 만들면 거부된 와일드카드 항목의 error 로그가 로그인마다 반복된다) */
+  /** returnTo 허용 목록 - env는 기동 뒤 바뀌지 않으므로 처음 쓸 때 한 번만 만든다 (요청마다 만들면 거부된 와일드카드 항목의 error 로그가 로그인마다 반복된다) */
   private redirectAllowlist?: OriginAllowlist;
 
   private authSuccessRedirect(requested?: string): string {
@@ -80,8 +80,8 @@ export class AuthController {
   }
 
   /**
-   * GET /auth/google — 구글 동의 화면으로 리다이렉트.
-   * `TURNSTILE_SECRET_KEY`가 설정돼 있으면 `turnstileToken`(Cloudflare Turnstile 위젯 토큰)을 먼저 siteverify로 검증한다 —
+   * GET /auth/google - 구글 동의 화면으로 리다이렉트.
+   * `TURNSTILE_SECRET_KEY`가 설정돼 있으면 `turnstileToken`(Cloudflare Turnstile 위젯 토큰)을 먼저 siteverify로 검증한다 -
    * 없음/거절 400 TURNSTILE_FAILED, Cloudflare 불통 503 TURNSTILE_UNAVAILABLE (turnstile.verifier.ts). state 발급 전에 검사한다.
    */
   @Get('google')
@@ -124,7 +124,7 @@ export class AuthController {
   }
 
   /**
-   * GET /auth/google/callback — Google code 교환 → 일회용 로그인 코드 → FE.
+   * GET /auth/google/callback - Google code 교환 → 일회용 로그인 코드 → FE.
    * Access/refresh tokens are returned only by POST /auth/exchange, never in a URL.
    */
   @Get('google/callback')
@@ -184,14 +184,14 @@ export class AuthController {
     } catch (caught) {
       onboardingError(this.logger, 'oauth.callback.failed', caught, { rid });
       // 실패 사유를 FE에 상세 노출하지 않는다 (code/state 탈취 시도 힌트 방지). 단 DB 일시 장애는 사용자 입력과 무관하고 재시도하면 되므로
-      // FE가 전용 문구("잠시 후 다시")를 가진 DATABASE_UNAVAILABLE을 알린다 — 그 밖은 일반 AUTH_FAILED
+      // FE가 전용 문구("잠시 후 다시")를 가진 DATABASE_UNAVAILABLE을 알린다 - 그 밖은 일반 AUTH_FAILED
       return res.redirect(this.loginCallbackUrl(fe, { error: isDatabaseUnavailable(caught) ? 'DATABASE_UNAVAILABLE' : 'AUTH_FAILED' }));
     }
   }
 
   /**
    * `GET /auth/google`는 브라우저가 최상위 이동으로 여는 라우트라 JSON 4xx/503을 내면 사용자는 날것의 JSON 페이지에 갇힌다
-   * (Turnstile 토큰 만료·재사용, Cloudflare 불통). 콜백과 같은 방식으로 FE `/auth/callback#error=<코드>`로 돌려보낸다 —
+   * (Turnstile 토큰 만료·재사용, Cloudflare 불통). 콜백과 같은 방식으로 FE `/auth/callback#error=<코드>`로 돌려보낸다 -
    * FE는 `TURNSTILE_FAILED`/`TURNSTILE_UNAVAILABLE`의 전용 문구를 갖고 있고 그 밖은 일반 `AUTH_FAILED` 문구다.
    * 예기치 못한 예외(5xx)와 FE URL을 만들 수 없는 설정은 그대로 던진다 (500 응답 + error 로그).
    */
@@ -209,10 +209,10 @@ export class AuthController {
   }
 
   /**
-   * POST /auth/exchange — 로그인 코드 + PKCE verifier → 세션.
+   * POST /auth/exchange - 로그인 코드 + PKCE verifier → 세션.
    * 쿠키 모드(`X-Ninja-Session: cookie`): refresh는 `Set-Cookie: ninja_rt=…`로만 주고 본문에서 뺀다 (session-cookie.ts).
    *   본문은 `{accessToken, user}`: `user`는 `GET /auth/me`와 같은 응답 (withSessionUser).
-   * 한도: 로그인 코드 해시별 10/min (AuthTokenThrottlerGuard) + IP당 600/min (전역 120/min을 이 라우트만 올림 — AUTH_PROXIED_ROUTE_IP_THROTTLE).
+   * 한도: 로그인 코드 해시별 10/min (AuthTokenThrottlerGuard) + IP당 600/min (전역 120/min을 이 라우트만 올림 - AUTH_PROXIED_ROUTE_IP_THROTTLE).
    */
   @Post('exchange')
   @HttpCode(200)
@@ -234,14 +234,14 @@ export class AuthController {
   }
 
   /**
-   * POST /auth/refresh — 토큰 재발급 (refresh token 회전).
-   *   - 본문 모드(deprecated): `{refreshToken}` → `{accessToken, refreshToken}` — 응답의 새 refreshToken으로 교체 필수. 쿠키는 무시.
+   * POST /auth/refresh - 토큰 재발급 (refresh token 회전).
+   *   - 본문 모드(deprecated): `{refreshToken}` → `{accessToken, refreshToken}` - 응답의 새 refreshToken으로 교체 필수. 쿠키는 무시.
    *   - 쿠키 모드(`X-Ninja-Session: cookie`): `ninja_rt` 쿠키를 읽어 회전하고 새 토큰을 다시 쿠키로 → 본문 `{accessToken, user}`.
    *     `user`는 `GET /auth/me`와 같은 응답이라 FE가 페이지 로드에서 `/auth/me` 왕복을 건너뛴다 (withSessionUser).
    *     본문에 `refreshToken`이 함께 오면(localStorage 레거시 토큰의 1회 이전) 본문 토큰을 쓰고 결과를 쿠키로 심는다.
    *     쿠키에서 읽은 토큰이 401이면 쿠키도 지운다 (죽은 세션).
-   * 한도: 제시된 refresh 토큰 해시별 10/min (AuthTokenThrottlerGuard — Vercel 프록시의 공유 IP로 버킷이 섞이지 않게) + IP당 600/min
-   * (전역 120/min을 이 라우트만 올림 — AUTH_PROXIED_ROUTE_IP_THROTTLE).
+   * 한도: 제시된 refresh 토큰 해시별 10/min (AuthTokenThrottlerGuard - Vercel 프록시의 공유 IP로 버킷이 섞이지 않게) + IP당 600/min
+   * (전역 120/min을 이 라우트만 올림 - AUTH_PROXIED_ROUTE_IP_THROTTLE).
    */
   @Post('refresh')
   @HttpCode(200)
@@ -276,10 +276,10 @@ export class AuthController {
   }
 
   /**
-   * POST /auth/logout — refresh 세션 폐기, 204.
+   * POST /auth/logout - refresh 세션 폐기, 204.
    * 쿠키 모드: 쿠키(와 본문에 함께 온 레거시 토큰)의 세션을 폐기하고 쿠키를 지운다(`Max-Age=0`, 같은 Path/속성). 토큰이 없어도 204.
-   * 한도: refresh와 같다 — 제시된 refresh 토큰 해시별 10/min (AuthTokenThrottlerGuard, 토큰이 없으면 건너뜀) + IP당 600/min
-   * (Vercel rewrite로 오는 라우트라 전역 120/min을 올림 — AUTH_PROXIED_ROUTE_IP_THROTTLE).
+   * 한도: refresh와 같다 - 제시된 refresh 토큰 해시별 10/min (AuthTokenThrottlerGuard, 토큰이 없으면 건너뜀) + IP당 600/min
+   * (Vercel rewrite로 오는 라우트라 전역 120/min을 올림 - AUTH_PROXIED_ROUTE_IP_THROTTLE).
    */
   @Post('logout')
   @HttpCode(204)
@@ -296,7 +296,7 @@ export class AuthController {
     clearRefreshCookie(res);
   }
 
-  /** 쿠키 모드 응답 — refresh는 HttpOnly 쿠키로만, 본문에서는 뺀다 (그 밖의 필드는 그대로) */
+  /** 쿠키 모드 응답 - refresh는 HttpOnly 쿠키로만, 본문에서는 뺀다 (그 밖의 필드는 그대로) */
   private toCookieSession<T extends { refreshToken: string }>(session: T, res: Response): Omit<T, 'refreshToken'> {
     const { refreshToken, ...rest } = session;
     setRefreshCookie(res, refreshToken, this.auth.refreshTtlSeconds);
@@ -321,7 +321,7 @@ export class AuthController {
     }
   }
 
-  /** GET /auth/me — 현재 세션 유저 프로필 + 온보딩/지갑/NFT 상태 */
+  /** GET /auth/me - 현재 세션 유저 프로필 + 온보딩/지갑/NFT 상태 */
   @Get('me')
   @Header('Cache-Control', 'no-store, private')
   @UseGuards(AuthGuard)

@@ -33,7 +33,7 @@ describe('HighlightAdminService audit transactions', () => {
     await service.update(highlightId, { title: 'T', displayOrder: 3, publish: true }, adminId);
     const [sql, params] = query.mock.calls[0];
     expect(sql).toContain('UPDATE platform_highlight SET title = $2, display_order = $3, is_published = $4, published_at = COALESCE(published_at, now()) WHERE id = $1 RETURNING id, is_published');
-    // the first publish time is kept on re-publish (same rule as notices) — no client-side Date is bound
+    // the first publish time is kept on re-publish (same rule as notices) - no client-side Date is bound
     expect(params).toEqual([highlightId, 'T', 3, true]);
 
     await service.update(highlightId, { publish: false }, adminId);

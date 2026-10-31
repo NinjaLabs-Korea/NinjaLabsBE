@@ -3,7 +3,7 @@ import { E2eApp, startApp } from './support/harness';
 
 const ID = '00000000-0000-4000-8000-000000000000';
 
-/** 등록된 모든 Express 라우트 — `METHOD /path` (Nest 컨트롤러가 만든 것 전부, 가드 데코레이터 해석 없이 실제 앱에서 읽는다) */
+/** 등록된 모든 Express 라우트 - `METHOD /path` (Nest 컨트롤러가 만든 것 전부, 가드 데코레이터 해석 없이 실제 앱에서 읽는다) */
 function registeredRoutes(e2e: E2eApp): Array<{ method: string; path: string }> {
   const router = (e2e.app.getHttpAdapter().getInstance() as { router: { stack: Array<{ route?: { path: string; methods: Record<string, boolean> } }> } }).router;
   return router.stack.flatMap((layer) => (layer.route ? Object.keys(layer.route.methods).map((m) => ({ method: m.toUpperCase(), path: layer.route!.path })) : []));

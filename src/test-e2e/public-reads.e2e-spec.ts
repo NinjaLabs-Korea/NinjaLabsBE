@@ -10,7 +10,7 @@ function bountyForm(overrides: Partial<AdminBountyForm> = {}): AdminBountyForm {
   };
 }
 
-// j. public reads — the shapes NinjaLabsFE/src/lib/{bounties,members,notices,hall-of-fame}.ts parse
+// j. public reads - the shapes NinjaLabsFE/src/lib/{bounties,members,notices,hall-of-fame}.ts parse
 describeDb('public reads over HTTP (e2e)', () => {
   let e2e: E2eApp;
   let admin: Session;
@@ -27,7 +27,7 @@ describeDb('public reads over HTTP (e2e)', () => {
     return id;
   }
 
-  it('GET /bounties/:id and GET /bounties expose an explicit column list — no created_by / sponsor_user_id / deleted_at; every field the FE BountyDetailRow reads is present', async () => {
+  it('GET /bounties/:id and GET /bounties expose an explicit column list - no created_by / sponsor_user_id / deleted_at; every field the FE BountyDetailRow reads is present', async () => {
     const id = await openBounty(bountyForm({ title: 'Column list' }));
     const detail = await e2e.get(`/bounties/${id}`);
     expect(detail.status).toBe(200);
@@ -86,14 +86,14 @@ describeDb('public reads over HTTP (e2e)', () => {
       `SELECT id FROM bounty WHERE deleted_at IS NULL AND opened_at IS NOT NULL
         ORDER BY opened_at DESC, created_at DESC, id`);
     const total = (await e2e.get('/bounties?pageSize=1')).body.total;
-    // the order is fully defined: opened_at DESC, then newest created first, then id — so pages can never overlap
+    // the order is fully defined: opened_at DESC, then newest created first, then id - so pages can never overlap
     const walked: string[] = [];
     for (let page = 1; (page - 1) * 50 < total; page++) {
       walked.push(...(await e2e.get(`/bounties?page=${page}&pageSize=50`)).body.items.map((b: { id: string }) => b.id));
     }
     expect(walked).toEqual(expected.rows.map((r) => r.id));
     expect(total).toBe(expected.rowCount);
-    // walk the list with several page sizes — each walk must return every row exactly once
+    // walk the list with several page sizes - each walk must return every row exactly once
     for (const size of [3, 7, 11, 13, 50]) {
       const seen: string[] = [];
       for (let page = 1; (page - 1) * size < total; page++) {

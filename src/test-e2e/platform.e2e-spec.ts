@@ -4,7 +4,7 @@ import { describeDb } from '../test-db/describe-db';
 import { getEthereumAddress, getInjectiveAddress } from './support/injective-sdk.stub';
 import { E2eApp, FE_ORIGIN, PREVIEW_ORIGIN, startApp } from './support/harness';
 
-// a. health · d. CORS · k. observability — the whole app over HTTP
+// a. health · d. CORS · k. observability - the whole app over HTTP
 describeDb('platform: health, CORS, observability (e2e)', () => {
   let e2e: E2eApp;
   beforeAll(async () => { e2e = await startApp(); });
@@ -96,7 +96,7 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
   });
 
   describe('k. observability', () => {
-    it('request log line: "<METHOD> <path> <status> <n>ms" — path only, no query string', async () => {
+    it('request log line: "<METHOD> <path> <status> <n>ms" - path only, no query string', async () => {
       await e2e.get('/notices?page=1&pageSize=5&category=EVENT');
       const line = e2e.linesFor('HTTP').find((l) => l.startsWith('GET /notices '));
       expect(line).toMatch(/^GET \/notices 200 \d+ms rid=[0-9a-f-]{36}$/);
@@ -112,7 +112,7 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
       expect(lines[0]).toMatch(/^GET \/auth\/google 302 \d+ms rid=[0-9a-f-]{36}$/);
     });
 
-    it('a 5xx logs exactly one HttpException line (method, path, status, error) — no body, headers or query; the response stays Nest-shaped', async () => {
+    it('a 5xx logs exactly one HttpException line (method, path, status, error) - no body, headers or query; the response stays Nest-shaped', async () => {
       const spy = jest.spyOn(e2e.db, 'query').mockRejectedValueOnce(new TypeError('pool exploded'));
       const before = e2e.linesFor('HttpException').length;
       let rid = '';
@@ -127,7 +127,7 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
         spy.mockRestore();
       }
       const lines = e2e.linesFor('HttpException').slice(before);
-      // 한 줄 + 스택 프레임(하네스가 Nest의 stack 인자를 같은 메시지에 이어 붙인다) — Nest 기본 필터의 `ExceptionsHandler` 로그는 더 이상 없다
+      // 한 줄 + 스택 프레임(하네스가 Nest의 stack 인자를 같은 메시지에 이어 붙인다) - Nest 기본 필터의 `ExceptionsHandler` 로그는 더 이상 없다
       expect(lines).toHaveLength(1);
       expect(lines[0]).toMatch(new RegExp(`^GET /members 500 TypeError: pool exploded rid=${rid} TypeError\\n\\s+at `));
       expect(e2e.linesFor('ExceptionsHandler')).toEqual([]);

@@ -8,7 +8,7 @@ import { MAX_REVOKE_CHAIN_HOPS } from './auth-sessions';
 import { AuthService } from './auth.service';
 import { decryptGraceToken } from './refresh-grace';
 
-/** 유닛 스펙은 JWT_SECRET provider(jwt-secret.ts) 대신 고정 시크릿을 직접 주입한다 — grace 사본은 이 값으로 감싸진다 */
+/** 유닛 스펙은 JWT_SECRET provider(jwt-secret.ts) 대신 고정 시크릿을 직접 주입한다 - grace 사본은 이 값으로 감싸진다 */
 const DEV_SECRET = 'dev-only-secret';
 
 describe('AuthService refresh rotation', () => {
@@ -32,7 +32,7 @@ describe('AuthService refresh rotation', () => {
   }
 
   it('binds every $n placeholder of the session INSERT exactly once per cast position', async () => {
-    // $6 is referenced twice (value + CASE) — both references must carry the same cast; a bare/cast mix is 42P08 on Postgres.
+    // $6 is referenced twice (value + CASE) - both references must carry the same cast; a bare/cast mix is 42P08 on Postgres.
     const txQuery = jest
       .fn()
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ user_id: userId, is_admin: false }] })
@@ -73,7 +73,7 @@ describe('AuthService refresh rotation', () => {
     expect(consumeCall[0]).toContain('AND s.expires_at > now()');
     // The consumed row drops its own grace copy the moment it is rotated.
     expect(consumeCall[0]).toContain('SET revoked_at = now(), grace_refresh_token = NULL');
-    // Rotation is only granted to an ACTIVE, non-deleted owner — the join is part of the conditional UPDATE itself.
+    // Rotation is only granted to an ACTIVE, non-deleted owner - the join is part of the conditional UPDATE itself.
     expect(consumeCall[0]).toContain("u.status = 'ACTIVE'");
     expect(consumeCall[0]).toContain('u.deleted_at IS NULL');
     expect(consumeCall[0]).toContain('RETURNING s.user_id, u.is_admin');
@@ -472,7 +472,7 @@ describe('AuthService upsertGoogleUser', () => {
       .fn()
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505', constraint }))
-      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // re-check by google_id: nobody — the conflict is the email of another account
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // re-check by google_id: nobody - the conflict is the email of another account
     const error = await createService(query).upsertGoogleUser('google', 'a@example.com').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as ConflictException).message).toBe('ACCOUNT_CONFLICT');

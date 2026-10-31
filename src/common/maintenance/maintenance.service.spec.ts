@@ -9,7 +9,7 @@ describe('MaintenanceService crons', () => {
   function setup(counts = [3, 2, 5, 7]) {
     let call = 0;
     const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: counts[call++] ?? 0, rows: [] }));
-    // The sweep statements take no bind parameters — any `$n` creeping in without params is caught here.
+    // The sweep statements take no bind parameters - any `$n` creeping in without params is caught here.
     const service = new MaintenanceService({ query: withParamsCheck(query) } as unknown as DatabaseService);
     const log = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     const error = jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
@@ -100,7 +100,7 @@ describe('MaintenanceService crons', () => {
   });
 });
 
-describe('MaintenanceService — robustness', () => {
+describe('MaintenanceService - robustness', () => {
   function setup(query: jest.Mock) {
     const service = new MaintenanceService({ query } as unknown as DatabaseService);
     const log = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
@@ -157,7 +157,7 @@ describe('MaintenanceService — robustness', () => {
   });
 });
 
-describe('MaintenanceService — shutdown', () => {
+describe('MaintenanceService - shutdown', () => {
   it('beforeApplicationShutdown waits for an in-flight sweep to finish, and no cron runs afterwards', async () => {
     let releaseFirst!: () => void;
     const query = jest.fn()

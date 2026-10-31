@@ -143,7 +143,7 @@ describe('ApplicationsService apply rules', () => {
     expect(query.mock.calls[0][1]).toEqual(['bounty']);
   });
 
-  it('a submission-type bounty (application_required = false) is 400 SUBMISSION_TYPE_BOUNTY — submit directly instead', async () => {
+  it('a submission-type bounty (application_required = false) is 400 SUBMISSION_TYPE_BOUNTY - submit directly instead', async () => {
     const query = jest.fn().mockResolvedValueOnce(bountyRow({ application_required: false }));
     await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ status: 400, message: 'SUBMISSION_TYPE_BOUNTY' });
     expect(query).toHaveBeenCalledTimes(1);

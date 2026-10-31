@@ -39,7 +39,7 @@ export class NoticesService {
     };
   }
 
-  /** 공지 상세 (공개) — 삭제/비공개면 404 → FE는 목록으로 안내 */
+  /** 공지 상세 (공개) - 삭제/비공개면 404 → FE는 목록으로 안내 */
   async detail(id: string) {
     const r = await this.db.query(
       `SELECT id, title, summary, body, category, thumbnail_url, external_url, published_at,

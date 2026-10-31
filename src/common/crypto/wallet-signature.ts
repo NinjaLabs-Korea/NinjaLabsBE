@@ -21,7 +21,7 @@ export interface WalletSignatureScheme {
   verify(input: WalletSignatureInput): { publicKey: string | null } | null;
 }
 
-/** EVM 지갑 (MetaMask 등) — EIP-191 personal_sign */
+/** EVM 지갑 (MetaMask 등) - EIP-191 personal_sign */
 const eip191Scheme: WalletSignatureScheme = {
   kind: 'EVM',
   verify: ({ address, message, signature }) => {
@@ -30,7 +30,7 @@ const eip191Scheme: WalletSignatureScheme = {
   },
 };
 
-/** Cosmos 지갑 (Keplr/Leap) — ADR-36 signArbitrary */
+/** Cosmos 지갑 (Keplr/Leap) - ADR-36 signArbitrary */
 const adr36Scheme: WalletSignatureScheme = {
   kind: 'INJECTIVE',
   verify: ({ address, message, signature, publicKey }) =>

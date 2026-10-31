@@ -15,7 +15,7 @@ describeDb('hall-of-fame stats paidTotals on a real database', () => {
   });
   afterAll(async () => db.onApplicationShutdown());
 
-  /** 매번 새 인스턴스 — 인메모리 캐시를 우회해 지금 DB 상태를 집계한다 */
+  /** 매번 새 인스턴스 - 인메모리 캐시를 우회해 지금 DB 상태를 집계한다 */
   const freshStats = () => new HighlightsService(db).stats();
 
   async function bountyWithReward(symbol: string, tokenType: 'NATIVE' | 'CW20' = 'NATIVE'): Promise<{ bountyId: string; rewardId: string; submissionId: string }> {

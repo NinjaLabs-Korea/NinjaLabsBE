@@ -37,12 +37,12 @@ export function normalizeSql(sql: string): string {
 export interface MockDb {
   /** `DatabaseService` 자리에 그대로 주입할 수 있는 stand-in (`query` + `tx`) */
   database: DatabaseService;
-  /** 같은 객체를 mock 타입으로 본 것 — `db.tx.mock.calls` 등을 단언할 때 */
+  /** 같은 객체를 mock 타입으로 본 것 - `db.tx.mock.calls` 등을 단언할 때 */
   db: { query: QueryMock; tx: jest.Mock };
   /** 호출 기록을 단언하는 원본 mock (검사 래퍼가 아니라 위임 대상) */
   query: QueryMock;
   txQuery: QueryMock;
-  /** 모든 `db.tx` 콜백이 받는 동일한 클라이언트 객체 — "같은 트랜잭션 클라이언트로 넘겼다"를 `toHaveBeenCalledWith(txClient, ...)`로 단언할 때 */
+  /** 모든 `db.tx` 콜백이 받는 동일한 클라이언트 객체 - "같은 트랜잭션 클라이언트로 넘겼다"를 `toHaveBeenCalledWith(txClient, ...)`로 단언할 때 */
   txClient: { query: QueryMock };
   /** 엄격 모드 핸들러를 맨 앞에 추가한다 (테스트별 덮어쓰기) */
   handle: (match: RegExp, reply: SqlHandler['reply']) => void;

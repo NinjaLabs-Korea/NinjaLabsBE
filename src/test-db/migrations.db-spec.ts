@@ -8,16 +8,16 @@ import { describeDb } from './describe-db';
 import { createDb, testSslEnv, unique } from './harness';
 
 const HARDENING = '0014_security_hardening.sql';
-/** 0014 부터 끝까지 — "0014 직전에 멈춘" DB 에 applyMigrations() 를 돌리면 이 순서로 적용돼야 한다 */
+/** 0014 부터 끝까지 - "0014 직전에 멈춘" DB 에 applyMigrations() 를 돌리면 이 순서로 적용돼야 한다 */
 const FROM_HARDENING = migrationFiles().filter((file) => file >= HARDENING);
 
 /**
- * 0014의 입금 tx 해시 유니크 인덱스는 중복이 남아 있으면 마이그레이션을 **실패**시켜야 한다 (조용히 건너뛰지 않음) — 그리고 운영자가 정리한 뒤
+ * 0014의 입금 tx 해시 유니크 인덱스는 중복이 남아 있으면 마이그레이션을 **실패**시켜야 한다 (조용히 건너뛰지 않음) - 그리고 운영자가 정리한 뒤
  * 재실행하면 적용되어야 한다. payout 해시는 멀티시그 한 tx로 여러 수상자에게 보내는 경우가 정당하므로 중복이 있어도 막지 않고 정규화만 한다.
  * 공유 테스트 DB는 이미 전부 적용돼 있으므로 0001~0013만 적용한 별도 데이터베이스를 만들어 검증한다.
  * 같은 "0014 미적용" DB로 SchemaGuard의 MIGRATIONS_PENDING 거부도 확인한다.
  *
- * 각 테스트는 beforeEach 에서 **자기만의** 데이터베이스를 만들고 afterEach 에서 지운다 — 테스트끼리 상태를 공유하지 않으므로
+ * 각 테스트는 beforeEach 에서 **자기만의** 데이터베이스를 만들고 afterEach 에서 지운다 - 테스트끼리 상태를 공유하지 않으므로
  * 어떤 순서로 돌아도(`--randomize`) 같은 결과다. 정렬 단언은 collation 에 기대지 않는다 (`COLLATE "C"`): en_US.UTF-8 클러스터(CI 의
  * postgres:16 기본)에서는 `0xAB…` 와 `0xab…` 의 순서가 C 와 다르다.
  */
@@ -49,19 +49,19 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
     url.pathname = `/${name}`;
     const pool = new Pool({ connectionString: url.toString(), ssl, max: 2 });
 
-    // 0014 직전까지만 담은 디렉터리 — 운영 러너와 같은 applyMigrations()로 적용한다
+    // 0014 직전까지만 담은 디렉터리 - 운영 러너와 같은 applyMigrations()로 적용한다
     const partialDir = mkdtempSync(join(tmpdir(), 'ninjalabs-mig-'));
     for (const file of migrationFiles()) if (file < HARDENING) copyFileSync(join(MIGRATIONS_DIR, file), join(partialDir, file));
     const { applied } = await applyMigrations(pool, { dir: partialDir });
     expect(applied).not.toContain(HARDENING);
 
     // 같은 해시를 두 보상에 적은 레거시 데이터 (대소문자 변형 → 0014의 정규화 UPDATE 뒤 충돌해야 한다)
-    // + 같은 payout 해시를 두 payout에 적은 레거시 데이터 (멀티 송금 — 0014는 이를 막지 않고 정규화만 해야 한다)
+    // + 같은 payout 해시를 두 payout에 적은 레거시 데이터 (멀티 송금 - 0014는 이를 막지 않고 정규화만 해야 한다)
     const id = unique();
     const userId = (await pool.query<{ id: string }>(
       `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step) VALUES ($1, $2, $3, '', 2) RETURNING id`,
       [`google-${id}`, `${id}@example.test`, `user_${id.slice(0, 8)}`])).rows[0].id;
-    // legacy cover image saved before the strict URL rule — 0014 must only *report* it (RAISE NOTICE), never fail on it
+    // legacy cover image saved before the strict URL rule - 0014 must only *report* it (RAISE NOTICE), never fail on it
     const bountyId = (await pool.query<{ id: string }>(
       `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline, cover_image_url)
        VALUES ($1, 's', 't', 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', '/uploads/legacy-cover.png') RETURNING id`, [userId])).rows[0].id;
@@ -96,7 +96,7 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
   beforeEach(async () => { stuck = await provisionStuckDb(); });
   afterEach(async () => { if (stuck) await dropStuckDb(stuck); });
 
-  /** 정렬을 Postgres collation 에 맡기지 않는다 — JS 코드포인트 순으로 비교한다 */
+  /** 정렬을 Postgres collation 에 맡기지 않는다 - JS 코드포인트 순으로 비교한다 */
   const sorted = (values: string[]) => [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
   it('refuses to start the app on that schema with MIGRATIONS_PENDING naming every missing file, and boots on the fully migrated one', async () => {
@@ -119,9 +119,9 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
     await expect(applyMigrations(stuck.pool, { log: (line) => notices.push(line) })).rejects.toMatchObject({
       file: HARDENING,
       code: '23505',
-      message: expect.stringContaining('0014: cannot create uq_bounty_reward_deposit_tx — 1 duplicate bounty_reward.deposit_tx_hash value(s)'),
+      message: expect.stringContaining('0014: cannot create uq_bounty_reward_deposit_tx - 1 duplicate bounty_reward.deposit_tx_hash value(s)'),
     });
-    // a second attempt on the same (still dirty) database fails the same way — nothing was half-applied
+    // a second attempt on the same (still dirty) database fails the same way - nothing was half-applied
     await expect(applyMigrations(stuck.pool)).rejects.toMatchObject({
       message: expect.stringMatching(/First 1: 0x(ab){32} \(x2\)\. Inspect with: SELECT deposit_tx_hash, count\(\*\), array_agg\(id\) FROM bounty_reward/),
     });
@@ -139,7 +139,7 @@ describeDb('0014 tx-hash uniqueness and SchemaGuard against a database stuck bef
     const { applied } = await applyMigrations(stuck.pool, { log: (line) => log.push(line) });
     expect(applied).toEqual(FROM_HARDENING);
     // the legacy cover image is reported, not rejected
-    expect(log).toContainEqual(expect.stringContaining('[notice] 0014: bounty.cover_image_url — 1 row(s) would fail the strict create-DTO URL rule'));
+    expect(log).toContainEqual(expect.stringContaining('[notice] 0014: bounty.cover_image_url - 1 row(s) would fail the strict create-DTO URL rule'));
     expect(log.some((line) => line.includes('notice.thumbnail_url'))).toBe(false);
     expect(await migrationNames()).toEqual(expect.arrayContaining(FROM_HARDENING));
     expect(await indexNames()).toEqual(['uq_bounty_reward_deposit_tx']);

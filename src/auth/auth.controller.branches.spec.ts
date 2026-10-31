@@ -17,7 +17,7 @@ function logs() {
 
 afterEach(() => jest.restoreAllMocks());
 
-describe('AuthController.googleCallback — rejected before touching Google', () => {
+describe('AuthController.googleCallback - rejected before touching Google', () => {
   function setup(config: Record<string, string> = { AUTH_SUCCESS_REDIRECT: 'https://app.example/' }) {
     const auth = { verifyOauthState: jest.fn(), exchangeGoogleCode: jest.fn(), upsertGoogleUser: jest.fn(), issueLoginCode: jest.fn() };
     const controller = new AuthController(auth as never, { get: (key: string) => config[key] } as never, { enabled: false } as never);
@@ -86,7 +86,7 @@ describe('AuthController.googleCallback — rejected before touching Google', ()
 });
 
 describe('AuthController.googleRedirect', () => {
-  it('builds the returnTo allowlist once — a rejected shared-hosting wildcard is reported once, not on every login', async () => {
+  it('builds the returnTo allowlist once - a rejected shared-hosting wildcard is reported once, not on every login', async () => {
     const { error } = logs();
     const auth = { issueOauthState: jest.fn(async () => 'state'), buildGoogleAuthUrl: jest.fn(() => 'https://accounts.google.com/') };
     const config: Record<string, string> = {
@@ -132,7 +132,7 @@ describe('AuthController.refresh / me', () => {
     expect(res.append).not.toHaveBeenCalled();
   });
 
-  it('a non-401 failure (e.g. the database is down) on a cookie token keeps the cookie — the session may still be alive', async () => {
+  it('a non-401 failure (e.g. the database is down) on a cookie token keeps the cookie - the session may still be alive', async () => {
     logs();
     const outage = new Error('connection terminated');
     const auth = { refreshTtlSeconds: 60, refresh: jest.fn(async () => { throw outage; }) };
@@ -185,7 +185,7 @@ describe('GoogleIdTokenVerifier.verify success path', () => {
   });
 });
 
-describe('refresh grace envelope — truncated copies', () => {
+describe('refresh grace envelope - truncated copies', () => {
   const secret = 's'.repeat(32);
   const sessionId = '11111111-1111-4111-8111-111111111111';
   it('a copy missing its tag or ciphertext part (two or one segments) is "no grace" (null), never a throw', () => {

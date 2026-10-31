@@ -8,7 +8,7 @@ import { assertMediaPathExists } from '../../common/validation/media-reference';
 import { assertChangedUrlsStrict } from '../../common/validation/url';
 import { RewardInput, RewardTokenResolver } from './reward-token.resolver';
 
-/** 저장된 마감과 이 차이 미만이면 "바꾸지 않은 값" — FE의 datetime-local 입력은 초/밀리초를 보존하지 못한다 */
+/** 저장된 마감과 이 차이 미만이면 "바꾸지 않은 값" - FE의 datetime-local 입력은 초/밀리초를 보존하지 못한다 */
 const DEADLINE_UNCHANGED_TOLERANCE_MS = 60_000;
 
 /** 지원 마감은 제출 마감보다 늦을 수 없다 - 제출이 끝난 뒤의 지원은 의미가 없다 (같은 시각과 1분 미만 차이는 허용: FE가 datetime-local로 왕복시키며 제출 마감의 초를 잃는다). 지원 마감이 없으면 통과 */
@@ -49,7 +49,7 @@ function assertDeadlines(input: DeadlineInput, stored?: StoredDeadlines, enforce
   }
 }
 
-/** 운영자용 바운티 관리 — 등록/수정/삭제/상태 전이 (쓰기 명령). 운영 현황 조회는 BountyOperationsQuery.
+/** 운영자용 바운티 관리 - 등록/수정/삭제/상태 전이 (쓰기 명령). 운영 현황 조회는 BountyOperationsQuery.
  * 전이 가능 여부는 BountyStatusPolicy, 전이 차단 사유는 BountyLifecycleService가 결정한다. */
 
 @Injectable()
@@ -86,7 +86,7 @@ export class BountyAdminService {
     coverImageUrl?: string;
     reward?: RewardInput;
   }) {
-    // 수정(update)과 같은 규칙: 새 바운티의 마감은 미래여야 한다 — 과거 마감으로 만들면 DRAFT에서 열 수도(DEADLINE_PASSED) 접수할 수도 없는 행이 생긴다
+    // 수정(update)과 같은 규칙: 새 바운티의 마감은 미래여야 한다 - 과거 마감으로 만들면 DRAFT에서 열 수도(DEADLINE_PASSED) 접수할 수도 없는 행이 생긴다
     assertDeadlines(input);
     const reward = this.rewardTokens.resolve(input.reward);
     return this.db.tx(async (tx) => {
@@ -184,14 +184,14 @@ export class BountyAdminService {
   }
 
   /**
-   * soft delete + 감사 로그를 **같은 트랜잭션**에 — 감사 기록이 실패하면 삭제도 롤백된다 (다른 *-admin 서비스와 같은 규칙).
-   * 삭제 정책(2026-10-24 결정, 2026-10-25 개정 — docs/decisions.md): 멀티시그에 아직 묶인 돈이 있으면 409 BOUNTY_HAS_OPEN_FUNDS —
+   * soft delete + 감사 로그를 **같은 트랜잭션**에 - 감사 기록이 실패하면 삭제도 롤백된다 (다른 *-admin 서비스와 같은 규칙).
+   * 삭제 정책(2026-10-24 결정, 2026-10-25 개정 - docs/decisions.md): 멀티시그에 아직 묶인 돈이 있으면 409 BOUNTY_HAS_OPEN_FUNDS -
    *   - 보상이 REFUND_PENDING이거나, FUNDED/PARTIALLY_PAID/PAID인데 입금액(deposited_amount) − PAID 합계 > 0
-   *     (배정 상한 LEAST(amount, deposited)가 아니라 입금액 전체 — 초과 입금분도 돌려줘야 할 돈이다. 정산 = REFUNDED, 또는 입금액을 전부 지급)
+   *     (배정 상한 LEAST(amount, deposited)가 아니라 입금액 전체 - 초과 입금분도 돌려줘야 할 돈이다. 정산 = REFUNDED, 또는 입금액을 전부 지급)
    *   - 또는 종료 상태(PAID/CANCELLED/FAILED)가 아닌(= 진행 중) payout이 하나라도 있음
    *   상태 집합·비교식은 rewards/payout-status.ts (OPEN_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardHoldsFundsSql)
    * 허용: 보상이 DEPOSIT_PENDING/REFUNDED/CANCELLED이거나 입금액 전액이 지급된 PAID뿐인 바운티. 남은 돈은 CANCELLED → scripts/record-refund.js(REFUNDED)로
-   * 정산한다 — 환불 스크립트는 CANCELLED 바운티만 받으므로, 전액 지급됐지만 초과 입금분이 남은 COMPLETED 바운티는 삭제할 수 없다(409, runbook §7.7).
+   * 정산한다 - 환불 스크립트는 CANCELLED 바운티만 받으므로, 전액 지급됐지만 초과 입금분이 남은 COMPLETED 바운티는 삭제할 수 없다(409, runbook §7.7).
    * 검사는 바운티 행 잠금 아래에서 하므로 같은 바운티의 requestPayout/confirmDeposit(둘 다 바운티 행을 먼저 잠근다)과 직렬화된다.
    */
   async remove(bountyId: string, adminId: string) {

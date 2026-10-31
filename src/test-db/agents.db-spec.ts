@@ -70,7 +70,7 @@ describeDb('agent lifecycle on a real database', () => {
     expect(again.agentId).not.toBe(agentId);
     expect(await agentRow(agentId)).toMatchObject({ status: 'REVOKED', deleted_at: null });
     expect(await agentRow(again.agentId)).toMatchObject({ status: 'ACTIVE', deleted_at: null, wallet_address: signer.address });
-    // both rows carry the same recovered public key — uq_agent_public_key ignores REVOKED rows too
+    // both rows carry the same recovered public key - uq_agent_public_key ignores REVOKED rows too
     expect((await agentRow(again.agentId)).public_key).toBe((await agentRow(agentId)).public_key);
 
     const mine = await agents.myAgents(ownerId);

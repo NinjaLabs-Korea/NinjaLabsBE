@@ -55,7 +55,7 @@ class VerifyAgentDto {
 export class AgentsController {
   constructor(private readonly agents: AgentsService) {}
 
-  /** POST /agents — 에이전트 등록 (PENDING_VERIFICATION 상태로 생성) */
+  /** POST /agents - 에이전트 등록 (PENDING_VERIFICATION 상태로 생성) */
   @Post()
   register(@Req() req: Request & { user: SessionUser }, @Body() dto: RegisterAgentDto) {
     return this.agents.register(
@@ -67,7 +67,7 @@ export class AgentsController {
     );
   }
 
-  /** POST /agents/:id/verify — 주인 지갑 서명 검증 + API key 발급 (원문 1회 노출) */
+  /** POST /agents/:id/verify - 주인 지갑 서명 검증 + API key 발급 (원문 1회 노출) */
   @Header('Cache-Control', 'no-store, private') // 일회성 비밀을 싣는 응답 - 토큰 응답(auth.controller.ts)과 같은 규칙
   @Post(':id/verify')
   verify(
@@ -78,13 +78,13 @@ export class AgentsController {
     return this.agents.verifyAndIssueKey(req.user.userId, agentId, dto.signature);
   }
 
-  /** GET /agents/me — 내 에이전트 목록 (키는 prefix만 노출) */
+  /** GET /agents/me - 내 에이전트 목록 (키는 prefix만 노출) */
   @Get('me')
   mine(@Req() req: Request & { user: SessionUser }) {
     return this.agents.myAgents(req.user.userId);
   }
 
-  /** POST /agents/:id/keys/rotate — 기존 ACTIVE 키 전부 폐기 + 새 키 발급 (원문 1회 노출) */
+  /** POST /agents/:id/keys/rotate - 기존 ACTIVE 키 전부 폐기 + 새 키 발급 (원문 1회 노출) */
   @Header('Cache-Control', 'no-store, private')
   @Post(':id/keys/rotate')
   rotateKey(
@@ -94,7 +94,7 @@ export class AgentsController {
     return this.agents.rotateKey(req.user.userId, agentId);
   }
 
-  /** POST /agents/:id/revoke — 에이전트와 모든 키 폐기 (멱등) */
+  /** POST /agents/:id/revoke - 에이전트와 모든 키 폐기 (멱등) */
   @Post(':id/revoke')
   revoke(
     @Param('id', ParseUUIDPipe) agentId: string,

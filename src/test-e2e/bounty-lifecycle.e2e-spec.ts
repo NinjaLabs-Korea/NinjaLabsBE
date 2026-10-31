@@ -18,7 +18,7 @@ function bountyForm(overrides: Partial<AdminBountyForm> = {}): AdminBountyForm {
 describeDb('bounty lifecycle over HTTP (e2e)', () => {
   let e2e: E2eApp;
   let admin: Session;
-  /** second operator — payouts are approved by a different admin than the requester (two-person rule) */
+  /** second operator - payouts are approved by a different admin than the requester (two-person rule) */
   let approver: Session;
   beforeAll(async () => {
     e2e = await startApp();
@@ -47,7 +47,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     const form = bountyForm();
     const bountyId = await createBounty(form);
 
-    // admin list row — exactly the fields createAdminApi().getAdminBounties reads
+    // admin list row - exactly the fields createAdminApi().getAdminBounties reads
     const row = await adminRow(bountyId);
     expect(row).toMatchObject({
       id: bountyId, title: form.title, sponsor_name: 'Injective Labs', summary: form.description.slice(0, 240).trim(),
@@ -215,7 +215,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await transition(id, 'OPEN')).body).toEqual({ id, status: 'OPEN' });
     const cancelBlocked = await transition(id, 'CANCELLED');
     expect(cancelBlocked.status).toBe(400);
-    expect(cancelBlocked.body).toEqual(owed); // same shape and sentence — the FE shows it like the COMPLETED block
+    expect(cancelBlocked.body).toEqual(owed); // same shape and sentence - the FE shows it like the COMPLETED block
 
     const ops = await e2e.get(`/admin/bounties/${id}/operations`, asAdmin);
     expect(ops.body.lifecycle.allowedTransitions).toEqual(['SUBMISSION_CLOSED', 'CANCELLED']);
@@ -420,7 +420,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
       expect(row.rows[0]).toEqual({ status: 'PENDING', message: 'gamma again', portfolio_url: 'https://gamma.example' });
       const audit = await e2e.get(`/admin/audit-logs?entityType=bounty_application&entityId=${applied.body.id}`, asAdmin);
       expect(audit.body.items.map((i: { action: string }) => i.action)).toEqual(['APPLICATION_REAPPLIED']);
-      // no user id on an Agent API call — the row must still say who acted (an empty actor reads as an ops-script row)
+      // no user id on an Agent API call - the row must still say who acted (an empty actor reads as an ops-script row)
       expect(audit.body.items[0]).toMatchObject({ actor_user_id: null, actor_agent_id: bot.agentId });
     });
   });

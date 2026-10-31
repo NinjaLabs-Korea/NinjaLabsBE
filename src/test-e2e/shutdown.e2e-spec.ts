@@ -6,7 +6,7 @@ import { createDb, createPrimaryWallet, createUser, deferred, waitFor } from '..
 import { E2eApp, startApp } from './support/harness';
 
 /**
- * 배포 중 종료(SIGTERM → app.close())의 순서 — docs/runbook.md "배포 중 종료 순서".
+ * 배포 중 종료(SIGTERM → app.close())의 순서 - docs/runbook.md "배포 중 종료 순서".
  * Nest close(): onModuleDestroy → beforeApplicationShutdown(크론 정지, 워커 드레인) → HTTP 종료 → onApplicationShutdown(DB 풀 종료).
  * 예전에는 풀이 첫 단계에서 닫혀, 드레인 중인 워커와 처리 중인 요청이 "Cannot use a pool after calling end on the pool"로 실패했다.
  */
@@ -48,14 +48,14 @@ describeDb('graceful shutdown (e2e)', () => {
 
     const first = await parentMintJob('3 seconds');
     const second = await parentMintJob('2 seconds');
-    // 선점은 1분 크론이 먼저 할 수도 있다 — 어느 poll이든 첫 잡의 mint에서 멈출 때까지 찔러 본다 (겹친 poll은 건너뛴다)
+    // 선점은 1분 크론이 먼저 할 수도 있다 - 어느 poll이든 첫 잡의 mint에서 멈출 때까지 찔러 본다 (겹친 poll은 건너뛴다)
     await waitFor(() => {
       void worker.poll();
       return mint.mock.calls.length > 0;
     }, 'the worker to start minting the first job');
     expect(mint.mock.calls[0][0]).toBe(first.nftId);
 
-    // 배치를 선점한 뒤 들어온 잡 — 종료 중에는 선점되면 안 된다
+    // 배치를 선점한 뒤 들어온 잡 - 종료 중에는 선점되면 안 된다
     const late = await parentMintJob('1 second');
 
     const closing = e2e.close();
@@ -66,7 +66,7 @@ describeDb('graceful shutdown (e2e)', () => {
     expect(health.status).toBe(200);
     expect(health.body).toEqual({ status: 'ok', db: 'up' });
 
-    await worker.poll(); // 종료 중의 크론 틱 — 아무것도 선점하지 않는다
+    await worker.poll(); // 종료 중의 크론 틱 - 아무것도 선점하지 않는다
     mintGate.resolve(`0x${'cd'.repeat(32)}`);
     await closing;
     closed = true;
@@ -75,7 +75,7 @@ describeDb('graceful shutdown (e2e)', () => {
     expect((await job(first.jobId)).status).toBe('SUCCEEDED');
     const nft = (await probe.query<{ status: string }>(`SELECT status FROM nft WHERE id = $1`, [first.nftId])).rows[0];
     expect(nft.status).toBe('MINTED');
-    // 손대지 않은 배치 잔여분은 PENDING으로 돌아갔다 — 시도하지 않았으니 retry_count 그대로, 15분 고아 재큐잉 대상 아님
+    // 손대지 않은 배치 잔여분은 PENDING으로 돌아갔다 - 시도하지 않았으니 retry_count 그대로, 15분 고아 재큐잉 대상 아님
     expect(await job(second.jobId)).toMatchObject({ status: 'PENDING', retry_count: 0 });
     // 종료 중에 들어온 잡은 선점되지 않았다
     expect(await job(late.jobId)).toMatchObject({ status: 'PENDING', retry_count: 0, started_at: null });

@@ -2,11 +2,11 @@ import { Wallet } from 'ethers';
 import { describeDb } from '../test-db/describe-db';
 import { E2eApp, Session, startApp } from './support/harness';
 
-/** 공개 읽기(600/min)가 아닌 라우트 — 전역 120/min을 검증할 때 쓴다 (인증 없이 401) */
+/** 공개 읽기(600/min)가 아닌 라우트 - 전역 120/min을 검증할 때 쓴다 (인증 없이 401) */
 const NON_PUBLIC_ROUTE = '/wallets/me';
 const TOO_MANY = { statusCode: 429, message: 'ThrottlerException: Too Many Requests' };
 
-// c. throttling — in-memory throttler storage per app instance; trust proxy 1 → the last X-Forwarded-For hop is the client
+// c. throttling - in-memory throttler storage per app instance; trust proxy 1 → the last X-Forwarded-For hop is the client
 describeDb('throttling over HTTP (e2e)', () => {
   let e2e: E2eApp;
   beforeAll(async () => { e2e = await startApp(); });
@@ -53,7 +53,7 @@ describeDb('throttling over HTTP (e2e)', () => {
     expect(third.headers['x-ratelimit-limit-auth-token']).toBe('10');
   });
 
-  it('/auth/refresh in cookie mode: the ninja_rt cookie keys the bucket (body {} — no token in the body)', async () => {
+  it('/auth/refresh in cookie mode: the ninja_rt cookie keys the bucket (body {} - no token in the body)', async () => {
     const ip = '203.0.113.41';
     const cookie = (t: string) => ({ ip, headers: { 'x-ninja-session': 'cookie', cookie: `ninja_rt=${t}` } });
     const [a, b] = [unknownToken('ca'), unknownToken('cb')];
@@ -81,7 +81,7 @@ describeDb('throttling over HTTP (e2e)', () => {
     expect((await e2e.post('/auth/refresh', { refreshToken: unknownToken('other-ip') }, { ip: '203.0.113.51' })).status).toBe(401);
   });
 
-  it('/auth/exchange: the per-IP limit is 600/min too — 121+ distinct codes from one IP are not 429 (they 401)', async () => {
+  it('/auth/exchange: the per-IP limit is 600/min too - 121+ distinct codes from one IP are not 429 (they 401)', async () => {
     const ip = '203.0.113.52';
     const codes = (i: number) => code43('e').slice(0, 40) + String(i).padStart(3, '0');
     const statuses = await burst(150, (i) => e2e.post('/auth/exchange', { code: codes(i), codeVerifier: verifier }, { ip }));
@@ -105,7 +105,7 @@ describeDb('throttling over HTTP (e2e)', () => {
     expect(other.headers['x-ratelimit-limit-auth-token']).toBe('10');
   });
 
-  it('/auth/logout: the per-IP limit is 600/min (Vercel egress IPs carry many users) — 121+ logouts from one IP are not 429; a token-less cookie-mode logout skips the token bucket', async () => {
+  it('/auth/logout: the per-IP limit is 600/min (Vercel egress IPs carry many users) - 121+ logouts from one IP are not 429; a token-less cookie-mode logout skips the token bucket', async () => {
     const ip = '203.0.113.54';
     const statuses = await burst(130, (i) => e2e.post('/auth/logout', { refreshToken: unknownToken(`lo${i}`) }, { ip }));
     expect(statuses).toEqual(Array(130).fill(204));

@@ -77,7 +77,7 @@ describe('bounty admin DTOs', () => {
   });
 
   it('update accepts legacy site-relative and scheme-less cover images (lenient IsSafeUrl) but still rejects unsafe schemes', async () => {
-    // the FE PATCH re-sends every field — a legacy row saved before the strict rule must not make the whole edit fail
+    // the FE PATCH re-sends every field - a legacy row saved before the strict rule must not make the whole edit fail
     const legacyRow = { ...validCreate, coverImageUrl: '/uploads/legacy-cover.png', maxWinners: 1 };
     expect(await failedFields(CreateBountyDto, legacyRow)).toEqual(['coverImageUrl']);
     expect(await failedFields(UpdateBountyDto, legacyRow)).toEqual([]);

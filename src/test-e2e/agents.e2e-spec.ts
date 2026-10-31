@@ -6,7 +6,7 @@ import { getInjectiveAddress } from './support/injective-sdk.stub';
 const badRequest = (message: string | string[]) => ({ statusCode: 400, error: 'Bad Request', message });
 const unauthorized = (message: string) => ({ statusCode: 401, error: 'Unauthorized', message });
 
-// agents — owner-facing registration/verify/rotate/revoke (/agents) and Agent API key auth (/agent-api/v1) over real HTTP
+// agents - owner-facing registration/verify/rotate/revoke (/agents) and Agent API key auth (/agent-api/v1) over real HTTP
 describeDb('agents over HTTP (e2e)', () => {
   let e2e: E2eApp;
   let owner: Session;
@@ -132,7 +132,7 @@ describeDb('agents over HTTP (e2e)', () => {
     const agentKey = async (agentId: string) =>
       (await e2e.db.query<{ public_key: string | null }>(`SELECT public_key FROM agent WHERE id = $1`, [agentId])).rows[0].public_key;
 
-    it("EVM: an attacker registering their own 0x wallet with the victim's publicKey stores NULL — the victim's verify is 201, not a 500", async () => {
+    it("EVM: an attacker registering their own 0x wallet with the victim's publicKey stores NULL - the victim's verify is 201, not a 500", async () => {
       const attacker = await e2e.loginOnboarded();
       const victim = await e2e.loginOnboarded();
       const attackerWallet = Wallet.createRandom();
@@ -235,7 +235,7 @@ describeDb('agents over HTTP (e2e)', () => {
       expect((await e2e.post(`/agents/${agentId}/keys/rotate`, undefined, { token: owner.accessToken })).status).toBe(409);
     });
 
-    it('GET /agents/me exposes only the key prefix of the current key — never the raw key or its hash', async () => {
+    it('GET /agents/me exposes only the key prefix of the current key - never the raw key or its hash', async () => {
       const session = await e2e.loginOnboarded();
       const { agentId, apiKey } = await activeAgent(session);
       const listed = await e2e.get('/agents/me', { token: session.accessToken });

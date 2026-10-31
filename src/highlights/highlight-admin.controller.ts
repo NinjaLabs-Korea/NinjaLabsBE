@@ -22,9 +22,9 @@ export class CreateHighlightDto {
   @IsOptional() @IsBoolean() publish?: boolean;
 }
 
-// 수정: TEXT 컬럼의 상한은 생성의 2배, URL은 완화 규칙(IsSafeUrl) — FE가 바뀌지 않은 필드도 저장값 그대로 되보내므로 엄격 규칙 이전의 레거시 행이
-// 모든 PATCH를 막지 않게 한다 (common/validation/url.ts, bounty-admin.dto.ts와 같은 이유). title은 VARCHAR(200) — 컬럼 상한을 넘기지 않는다 (MaxChars).
-// NOT NULL 컬럼(type/title/description/display_order)과 publish는 null을 400으로 막는다 (IsOptionalNotNull) — URL은 nullable이라 null = 지우기.
+// 수정: TEXT 컬럼의 상한은 생성의 2배, URL은 완화 규칙(IsSafeUrl) - FE가 바뀌지 않은 필드도 저장값 그대로 되보내므로 엄격 규칙 이전의 레거시 행이
+// 모든 PATCH를 막지 않게 한다 (common/validation/url.ts, bounty-admin.dto.ts와 같은 이유). title은 VARCHAR(200) - 컬럼 상한을 넘기지 않는다 (MaxChars).
+// NOT NULL 컬럼(type/title/description/display_order)과 publish는 null을 400으로 막는다 (IsOptionalNotNull) - URL은 nullable이라 null = 지우기.
 export class UpdateHighlightDto {
   @IsOptionalNotNull() @IsIn(HIGHLIGHT_TYPES) type?: string;
   @OptionalDisplayTitle(200) title?: string;

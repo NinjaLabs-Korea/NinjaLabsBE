@@ -13,7 +13,7 @@ function bountyForm(overrides: Partial<AdminBountyForm> = {}): AdminBountyForm {
   };
 }
 
-// revision flow, cancellation and review-input validation over HTTP — status codes and error codes as the FE sees them
+// revision flow, cancellation and review-input validation over HTTP - status codes and error codes as the FE sees them
 describeDb('bounty rules over HTTP (e2e)', () => {
   let e2e: E2eApp;
   let admin: Session;
@@ -89,7 +89,7 @@ describeDb('bounty rules over HTTP (e2e)', () => {
     expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
     const winner = await e2e.loginOnboarded();
     await e2e.onboard(winner);
-    // left unreviewed — an approved winner still owed would block the cancel (UNPAID_WINNERS, bounty-lifecycle e2e)
+    // left unreviewed - an approved winner still owed would block the cancel (UNPAID_WINNERS, bounty-lifecycle e2e)
     const sub = await submit(id, winner, 'w');
 
     expect((await transition(id, 'CANCELLED')).body).toEqual({ id, status: 'CANCELLED' });
@@ -101,7 +101,7 @@ describeDb('bounty rules over HTTP (e2e)', () => {
     for (const to of ['OPEN', 'COMPLETED', 'DRAFT']) {
       expect((await transition(id, to)).body).toEqual(badRequest(`INVALID_TRANSITION:CANCELLED->${to}`));
     }
-    // still publicly visible as CANCELLED — it was opened (publicBountySql: opened_at IS NOT NULL); one cancelled before opening is 404 (public-reads e2e)
+    // still publicly visible as CANCELLED - it was opened (publicBountySql: opened_at IS NOT NULL); one cancelled before opening is 404 (public-reads e2e)
     expect((await e2e.get(`/bounties/${id}`)).body).toMatchObject({ id, status: 'CANCELLED' });
   });
 

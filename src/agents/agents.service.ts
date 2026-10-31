@@ -65,8 +65,8 @@ export class AgentsService {
       throw new BadRequestException('AGENT_PUBLIC_KEY_REQUIRED');
     }
     const normalizedAddress = isEvm ? getAddress(trimmed) : inj1Address;
-    // 저장할 공개키 — 검증되지 않은 키는 uq_agent_public_key를 선점해 그 키 주인의 등록/verify를 막는 데 쓰일 수 있다.
-    //   - EVM(0x): 클라이언트 값은 무시하고 NULL — 키는 verify 때 EIP-191 서명에서 복원한 것만 저장한다 (docs/agent-api.md:
+    // 저장할 공개키 - 검증되지 않은 키는 uq_agent_public_key를 선점해 그 키 주인의 등록/verify를 막는 데 쓰일 수 있다.
+    //   - EVM(0x): 클라이언트 값은 무시하고 NULL - 키는 verify 때 EIP-191 서명에서 복원한 것만 저장한다 (docs/agent-api.md:
     //     EVM은 publicKey를 보내지 않는다. 예전 클라이언트 호환을 위해 400 대신 무시)
     //   - inj1: ADR-36 verify가 이 키로 검증하므로 필요하다. 대신 그 주소의 키인지 지금 확인한다 (남의 키 → 400)
     if (!isEvm && !injectivePublicKeyMatchesAddress(normalizedAddress, publicKey!)) {
@@ -75,7 +75,7 @@ export class AgentsService {
     const storedPublicKey = isEvm ? null : canonicalPublicKeyBase64(publicKey!); // 위 일치 검사를 통과했으므로 33바이트 - 클라이언트가 보낸 문자열이 아니라 정규 표기를 저장한다
 
     try {
-      // 같은 지갑/키를 점유한 행 확인(남의 버려진 PENDING은 soft delete)과 INSERT를 한 트랜잭션에서 — 유니크 위반이면 전체가 롤백되고 아래 catch로 간다
+      // 같은 지갑/키를 점유한 행 확인(남의 버려진 PENDING은 soft delete)과 INSERT를 한 트랜잭션에서 - 유니크 위반이면 전체가 롤백되고 아래 catch로 간다
       const r = await this.db.tx(async (tx) => {
         // 탈퇴도 유저 -> 에이전트 순서로 잠근다. 에이전트 조회/INSERT 전에 소유자의 활성 온보딩을 확인하고 잠가야 교착을 피한다.
         await BountyActor.user(ownerUserId).assertOnboarded(tx);
@@ -127,13 +127,13 @@ export class AgentsService {
    * 같은 지갑/공개키를 점유한 행을 확인해 재등록을 허용할지 정한다. 행을 잠근 채(FOR UPDATE) 처리해 동시 재등록·revoke·verify와
    * 엇갈리지 않는다. uq_agent_wallet/uq_agent_public_key(0014)는 `deleted_at IS NULL AND status <> 'REVOKED'` 행만 보므로
    * REVOKED 행은 지우지 않아도 지갑/키가 풀린다.
-   *   - 내 REVOKED 에이전트 → 그대로 둔다 (soft delete 하지 않음 — 제출/지원 이력이 /agents/me 와 프로필에 계속 보인다)
-   *   - 남의 REVOKED 에이전트 → 409 — 단, **한 번도 verify되지 않은** 것(verified_at IS NULL)은 막지 않는다. PENDING 행을 만들어 바로 폐기(revoke)하면
+   *   - 내 REVOKED 에이전트 → 그대로 둔다 (soft delete 하지 않음 - 제출/지원 이력이 /agents/me 와 프로필에 계속 보인다)
+   *   - 남의 REVOKED 에이전트 → 409 - 단, **한 번도 verify되지 않은** 것(verified_at IS NULL)은 막지 않는다. PENDING 행을 만들어 바로 폐기(revoke)하면
    *     소유 증명 없이 남의 지갑/키를 영구히 점유할 수 있었다 (24시간 만료를 우회). 검증된 적 없는 행은 이력(키·제출·지원)도 없다
    *   - 남의 PENDING_VERIFICATION 에이전트 → 등록 후 24시간이 지났으면 버려진 것으로 보고 soft delete.
-   *     PENDING 행은 소유를 증명하지 않는다(증명은 verify의 서명) — 누구나 남의 지갑 주소를 먼저 등록해 선점(squatting)할 수 있으므로.
+   *     PENDING 행은 소유를 증명하지 않는다(증명은 verify의 서명) - 누구나 남의 지갑 주소를 먼저 등록해 선점(squatting)할 수 있으므로.
    *     24시간 이내면 서명 제출 중일 수 있어 409
-   *   - 내 PENDING 행은 건드리지 않는다 — INSERT가 유니크 위반으로 실패하고 register()가 그 행을 그대로 돌려준다
+   *   - 내 PENDING 행은 건드리지 않는다 - INSERT가 유니크 위반으로 실패하고 register()가 그 행을 그대로 돌려준다
    */
   /**
    * 에이전트 지갑은 소유자 본인의 연결 지갑과 달라야 한다 (등록 화면·skill.md의 "must differ from your own wallet" 규칙의 서버 쪽 집행).
@@ -183,7 +183,7 @@ export class AgentsService {
   }
 
   /**
-   * 소유 증명 메시지 — agentId + 소유 유저에 결정론적으로 바인딩되어
+   * 소유 증명 메시지 - agentId + 소유 유저에 결정론적으로 바인딩되어
    * 다른 에이전트/유저로의 서명 재사용이 불가능하다.
    */
   static verificationMessage(agentId: string, ownerUserId: string): string {
@@ -250,7 +250,7 @@ export class AgentsService {
       }
 
       if (verified.publicKey && isEvmAddress(agent.wallet_address)) {
-        // 이 수정 전 등록된 EVM PENDING 행에는 클라이언트가 보낸(검증 안 된) public_key가 남아 있을 수 있다 — 남의 키를 붙여 둔 행이
+        // 이 수정 전 등록된 EVM PENDING 행에는 클라이언트가 보낸(검증 안 된) public_key가 남아 있을 수 있다 - 남의 키를 붙여 둔 행이
         // 아래 UPDATE를 uq_agent_public_key 위반으로 막지 않도록, 서명으로 방금 증명된 이 키를 쥔 다른 EVM PENDING 행의 키를 비운다.
         // EVM verify는 저장된 키를 쓰지 않으므로(서명에서 복원) 그 행들의 동작은 바뀌지 않는다.
         await tx.query(
@@ -267,11 +267,11 @@ export class AgentsService {
         [agentId, verified.publicKey],
       );
       const expiresAt = await this.insertKey(tx, agentId, key);
-      // 첫 API key 발급도 rotate와 같은 자격 증명 발급이다 — 감사 없이는 ACTIVE 에이전트가 언제 생겼는지 알 수 없다
+      // 첫 API key 발급도 rotate와 같은 자격 증명 발급이다 - 감사 없이는 ACTIVE 에이전트가 언제 생겼는지 알 수 없다
       await this.audit.record(ownerUserId, 'AGENT_VERIFIED', 'agent', agentId, tx);
       return expiresAt;
     }).catch((err: unknown) => {
-      // 그래도 이 키를 쥔 다른 행(ACTIVE 등)이 있으면 500이 아니라 409 — 트랜잭션은 이미 롤백됐다
+      // 그래도 이 키를 쥔 다른 행(ACTIVE 등)이 있으면 500이 아니라 409 - 트랜잭션은 이미 롤백됐다
       if (isUniqueViolation(err, 'uq_agent_public_key')) {
         throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
       }
@@ -281,7 +281,7 @@ export class AgentsService {
     return { agentId, status: 'ACTIVE', apiKey: key.raw, expiresAt: expires };
   }
 
-  /** API key 행 삽입 — 만료 90일 (decisions.md MVP 디폴트). verify와 rotate가 공유한다. */
+  /** API key 행 삽입 - 만료 90일 (decisions.md MVP 디폴트). verify와 rotate가 공유한다. */
   private async insertKey(tx: QueryRunner, agentId: string, key: { prefix: string; hash: string }) {
     const k = (await tx.query(
       `INSERT INTO agent_api_key (agent_id, key_prefix, key_hash, expires_at)
@@ -293,7 +293,7 @@ export class AgentsService {
   }
 
   /**
-   * API key 재발급 — ACTIVE 에이전트의 기존 ACTIVE 키를 모두 폐기하고 새 키 1개를 발급한다.
+   * API key 재발급 - ACTIVE 에이전트의 기존 ACTIVE 키를 모두 폐기하고 새 키 1개를 발급한다.
    * 에이전트 행을 잠근 채 한 트랜잭션에서 수행하므로 동시 rotate 두 번도 유효 키는 항상 1개다.
    * 새 키 원문은 이 응답에서만 노출된다.
    */
@@ -311,7 +311,7 @@ export class AgentsService {
   }
 
   /**
-   * 에이전트 폐기 — 에이전트 REVOKED + 모든 ACTIVE 키 REVOKED (Agent API 인증 즉시 거부).
+   * 에이전트 폐기 - 에이전트 REVOKED + 모든 ACTIVE 키 REVOKED (Agent API 인증 즉시 거부).
    * 이미 REVOKED면 아무것도 바꾸지 않고 같은 응답을 돌려준다 (멱등).
    */
   async revoke(ownerUserId: string, agentId: string) {
@@ -325,7 +325,7 @@ export class AgentsService {
     return { agentId, status: 'REVOKED' };
   }
 
-  /** 내 에이전트 행 잠금 — 남의 에이전트/삭제된 에이전트는 404 (존재 여부를 노출하지 않음) */
+  /** 내 에이전트 행 잠금 - 남의 에이전트/삭제된 에이전트는 404 (존재 여부를 노출하지 않음) */
   private async lockOwnedAgent(tx: QueryRunner, ownerUserId: string, agentId: string) {
     const r = (await tx.query(
       `SELECT status FROM agent
@@ -337,7 +337,7 @@ export class AgentsService {
     return r.rows[0];
   }
 
-  /** API key 생성 헬퍼 — nj_ 프리픽스 + 랜덤, DB엔 sha256 해시만 */
+  /** API key 생성 헬퍼 - nj_ 프리픽스 + 랜덤, DB엔 sha256 해시만 */
   protected generateApiKey() {
     const raw = `nj_${randomBytes(32).toString('base64url')}`;
     return {
@@ -348,8 +348,8 @@ export class AgentsService {
   }
 
   /**
-   * 내 에이전트 목록 — 에이전트당 정확히 1행. 키는 최신 ACTIVE 키 1개(없으면 최신 키)만 LATERAL로 붙인다.
-   * key_status: 'ACTIVE' | 'REVOKED' | 'EXPIRED' | null — EXPIRED는 expires_at <= now()로 계산한다.
+   * 내 에이전트 목록 - 에이전트당 정확히 1행. 키는 최신 ACTIVE 키 1개(없으면 최신 키)만 LATERAL로 붙인다.
+   * key_status: 'ACTIVE' | 'REVOKED' | 'EXPIRED' | null - EXPIRED는 expires_at <= now()로 계산한다.
    */
   async myAgents(ownerUserId: string) {
     const r = await this.db.query(

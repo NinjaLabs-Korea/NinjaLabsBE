@@ -89,7 +89,7 @@ describe('SubmissionReviewService decisions', () => {
     await expect(service.review('sub', 'START_REVIEW', undefined, 'admin')).resolves.toEqual({ id: 'sub', status: 'IN_REVIEW' });
   });
 
-  // reviewable statuses × decisions — REVISION_REQUESTED only accepts REJECT (closing an abandoned revision), finalized ones nothing
+  // reviewable statuses × decisions - REVISION_REQUESTED only accepts REJECT (closing an abandoned revision), finalized ones nothing
   const DECISIONS = ['START_REVIEW', 'REQUEST_REVISION', 'APPROVE', 'REJECT'];
   const matrix: Array<[string, string, boolean]> = [];
   for (const status of ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW']) for (const d of DECISIONS) matrix.push([status, d, !(status === 'IN_REVIEW' && d === 'START_REVIEW')]);

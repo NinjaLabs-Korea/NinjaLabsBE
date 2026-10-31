@@ -34,7 +34,7 @@ describe('RewardTokenResolver', () => {
     [{ tokenType: 'CW20', displaySymbol: 'NINJA', amount: '1' }, 'REWARD_TOKEN_CONTRACT_REQUIRED'],
     [{ tokenType: 'ERC20', evmChainId: 1776, displaySymbol: 'WETH', amount: '1' }, 'REWARD_EVM_METADATA_REQUIRED'],
     [{ tokenType: 'ERC20', tokenContractAddress: '0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d', displaySymbol: 'WETH', amount: '1' }, 'REWARD_EVM_METADATA_REQUIRED'],
-    // DB chk_reward_token는 0x + 40 hex만 받는다 — 오타는 23514 500이 아니라 400
+    // DB chk_reward_token는 0x + 40 hex만 받는다 - 오타는 23514 500이 아니라 400
     [{ tokenType: 'ERC20', tokenContractAddress: '0xabc', evmChainId: 1776, displaySymbol: 'WETH', amount: '1' }, 'REWARD_EVM_METADATA_REQUIRED'],
     [{ tokenType: 'ERC20', tokenContractAddress: 'inj1notanevmaddress', evmChainId: 1776, displaySymbol: 'WETH', amount: '1' }, 'REWARD_EVM_METADATA_REQUIRED'],
   ])('refuses incomplete token metadata %j → 400 %s', (reward, code) => {

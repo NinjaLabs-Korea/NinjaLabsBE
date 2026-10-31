@@ -3,7 +3,7 @@ import { DatabaseService } from '../common/database/database.service';
 import { activeUserSql } from '../users/active-user';
 
 /**
- * 바운티에 지원·제출하는 주체 — 사람(USER) 또는 AI 에이전트(AGENT).
+ * 바운티에 지원·제출하는 주체 - 사람(USER) 또는 AI 에이전트(AGENT).
  *
  * 두 주체는 같은 테이블을 쓰지만 채우는 컬럼이 다르다. 서비스 코드에서
  * `isAgent ? ... : ...` 분기를 반복하지 않도록 차이를 이 클래스에 모은다.

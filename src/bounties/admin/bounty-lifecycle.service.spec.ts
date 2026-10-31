@@ -13,7 +13,7 @@ const FUTURE = '2999-01-01T00:00:00.000Z';
 const PAST = '2000-01-01T00:00:00.000Z';
 const ZERO: Counts = { pending: 0, unsubmitted: 0, unresolved: 0, unfunded: 0, unpaid: 0, unawarded: 0 };
 
-/** One counts row per call — the blockers query is a single SELECT of six sub-counts */
+/** One counts row per call - the blockers query is a single SELECT of six sub-counts */
 function runnerWith(counts: Counts) {
   const query = jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [{ ...ZERO, ...counts }] })));
   return { query, runner: { query } as never };
@@ -101,9 +101,9 @@ describe('BountyLifecycleService.blockers', () => {
     // unresolved = submission-status.ts의 미결 집합을 $2로 바인딩 (탈퇴 시 철회 대상과 같은 집합)
     expect(sql).toContain('status = ANY($2::text[])) AS unresolved');
     expect(query.mock.calls[0][1]).toEqual(['b', ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
-    // 보상/payout 규칙은 rewards/payout-status.ts가 단일 출처 — 여기 문자열이 아니라 그 상수/헬퍼로 기대값을 만든다
+    // 보상/payout 규칙은 rewards/payout-status.ts가 단일 출처 - 여기 문자열이 아니라 그 상수/헬퍼로 기대값을 만든다
     expect(sql).toContain(`status NOT IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})) AS unfunded`);
-    // unpaid = 진행 중 payout만 (CANCELLED/FAILED/PAID는 아님 — 수동 취소한 payout이 COMPLETED를 영구히 막지 않게)
+    // unpaid = 진행 중 payout만 (CANCELLED/FAILED/PAID는 아님 - 수동 취소한 payout이 COMPLETED를 영구히 막지 않게)
     expect(sql).toContain("p.status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING')) AS unpaid");
     // unawarded = 응답의 payoutStatus가 PENDING/PARTIALLY_PAID인 승인 제출 (보상 소진·지급 취소는 막지 않는다)
     expect(sql).toContain(`s.status = 'APPROVED' AND ${owesUnpaidRewardSql('s', 'b')}) AS unawarded`);
@@ -112,7 +112,7 @@ describe('BountyLifecycleService.blockers', () => {
 
 /**
  * BountyAdminService.transition over the whole table: the bounty row is read under FOR UPDATE, then (for allowed pairs only) the
- * blockers query, then the status UPDATE with the first-entry stamp, then the audit row — all on the transaction client.
+ * blockers query, then the status UPDATE with the first-entry stamp, then the audit row - all on the transaction client.
  */
 describe('BountyAdminService.transition for every pair', () => {
   const ALL = ['DRAFT', 'FUNDING_PENDING', 'OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED', 'CANCELLED'];
@@ -192,7 +192,7 @@ describe('BountyAdminService.transition for every pair', () => {
     expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty_application'))).toBe(false);
   });
 
-  it.each([{ unpaid: 1 }, { unawarded: 1 }])('cancelling (after a reopen) is refused while an approved winner is still owed %j — 400 UNPAID_WINNERS sentence, row untouched', async (counts) => {
+  it.each([{ unpaid: 1 }, { unawarded: 1 }])('cancelling (after a reopen) is refused while an approved winner is still owed %j - 400 UNPAID_WINNERS sentence, row untouched', async (counts) => {
     const { service, query } = setup('OPEN', counts);
     await expect(service.transition('b', 'CANCELLED', 'admin')).rejects.toMatchObject({
       response: { message: ['Record completed payments for all approved winners and finish every pending payout.'] },

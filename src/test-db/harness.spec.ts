@@ -1,6 +1,6 @@
 import { testDatabaseUrl } from './harness';
 
-/** 유닛 스위트(`npm test`)에서 도는 하네스 가드 — CI 에서 TEST_DATABASE_URL 이 빠지면 skip 이 아니라 실패해야 한다 */
+/** 유닛 스위트(`npm test`)에서 도는 하네스 가드 - CI 에서 TEST_DATABASE_URL 이 빠지면 skip 이 아니라 실패해야 한다 */
 describe('test-db harness: TEST_DATABASE_URL gate', () => {
   it('returns the URL when set, regardless of CI', () => {
     expect(testDatabaseUrl({ TEST_DATABASE_URL: 'postgresql://x' })).toBe('postgresql://x');

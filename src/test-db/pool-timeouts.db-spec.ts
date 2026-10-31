@@ -7,7 +7,7 @@ import { describeDb } from './describe-db';
 import { createDb, unique } from './harness';
 
 /**
- * pool-timeouts.ts 의 타임아웃이 실 Postgres 에서 실제로 걸리는지 — statement_timeout(서버 취소 57014), 풀 고갈 시
+ * pool-timeouts.ts 의 타임아웃이 실 Postgres 에서 실제로 걸리는지 - statement_timeout(서버 취소 57014), 풀 고갈 시
  * connectionTimeoutMillis(→ 503 DATABASE_UNAVAILABLE), 그리고 그 상태에서 PgThrottlerStorage 가 fail-open 하는지.
  */
 describeDb('database pool timeouts (real Postgres)', () => {

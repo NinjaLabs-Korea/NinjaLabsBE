@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 
 /**
- * 오리진 허용 목록 — CORS_ORIGINS / AUTH_ALLOWED_REDIRECT_ORIGINS 공용 매처.
+ * 오리진 허용 목록 - CORS_ORIGINS / AUTH_ALLOWED_REDIRECT_ORIGINS 공용 매처.
  *
  * 항목은 콤마 구분이며 앞뒤 공백은 무시한다. 정확한 오리진 외에, 호스트 레이블 하나에 `*` 한 개를
  * 허용한다 (예: `https://ninjalabsfe-*-<team-slug>.vercel.app` → Vercel preview 배포). 규칙:
@@ -10,12 +10,12 @@ import { Logger } from '@nestjs/common';
  *   - 비교는 요청 오리진의 scheme/host/port만 보고 경로·쿼리는 무시한다
  *
  * 주의: vercel.app 같은 공용 호스팅 도메인(아무나 하위 호스트를 등록할 수 있는 접미사) 위의 와일드카드는 `*`의 위치와
- * 무관하게 안전하지 않다 — `https://ninjalabsfe-*-team.vercel.app`도 공격자가 `ninjalabsfe-evil-team`이라는 프로젝트를
+ * 무관하게 안전하지 않다 - `https://ninjalabsfe-*-team.vercel.app`도 공격자가 `ninjalabsfe-evil-team`이라는 프로젝트를
  * 만들면 통과한다 (returnTo로 로그인 코드 탈취). 그래서 등록 가능 도메인(registrable domain, 마지막 두 레이블)이
- * 공용 호스팅 접미사인 와일드카드 항목은 **전부 거부**한다 — 기동 시 error 로그를 남기고 목록에서 제외되므로 어떤
+ * 공용 호스팅 접미사인 와일드카드 항목은 **전부 거부**한다 - 기동 시 error 로그를 남기고 목록에서 제외되므로 어떤
  * 오리진과도 매칭되지 않는다 (CORS/returnTo 모두). 같은 이유로 `*`가 등록 가능 도메인 자리(마지막 두 레이블: `https://*.com`, `https://ninjalabs-*.com`)에
- * 있는 항목도 거부한다 — 그 자리는 아무나 등록할 수 있다. Vercel preview는 브랜치 고정 별칭을 **정확한 항목**으로 넣는다
- * (`https://ninjalabsfe-git-develop-<team>.vercel.app`) — 또는 커스텀 preview 도메인을 쓴다.
+ * 있는 항목도 거부한다 - 그 자리는 아무나 등록할 수 있다. Vercel preview는 브랜치 고정 별칭을 **정확한 항목**으로 넣는다
+ * (`https://ninjalabsfe-git-develop-<team>.vercel.app`) - 또는 커스텀 preview 도메인을 쓴다.
  */
 const ENTRY = /^([a-z][a-z0-9+.-]*):\/\/([^/?#:@]+)(?::(\d{1,5}))?(?:[/?#].*)?$/i;
 const LABEL = /^[a-z0-9-]*\*?[a-z0-9-]*$/;
@@ -23,7 +23,7 @@ const LABEL = /^[a-z0-9-]*\*?[a-z0-9-]*$/;
 type Pattern = { protocol: string; port: string; host: RegExp };
 
 
-/** 누구나 하위 호스트를 등록할 수 있는 공용 호스팅 접미사 — 이 도메인 위의 와일드카드 항목은 위치와 무관하게 거부 대상 */
+/** 누구나 하위 호스트를 등록할 수 있는 공용 호스팅 접미사 - 이 도메인 위의 와일드카드 항목은 위치와 무관하게 거부 대상 */
 export const SHARED_HOSTING_SUFFIXES: ReadonlySet<string> = new Set([
   'vercel.app', 'netlify.app', 'pages.dev', 'github.io', 'railway.app',
   'herokuapp.com', 'onrender.com', 'fly.dev', 'web.app', 'firebaseapp.com',
@@ -33,7 +33,7 @@ export const SHARED_HOSTING_SUFFIXES: ReadonlySet<string> = new Set([
 
 /**
  * 와일드카드 호스트의 등록 가능 도메인(마지막 두 레이블)이 공용 호스팅 접미사인가.
- * 대소문자 무시, 끝의 점(`vercel.app.`) 무시 — 포트는 호출 전에 이미 분리돼 있다.
+ * 대소문자 무시, 끝의 점(`vercel.app.`) 무시 - 포트는 호출 전에 이미 분리돼 있다.
  */
 export function isSharedHostingWildcard(host: string): boolean {
   const labels = host.toLowerCase().replace(/\.+$/, '').split('.');
@@ -52,7 +52,7 @@ function escapeRegExp(value: string): string {
 export class OriginAllowlist {
   private static readonly logger = new Logger(OriginAllowlist.name);
   private readonly exact = new Set<string>();
-  /** 정확한 항목의 호스트만 (allowsHostname용 — 스킴/포트 무시) */
+  /** 정확한 항목의 호스트만 (allowsHostname용 - 스킴/포트 무시) */
   private readonly exactHosts = new Set<string>();
   private readonly patterns: Pattern[] = [];
 
@@ -105,7 +105,7 @@ export class OriginAllowlist {
   }
 
   /**
-   * 호스트 이름만 비교 — 스킴·포트를 모르는 값(Cloudflare Turnstile siteverify의 `hostname`)용. 정확한 항목의 호스트이거나
+   * 호스트 이름만 비교 - 스킴·포트를 모르는 값(Cloudflare Turnstile siteverify의 `hostname`)용. 정확한 항목의 호스트이거나
    * 와일드카드 항목의 호스트 패턴에 맞으면 true. 대소문자·끝의 점 무시. 공용 호스팅 와일드카드는 생성 시 이미 빠져 있다.
    */
   allowsHostname(hostname: string | undefined | null): boolean {

@@ -38,7 +38,7 @@ describe('UsersService.nicknameAvailable', () => {
 });
 
 describe('UsersService.completeProfile / completeOnboarding', () => {
-  it('updates nickname/bio/step 4 for the active user, replaces the tag set, and answers {ok:true} — all in one transaction', async () => {
+  it('updates nickname/bio/step 4 for the active user, replaces the tag set, and answers {ok:true} - all in one transaction', async () => {
     const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: sql.includes('FOR UPDATE') ? [{ nickname: 'user_ab12', onboarding_step: 1 }] : [] }));
     const { database, db } = createMockDb({ txQuery });
     const service = new UsersService(database, new AuditService(database));

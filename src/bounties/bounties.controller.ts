@@ -14,14 +14,14 @@ class ListBountiesQueryDto extends PaginationQueryDto {
 export class BountiesController {
   constructor(private readonly bounties: BountiesService) {}
 
-  /** GET /bounties?page=&pageSize=&category=&status= — 바운티 목록 (공개) */
+  /** GET /bounties?page=&pageSize=&category=&status= - 바운티 목록 (공개) */
   @Throttle(PUBLIC_READ_IP_THROTTLE)
   @Get()
   list(@Query() query: ListBountiesQueryDto) {
     return this.bounties.list(query.page ?? 1, query.pageSize ?? 12, query.category, query.status);
   }
 
-  /** GET /bounties/:id — 바운티 상세 (공개) */
+  /** GET /bounties/:id - 바운티 상세 (공개) */
   @Throttle(PUBLIC_READ_IP_THROTTLE)
   @Get(':id')
   detail(@Param('id', ParseUUIDPipe) id: string) {

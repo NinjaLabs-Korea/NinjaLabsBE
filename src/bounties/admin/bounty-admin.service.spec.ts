@@ -13,7 +13,7 @@ describe('BountyAdminService update safeguards', () => {
 
   function setup(options: { exists?: boolean; approved?: number; status?: string; openFunds?: { open_rewards: number; open_payouts: number }; stored?: { submission_deadline: string; application_deadline: string | null } } = {}) {
     const stored = options.stored ?? { submission_deadline: future, application_deadline: null };
-    // The dynamic UPDATE builder is the statement most likely to drift ($n vs values) — every tx statement is checked for it.
+    // The dynamic UPDATE builder is the statement most likely to drift ($n vs values) - every tx statement is checked for it.
     const query = jest.fn(withParamsCheck(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FOR UPDATE')) return { rowCount: options.exists === false ? 0 : 1, rows: [{ id: bountyId, status: options.status ?? 'OPEN', ...stored }] };
       if (sql.includes('AS open_rewards')) return { rowCount: 1, rows: [options.openFunds ?? { open_rewards: 0, open_payouts: 0 }] };
@@ -21,7 +21,7 @@ describe('BountyAdminService update safeguards', () => {
       if (sql.startsWith('UPDATE bounty')) return { rowCount: 1, rows: [{ id: bountyId, status: 'OPEN' }] };
       return { rowCount: 1, rows: [] };
     }));
-    // db.query (autocommit) is a separate mock from the tx client — nothing in update() may run outside the transaction
+    // db.query (autocommit) is a separate mock from the tx client - nothing in update() may run outside the transaction
     const db = { query: jest.fn(), tx: jest.fn(async (callback: (tx: { query: typeof query }) => Promise<unknown>) => callback({ query })) };
     const service = new BountyAdminService(
       db as unknown as DatabaseService,
@@ -72,10 +72,10 @@ describe('BountyAdminService update safeguards', () => {
     const check = query.mock.calls[1][0] as string;
     expect(check).toContain("rw.status = 'REFUND_PENDING'");
     expect(check).toContain("rw.status IN ('FUNDED', 'PARTIALLY_PAID', 'PAID')");
-    // the whole deposit, not the allocation cap — over-deposit excess is still money in custody
+    // the whole deposit, not the allocation cap - over-deposit excess is still money in custody
     expect(check).toContain("COALESCE(rw.deposited_amount, 0) > (SELECT COALESCE(SUM(p.amount), 0) FROM payout p WHERE p.bounty_reward_id = rw.id AND p.status = 'PAID')");
     expect(check).not.toContain('LEAST(');
-    // open = not terminal (PAID/CANCELLED/FAILED) — payout-status.ts OPEN_PAYOUT_STATUSES
+    // open = not terminal (PAID/CANCELLED/FAILED) - payout-status.ts OPEN_PAYOUT_STATUSES
     expect(check).toContain("p.status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING')");
     expect(query.mock.calls[2][0]).toContain('UPDATE bounty SET deleted_at = now()');
     expect(query.mock.calls[3][0]).toContain('INSERT INTO audit_log');
@@ -85,7 +85,7 @@ describe('BountyAdminService update safeguards', () => {
   it.each([
     ['a reward still holding funds', { open_rewards: 1, open_payouts: 0 }],
     ['a non-terminal payout', { open_rewards: 0, open_payouts: 1 }],
-  ])('remove refuses with 409 BOUNTY_HAS_OPEN_FUNDS when there is %s — no UPDATE, no audit row', async (_label, openFunds) => {
+  ])('remove refuses with 409 BOUNTY_HAS_OPEN_FUNDS when there is %s - no UPDATE, no audit row', async (_label, openFunds) => {
     const { service, query } = setup({ openFunds });
     await expect(service.remove(bountyId, adminId)).rejects.toMatchObject({ status: 409, message: 'BOUNTY_HAS_OPEN_FUNDS' });
     expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty'))).toBe(false);

@@ -2,7 +2,7 @@ import { statusCheckValues } from '../test-support/migration-check';
 import { SubmissionStatusPolicy } from './submission-status';
 
 /**
- * 제출 상태 규칙표 — 이 스펙이 정책의 문서다. submission-status.ts를 바꾸면 아래 표도 의도에 맞게 같이 고친다.
+ * 제출 상태 규칙표 - 이 스펙이 정책의 문서다. submission-status.ts를 바꾸면 아래 표도 의도에 맞게 같이 고친다.
  * (서비스 단위 동작은 submissions/*.spec.ts, admin/*.spec.ts가 따로 검사한다.)
  */
 const ALL = ['SUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED', 'RESUBMITTED', 'APPROVED', 'REJECTED', 'WITHDRAWN'] as const;
@@ -34,7 +34,7 @@ describe('SubmissionStatusPolicy', () => {
   });
 
   describe('review table (status × decision): reviewable / comment required', () => {
-    // [status, decision, reviewable, commentRequired] — commentRequired는 reviewable일 때만 의미가 있다
+    // [status, decision, reviewable, commentRequired] - commentRequired는 reviewable일 때만 의미가 있다
     const Y = true;
     const N = false;
     const TABLE: Array<[string, string, boolean, boolean]> = [

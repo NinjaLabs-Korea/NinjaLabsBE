@@ -9,20 +9,20 @@ import { decryptGraceToken, encryptGraceToken, REFRESH_REUSE_GRACE } from './ref
 import { activeUserSql } from '../users/active-user';
 
 /**
- * 자체 세션(access JWT + refresh 토큰)의 단일 출처 — 발급, 회전(refresh), 재사용 감지 사슬 폐기, 로그아웃.
+ * 자체 세션(access JWT + refresh 토큰)의 단일 출처 - 발급, 회전(refresh), 재사용 감지 사슬 폐기, 로그아웃.
  * AuthService의 issueSession / refresh / revoke와 LoginCodes(로그인 코드 소비 후 발급)가 이 클래스를 쓴다.
  *
  * 여기를 고치는 경우:
  *   - access JWT에 넣는 클레임 → signAccessToken (검증 쪽 access-token.verifier.ts도 함께).
  *   - refresh 회전·30초 유예·재사용 감지 규칙 → refresh / revokeChain. 유예 사본 암호화와 창 길이는 refresh-grace.ts.
- *   - auth_session에 적는 컬럼 → saveSession (`$6` 이중 캐스트 주의 — 아래 주석). 수명(JWT_REFRESH_TTL) 해석은 refresh-ttl.ts.
+ *   - auth_session에 적는 컬럼 → saveSession (`$6` 이중 캐스트 주의 - 아래 주석). 수명(JWT_REFRESH_TTL) 해석은 refresh-ttl.ts.
  *   - 사슬 홉 상한 → MAX_REVOKE_CHAIN_HOPS.
  * 회전/로그인 시 "유저가 ACTIVE인가"는 각 SQL의 `activeUserSql('u')` 조건이다(users/active-user.ts).
  */
 
 /**
  * revokeChain 이 prev_refresh_token_hash 를 따라가는 최대 홉 수. 정상 사슬은 폐기 후 30일(MaintenanceService)이 지나면 잘려 나가므로
- * 15분 회전이라도 이보다 훨씬 짧다 — 넘으면 손상된/조작된 사슬(순환 등)로 보고 그 유저의 열린 세션을 전부 폐기한다 (안전 쪽으로).
+ * 15분 회전이라도 이보다 훨씬 짧다 - 넘으면 손상된/조작된 사슬(순환 등)로 보고 그 유저의 열린 세션을 전부 폐기한다 (안전 쪽으로).
  */
 export const MAX_REVOKE_CHAIN_HOPS = 32;
 
@@ -32,7 +32,7 @@ export function hashToken(token: string): string {
 }
 
 /**
- * 한 유저의 열린 세션을 전부 폐기 (유예 사본도 비운다) — 그 유저는 이후 refresh할 수 없다.
+ * 한 유저의 열린 세션을 전부 폐기 (유예 사본도 비운다) - 그 유저는 이후 refresh할 수 없다.
  * 호출자의 runner(트랜잭션) 안에서 실행한다: revokeChain의 홉 상한 초과 폴백, 회원 탈퇴(users/account-withdrawal.service.ts).
  */
 export async function revokeAllSessionsOfUser(runner: QueryRunner, userId: string): Promise<void> {
@@ -43,16 +43,16 @@ export async function revokeAllSessionsOfUser(runner: QueryRunner, userId: strin
   );
 }
 
-/** auth_session.ip_address(INET)에 넣어도 되는 값만 통과 — Node의 isIP는 존 ID(`fe80::1%eth0`)를 받지만 Postgres inet은 거부한다 */
+/** auth_session.ip_address(INET)에 넣어도 되는 값만 통과 - Node의 isIP는 존 ID(`fe80::1%eth0`)를 받지만 Postgres inet은 거부한다 */
 function inetOrNull(ip: string | undefined): string | null {
   return ip && isIP(ip) && !ip.includes('%') ? ip : null;
 }
 
 export class AuthSessions {
   /**
-   * @param refreshTtl normalizeRefreshTtl 결과(`'14 days'`) — auth_session.expires_at = now() + 이 interval
-   * @param graceSecret grace_refresh_token 암호화 키 재료 (refresh-grace.ts) — AuthService가 JWT_SECRET provider에서 받아 넘긴다
-   * @param logger AuthService의 로거 — 로그 컨텍스트가 `AuthService`로 유지된다
+   * @param refreshTtl normalizeRefreshTtl 결과(`'14 days'`) - auth_session.expires_at = now() + 이 interval
+   * @param graceSecret grace_refresh_token 암호화 키 재료 (refresh-grace.ts) - AuthService가 JWT_SECRET provider에서 받아 넘긴다
+   * @param logger AuthService의 로거 - 로그 컨텍스트가 `AuthService`로 유지된다
    */
   constructor(
     private readonly db: DatabaseService,
@@ -74,22 +74,22 @@ export class AuthSessions {
   }
 
   /**
-   * refresh token 재발급 — **회전(rotation) 방식**
+   * refresh token 재발급 - **회전(rotation) 방식**
    * 구 refresh token은 즉시 폐기하고 새 토큰을 발급한다.
    * 탈취된 토큰의 유효 기간을 "다음 갱신까지"로 최소화하고,
    * 이미 폐기된 토큰 재사용 시도(= 탈취 신호)는 거부되며 그 토큰에서 파생된 세션 사슬 전체를 폐기한다.
    *
    * 재사용 유예(30초): 멀티탭이 같은 토큰으로 동시에 호출하면 진 쪽은 401 대신 **이긴 쪽과 같은 후속 쌍**을 받는다
-   * (후속 세션 행의 grace_refresh_token을 복호화 — refresh-grace.ts). 다시 회전하지 않으므로 두 탭이 같은 토큰을 쥔다.
+   * (후속 세션 행의 grace_refresh_token을 복호화 - refresh-grace.ts). 다시 회전하지 않으므로 두 탭이 같은 토큰을 쥔다.
    */
   async refresh(refreshToken: string, ip?: string, userAgent?: string) {
     const hash = hashToken(refreshToken);
-    // 재사용 감지의 사슬 폐기는 **커밋돼야** 한다 — 트랜잭션 콜백 안에서 401을 던지면 db.tx가 롤백해 폐기가 사라진다
+    // 재사용 감지의 사슬 폐기는 **커밋돼야** 한다 - 트랜잭션 콜백 안에서 401을 던지면 db.tx가 롤백해 폐기가 사라진다
     // (test-db의 auth.db-spec이 실 DB로 확인). 그래서 콜백은 결과만 돌려주고 예외는 커밋 뒤에 던진다.
     const outcome = await this.db.tx(async (tx): Promise<{ tokens: { accessToken: string; refreshToken: string } } | { reuse: true }> => {
       // 유효한 기존 세션을 조건부 UPDATE로 선점한다. 같은 토큰의 동시 요청 중
       // 첫 요청만 row를 반환하고, 나머지는 커밋 이후 조건 재평가에서 거부된다.
-      // 정지(SUSPENDED/WITHDRAWN)·삭제된 유저의 세션은 회전되지 않는다 — 구 토큰은 아래 사슬 폐기로 소비되므로 재시도도 불가.
+      // 정지(SUSPENDED/WITHDRAWN)·삭제된 유저의 세션은 회전되지 않는다 - 구 토큰은 아래 사슬 폐기로 소비되므로 재시도도 불가.
       // 이 행이 품고 있던 유예 사본(grace_refresh_token)은 회전되는 순간 비운다.
       const consumed = await tx.query<{ user_id: string; is_admin: boolean }>(
         `UPDATE auth_session AS s
@@ -148,11 +148,11 @@ export class AuthSessions {
    *
    * 재귀 CTE 한 문장으로 하지 않는 이유: READ COMMITTED에서 문장 하나는 시작 시점 스냅샷만 본다. 정당한 소유자가 바로 그 순간
    * 후속 토큰(T2)을 회전 중이면(S2를 조건부 UPDATE로 잠근 채 S3를 INSERT, 아직 커밋 전) CTE는 S3를 보지 못하고, S2는 잠금 대기 뒤
-   * 재평가에서 이미 폐기돼 건너뛴다 — 그 회전이 커밋되면 S3가 살아남는다. 그래서 사슬을 한 홉씩 **FOR UPDATE로 잠그며** 따라간다:
+   * 재평가에서 이미 폐기돼 건너뛴다 - 그 회전이 커밋되면 S3가 살아남는다. 그래서 사슬을 한 홉씩 **FOR UPDATE로 잠그며** 따라간다:
    * 회전 중인 행은 그 트랜잭션이 끝날 때까지 기다리고, 다음 홉은 새 스냅샷이라 커밋된 S3를 본다. 새 홉이 없을 때까지 반복한 뒤
    * 모은 행을 한 번에 폐기한다 (test-db auth.db-spec이 이 레이스를 실 DB로 재현).
    *
-   * 홉 수는 MAX_REVOKE_CHAIN_HOPS 로 묶는다 — 그보다 긴 사슬은 정상 회전으로는 생기지 않으므로(손상·조작된 데이터) 걷기를 멈추고
+   * 홉 수는 MAX_REVOKE_CHAIN_HOPS 로 묶는다 - 그보다 긴 사슬은 정상 회전으로는 생기지 않으므로(손상·조작된 데이터) 걷기를 멈추고
    * 그 유저의 폐기되지 않은 세션을 **전부** 폐기한 뒤 경고를 남긴다. 사슬을 따라가다 끝내지 못하는 것보다 넓게 폐기하는 쪽이 안전하다.
    */
   async revokeChain(runner: QueryRunner, hash: string) {
@@ -188,8 +188,8 @@ export class AuthSessions {
   }
 
   /**
-   * access JWT 발급 — 클레임 모양의 단일 출처 (검증 규칙은 access-token.verifier.ts, 두 곳을 함께 고친다).
-   * typ: 'access' — 같은 JWT_SECRET으로 서명되는 OAuth state(p: 'gstate')가 Bearer로 쓰이지 않도록 용도를 바인딩한다
+   * access JWT 발급 - 클레임 모양의 단일 출처 (검증 규칙은 access-token.verifier.ts, 두 곳을 함께 고친다).
+   * typ: 'access' - 같은 JWT_SECRET으로 서명되는 OAuth state(p: 'gstate')가 Bearer로 쓰이지 않도록 용도를 바인딩한다
    */
   private signAccessToken(userId: string, isAdmin: boolean): Promise<string> {
     return this.jwt.signAsync({ sub: userId, adm: isAdmin, typ: 'access' }, JWT_SIGN_OPTIONS);
@@ -203,12 +203,12 @@ export class AuthSessions {
   }
 
   /**
-   * refresh 세션 저장 — 원문 토큰은 저장하지 않고 해시만, 수명은 JWT_REFRESH_TTL.
+   * refresh 세션 저장 - 원문 토큰은 저장하지 않고 해시만, 수명은 JWT_REFRESH_TTL.
    * ip_address는 INET 컬럼이라 IP 리터럴이 아닌 값(포트가 붙은 `1.2.3.4:5678`, 존 ID가 붙은 IPv6, 프록시가 넘긴 쓰레기)은 Postgres가
-   * 22P02로 거부해 그 클라이언트의 모든 로그인·refresh가 500이 된다 — 기록용 값이라 IP가 아니면 null로 둔다.
+   * 22P02로 거부해 그 클라이언트의 모든 로그인·refresh가 500이 된다 - 기록용 값이라 IP가 아니면 null로 둔다.
    * 회전으로 만들어진 세션은 선행 토큰 해시(prev_refresh_token_hash, 재사용 감지 사슬)와
    * 30초 유예용 암호화 사본(grace_refresh_token)을 함께 적는다. 사본은 이 행의 id를 AAD로 묶으므로 id를 앱에서 먼저 만든다 ($8).
-   * `$6`은 두 번 쓰이므로 두 자리 모두 같은 캐스트(::varchar)여야 한다 — 한쪽만 캐스트하면 Postgres가
+   * `$6`은 두 번 쓰이므로 두 자리 모두 같은 캐스트(::varchar)여야 한다 - 한쪽만 캐스트하면 Postgres가
    * 42P08(inconsistent types deduced for parameter)로 거부해 모든 세션 발급이 500이 된다 (test-db가 실제 DB로 검증).
    */
   private async saveSession(
@@ -234,7 +234,7 @@ export class AuthSessions {
   }
 
   /**
-   * 세션 폐기 (로그아웃) — 유예 사본도 비운다. 제시된 토큰이 방금(30초 유예 안에) 회전됐다면 그 후속 세션도 함께 폐기한다:
+   * 세션 폐기 (로그아웃) - 유예 사본도 비운다. 제시된 토큰이 방금(30초 유예 안에) 회전됐다면 그 후속 세션도 함께 폐기한다:
    * 로그아웃과 다른 탭의 refresh가 겹치면 로그아웃 요청은 이미 회전된 구 토큰을 들고 오는데, 구 세션만 닫으면 후속 세션이 살아남아
    * 로그아웃했는데도 로그인이 유지된다.
    */

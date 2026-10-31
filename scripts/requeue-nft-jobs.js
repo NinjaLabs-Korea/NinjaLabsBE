@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * FAILED nft_job 수동 재시도 — 워커(nft-job.worker.ts)가 5회 시도 끝에 FAILED로 고정한 잡을 PENDING으로 되돌린다.
+ * FAILED nft_job 수동 재시도 - 워커(nft-job.worker.ts)가 5회 시도 끝에 FAILED로 고정한 잡을 PENDING으로 되돌린다.
  *
  *   node scripts/requeue-nft-jobs.js <job-id> [<job-id> ...] [--dry-run] [--yes]
  *   node scripts/requeue-nft-jobs.js --all [--dry-run] [--yes]
@@ -10,13 +10,13 @@
  *
  * 한 트랜잭션에서:
  *   - nft_job: status FAILED → PENDING, retry_count 0(새로 5회), scheduled_at now(), started_at/processed_at NULL. last_error는 남긴다
- *     (다음 시도가 덮어쓰고 성공하면 비운다 — 무엇 때문에 실패했는지 재시도 직전까지 보이게).
+ *     (다음 시도가 덮어쓰고 성공하면 비운다 - 무엇 때문에 실패했는지 재시도 직전까지 보이게).
  *   - nft: 그 잡의 nft가 FAILED면 token_id가 있으면(민팅은 끝났고 attach가 실패) MINTED, 없으면 PENDING으로 되돌린다
- *     — 워커의 ATTACH 분기는 MINTED/ATTACHING만, MINT 분기는 MINTED/ATTACHED가 아니면 민팅하므로 두 경우 모두 다시 돈다.
+ *     - 워커의 ATTACH 분기는 MINTED/ATTACHING만, MINT 분기는 MINTED/ATTACHED가 아니면 민팅하므로 두 경우 모두 다시 돈다.
  *   - audit_log: 잡마다 NFT_JOB_REQUEUED (actor NULL, entity_type 'nft_job').
  * FAILED가 아닌 잡 id는 건너뛰고 이유를 출력한다. 워커가 다음 1분 폴링에서 집는다.
- * 원인(컨트랙트/가스/니모닉/RPC)을 고치기 전에 돌리면 같은 이유로 다시 5회 실패한다 — docs/runbook.md "NFT 민팅 정체".
- * 접속: DATABASE_URL (+ DATABASE_CA_CERT / PGSSLMODE) — scripts/migrate.js와 같은 규칙 (scripts/ops-cli.js).
+ * 원인(컨트랙트/가스/니모닉/RPC)을 고치기 전에 돌리면 같은 이유로 다시 5회 실패한다 - docs/runbook.md "NFT 민팅 정체".
+ * 접속: DATABASE_URL (+ DATABASE_CA_CERT / PGSSLMODE) - scripts/migrate.js와 같은 규칙 (scripts/ops-cli.js).
  */
 const { parseArgs, promptYes, runCli, UUID_RE } = require('./ops-cli');
 
@@ -75,7 +75,7 @@ async function requeueJobs(pool, ids) {
 }
 
 /**
- * CLI 본체 — 테스트가 pool/prompt/log를 주입해 그대로 돌린다. 종료 코드를 돌려준다.
+ * CLI 본체 - 테스트가 pool/prompt/log를 주입해 그대로 돌린다. 종료 코드를 돌려준다.
  * @param {string[]} argv
  * @param {{ pool: import('pg').Pool, prompt?: (q: string) => Promise<boolean>, log?: (line: string) => void }} deps
  */

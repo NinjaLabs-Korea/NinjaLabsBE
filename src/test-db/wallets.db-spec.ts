@@ -6,7 +6,7 @@ import { describeDb } from './describe-db';
 import { createDb, createUser, testConfig } from './harness';
 
 // @injectivelabs/sdk-ts is ESM-only and cannot be loaded by jest; only its address helpers are used on the EVM path.
-// Signatures are REAL EIP-191 signatures from an ethers wallet — the bech32 conversion is the only fake.
+// Signatures are REAL EIP-191 signatures from an ethers wallet - the bech32 conversion is the only fake.
 jest.mock('@injectivelabs/sdk-ts', () => ({
   getInjectiveAddress: (evm: string) => `inj1${evm.slice(2).toLowerCase()}`,
   getEthereumAddress: (inj: string) => inj,

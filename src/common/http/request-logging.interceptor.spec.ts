@@ -50,7 +50,7 @@ describe('RequestLoggingInterceptor', () => {
   it('reads the status on the response finish event, so a status written after the handler (302 redirect) is logged', async () => {
     const res = response(200);
     await lastValueFrom(new RequestLoggingInterceptor().intercept(context('/auth/google', res), handler(undefined)));
-    expect(log).not.toHaveBeenCalled(); // nothing sent yet — do not guess the status
+    expect(log).not.toHaveBeenCalled(); // nothing sent yet - do not guess the status
     finish(res, 302);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/^GET \/auth\/google 302 \d+ms$/));
   });
@@ -121,7 +121,7 @@ describe('RequestLoggingInterceptor through a real Nest HTTP app', () => {
   });
 });
 
-describe('RequestLoggingInterceptor — status of thrown errors, non-HTTP contexts and hostile paths', () => {
+describe('RequestLoggingInterceptor - status of thrown errors, non-HTTP contexts and hostile paths', () => {
   function context(path: string, method = 'GET') {
     const res = Object.assign(new EventEmitter(), { statusCode: 200, writableEnded: false });
     return {
@@ -160,7 +160,7 @@ describe('RequestLoggingInterceptor — status of thrown errors, non-HTTP contex
     expect(log).not.toHaveBeenCalled();
   });
 
-  it('only skips exactly /health — /healthz and /health/x are logged', async () => {
+  it('only skips exactly /health - /healthz and /health/x are logged', async () => {
     for (const path of ['/healthz', '/health/x']) await failWith(new Error('x'), path);
     expect(log.mock.calls.map(([line]) => (line as string).split(' ')[1])).toEqual(['/healthz', '/health/x']);
   });

@@ -27,7 +27,7 @@ describe('GET /admin/audit-logs query validation', () => {
 
 describe('AuditService.list', () => {
   function setup(rows: unknown[] = [], total = 0) {
-    // list() assembles WHERE / LIMIT / OFFSET placeholders dynamically — every statement is checked for $n/params drift
+    // list() assembles WHERE / LIMIT / OFFSET placeholders dynamically - every statement is checked for $n/params drift
     const query = jest.fn(async (sql: string, _params?: unknown[]) =>
       sql.includes('count(*)') ? { rowCount: 1, rows: [{ total }] } : { rowCount: rows.length, rows });
     return { query, service: new AuditService(createMockDb({ query }).database) };

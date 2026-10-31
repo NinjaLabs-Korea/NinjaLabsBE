@@ -51,7 +51,7 @@ describe('BountiesService.list (public)', () => {
 });
 
 describe('BountiesService.detail (public)', () => {
-  it('404 BOUNTY_NOT_FOUND when the bounty is unknown, deleted or never opened — the same predicate as the list', async () => {
+  it('404 BOUNTY_NOT_FOUND when the bounty is unknown, deleted or never opened - the same predicate as the list', async () => {
     const { service, query } = setup(() => ({ rowCount: 0, rows: [] }));
     const error = await service.detail('b').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NotFoundException);

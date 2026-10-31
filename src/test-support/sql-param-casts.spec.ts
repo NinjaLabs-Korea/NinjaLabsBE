@@ -3,13 +3,13 @@ import { join, relative } from 'path';
 import { listSourceFiles } from './source-files';
 
 /**
- * 정적 가드 — 같은 SQL 문장 안에서 같은 `$n`이 서로 다른 타입으로 추론되게 쓰였는지 검사한다 (README "코드 배치 규칙").
+ * 정적 가드 - 같은 SQL 문장 안에서 같은 `$n`이 서로 다른 타입으로 추론되게 쓰였는지 검사한다 (README "코드 배치 규칙").
  *
  * node-pg는 파라미터 타입을 보내지 않으므로 Postgres가 문맥에서 추론한다. 한 문장에서 같은 `$n`이
  *   (a) 한 번은 `$n::type`, 한 번은 bare로,
  *   (b) 서로 다른 캐스트로,
  *   (c) bare인 채로 컬럼 대입/비교(`status = $n`, varchar)와 문자열 리터럴 비교(`$n = 'X'` / `CASE WHEN $n`, text)에 함께
- * 쓰이면 `42P08 inconsistent types deduced for parameter`로 거부된다 — mock DB 유닛 테스트는 이를 절대 잡지 못한다
+ * 쓰이면 `42P08 inconsistent types deduced for parameter`로 거부된다 - mock DB 유닛 테스트는 이를 절대 잡지 못한다
  * (nft-job.worker.ts의 실패 경로가 그렇게 운영에서 터졌다). 해결은 모든 자리를 같은 캐스트로 통일하는 것 (`$2::varchar` …).
  *
  * 의도적으로 다르게 써야 하면 문장 안에 `-- sql-params-ok: <이유>`를 넣어 건너뛴다 (이유 없는 opt-out은 실패).
@@ -18,7 +18,7 @@ import { listSourceFiles } from './source-files';
 const SRC_ROOT = join(__dirname, '..');
 const SQL_KEYWORD = /\b(SELECT|INSERT|UPDATE|DELETE|WITH|VALUES|MERGE)\b/i;
 const OPT_OUT = /--\s*sql-params-ok\b[:\s-]*([^\n]*)/;
-/** `$n` 또는 `$n::type` — `::`가 바로 붙은 캐스트만 그 자리의 캐스트로 본다 */
+/** `$n` 또는 `$n::type` - `::`가 바로 붙은 캐스트만 그 자리의 캐스트로 본다 */
 const PARAM = /\$(\d+)(?:::(\w+(?:\[\])?))?/g;
 /** `$n = <여기>`에서 컬럼이 아닌 것들 */
 const NOT_A_COLUMN = new Set(['ANY', 'ALL', 'SOME', 'NULL', 'TRUE', 'FALSE', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'AND', 'OR', 'NOT', 'IS', 'IN', 'INTERVAL', 'NOW']);
@@ -27,7 +27,7 @@ export type Finding = { param: number; reason: string };
 
 /**
  * 소스에서 문자열/템플릿 리터럴을 꺼낸다 (주석은 건너뛴다). 템플릿의 `${…}`는 중첩 깊이를 세어 넘기고,
- * 그 안의 리터럴도 재귀적으로 꺼낸다. 정규식 리터럴은 따로 인식하지 않는다 — 따옴표류 문자열은 줄을 넘지 못하므로
+ * 그 안의 리터럴도 재귀적으로 꺼낸다. 정규식 리터럴은 따로 인식하지 않는다 - 따옴표류 문자열은 줄을 넘지 못하므로
  * 정규식 안의 따옴표가 섞여도 피해는 그 줄로 끝난다.
  */
 export function extractLiterals(source: string): Array<{ text: string; line: number }> {
@@ -52,7 +52,7 @@ export function extractLiterals(source: string): Array<{ text: string; line: num
         out.push({ text: source.slice(start + 1, j), line: lineAt(start) });
         i = j + 1;
       } else {
-        i = start + 1; // 닫히지 않음(정규식 등) — 문자열이 아니었던 것으로 본다
+        i = start + 1; // 닫히지 않음(정규식 등) - 문자열이 아니었던 것으로 본다
       }
     } else if (c === '`') {
       const start = i;
@@ -78,7 +78,7 @@ export function extractLiterals(source: string): Array<{ text: string; line: num
   return out;
 }
 
-/** `{`의 짝 `}` 인덱스 — 사이의 문자열/템플릿/주석은 건너뛴다 */
+/** `{`의 짝 `}` 인덱스 - 사이의 문자열/템플릿/주석은 건너뛴다 */
 function matchBrace(source: string, open: number): number {
   let depth = 0;
   let i = open;
@@ -119,7 +119,7 @@ function isColumn(identifier: string | null): boolean {
   return identifier !== null && !NOT_A_COLUMN.has(identifier.toUpperCase());
 }
 
-/** 문장 하나를 검사한다 — SQL로 보이지 않거나 `$n`이 없으면 빈 배열 */
+/** 문장 하나를 검사한다 - SQL로 보이지 않거나 `$n`이 없으면 빈 배열 */
 export function analyzeStatement(sql: string): Finding[] {
   if (!/\$\d/.test(sql) || !SQL_KEYWORD.test(sql)) return [];
   const optOut = sql.match(OPT_OUT);
@@ -145,7 +145,7 @@ export function analyzeStatement(sql: string): Finding[] {
     if (casts.length > 1) findings.push({ param, reason: `used with different casts (${casts.map((c) => `::${c}`).join(', ')})` });
     else if (casts.length === 1 && entry.bare > 0) findings.push({ param, reason: `used both as $${param}::${casts[0]} and bare` });
     else if (casts.length === 0 && entry.column && entry.literal) {
-      findings.push({ param, reason: `bare in both a column assignment/comparison and a string-literal comparison (deduces varchar vs text) — cast every use, e.g. $${param}::varchar` });
+      findings.push({ param, reason: `bare in both a column assignment/comparison and a string-literal comparison (deduces varchar vs text) - cast every use, e.g. $${param}::varchar` });
     }
   }
   return findings;

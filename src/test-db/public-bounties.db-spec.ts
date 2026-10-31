@@ -7,7 +7,7 @@ import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';
 import { createDb, createUser, testConfig, unique } from './harness';
 
-/** Public bounty reads on a real database — the JSON aggregation a mock DB cannot check. */
+/** Public bounty reads on a real database - the JSON aggregation a mock DB cannot check. */
 describeDb('public bounty list and detail on a real database', () => {
   let db: DatabaseService;
   let adminId: string;

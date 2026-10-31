@@ -73,7 +73,7 @@ describe('WalletsService address normalization (challenge + verify share it)', (
     expect(db.tx).not.toHaveBeenCalled();
   });
 
-  it('trims and canonicalizes: lowercase/whitespace 0x → EIP-55 checksum; inj1 → re-encoded inj1 — in the bound params and the signed message', async () => {
+  it('trims and canonicalizes: lowercase/whitespace 0x → EIP-55 checksum; inj1 → re-encoded inj1 - in the bound params and the signed message', async () => {
     const { service, txQuery } = setup();
     const a = await service.createChallenge(userId, `  ${evm.address.toLowerCase()}\n`);
     expect(a.message).toContain(`地址: ${evm.address}`);
@@ -109,7 +109,7 @@ function flipChecksum(address: string): string {
   return `${address.slice(0, index)}${flipped}${address.slice(index + 1)}`;
 }
 
-describe('WalletsService.verifySignature — ADR-36 (Keplr/Leap, inj1…)', () => {
+describe('WalletsService.verifySignature - ADR-36 (Keplr/Leap, inj1…)', () => {
   const evm = Wallet.createRandom();
   const inj = getInjectiveAddress(evm.address);
   const pubKey = 'A'.repeat(44);
@@ -151,7 +151,7 @@ describe('WalletsService.verifySignature — ADR-36 (Keplr/Leap, inj1…)', () =
   });
 });
 
-describe('WalletsService.verifySignature — EIP-191 (0x…)', () => {
+describe('WalletsService.verifySignature - EIP-191 (0x…)', () => {
   it('the challenge is keyed by the canonical 0x address: issued for the lowercase form, verified with the checksummed form', async () => {
     const signer = Wallet.createRandom();
     const { service, wallets } = setup();
@@ -203,7 +203,7 @@ describe('WalletsService.verifySignature - the owner\'s own agent wallet', () =>
   });
 });
 
-describe('WalletsService.verifySignature — concurrent withdrawal', () => {
+describe('WalletsService.verifySignature - concurrent withdrawal', () => {
   it('a user withdrawn between the challenge and the verify gets 404 USER_NOT_FOUND and no mint job (the wallet INSERT is rolled back with the tx)', async () => {
     const signer = Wallet.createRandom();
     const { service, txQuery, nfts } = setup();
@@ -262,7 +262,7 @@ describe('WalletsController', () => {
     expect(lines[0]).toContain('"signatureType":"EIP191"');
     expect(lines.find((line) => line.includes('inj1qq') && line.includes('verify.requested'))).toContain('"signatureType":"ADR36"');
 
-    // 서비스는 `0X…`도 EVM으로 보고 EIP-191로 검증한다 — 로그 라벨이 같은 판정(isEvmAddress)을 써야 한다
+    // 서비스는 `0X…`도 EVM으로 보고 EIP-191로 검증한다 - 로그 라벨이 같은 판정(isEvmAddress)을 써야 한다
     log.mockClear();
     await controller.verify(req, { address: '  0X1234567890abcdef1234567890abcdef12345678', signature: 's' });
     expect(String(log.mock.calls[0][0])).toContain('"signatureType":"EIP191"');

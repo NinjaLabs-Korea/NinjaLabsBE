@@ -6,7 +6,7 @@ import { SubmissionDecision, SubmissionStatusPolicy } from '../submission-status
 import { recordReviews } from './system-review';
 import { activeUserSql } from '../../users/active-user';
 
-/** 운영자의 제출물 심사 — 심사 시작/수정 요청/승인/반려와 리비전별 심사 기록 */
+/** 운영자의 제출물 심사 - 심사 시작/수정 요청/승인/반려와 리비전별 심사 기록 */
 @Injectable()
 export class SubmissionReviewService {
   constructor(

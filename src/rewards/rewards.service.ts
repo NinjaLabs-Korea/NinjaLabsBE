@@ -46,18 +46,18 @@ export class RewardsService {
   /**
    * 운영자: 선입금 확인 처리 → 보상 FUNDED, 바운티 OPEN 전환은 admin 쪽에서.
    * tx 해시는 32바이트 hex만 받아 `0x`+소문자로 정규화한다 (400 INVALID_TX_HASH). 같은 해시를 두 보상에 쓰면
-   * uq_bounty_reward_deposit_tx(0014)가 막고 409 TX_HASH_ALREADY_USED — 한 입금을 두 번 인정하지 않는다.
+   * uq_bounty_reward_deposit_tx(0014)가 막고 409 TX_HASH_ALREADY_USED - 한 입금을 두 번 인정하지 않는다.
    * 이미 payout 송금으로 기록된 해시도 409 TX_HASH_ALREADY_USED (반대 방향 tx를 입금으로 인정하지 않는다).
    */
   async confirmDeposit(rewardId: string, txHash: string, depositedAmount: string, adminId: string) {
     this.validateAmount(depositedAmount);
     const hash = normalizeTxHash(txHash);
     return this.rejectReusedTxHash(() => this.db.tx(async (tx) => {
-      // 같은 해시의 markPaid와 직렬화 (같은 advisory lock 키) — 입금 tx와 송금 tx는 방향이 반대라 같은 해시일 수 없다
+      // 같은 해시의 markPaid와 직렬화 (같은 advisory lock 키) - 입금 tx와 송금 tx는 방향이 반대라 같은 해시일 수 없다
       await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [hash]);
       const asPayout = await tx.query(`SELECT 1 FROM payout WHERE payout_tx_hash = $1 LIMIT 1`, [hash]);
       if (asPayout.rowCount || await this.isRecordedRefund(tx, hash)) throw new ConflictException('TX_HASH_ALREADY_USED');
-      // 바운티 행 잠금 — 삭제(BountyAdminService.remove의 BOUNTY_HAS_OPEN_FUNDS 검사)와 직렬화하고, 삭제된 바운티의 입금은 받지 않는다
+      // 바운티 행 잠금 - 삭제(BountyAdminService.remove의 BOUNTY_HAS_OPEN_FUNDS 검사)와 직렬화하고, 삭제된 바운티의 입금은 받지 않는다
       const parent = await tx.query(`SELECT b.id FROM bounty b JOIN bounty_reward rw ON rw.bounty_id = b.id
         WHERE rw.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [rewardId]);
       if (!parent.rowCount) throw new NotFoundException('REWARD_NOT_FOUND_OR_NOT_PENDING');
@@ -69,7 +69,7 @@ export class RewardsService {
         [rewardId, hash, depositedAmount],
       );
       if (!r.rowCount) {
-        // 입금 대기 보상인데 금액이 모자란 경우는 "없거나 입금 대기가 아니다"가 아니라 금액 문제로 알려 준다 — 운영자가 금액을 고쳐 다시 보내면 된다
+        // 입금 대기 보상인데 금액이 모자란 경우는 "없거나 입금 대기가 아니다"가 아니라 금액 문제로 알려 준다 - 운영자가 금액을 고쳐 다시 보내면 된다
         const short = await tx.query(
           `SELECT 1 FROM bounty_reward WHERE id = $1 AND status = 'DEPOSIT_PENDING' AND amount > $2::numeric`,
           [rewardId, depositedAmount],
@@ -84,8 +84,8 @@ export class RewardsService {
 
   /**
    * 운영자: 승인된 제출물에 대한 지급 요청 생성 (멱등).
-   * 배정 상한(2026-10-24 결정): 취소 아닌 payout 합계 + amount ≤ LEAST(게시 금액 amount, 입금액 deposited_amount) — 초과 입금은 상한을 올리지 않는다.
-   * 보상이 이미 PAID여도 여유분(그 상한 − 취소 아닌 payout 합계)이 남아 있으면 받는다 — 첫 지급 뒤 운영자가 maxWinners를 올려
+   * 배정 상한(2026-10-24 결정): 취소 아닌 payout 합계 + amount ≤ LEAST(게시 금액 amount, 입금액 deposited_amount) - 초과 입금은 상한을 올리지 않는다.
+   * 보상이 이미 PAID여도 여유분(그 상한 − 취소 아닌 payout 합계)이 남아 있으면 받는다 - 첫 지급 뒤 운영자가 maxWinners를 올려
    * 수상자를 추가한 경우. 그때는 삽입 후 상태를 재계산해 PARTIALLY_PAID로 되돌린다 (advanceRewardStatus). 여유분이 없으면 400 PAYOUT_EXCEEDS_AVAILABLE_REWARD.
    */
   async requestPayout(rewardId: string, submissionId: string, amount: string, adminId: string) {
@@ -103,7 +103,7 @@ export class RewardsService {
       if (!reward.rowCount || !(PAYABLE_REWARD_STATUSES as readonly string[]).includes(reward.rows[0].status)) {
         throw new BadRequestException('REWARD_NOT_FUNDED');
       }
-      // 수령자 유저 행을 FOR SHARE로 잠근다 — 회원 탈퇴(AccountWithdrawalService)는 같은 행을 FOR UPDATE로 먼저 잠그고 열린 payout을
+      // 수령자 유저 행을 FOR SHARE로 잠근다 - 회원 탈퇴(AccountWithdrawalService)는 같은 행을 FOR UPDATE로 먼저 잠그고 열린 payout을
       // 검사하므로, 둘이 겹치면 한쪽이 기다린다: 탈퇴가 먼저면 이 조회가 재평가돼 탈퇴 유저(deleted_at) → 404, 이쪽이 먼저면 탈퇴가 이 payout을 보고 409.
       const wallet = await tx.query<{ wallet_id: string }>(
         `SELECT w.id AS wallet_id
@@ -135,7 +135,7 @@ export class RewardsService {
         [rewardId, submissionId, wallet.rows[0].wallet_id, amount,
          `submission:${submissionId}:reward:${rewardId}`, adminId],
       );
-      // 새 payout이 아직 지급 전이므로 PAID였던 보상은 PARTIALLY_PAID로 돌아간다 (FUNDED는 그대로 — 지급된 것이 없다)
+      // 새 payout이 아직 지급 전이므로 PAID였던 보상은 PARTIALLY_PAID로 돌아간다 (FUNDED는 그대로 - 지급된 것이 없다)
       await this.advanceRewardStatus(tx, rewardId);
       await this.audit.record(adminId, 'PAYOUT_REQUESTED', 'payout', r.rows[0].id, tx);
       return r.rows[0];
@@ -143,7 +143,7 @@ export class RewardsService {
   }
 
   /**
-   * 운영자: 멀티시그 승인 완료 표시 — 상태 전이와 감사 로그를 같은 트랜잭션에.
+   * 운영자: 멀티시그 승인 완료 표시 - 상태 전이와 감사 로그를 같은 트랜잭션에.
    * 2인 규칙: 요청한 운영자(requested_by)와 다른 운영자만 승인할 수 있다 → 같으면 403 PAYOUT_SELF_APPROVAL
    * (PAYOUT_ALLOW_SELF_APPROVAL=true면 허용 + warn + 감사 PAYOUT_SELF_APPROVED). rewards/payout-approval.ts
    */
@@ -173,9 +173,9 @@ export class RewardsService {
   }
 
   /**
-   * 운영자: 송금 완료 기록 (tx hash — confirmDeposit과 같은 정규화).
+   * 운영자: 송금 완료 기록 (tx hash - confirmDeposit과 같은 정규화).
    * 멀티시그 tx 하나가 여러 수상자에게 한 번에 보낼 수 있으므로 **같은 바운티 안에서는** 같은 해시를 여러 payout에 기록할 수 있다(info 로그).
-   * **다른 바운티**의 payout에 이미 PAID로 기록된 해시는 409 TX_HASH_ALREADY_USED — 한 송금을 두 바운티의 지급으로 인정하지 않는다.
+   * **다른 바운티**의 payout에 이미 PAID로 기록된 해시는 409 TX_HASH_ALREADY_USED - 한 송금을 두 바운티의 지급으로 인정하지 않는다.
    * 어느 보상의 입금 해시(deposit_tx_hash)로 기록된 값도 409 TX_HASH_ALREADY_USED.
    * payout_tx_hash에는 유니크 인덱스가 없으므로(0014는 정규화만) 이 검사는 UPDATE 전에 조회로 하고, 같은 해시의 동시 기록은
    * 해시별 advisory lock으로 직렬화한다.
@@ -197,7 +197,7 @@ export class RewardsService {
         [payoutId, hash, target.rows[0].bounty_id],
       );
       if (reuse.rows[0].other_bounty > 0) throw new ConflictException('TX_HASH_ALREADY_USED');
-      // 스폰서 입금(→ 멀티시그)이나 스폰서 환불(scripts/record-refund.js)로 이미 기록된 해시는 수상자 송금(멀티시그 →)의 증빙이 될 수 없다 — 운영자가 다른 용도의 해시를 잘못 붙여 넣는 실수를 막는다
+      // 스폰서 입금(→ 멀티시그)이나 스폰서 환불(scripts/record-refund.js)로 이미 기록된 해시는 수상자 송금(멀티시그 →)의 증빙이 될 수 없다 - 운영자가 다른 용도의 해시를 잘못 붙여 넣는 실수를 막는다
       const asDeposit = await tx.query(`SELECT 1 FROM bounty_reward WHERE deposit_tx_hash = $1 LIMIT 1`, [hash]);
       if (asDeposit.rowCount || await this.isRecordedRefund(tx, hash)) throw new ConflictException('TX_HASH_ALREADY_USED');
       if (reuse.rows[0].same_bounty > 0) {
@@ -244,7 +244,7 @@ export class RewardsService {
   }
 
   /**
-   * 이 해시가 환불 증빙(audit REWARD_REFUNDED의 txHash)으로 이미 기록됐나 — scripts/record-refund.js의 hashInUse와 반대 방향 검사.
+   * 이 해시가 환불 증빙(audit REWARD_REFUNDED의 txHash)으로 이미 기록됐나 - scripts/record-refund.js의 hashInUse와 반대 방향 검사.
    * 스크립트도 같은 해시별 advisory lock(hashtext)을 잡고 검사하므로 동시 기록이 서로를 본다. 호출자는 그 락을 먼저 잡아야 한다.
    */
   private async isRecordedRefund(tx: QueryRunner, hash: string): Promise<boolean> {
@@ -269,10 +269,10 @@ export class RewardsService {
 
   /**
    * payout 변동 뒤 보상 상태 재계산 (markPaid / requestPayout 트랜잭션 안에서 호출). 지급된 payout이 하나라도 있어야 움직인다.
-   *   PAID            — 미정산 payout(UNSETTLED_PAYOUT_STATUSES — 진행 중 + FAILED)이 없고, PAID 수가 max_winners에 도달했거나 PAID 합계가 배정 상한
-   *                     LEAST(amount, deposited_amount)를 소진한 경우 (requestPayout과 같은 상한 — 초과 입금분은 여유분이 아니다)
-   *   PARTIALLY_PAID  — 그 외: 잔액/수상자가 남았거나, 아직 지급 전인 payout이 있다 (PAID였다가 maxWinners 인상 후 payout이 추가된 경우 포함)
-   *   FUNDED          — 지급된 것이 없으면 건드리지 않는다 (요청만 있는 상태는 "부분 지급"이 아니다)
+   *   PAID            - 미정산 payout(UNSETTLED_PAYOUT_STATUSES - 진행 중 + FAILED)이 없고, PAID 수가 max_winners에 도달했거나 PAID 합계가 배정 상한
+   *                     LEAST(amount, deposited_amount)를 소진한 경우 (requestPayout과 같은 상한 - 초과 입금분은 여유분이 아니다)
+   *   PARTIALLY_PAID  - 그 외: 잔액/수상자가 남았거나, 아직 지급 전인 payout이 있다 (PAID였다가 maxWinners 인상 후 payout이 추가된 경우 포함)
+   *   FUNDED          - 지급된 것이 없으면 건드리지 않는다 (요청만 있는 상태는 "부분 지급"이 아니다)
    * 현재 상태에서 다시 계산하므로 몇 번 호출해도 결과가 같다.
    */
   private async advanceRewardStatus(tx: QueryRunner, rewardId: string) {

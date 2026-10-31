@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 
 /**
- * 부트스트랩 환경 검사 — main.ts / auth.module.ts / auth/jwt-secret.ts가 ConfigService에서 읽은 값을 넘긴다
+ * 부트스트랩 환경 검사 - main.ts / auth.module.ts / auth/jwt-secret.ts가 ConfigService에서 읽은 값을 넘긴다
  * (import 시점의 process.env는 ConfigModule이 .env를 읽기 전이므로 쓰지 않는다).
  *
  * production에서 **보안을 무력화하는** 값(JWT_SECRET 미설정/자리표시값/32바이트 미만, GOOGLE_CLIENT_SECRET 미설정, TRUST_PROXY=0/비정수)은
@@ -17,13 +17,13 @@ export function isProduction(env: BootstrapEnv): boolean {
   return env.NODE_ENV === 'production';
 }
 
-/** production에서 TRUST_PROXY가 비어 있을 때의 기본 홉 수 — Railway/Fly/대부분의 PaaS는 엣지 프록시 1홉 뒤다 */
+/** production에서 TRUST_PROXY가 비어 있을 때의 기본 홉 수 - Railway/Fly/대부분의 PaaS는 엣지 프록시 1홉 뒤다 */
 const DEFAULT_PRODUCTION_PROXY_HOPS = 1;
 
 /**
  * 리버스 프록시 홉 수.
- *   - production + 미설정(또는 빈 값): 1로 보고 warn 1회 (Railway는 항상 프록시 1홉 뒤 — 배포 설정에서 빠뜨려도 크래시 루프가 되지 않는다)
- *   - production + 명시적 `0`/비정수/음수: 기동 거부 — 모든 요청이 프록시 IP로 묶여 rate limit과 auth_session.ip_address가 무의미해진다
+ *   - production + 미설정(또는 빈 값): 1로 보고 warn 1회 (Railway는 항상 프록시 1홉 뒤 - 배포 설정에서 빠뜨려도 크래시 루프가 되지 않는다)
+ *   - production + 명시적 `0`/비정수/음수: 기동 거부 - 모든 요청이 프록시 IP로 묶여 rate limit과 auth_session.ip_address가 무의미해진다
  *   - 그 외 환경: 미설정/0이면 신뢰 안 함
  */
 export function trustProxyHops(env: BootstrapEnv): number {
@@ -57,7 +57,7 @@ const MIN_JWT_SECRET_BYTES = 32;
  */
 export function requireJwtSecret(env: BootstrapEnv): string {
   const secret = env.JWT_SECRET;
-  // 앞뒤 공백/개행은 무시하고 판정한다 — 대시보드에 .env.example 값을 줄바꿈째 붙여 넣으면 자리표시값(28바이트)이 "알려진 시크릿"인데도 경고만 남기고 기동했다
+  // 앞뒤 공백/개행은 무시하고 판정한다 - 대시보드에 .env.example 값을 줄바꿈째 붙여 넣으면 자리표시값(28바이트)이 "알려진 시크릿"인데도 경고만 남기고 기동했다
   const trimmed = secret?.trim();
   const usable = Boolean(trimmed) && trimmed !== DEV_JWT_SECRET_PLACEHOLDER;
   if (isProduction(env)) {
@@ -76,18 +76,18 @@ export function requireJwtSecret(env: BootstrapEnv): string {
   return usable ? secret! : 'dev-only-secret';
 }
 
-/** GOOGLE_CLIENT_SECRET — production에서 비어 있으면 code 교환이 전부 실패하므로(로그인 불가) 기동 시점에 거부한다. */
+/** GOOGLE_CLIENT_SECRET - production에서 비어 있으면 code 교환이 전부 실패하므로(로그인 불가) 기동 시점에 거부한다. */
 export function requireGoogleClientSecret(env: BootstrapEnv): void {
   if (isProduction(env) && !env.GOOGLE_CLIENT_SECRET?.trim()) {
     throw new Error('FATAL: GOOGLE_CLIENT_SECRET must be set in production');
   }
 }
 
-/** 개발 기본 FE 오리진 / 로그인 후 리다이렉트 — **production에서는 쓰지 않는다** (아래 두 검사가 값을 요구한다) */
+/** 개발 기본 FE 오리진 / 로그인 후 리다이렉트 - **production에서는 쓰지 않는다** (아래 두 검사가 값을 요구한다) */
 export const LOCAL_FE_ORIGIN = 'http://localhost:3000';
 export const LOCAL_AUTH_SUCCESS_REDIRECT = 'http://localhost:3000/';
 
-/** 루프백 호스트 — localhost(·*.localhost), 127.0.0.0/8(IPv4-mapped IPv6 표기 포함), ::1, ::, 0.0.0.0. production 브라우저가 이 주소로 가면 사용자 자신의 기계에 닿는다 */
+/** 루프백 호스트 - localhost(·*.localhost), 127.0.0.0/8(IPv4-mapped IPv6 표기 포함), ::1, ::, 0.0.0.0. production 브라우저가 이 주소로 가면 사용자 자신의 기계에 닿는다 */
 function isLoopbackUrl(value: string): boolean {
   let host: string;
   try {
@@ -102,8 +102,8 @@ function isLoopbackUrl(value: string): boolean {
 
 /**
  * CORS 허용 목록의 env 값 (app-setup.ts → OriginAllowlist.fromEnv).
- *   - production + 미설정/빈 값: 기동 거부 — 예전엔 조용히 `http://localhost:3000`으로 폴백해 운영 FE의 모든 API 호출이 CORS로 막혔다
- *   - production + 루프백 항목(localhost/127.x): 그 항목만 빼고 error 로그 (기동은 함) — 아무 브라우저 탭의 localhost 페이지가
+ *   - production + 미설정/빈 값: 기동 거부 - 예전엔 조용히 `http://localhost:3000`으로 폴백해 운영 FE의 모든 API 호출이 CORS로 막혔다
+ *   - production + 루프백 항목(localhost/127.x): 그 항목만 빼고 error 로그 (기동은 함) - 아무 브라우저 탭의 localhost 페이지가
  *     운영 API를 자격 증명과 함께 부를 수 있게 되므로 허용하지 않지만, 옛 main의 railway.ts가 `http://localhost:3000`을 넣었기 때문에
  *     `railway config apply` 전의 값으로 크래시 루프가 나지 않게 한다. 빼고 나서 남는 항목이 없으면 미설정과 같으므로 기동 거부
  *   - 그 외 환경: 미설정이면 로컬 FE (`http://localhost:3000`)
@@ -129,7 +129,7 @@ export function corsOriginsValue(env: BootstrapEnv): string {
 }
 
 /**
- * production에서 CORS 허용 목록이 비었으면 기동 거부 — `corsOriginsValue`는 값이 **있는지**만 본다. 스킴 없는 항목(`ninjalabsfe.vercel.app`),
+ * production에서 CORS 허용 목록이 비었으면 기동 거부 - `corsOriginsValue`는 값이 **있는지**만 본다. 스킴 없는 항목(`ninjalabsfe.vercel.app`),
  * 오타, 공용 호스팅 와일드카드(OriginAllowlist가 거부)만 있으면 OriginAllowlist가 전부 버려 어떤 FE 오리진도 통과하지 못하고,
  * 서버는 정상 기동한 채 운영 FE의 모든 API 호출이 브라우저에서 CORS로 막힌다. @param size OriginAllowlist.size
  */
@@ -143,10 +143,10 @@ export function requireUsableCorsOrigins(env: BootstrapEnv, size: number): void 
 }
 
 /**
- * AUTH_ALLOWED_REDIRECT_ORIGINS(로그인 returnTo + Turnstile hostname 허용 목록)의 항목 — production에서는 corsOriginsValue와 같은 이유로
+ * AUTH_ALLOWED_REDIRECT_ORIGINS(로그인 returnTo + Turnstile hostname 허용 목록)의 항목 - production에서는 corsOriginsValue와 같은 이유로
  * 루프백 오리진(localhost/127.x)을 뺀다: 로그인 코드를 사용자 자신의 기계에서 도는 아무 서버로 보낼 수 있게 되기 때문이다.
  * 대시보드에서 넣은 `http://localhost:3000`으로 크래시 루프가 나지 않게 기동은 거부하지 않는다 (`ignored`는 AuthModule이 error로 로그).
- * 그 외 환경은 그대로 둔다 — 로컬 FE가 정상 경로다.
+ * 그 외 환경은 그대로 둔다 - 로컬 FE가 정상 경로다.
  */
 export function authRedirectOrigins(env: BootstrapEnv): { kept: string[]; ignored: string[] } {
   const entries = (env.AUTH_ALLOWED_REDIRECT_ORIGINS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean);
@@ -164,13 +164,13 @@ export function warnIgnoredAuthRedirectOrigins(env: BootstrapEnv): void {
   );
 }
 
-/** production에서 반드시 있어야 하는 로그인 플로우 값 — 없으면 Google 동의 화면/콜백/완료 리다이렉트 중 하나가 깨진다 */
+/** production에서 반드시 있어야 하는 로그인 플로우 값 - 없으면 Google 동의 화면/콜백/완료 리다이렉트 중 하나가 깨진다 */
 const PRODUCTION_AUTH_KEYS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CALLBACK_URL', 'AUTH_SUCCESS_REDIRECT'] as const;
-/** 이 중 URL인 값 — https URL이어야 하고 루프백이면 안 된다 */
+/** 이 중 URL인 값 - https URL이어야 하고 루프백이면 안 된다 */
 const PRODUCTION_AUTH_URL_KEYS = ['GOOGLE_CALLBACK_URL', 'AUTH_SUCCESS_REDIRECT'] as const;
 
 /**
- * GOOGLE_CLIENT_ID / GOOGLE_CALLBACK_URL / AUTH_SUCCESS_REDIRECT — production에서 미설정·빈 값·https URL 아님·루프백이면 기동 거부.
+ * GOOGLE_CLIENT_ID / GOOGLE_CALLBACK_URL / AUTH_SUCCESS_REDIRECT - production에서 미설정·빈 값·https URL 아님·루프백이면 기동 거부.
  * 예전엔 AUTH_SUCCESS_REDIRECT가 조용히 `http://localhost:3000/`으로 폴백해 로그인 완료 후 사용자를 **자기 기계의 localhost로**
  * 로그인 코드와 함께 보냈고, GOOGLE_CLIENT_ID가 비면 첫 로그인 요청에서야 500이 났다. railway.ts가 네 값(CORS 포함)을 공개값으로 넣는다.
  * 개발에서는 아무것도 하지 않는다 (fe-origins.ts가 로컬 FE로 폴백, google-oauth.flow.ts는 요청 시점에 GOOGLE_CLIENT_ID를 요구).
@@ -183,7 +183,7 @@ export function requireProductionAuthUrls(env: BootstrapEnv): void {
   }
   for (const key of PRODUCTION_AUTH_URL_KEYS) {
     const value = env[key]!.trim();
-    // https만 — AUTH_SUCCESS_REDIRECT는 일회용 로그인 코드를 URL 프래그먼트로 받는 주소라 평문 http면 경로 위 누구나 코드를 볼 수 있고, Google은 localhost 밖의 http 콜백을 거부한다
+    // https만 - AUTH_SUCCESS_REDIRECT는 일회용 로그인 코드를 URL 프래그먼트로 받는 주소라 평문 http면 경로 위 누구나 코드를 볼 수 있고, Google은 localhost 밖의 http 콜백을 거부한다
     const isHttpsUrl = URL.canParse(value) && new URL(value).protocol === 'https:';
     if (!isHttpsUrl || isLoopbackUrl(value)) {
       throw new Error(`FATAL: ${key}=${JSON.stringify(env[key])} - must be a public https URL in production (not http, not localhost/127.x)`);

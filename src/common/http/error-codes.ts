@@ -1,5 +1,5 @@
 /**
- * 서비스가 던지는 에러 코드 카탈로그 — 코드 → HTTP 상태 → 한 줄 의미(한국어).
+ * 서비스가 던지는 에러 코드 카탈로그 - 코드 → HTTP 상태 → 한 줄 의미(한국어).
  *
  * 응답은 Nest 기본 포맷 `{ statusCode, message: "ERROR_CODE", error }`이고 `message`가 곧 이 코드다 (docs/api-contract.md "공통 규칙").
  * FE는 이 `message` 문자열로 분기·번역하므로 **코드 문자열 자체가 공개 계약**이다. 이름을 바꾸면 FE가 깨진다.
@@ -12,7 +12,7 @@
  * - **같은 코드를 다른 상태로 던질 때**(예: `BOUNTY_NOT_FOUND`가 404/400): `statuses`에 둘 다 적는다. 가능하면 상태를 통일하는 편이 낫다.
  *
  * ## 이 파일이 다루지 않는 것
- * - 서비스의 리터럴은 그대로 둔다 (런타임이 이 카탈로그를 import하지 않는다 — 스펙만 정적 스캔으로 대조한다).
+ * - 서비스의 리터럴은 그대로 둔다 (런타임이 이 카탈로그를 import하지 않는다 - 스펙만 정적 스캔으로 대조한다).
  * - class-validator가 만드는 DTO 검증 메시지(`nickname must be ...` 등)와 `blockers` 영어 문장(BountyLifecycleService),
  *   throttler 429, body-parser 오류는 "코드"가 아니라 여기에 없다.
  * - `INVALID_TRANSITION`은 실제 메시지가 `INVALID_TRANSITION:<from>-><to>` 형태다 (접두사가 코드).
@@ -21,7 +21,7 @@
 export type ErrorCodeEntry = {
   /** 이 코드가 응답으로 나갈 수 있는 HTTP 상태 (오름차순). 대부분 하나다. */
   readonly statuses: readonly number[];
-  /** 한 줄 의미 (운영자/FE 개발자가 읽는 설명 — 사용자 노출 문구가 아니다, 사용자 문구는 FE messages가 소유) */
+  /** 한 줄 의미 (운영자/FE 개발자가 읽는 설명 - 사용자 노출 문구가 아니다, 사용자 문구는 FE messages가 소유) */
   readonly ko: string;
 };
 
@@ -147,7 +147,7 @@ export const ERROR_CODES = {
   MEDIA_FILE_TYPE_UNSUPPORTED: { statuses: [400], ko: '허용되지 않는 이미지 형식이다 (시그니처 검사)' },
   MEDIA_NOT_FOUND: { statuses: [404], ko: '미디어가 없다' },
 
-  // ── 공통 (DB 오류 매핑 — common/database/pg-errors.ts) ──
+  // ── 공통 (DB 오류 매핑 - common/database/pg-errors.ts) ──
   INVALID_CHARACTER: { statuses: [400], ko: '요청 값에 DB가 거부하는 문자(NUL 등)가 있다' },
   INVALID_DATE: { statuses: [400], ko: '요청 값의 날짜/시각이 달력에 없다 (예: 2월 31일)' },
   REFERENCE_NOT_FOUND: { statuses: [400], ko: '참조하는 대상 행이 없다 (FK 위반)' },

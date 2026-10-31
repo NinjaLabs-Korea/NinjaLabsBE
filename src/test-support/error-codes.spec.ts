@@ -5,14 +5,14 @@ import { listSourceFiles } from './source-files';
 
 
 /**
- * 정적 가드 — 서비스가 던지는 에러 코드 ↔ `common/http/error-codes.ts` 카탈로그 ↔ `docs/api-contract.md` 코드 표가
+ * 정적 가드 - 서비스가 던지는 에러 코드 ↔ `common/http/error-codes.ts` 카탈로그 ↔ `docs/api-contract.md` 코드 표가
  * 서로 정확히 같은지(양방향, HTTP 상태 포함) 검사한다.
  *
  * 새 코드를 던졌는데 이 스펙이 실패하면: error-codes.ts에 항목을 추가하고, api-contract.md의 표(BEGIN/END 사이)에 같은 행을 넣는다.
  * 카탈로그/문서에만 남은 코드가 실패하면: 던지는 곳이 사라진 것이니 그 항목을 지운다.
  *
  * 스캔 대상은 `new XxxException('UPPER_SNAKE'…` 리터럴(또는 `INVALID_TRANSITION:${…}` 같은 템플릿의 접두사)이다.
- * 코드를 상수/변수로 넘기면 스캔에 안 잡힌다 — 에러 코드는 리터럴로 던진다 (그래서 grep으로도 찾힌다).
+ * 코드를 상수/변수로 넘기면 스캔에 안 잡힌다 - 에러 코드는 리터럴로 던진다 (그래서 grep으로도 찾힌다).
  */
 
 const STATUS_BY_CLASS: Record<string, number> = {
@@ -35,7 +35,7 @@ function scanThrownCodes(): Map<string, number[]> {
     if (file.endsWith(join('common', 'http', 'error-codes.ts'))) continue; // 카탈로그 머리 주석의 예시(`XxxException('NEW_CODE')`)는 던지는 곳이 아니다
     for (const [, cls, code] of readFileSync(file, 'utf8').matchAll(THROW)) {
       const status = STATUS_BY_CLASS[cls];
-      if (status === undefined) throw new Error(`${file}: ${cls}('${code}') — STATUS_BY_CLASS에 이 예외 클래스를 추가하세요`);
+      if (status === undefined) throw new Error(`${file}: ${cls}('${code}') - STATUS_BY_CLASS에 이 예외 클래스를 추가하세요`);
       (found.get(code) ?? found.set(code, new Set()).get(code)!).add(status);
     }
   }

@@ -3,8 +3,8 @@ import { describeDb } from './describe-db';
 import { createDb } from './harness';
 
 /**
- * 0017 — 마이그레이션을 전부 적용한 DB에서 민감 테이블의 RLS가 켜져 있고, BE가 쓰는 소유자 연결은 그대로 읽고 쓴다.
- * 모든 테이블 완전성은 정적 가드(src/test-support/rls-coverage.spec.ts)가 본다 — 다른 db-spec이 만든 `*_probe` 임시 테이블이 공유 DB에 남아 있어 여기서는 전수 검사를 하지 않는다.
+ * 0017 - 마이그레이션을 전부 적용한 DB에서 민감 테이블의 RLS가 켜져 있고, BE가 쓰는 소유자 연결은 그대로 읽고 쓴다.
+ * 모든 테이블 완전성은 정적 가드(src/test-support/rls-coverage.spec.ts)가 본다 - 다른 db-spec이 만든 `*_probe` 임시 테이블이 공유 DB에 남아 있어 여기서는 전수 검사를 하지 않는다.
  */
 describeDb('row level security on a fully migrated database', () => {
   let db: DatabaseService;

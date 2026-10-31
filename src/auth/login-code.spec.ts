@@ -9,7 +9,7 @@ const code = 'c'.repeat(43);
 const verifier = 'v'.repeat(43);
 const challenge = createHash('sha256').update(verifier).digest('base64url');
 
-/** `dbQuery` serves issueLoginCode (autocommit); `query` is the transaction client of exchangeLoginCode — both checked for $n/params drift */
+/** `dbQuery` serves issueLoginCode (autocommit); `query` is the transaction client of exchangeLoginCode - both checked for $n/params drift */
 function setup(query = jest.fn()) {
   const dbQuery = jest.fn();
   const { database, db } = createMockDb({ query: dbQuery, txQuery: query });

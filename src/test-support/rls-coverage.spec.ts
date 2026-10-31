@@ -2,8 +2,8 @@ import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 /**
- * 정적 가드 — public 스키마의 모든 테이블은 RLS가 켜져 있어야 한다 (supabase/migrations/0017_enable_rls.sql 머리 주석).
- * Supabase는 public 테이블을 anon 키로 읽고 쓰는 Data API로 노출한다 — RLS 없는 테이블은 곧 공개 테이블이다.
+ * 정적 가드 - public 스키마의 모든 테이블은 RLS가 켜져 있어야 한다 (supabase/migrations/0017_enable_rls.sql 머리 주석).
+ * Supabase는 public 테이블을 anon 키로 읽고 쓰는 Data API로 노출한다 - RLS 없는 테이블은 곧 공개 테이블이다.
  * CREATE TABLE이 있는 마이그레이션 묶음 어디선가 같은 테이블에 `ENABLE ROW LEVEL SECURITY`가 있어야 한다.
  */
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'supabase', 'migrations');

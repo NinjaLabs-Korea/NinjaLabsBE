@@ -1,9 +1,9 @@
 /**
- * npm audit 게이트 — `npm audit --omit=dev --json` 결과에서 high/critical advisory가
+ * npm audit 게이트 - `npm audit --omit=dev --json` 결과에서 high/critical advisory가
  * audit-allowlist.json에 없으면 실패한다.
  *
  * allowlist 항목: { id: "GHSA-…", reason: "…", expires: "YYYY-MM-DD" }
- *   - 만료일이 지난 항목이 하나라도 있으면 (해당 advisory가 아직 남아 있든 아니든) 실패 — 보류 결정을 주기적으로 다시 보게 만든다.
+ *   - 만료일이 지난 항목이 하나라도 있으면 (해당 advisory가 아직 남아 있든 아니든) 실패 - 보류 결정을 주기적으로 다시 보게 만든다.
  *   - id/reason/expires가 빠진 항목도 실패.
  * 사용: node scripts/audit-gate.js   (CI의 audit job)
  */

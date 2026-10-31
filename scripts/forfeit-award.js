@@ -7,25 +7,25 @@
  *
  *   --reason   보상 미지급 사유 (필수, 앞뒤 공백 제거 후 1~500자(코드 포인트), 보이는 글자가 있는 한 줄, 개행·제어·방향 제어 문자 불가). 심사 기록 코멘트 'forfeited: <reason>'과 감사 행에 남는다.
  *              이 코멘트는 제출자의 `GET /submissions/me` review_comment로 보이므로, 사유는 제출자가 읽는 한국어 문장으로 쓴다 (예: '지갑 미연결').
- *   --admin    결정한 운영자의 user id — 활성(ACTIVE, 탈퇴 안 함) is_admin 유저여야 한다. 심사 기록 reviewer와 감사 actor가 된다.
+ *   --admin    결정한 운영자의 user id - 활성(ACTIVE, 탈퇴 안 함) is_admin 유저여야 한다. 심사 기록 reviewer와 감사 actor가 된다.
  *   --dry-run  검사 결과와 계획만 출력하고 아무것도 쓰지 않는다
  *   --yes      확인 프롬프트를 건너뛴다 (비대화형 실행은 필수)
  *
  * 한 트랜잭션에서 (submission-review.service.ts와 같은 잠금 순서: bounty → bounty_submission):
  *   - 바운티가 삭제되지 않았고 진행 상태(OPEN/SUBMISSION_CLOSED/IN_REVIEW), 제출이 APPROVED,
- *     그 제출의 payout 행이 **하나도** 없고(상태 무관 — 있으면 §7.4의 payout 정정/취소로 다룬다) 완료 NFT 행도 없어야 한다.
+ *     그 제출의 payout 행이 **하나도** 없고(상태 무관 - 있으면 §7.4의 payout 정정/취소로 다룬다) 완료 NFT 행도 없어야 한다.
  *     운영자 id는 활성 is_admin 유저여야 한다. 하나라도 어긋나면 아무것도 쓰지 않고 이유를 출력한다 (exit 1).
  *   - bounty_submission: APPROVED → REJECTED (reviewed_at = now()).
  *   - submission_review: reviewer = 운영자, decision 'REJECT'(0005 CHECK 값), comment 'forfeited: <reason>', 현재 리비전.
  *   - audit_log: SUBMISSION_AWARD_FORFEITED (actor = 운영자, entity_type 'bounty_submission',
  *     before_data {status}, after_data {status, reason, bountyId, source}).
- * 결과: max_winners 자리가 하나 빈다, 공개 프로필 completedBounties·명예의전당 집계(APPROVED 기준)에서 이 수상이 빠진다 — 사례별 운영자 결정.
- * 스키마 변경 없음. 접속: DATABASE_URL (+ DATABASE_CA_CERT / PGSSLMODE) — scripts/migrate.js와 같은 규칙 (scripts/ops-cli.js).
+ * 결과: max_winners 자리가 하나 빈다, 공개 프로필 completedBounties·명예의전당 집계(APPROVED 기준)에서 이 수상이 빠진다 - 사례별 운영자 결정.
+ * 스키마 변경 없음. 접속: DATABASE_URL (+ DATABASE_CA_CERT / PGSSLMODE) - scripts/migrate.js와 같은 규칙 (scripts/ops-cli.js).
  */
 const { OpsError, UUID_RE, extractValueOptions, parseArgs, promptYes, runCli } = require('./ops-cli');
 
 const USAGE = 'usage: node scripts/forfeit-award.js <submission-id> --reason <user-facing Korean text, 1-500 chars, e.g. 지갑 미연결> --admin <admin-user-id> [--dry-run] [--yes]';
-/** src/bounties/bounty-status.ts IN_PROGRESS의 사본 — 심사(SubmissionReviewService)가 받는 바운티 상태와 같다 (forfeit-award.spec.ts가 대조) */
+/** src/bounties/bounty-status.ts IN_PROGRESS의 사본 - 심사(SubmissionReviewService)가 받는 바운티 상태와 같다 (forfeit-award.spec.ts가 대조) */
 const FORFEITABLE_BOUNTY_STATUSES = ['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'];
 const ACTION = 'SUBMISSION_AWARD_FORFEITED';
 const SOURCE = 'scripts/forfeit-award.js';
@@ -39,7 +39,7 @@ const RUNBOOK = 'docs/runbook.md §7.4';
 const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}\p{Z}\p{Co}\p{Cn}\p{Cs}\uFFFC\u2800]/gu;
 const DISPLAY_FORBIDDEN = /[\p{Cc}\u2028\u2029\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/u;
 
-/** 사유가 거부되는 이유 (통과면 null) — 이 문구가 제출자 화면에 나가기 전에 운영자에게 먼저 보인다 */
+/** 사유가 거부되는 이유 (통과면 null) - 이 문구가 제출자 화면에 나가기 전에 운영자에게 먼저 보인다 */
 function reasonProblem(raw) {
   if (typeof raw !== 'string') return 'reason must be text';
   const reason = raw.trim();
@@ -50,7 +50,7 @@ function reasonProblem(raw) {
   return null;
 }
 
-/** 사유 정규화 — 앞뒤 공백 제거. 보이는 글자가 있는 한 줄이고 1~500자(코드 포인트)가 아니면 null */
+/** 사유 정규화 - 앞뒤 공백 제거. 보이는 글자가 있는 한 줄이고 1~500자(코드 포인트)가 아니면 null */
 function normalizeReason(raw) {
   return reasonProblem(raw) === null ? raw.trim() : null;
 }
@@ -87,7 +87,7 @@ async function inspectSubmission(runner, submissionId, adminId, lock = false) {
   return { submission, admin: a.rows[0] || null };
 }
 
-/** 거부 사유 (없으면 null) — 순수 함수 */
+/** 거부 사유 (없으면 null) - 순수 함수 */
 function refusalReason(submission, admin) {
   if (!admin || !admin.is_admin || admin.deleted || admin.status !== 'ACTIVE') return 'admin id is not an active admin user';
   if (!submission) return 'submission not found';
@@ -141,7 +141,7 @@ async function forfeitAward(pool, submissionId, adminId, reason) {
 }
 
 /**
- * CLI 본체 — 테스트가 pool/prompt/log를 주입해 그대로 돌린다. 종료 코드를 돌려준다.
+ * CLI 본체 - 테스트가 pool/prompt/log를 주입해 그대로 돌린다. 종료 코드를 돌려준다.
  * @param {string[]} argv
  * @param {{ pool: import('pg').Pool, prompt?: (q: string) => Promise<boolean>, log?: (line: string) => void }} deps
  */

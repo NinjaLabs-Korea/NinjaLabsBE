@@ -23,7 +23,7 @@ describeDb('users on a real database', () => {
        VALUES ($1, 's', $2, 's', 'd', 'r', 'e', 'DEV', now() + interval '7 days', CASE WHEN $3::boolean THEN now() END) RETURNING id`,
       [createdBy, title, options.deleted ?? false])).rows[0].id;
   }
-  /** 기본은 입금 확인된(FUNDED, deposited = amount) 보상 — payoutStatus는 입금 확인된 보상만 센다 */
+  /** 기본은 입금 확인된(FUNDED, deposited = amount) 보상 - payoutStatus는 입금 확인된 보상만 센다 */
   async function reward(bountyId: string, amount: number, symbol = 'INJ', options: { status?: string; deposited?: number } = {}): Promise<string> {
     const status = options.status ?? 'FUNDED';
     const deposited = options.deposited ?? (status === 'DEPOSIT_PENDING' ? 0 : amount);
@@ -82,7 +82,7 @@ describeDb('users on a real database', () => {
     expect(byTitle.mixed.postedRewards).toEqual([{ amount: '7', symbol: 'INJ' }, { amount: '9', symbol: 'USDT' }]);
   });
 
-  describe('payout status (rewards/payout-status.ts) — same value on GET /users/:nickname and GET /submissions/me', () => {
+  describe('payout status (rewards/payout-status.ts) - same value on GET /users/:nickname and GET /submissions/me', () => {
     it('PAID / PARTIALLY_PAID / PAID-when-the-rest-went-to-others / PENDING / NONE, counting only the rewards owed to this submission', async () => {
       const admin = await createUser(db, { isAdmin: true });
       const nickname = `Pst${unique().slice(0, 8)}`;

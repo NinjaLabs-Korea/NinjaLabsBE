@@ -1,8 +1,8 @@
 /**
- * `@injectivelabs/sdk-ts` 대역 — jest.e2e.config.js의 moduleNameMapper가 이 파일로 바꾼다.
+ * `@injectivelabs/sdk-ts` 대역 - jest.e2e.config.js의 moduleNameMapper가 이 파일로 바꾼다.
  *
  * sdk-ts(와 그 의존성 @scure/@noble)는 ESM 전용이라 jest(CommonJS)가 불러오지 못한다. 앱이 HTTP 경로에서 쓰는 것은
- * 주소 변환 두 개뿐이므로(wallets.service.ts) 그 둘을 **실제 bech32 구현**으로 제공한다 — 결과는 sdk-ts와 바이트 단위로 같다
+ * 주소 변환 두 개뿐이므로(wallets.service.ts) 그 둘을 **실제 bech32 구현**으로 제공한다 - 결과는 sdk-ts와 바이트 단위로 같다
  * (inj1… = bech32('inj', 20바이트 EVM 주소)). 온체인 클래스(PrivateKey, MsgBroadcasterWithPk, ChainGrpcWasmApi …)는
  * 호출되면 실패한다: 체인 I/O는 harness가 InjectiveNftClient를 가짜로 바꿔 끊고, ADR-36(Keplr) 서명 경로는 e2e 범위 밖이다.
  */

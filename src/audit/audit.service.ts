@@ -42,7 +42,7 @@ export class AuditService {
   }
 
   /**
-   * Agent API 키로 한 행위 — 유저 id가 없으므로 `actor_agent_id`를 채운다. 둘 다 비면 운영 스크립트가 남긴 행으로 읽히기 때문에
+   * Agent API 키로 한 행위 - 유저 id가 없으므로 `actor_agent_id`를 채운다. 둘 다 비면 운영 스크립트가 남긴 행으로 읽히기 때문에
    * (api-contract.md "운영 스크립트" action 표시 규칙) 에이전트 행위는 이 메서드로 남긴다.
    */
   async recordAgentAction<A extends AuditAction>(

@@ -15,8 +15,8 @@ import { AgentsService } from './agents.service';
     AuthModule,
     AuditModule,
     BountiesModule,
-    // Agent API 키별 한도용 별도 throttler 저장소 — 전역 IP 한도(app.module.ts)와 독립
-    // 저장소는 THROTTLER_STORAGE를 따른다 (production 기본 postgres — 레플리카 간 공유, docs/agent-api.md "Rate limit")
+    // Agent API 키별 한도용 별도 throttler 저장소 - 전역 IP 한도(app.module.ts)와 독립
+    // 저장소는 THROTTLER_STORAGE를 따른다 (production 기본 postgres - 레플리카 간 공유, docs/agent-api.md "Rate limit")
     throttlerModule([AGENT_API_THROTTLER]),
   ],
   controllers: [AgentsController, AgentApiController],

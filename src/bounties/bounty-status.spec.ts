@@ -45,7 +45,7 @@ describe('BountyStatusPolicy', () => {
 
 describe('BountyStatusPolicy transition table (every from × to pair)', () => {
   const ALL = ['DRAFT', 'FUNDING_PENDING', 'OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED', 'CANCELLED'] as const;
-  /** The operator transitions the admin UI offers (docs/decisions.md, wiki be/bounties 전이표) — anything not listed must be refused */
+  /** The operator transitions the admin UI offers (docs/decisions.md, wiki be/bounties 전이표) - anything not listed must be refused */
   const ALLOWED: Record<string, string[]> = {
     DRAFT: ['FUNDING_PENDING', 'OPEN', 'CANCELLED'],
     FUNDING_PENDING: ['OPEN', 'CANCELLED'],
@@ -86,7 +86,7 @@ describe('BountyStatusPolicy transition table (every from × to pair)', () => {
 });
 
 describe('publicBountySql', () => {
-  it('is "not deleted and ever opened" — opened_at, not a status list, so a bounty cancelled before it opened stays hidden', () => {
+  it('is "not deleted and ever opened" - opened_at, not a status list, so a bounty cancelled before it opened stays hidden', () => {
     expect(publicBountySql()).toBe('b.deleted_at IS NULL AND b.opened_at IS NOT NULL');
     expect(publicBountySql('bx')).toBe('bx.deleted_at IS NULL AND bx.opened_at IS NOT NULL');
     expect(publicBountySql()).not.toMatch(/status/);

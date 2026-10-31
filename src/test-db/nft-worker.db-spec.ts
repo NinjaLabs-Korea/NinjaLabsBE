@@ -14,7 +14,7 @@ jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} 
 type JobRow = { status: string; retry_count: number; last_error: string | null; scheduled_at: Date; processed_at: Date | null };
 
 /**
- * NftJobWorker on a real database — 실패 경로 UPDATE의 `$2` 세 자리(컬럼 대입 + 문자열 비교 2곳)는 mock DB에서는 통과하고
+ * NftJobWorker on a real database - 실패 경로 UPDATE의 `$2` 세 자리(컬럼 대입 + 문자열 비교 2곳)는 mock DB에서는 통과하고
  * 실 Postgres에서만 42P08을 내던 자리다. 여기서는 진짜 nft_job/nft 행 위에서 재시도·FAILED 경계·배치 격리·다중 인스턴스 소유권을 본다.
  */
 describeDb('nft_job worker on a real database', () => {
@@ -24,7 +24,7 @@ describeDb('nft_job worker on a real database', () => {
   beforeAll(async () => {
     db = createDb();
     nfts = new NftsService(db, testConfig());
-    // 다른 스위트가 남긴 대기 잡이 LIMIT 10 선점을 차지하지 않도록 치운다 (스위트는 직렬 실행 — 그쪽 단언은 이미 끝났다)
+    // 다른 스위트가 남긴 대기 잡이 LIMIT 10 선점을 차지하지 않도록 치운다 (스위트는 직렬 실행 - 그쪽 단언은 이미 끝났다)
     await db.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE status IN ('PENDING', 'PROCESSING')`);
   });
   afterAll(async () => db.onApplicationShutdown());
@@ -39,7 +39,7 @@ describeDb('nft_job worker on a real database', () => {
   }
 
   function createWorker(chain: ReturnType<typeof chainStub>): NftJobWorker {
-    // 운영 알림은 대역 — 호출만 기록한다 (worker['alerts'].notify)
+    // 운영 알림은 대역 - 호출만 기록한다 (worker['alerts'].notify)
     const alerts = { notify: jest.fn(async () => true) };
     const worker = new NftJobWorker(db, chain as unknown as InjectiveNftClient, testConfig(), alerts as unknown as AlertService);
     jest.spyOn(worker['logger'], 'error').mockImplementation(() => undefined);
@@ -75,7 +75,7 @@ describeDb('nft_job worker on a real database', () => {
     return r.rows[0];
   }
 
-  /** 자식 NFT + MINT_CHILD 잡 (payout PAID 직후 상태) — 바운티/제출물 행은 chk_nft_child_refs 때문에 필요하다 */
+  /** 자식 NFT + MINT_CHILD 잡 (payout PAID 직후 상태) - 바운티/제출물 행은 chk_nft_child_refs 때문에 필요하다 */
   async function childJob(userId: string, walletId: string): Promise<{ nftId: string; jobId: string }> {
     const bountyId = (await db.query<{ id: string }>(
       `INSERT INTO bounty (created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, submission_deadline)
@@ -138,7 +138,7 @@ describeDb('nft_job worker on a real database', () => {
     expect(worker['alerts'].notify).toHaveBeenCalledWith('nft-job-failed:MINT_PARENT', expect.stringContaining(`nft_job ${jobId} (MINT_PARENT, nft ${nftId}) reached FAILED`));
   });
 
-  it('operator retry of a permanently FAILED mint: PENDING with retry_count 0, the nft back to PENDING, audited — and the next poll mints it', async () => {
+  it('operator retry of a permanently FAILED mint: PENDING with retry_count 0, the nft back to PENDING, audited - and the next poll mints it', async () => {
     const { nftId, jobId } = await parentJob('1 minute');
     const failing = chainStub(async () => { throw new Error('node unreachable'); });
     await db.query(`UPDATE nft_job SET retry_count = 4 WHERE id = $1`, [jobId]);
@@ -192,13 +192,13 @@ describeDb('nft_job worker on a real database', () => {
     const mine = await Promise.all(Array.from({ length: 13 }, (_, i) => parentJob(`${i + 1} minutes`)));
     const myIds = new Set(mine.map((job) => job.jobId));
 
-    // both transactions run the worker's claim statement and then wait for each other BEFORE committing — while A still holds its
+    // both transactions run the worker's claim statement and then wait for each other BEFORE committing - while A still holds its
     // row locks, B must come back at once with the rows A skipped. Without SKIP LOCKED, B blocks on A's rows and the barrier times out.
     const bothClaimed = deferred<void>();
     let arrived = 0;
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('second claim did not return while the first transaction held its rows — SKIP LOCKED is not in effect')), 5_000);
+      timer = setTimeout(() => reject(new Error('second claim did not return while the first transaction held its rows - SKIP LOCKED is not in effect')), 5_000);
     });
     const claim = () => db.tx(async (client) => {
       const r = await client.query<{ id: string }>(CLAIM_PENDING_JOBS_SQL);
@@ -218,7 +218,7 @@ describeDb('nft_job worker on a real database', () => {
     expect(idsB.length).toBeGreaterThan(0);
     // SKIP LOCKED does not promise either claimant a full batch: two truly concurrent scans interleave their row locks, so the 13 due
     // jobs can split 7/6 as well as 10/3. What it does promise is checked here and below: each batch ≤ LIMIT 10, disjoint, and together
-    // every due job exactly once. (A `max === 10` assertion was flaky in CI — 2026-10-25.)
+    // every due job exactly once. (A `max === 10` assertion was flaky in CI - 2026-10-25.)
     expect(idsA.length).toBeLessThanOrEqual(10);
     expect(idsB.length).toBeLessThanOrEqual(10);
     expect(idsA.filter((id) => idsB.includes(id))).toEqual([]); // disjoint
@@ -228,7 +228,7 @@ describeDb('nft_job worker on a real database', () => {
       `SELECT status, count(*)::int AS n FROM nft_job WHERE id = ANY($1::uuid[]) GROUP BY status`, [[...claimed]]);
     expect(states.rows).toEqual([{ status: 'PROCESSING', n: claimed.size }]);
 
-    // nothing processes these — close them so later tests (and the 15-minute stale sweep) never see them
+    // nothing processes these - close them so later tests (and the 15-minute stale sweep) never see them
     await db.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE id = ANY($1::uuid[])`, [[...claimed]]);
   });
 
@@ -253,7 +253,7 @@ describeDb('nft_job worker on a real database', () => {
     expect(await jobRow(first.jobId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0 });
     expect(await jobRow(second.jobId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0 });
 
-    // A wakes up: its mint of the first job fails late — the job is B's now, so no retry_count bump, no FAILED, nft untouched
+    // A wakes up: its mint of the first job fails late - the job is B's now, so no retry_count bump, no FAILED, nft untouched
     gate.reject(new Error('late timeout from A'));
     await pollA;
     expect(await jobRow(first.jobId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0, last_error: null });
@@ -368,7 +368,7 @@ describeDb('nft_job worker on a real database', () => {
     await worker.poll();
     expect(await attachJob(child.nftId)).toMatchObject({ status: 'SUCCEEDED', retry_count: 0, last_error: null });
     expect((await nftRow(child.nftId)).status).toBe('ATTACHED');
-    expect(chain.mint).toHaveBeenCalledTimes(2); // child + parent only — attach never touches the chain on path A
+    expect(chain.mint).toHaveBeenCalledTimes(2); // child + parent only - attach never touches the chain on path A
   });
 
   it('a child minted after its parent is already MINTED queues ATTACH_CHILD itself (no parent scan needed)', async () => {

@@ -29,7 +29,7 @@ describe('AuthTokenThrottlerGuard tracker', () => {
     expect(a).not.toBe(b);
   });
 
-  it('/auth/exchange is keyed by the login-code hash (the IP key is only the unreachable fallback — such requests are skipped)', async () => {
+  it('/auth/exchange is keyed by the login-code hash (the IP key is only the unreachable fallback - such requests are skipped)', async () => {
     expect(await tracker({ body: { code: 'c'.repeat(43) } }, 'exchange')).toBe(`code:${sha256('c'.repeat(43))}`);
     expect(await tracker({ body: { code: 42 } }, 'exchange')).toBe('ip:10.0.0.1');
     expect(await tracker({ body: undefined }, 'exchange')).toBe('ip:10.0.0.1');

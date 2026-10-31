@@ -97,7 +97,7 @@ describe('onboardingError level and rid', () => {
   });
 });
 
-describe('logSafe — every input yields one bounded line', () => {
+describe('logSafe - every input yields one bounded line', () => {
   it('escapes all 33 C0/DEL characters and U+2028/2029 to visible text', () => {
     const controls = [...Array(32).keys(), 0x7f, 0x2028, 0x2029].map((code) => String.fromCharCode(code)).join('');
     const out = logSafe(controls, 10_000);

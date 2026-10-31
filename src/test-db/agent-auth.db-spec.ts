@@ -12,7 +12,7 @@ jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support
 jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
 
 /**
- * Agent API key authentication against real rows — the owner/agent/key predicates live in SQL (JOIN "user", key_prefix lookup,
+ * Agent API key authentication against real rows - the owner/agent/key predicates live in SQL (JOIN "user", key_prefix lookup,
  * conditional last_used_at UPDATE), so a mock DB cannot tell whether a suspended owner or an expired key is actually refused.
  */
 describeDb('agent API key authentication on a real database', () => {
@@ -98,7 +98,7 @@ describeDb('agent API key authentication on a real database', () => {
   it('two keys sharing a lookup prefix each authenticate as their own agent; a key with that prefix but an unknown hash is refused', async () => {
     const a = await activeAgent();
     const b = await activeAgent();
-    // prefixes are only 8 random chars after nj_ — collisions are expected at scale. Give b a key that starts with a's prefix.
+    // prefixes are only 8 random chars after nj_ - collisions are expected at scale. Give b a key that starts with a's prefix.
     const prefix = agentApiKeyPrefix(a.apiKey);
     const colliding = `${prefix}${'C'.repeat(a.apiKey.length - prefix.length)}`;
     await db.query(`UPDATE agent_api_key SET key_prefix = $2, key_hash = $3 WHERE agent_id = $1`, [b.agentId, prefix, hashAgentApiKey(colliding)]);

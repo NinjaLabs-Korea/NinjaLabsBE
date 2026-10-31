@@ -1,5 +1,5 @@
 -- ============================================================
--- 0004_bounties.sql — 바운티 영역
+-- 0004_bounties.sql - 바운티 영역
 -- ERD v1 §7~8 (bounty, bounty_attachment, bounty_application)
 --
 -- 상태 흐름:

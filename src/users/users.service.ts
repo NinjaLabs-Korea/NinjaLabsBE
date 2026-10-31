@@ -1,9 +1,11 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { AuditAction } from '../audit/audit-actions';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { payoutStatusSql } from '../rewards/payout-status';
 import { isSavableNickname, normalizeNickname } from './nickname';
+import { ONBOARDING_STEP } from './onboarding-step';
 
 /** 활성 유저 닉네임 유니크 인덱스 (0019_nickname_unicode_fold.sql, 접힌 닉네임 WHERE deleted_at IS NULL) */
 export const NICKNAME_UNIQUE_INDEX = 'uq_user_nickname_active';
@@ -16,7 +18,7 @@ export const nicknameKeySql = (expr: string) => `lower(${expr} COLLATE "und-x-ic
 
 /** 닉네임을 이미 정한 사람의 다음 변경까지 기다려야 하는 시간 - 이름이 곧 신원(공개 프로필 URL, 멤버 표시)이라 빠른 양도·선점을 막는다 */
 export const NICKNAME_CHANGE_COOLDOWN_HOURS = 24;
-export const NICKNAME_CHANGED_AUDIT_ACTION = 'USER_NICKNAME_CHANGED';
+export const NICKNAME_CHANGED_AUDIT_ACTION = 'USER_NICKNAME_CHANGED' satisfies AuditAction;
 
 @Injectable()
 export class UsersService {
@@ -62,7 +64,7 @@ export class UsersService {
       if (!current.rowCount) throw new NotFoundException('USER_NOT_FOUND');
       // 프로필을 한 번 저장한 뒤(step >= 4) 닉네임이 바뀌는 경우만 제한·기록한다: 임시 닉네임에서 첫 이름을 정하거나 오타를 고치는 온보딩 재저장, 자기소개·태그만 고치는 저장은 자유.
       const previous = current.rows[0];
-      const renamed = previous.onboarding_step >= 4 && previous.nickname !== nickname;
+      const renamed = previous.onboarding_step >= ONBOARDING_STEP.PROFILE_SAVED && previous.nickname !== nickname;
       if (renamed) {
         const recent = await tx.query(
           `SELECT 1 FROM audit_log
@@ -75,7 +77,7 @@ export class UsersService {
       }
       const updated = await tx.query(
         `UPDATE "user"
-            SET nickname = $2, bio = $3, onboarding_step = 4
+            SET nickname = $2, bio = $3, onboarding_step = ${ONBOARDING_STEP.PROFILE_SAVED}
           WHERE id = $1 AND deleted_at IS NULL`,
         [userId, nickname, bio],
       );
@@ -100,7 +102,7 @@ export class UsersService {
   async completeOnboarding(userId: string) {
     const stamped = await this.db.query(
       `UPDATE "user" SET onboarding_completed_at = now()
-        WHERE id = $1 AND onboarding_completed_at IS NULL AND onboarding_step >= 4`,
+        WHERE id = $1 AND onboarding_completed_at IS NULL AND onboarding_step >= ${ONBOARDING_STEP.PROFILE_SAVED}`,
       [userId],
     );
     if (stamped.rowCount) return { ok: true };

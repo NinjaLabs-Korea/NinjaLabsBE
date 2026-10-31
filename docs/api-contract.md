@@ -379,6 +379,69 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 
 운영자 지정(`is_admin`)은 API가 없다 - `scripts/grant-admin.js`로만 바꾼다([runbook.md](runbook.md) §3). 그 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/requeue-nft-jobs.js`는 `NFT_JOB_REQUEUED`(entity `nft_job`)를, `scripts/record-refund.js`는 `REWARD_REFUNDED`(entity `bounty_reward`, `after_data` `{txHash, refundedAmount}`)를, runbook §7.4의 수동 SQL은 `PAYOUT_CORRECTED_MANUAL`/`PAYOUT_CANCELLED_MANUAL`(entity `payout`)을 남긴다 - 감사 로그 화면은 actor가 비어 있고 action이 위 여섯 가지 중 하나인 행을 "운영 스크립트"로 표시하면 된다. 일곱 번째 운영 스크립트 action `SUBMISSION_AWARD_FORFEITED`(entity `bounty_submission`, `scripts/forfeit-award.js`, runbook §7.4 "지급할 수 없는 수상")는 **actor가 채워진다**(`--admin`으로 받은 결정 운영자 id) - action 이름만으로 "운영 스크립트"로 표시한다. `before_data` `{status: "APPROVED"}`, `after_data` `{status: "REJECTED", reason, bountyId, source}`. 같은 트랜잭션에 `submission_review`(decision `REJECT`, comment `forfeited: <사유>`) 행이 남으므로 제출자의 `GET /submissions/me` `review_comment`에 그 코멘트가 보인다. `POST /admin/submissions/:id/review`의 `comment`는 `forfeited:`(대소문자·앞 공백 무관)로 시작할 수 없다(400) - 이 접두사는 이 스크립트가 남긴 보상 미지급 표식이라 일반 반려 코멘트가 쓰면 제출자 화면이 "승인됐지만 보상 미지급"으로 오해한다. 보이는 글자가 없는 `comment`/`note`는 `null`로 취급되어 수정 요청에서는 400 `REVISION_COMMENT_REQUIRED`다. 에이전트 키로 한 행위는 `actor_user_id`가 비는 대신 `actor_agent_id`가 채워진다(`AuditService.recordAgentAction` - 지금은 `APPLICATION_REAPPLIED`). 다만 이 수정 이전에 쌓인 에이전트 `APPLICATION_REAPPLIED` 행은 actor가 둘 다 비어 있으므로, 표시는 action 이름으로 판단하고 "actor가 비었다"만으로 운영 스크립트로 단정하지 말 것.
 
+### 감사 action 카탈로그
+
+`audit_log.action`의 전체 목록이다. 서버 코드의 값은 `src/audit/audit-actions.ts`(`AUDIT_ACTIONS`, `AuditService.record()`가 이 키만 받는다), 운영 스크립트·수동 SQL의 값은 같은 파일의 `SCRIPT_AUDIT_ACTIONS`가 단일 출처이고, `src/audit/audit-actions.spec.ts`가 이 표와 양방향으로 대조한다. 값은 운영 DB에 이미 쌓인 문자열이라 이름을 바꾸지 않는다.
+
+| action | entity_type | 남기는 곳 |
+|---|---|---|
+| `BOUNTY_CREATED` | `bounty` | `POST /admin/bounties` |
+| `BOUNTY_UPDATED` | `bounty` | `PATCH /admin/bounties/:id` |
+| `BOUNTY_DELETED` | `bounty` | `DELETE /admin/bounties/:id` |
+| `BOUNTY_FUNDING_PENDING` | `bounty` | `POST /admin/bounties/:id/transition` (`BOUNTY_<도착 상태>`) |
+| `BOUNTY_OPEN` | `bounty` | 상동 |
+| `BOUNTY_SUBMISSION_CLOSED` | `bounty` | 상동 |
+| `BOUNTY_IN_REVIEW` | `bounty` | 상동 |
+| `BOUNTY_COMPLETED` | `bounty` | 상동 |
+| `BOUNTY_CANCELLED` | `bounty` | 상동 (연쇄 반려·철회는 이 한 행이 기록) |
+| `APPLICATION_APPROVED` | `bounty_application` | `POST /admin/applications/:id/review` |
+| `APPLICATION_REJECTED` | `bounty_application` | 상동 |
+| `APPLICATION_REAPPLIED` | `bounty_application` | 철회한 지원을 다시 열 때 (에이전트 키면 `actor_agent_id`) |
+| `SUBMISSION_START_REVIEW` | `bounty_submission` | `POST /admin/submissions/:id/review` (`SUBMISSION_<decision>`) |
+| `SUBMISSION_REQUEST_REVISION` | `bounty_submission` | 상동 |
+| `SUBMISSION_APPROVE` | `bounty_submission` | 상동 |
+| `SUBMISSION_REJECT` | `bounty_submission` | 상동 |
+| `REWARD_DEPOSIT_CONFIRMED` | `bounty_reward` | `POST /admin/rewards/:id/confirm-deposit` |
+| `PAYOUT_REQUESTED` | `payout` | `POST /admin/payouts` |
+| `PAYOUT_APPROVED` | `payout` | `POST /admin/payouts/:id/approve` (다른 운영자 승인) |
+| `PAYOUT_SELF_APPROVED` | `payout` | 상동, `PAYOUT_ALLOW_SELF_APPROVAL=true`에서 요청자 본인 승인 |
+| `PAYOUT_PAID` | `payout` | `POST /admin/payouts/:id/paid` |
+| `AGENT_VERIFIED` | `agent` | 에이전트 소유 서명 검증 + 첫 키 발급 |
+| `AGENT_KEY_ROTATED` | `agent` | 에이전트 키 재발급 |
+| `AGENT_REVOKED` | `agent` | 에이전트 폐기, 회원 탈퇴 시 소유 에이전트 일괄 폐기 |
+| `COHORT_CREATED` | `cohort` | `POST /admin/cohorts` |
+| `COHORT_UPDATED` | `cohort` | `PATCH /admin/cohorts/:id` |
+| `COHORT_DELETED` | `cohort` | `DELETE /admin/cohorts/:id` |
+| `COHORT_QUESTIONS_UPDATED` | `cohort` | `PUT /admin/cohorts/:id/questions` (before/after 질문 id) |
+| `COHORT_OPENED` | `cohort` | 기수 전이 DRAFT -> OPEN |
+| `COHORT_CLOSED` | `cohort` | 기수 전이 -> CLOSED |
+| `COHORT_REOPENED` | `cohort` | 기수 전이 CLOSED -> OPEN |
+| `COHORT_APPLICATION_SUBMITTED` | `cohort_application` | 기수 지원서 제출 |
+| `COHORT_APPLICATION_REAPPLIED` | `cohort_application` | 철회한 기수 지원서를 다시 열 때 |
+| `COHORT_APPLICATION_UPDATED` | `cohort_application` | 기수 지원서 수정 |
+| `COHORT_APPLICATION_WITHDRAWN` | `cohort_application` | 기수 지원서 철회 |
+| `COHORT_APPLICATION_ACCEPTED` | `cohort_application` | 기수 지원서 심사 (before/after 상태) |
+| `COHORT_APPLICATION_REJECTED` | `cohort_application` | 상동 |
+| `NOTICE_CREATED` | `notice` | `POST /admin/notices` (초안) |
+| `NOTICE_PUBLISHED` | `notice` | `POST /admin/notices` (`publish: true`) |
+| `NOTICE_UPDATED` | `notice` | `PATCH /admin/notices/:id` |
+| `NOTICE_DELETED` | `notice` | `DELETE /admin/notices/:id` |
+| `HIGHLIGHT_CREATED` | `platform_highlight` | `POST /admin/highlights` |
+| `HIGHLIGHT_UPDATED` | `platform_highlight` | `PATCH /admin/highlights/:id` |
+| `HIGHLIGHT_DELETED` | `platform_highlight` | `DELETE /admin/highlights/:id` |
+| `USER_WITHDRAWN` | `user` | 회원 탈퇴 |
+| `USER_NICKNAME_CHANGED` | `user` | 프로필 저장 뒤 닉네임 변경 (before/after 닉네임, 변경 쿨다운 조회 기준) |
+| `USER_MEMBER_GRANTED` | `user` | `POST /admin/users/:id/member` (`isMember: true`) |
+| `USER_MEMBER_REVOKED` | `user` | 상동 (`isMember: false`) |
+| `NFT_JOB_RETRIED` | `nft_job` | `POST /admin/nft-jobs/:id/retry` |
+| `ADMIN_GRANTED` | `user` | 운영 스크립트 `scripts/grant-admin.js` (actor NULL) |
+| `ADMIN_REVOKED` | `user` | 상동 |
+| `NFT_JOB_REQUEUED` | `nft_job` | 운영 스크립트 `scripts/requeue-nft-jobs.js` (actor NULL) |
+| `REWARD_REFUNDED` | `bounty_reward` | 운영 스크립트 `scripts/record-refund.js` (actor NULL) |
+| `SUBMISSION_AWARD_FORFEITED` | `bounty_submission` | 운영 스크립트 `scripts/forfeit-award.js` (actor = `--admin`) |
+| `PAYOUT_CORRECTED_MANUAL` | `payout` | runbook §7.4 수동 SQL (actor NULL) |
+| `PAYOUT_CANCELLED_MANUAL` | `payout` | 상동 |
+
 `AdminGuard`는 JWT의 `isAdmin` 클레임 외에 요청마다 `"user"` 행(`is_admin`, `status='ACTIVE'`, 미삭제)을 다시 확인한다 — 어드민 해제/정지가 토큰 만료 전에 즉시 반영된다 (403 `ADMIN_ONLY`).
 
 `GET /media/:id`는 인증 없이 업로드 원본을 immutable cache header와 함께 반환한다(`Cross-Origin-Resource-Policy: cross-origin` — 전역 helmet의 `same-origin`을 이 응답만 풀어 다른 오리진의 `<img>`가 절대 BE URL을 불러올 수 있다). 파일 MIME과

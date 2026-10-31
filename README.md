@@ -67,6 +67,7 @@ docs/
   `*-admin.controller.ts` / `*-admin.service.ts`에 있다 (예: `notices/notice-admin.*`, `bounties/admin/*`).
   모든 운영자 컨트롤러는 `@UseGuards(AdminGuard)`를 붙이고 `AuthedRequest`로 `req.user`를 받는다.
 - **감사 로그는 `AuditService`로만 남긴다** — 사람/시스템 행위는 `record()`, Agent API 키로 한 행위(유저 id 없음)는 `recordAgentAction()`(`actor_agent_id`). 트랜잭션 안이면 `tx`를 넘긴다.
+  action은 `audit/audit-actions.ts` 카탈로그(`AUDIT_ACTIONS`, entity_type까지 타입으로 묶임)의 키만 받는다. 새 action은 카탈로그와 `docs/api-contract.md` "감사 action 카탈로그" 표에 같이 추가한다(`audit/audit-actions.spec.ts`). 이미 쌓인 값은 이름을 바꾸지 않는다.
 - **운영 알림은 `AlertService.notify(key, message)`로만 보낸다** (`common/alerts/alert.service.ts`, 전역 모듈). 절대 throw하지 않으므로 try/catch 불필요.
   `key`는 고정 문자열(또는 `종류:작은 고정 집합` — 예 `nft-job-failed:MINT_CHILD`)이고 같은 키는 30분에 한 번만 나간다(웹훅 전달 성공 기준 — 실패는 2초 뒤 1회 재시도 후 다음 발생이 다시 시도). 메시지에 비밀·PII(이메일, 닉네임, 요청 본문, 실제 경로 값)를 넣지 않는다 — id·개수·상태·라우트 패턴만.
 - **바운티 상태 문자열 배열을 직접 만들지 않는다.** `bounties/bounty-status.ts`의 `BountyStatusPolicy`를 쓴다. 공개 노출 조건은 `publicBountySql()`(`opened_at IS NOT NULL`)이다 — 상태 목록으로 거르지 않는다 (정적 가드 `status-literals.spec.ts`).

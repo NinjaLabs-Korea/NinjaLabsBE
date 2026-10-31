@@ -739,7 +739,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       const parkingAudit = {
         record: async (actor: string | undefined, action: string, type: string, id: string, runner?: unknown) => {
           if (action === 'PAYOUT_PAID' && id === payoutId) { parked.resolve(); await release.promise; }
-          return new AuditService(db).record(actor, action, type, id, runner as never);
+          return new AuditService(db).record(actor, action as never, type as never, id, runner as never);
         },
       } as unknown as AuditService;
       return { service: new RewardsService(db, nfts, parkingAudit, testConfig()), parked: parked.promise, release: () => release.resolve() };

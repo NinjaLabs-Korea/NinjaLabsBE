@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
+import { ONBOARDING_STEP } from '../users/onboarding-step';
 
 /**
  * 실 Postgres 통합 테스트 하네스 — `npm run test:db` (jest.db.config.js).
@@ -78,8 +79,8 @@ export async function createUser(db: DatabaseService, options: { isAdmin?: boole
   const onboarded = options.onboarded ?? true;
   const r = await db.query<{ id: string }>(
     `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step, onboarding_completed_at, is_admin)
-     VALUES ($1, $2, $3, '', $5::int, CASE WHEN $5::int >= 4 THEN now() END, $4) RETURNING id`,
-    [`google-${id}`, `${id}@example.test`, options.nickname ?? `user_${id.slice(0, 8)}`, options.isAdmin ?? false, onboarded ? 4 : 2],
+     VALUES ($1, $2, $3, '', $5::int, CASE WHEN $5::int >= ${ONBOARDING_STEP.PROFILE_SAVED} THEN now() END, $4) RETURNING id`,
+    [`google-${id}`, `${id}@example.test`, options.nickname ?? `user_${id.slice(0, 8)}`, options.isAdmin ?? false, onboarded ? ONBOARDING_STEP.PROFILE_SAVED : ONBOARDING_STEP.WALLET],
   );
   return r.rows[0].id;
 }

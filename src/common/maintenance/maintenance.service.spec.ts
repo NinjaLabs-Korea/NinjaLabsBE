@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { CronExpression } from '@nestjs/schedule';
+import { REFRESH_REUSE_GRACE } from '../../auth/refresh-grace';
 import { withParamsCheck } from '../../test-support/expect-params-match';
 import { DatabaseService } from '../database/database.service';
 import { MaintenanceService } from './maintenance.service';
@@ -40,10 +41,24 @@ describe('MaintenanceService crons', () => {
     const { service, query, log } = setup([4, 0]);
     await service.clearGraceCopies();
     expect(query.mock.calls[0][0]).toContain('UPDATE auth_session SET grace_refresh_token = NULL');
+    expect(REFRESH_REUSE_GRACE).toBe('30 seconds'); // 렌더링된 문장이 상수화 이전과 같다
     expect(query.mock.calls[0][0]).toContain(`prev_rotated_at < now() - interval '30 seconds'`);
     expect(log).toHaveBeenCalledWith('grace copies cleared: 4');
     await service.clearGraceCopies();
     expect(log).toHaveBeenCalledTimes(1);
+  });
+
+  it('clearGraceCopies follows the refresh reuse grace constant instead of its own copy (changing the grace moves the sweep window too)', async () => {
+    let Isolated: typeof MaintenanceService | undefined;
+    jest.isolateModules(() => {
+      jest.doMock('../../auth/refresh-grace', () => ({ REFRESH_REUSE_GRACE: '45 seconds' }));
+      Isolated = (jest.requireActual('./maintenance.service') as { MaintenanceService: typeof MaintenanceService }).MaintenanceService;
+    });
+    jest.dontMock('../../auth/refresh-grace');
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 0, rows: [] }));
+    await new Isolated!({ query: withParamsCheck(query) } as unknown as DatabaseService).clearGraceCopies();
+    expect(query.mock.calls[0][0]).toContain(`prev_rotated_at < now() - interval '45 seconds'`);
+    expect(query.mock.calls[0][0]).not.toContain('30 seconds');
   });
 
   it('clearGraceCopies logs and swallows a failure', async () => {

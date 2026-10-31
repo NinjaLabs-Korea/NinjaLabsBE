@@ -45,6 +45,24 @@ describe('RewardsService input checks (before any transaction)', () => {
   });
 });
 
+describe('RewardsService confirmDeposit unique violations', () => {
+  it('maps a unique violation on uq_bounty_reward_deposit_tx to 409 TX_HASH_ALREADY_USED', async () => {
+    const { service, db } = build();
+    db.tx.mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_bounty_reward_deposit_tx' }));
+    await expect(service.confirmDeposit('reward', txHash, '1000000', 'admin')).rejects.toMatchObject({ status: 409, message: 'TX_HASH_ALREADY_USED' });
+  });
+
+  it.each([
+    ['another unique index', 'uq_payout_idempotency'],
+    ['no constraint name', undefined],
+  ])('rethrows a unique violation from %s unchanged instead of calling it a reused hash', async (_what, constraint) => {
+    const { service, db } = build();
+    const boom = Object.assign(new Error('duplicate key'), { code: '23505', constraint });
+    db.tx.mockRejectedValueOnce(boom);
+    await expect(service.confirmDeposit('reward', txHash, '1000000', 'admin')).rejects.toBe(boom);
+  });
+});
+
 describe('RewardsService markApproved (two-person rule policy)', () => {
   /** the transaction answers: the payout row (requested_by), the APPROVED update, then anything else */
   function setup(options: { requestedBy?: string; allowSelf?: string } = {}) {

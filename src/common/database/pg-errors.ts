@@ -5,10 +5,13 @@ type PgError = { code?: unknown; constraint?: unknown; detail?: unknown } | null
 /**
  * PostgreSQL unique_violation (23505) — 유니크 인덱스 충돌 여부. `constraint`를 주면 **그 제약(인덱스) 이름**일 때만 true —
  * 한 트랜잭션이 여러 유니크 제약을 건드릴 때 엉뚱한 충돌을 특정 도메인 코드(예: NICKNAME_TAKEN)로 잘못 바꾸지 않도록.
+ * 한 catch가 의도적으로 여러 제약을 덮을 때는 이름 목록을 준다(그중 하나면 true). 이름이 없는 23505는 목록과 맞지 않는다.
  */
-export function isUniqueViolation(err: unknown, constraint?: string): boolean {
+export function isUniqueViolation(err: unknown, constraint?: string | readonly string[]): boolean {
   const pg = err as PgError;
-  return pg?.code === '23505' && (constraint === undefined || pg.constraint === constraint);
+  if (pg?.code !== '23505') return false;
+  if (constraint === undefined) return true;
+  return typeof pg.constraint === 'string' && (typeof constraint === 'string' ? pg.constraint === constraint : constraint.includes(pg.constraint));
 }
 
 /** PostgreSQL foreign_key_violation (23503). `constraint`를 주면 그 FK 이름일 때만 true */

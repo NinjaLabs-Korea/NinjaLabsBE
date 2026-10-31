@@ -24,6 +24,12 @@ import { UserStatusCache } from './user-status-cache';
 import { activeUserSql } from '../users/active-user';
 import { primaryWalletSql } from '../wallets/primary-wallet';
 
+/**
+ * 구글 첫 로그인 INSERT의 23505 중 ACCOUNT_CONFLICT(또는 동시 첫 로그인 복구)로 바꾸는 부분 유니크 인덱스(0014, `deleted_at IS NULL`).
+ * 임시 닉네임이 겹친 `uq_user_nickname_active` 같은 다른 충돌은 계정 충돌이 아니므로 그대로 던진다(콜백은 어차피 AUTH_FAILED로 보내지만 로그에 원인이 남는다).
+ */
+export const GOOGLE_USER_UNIQUE_INDEXES = ['uq_user_google_id', 'uq_user_email'] as const;
+
 // SessionUser는 컨트롤러·가드 등 여러 모듈이 이 경로로 import한다 — 정의는 access-token.verifier.ts 한 곳
 export type { SessionUser } from './access-token.verifier';
 export type { OAuthState } from './google-oauth.flow';
@@ -196,7 +202,7 @@ export class AuthService {
     } catch (err: unknown) {
       // uq_user_email / uq_user_google_id는 deleted_at IS NULL 행만 본다(0014). 그래도 같은 이메일/구글 계정의 활성 행과
       // 충돌하면(동시 첫 로그인, 또는 탈퇴 후 다른 google_id로 같은 이메일) 500 대신 409 → 콜백이 #error=AUTH_FAILED로 보낸다
-      if (isUniqueViolation(err)) {
+      if (isUniqueViolation(err, GOOGLE_USER_UNIQUE_INDEXES)) {
         // 같은 구글 계정의 동시 첫 로그인(두 콜백이 겹침)이면 상대가 방금 만든 행이 이제 보인다 — 그 유저로 로그인시킨다. 안 보이면 이메일 충돌이다
         const raced = await this.findGoogleUser(googleId);
         if (raced) return raced;

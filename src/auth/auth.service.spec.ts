@@ -467,11 +467,11 @@ describe('AuthService upsertGoogleUser', () => {
     expect(query.mock.calls[0][0]).toContain('deleted_at IS NULL');
   });
 
-  it('maps a unique violation on insert to 409 ACCOUNT_CONFLICT instead of a 500', async () => {
+  it.each(['uq_user_email', 'uq_user_google_id'])('maps a unique violation on %s at insert to 409 ACCOUNT_CONFLICT instead of a 500', async (constraint) => {
     const query = jest
       .fn()
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
-      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505' }))
+      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505', constraint }))
       .mockResolvedValueOnce({ rowCount: 0, rows: [] }); // re-check by google_id: nobody — the conflict is the email of another account
     const error = await createService(query).upsertGoogleUser('google', 'a@example.com').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ConflictException);
@@ -482,10 +482,23 @@ describe('AuthService upsertGoogleUser', () => {
     const query = jest
       .fn()
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
-      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505' }))
+      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_user_google_id' }))
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: userId, is_admin: false }] });
     await expect(createService(query).upsertGoogleUser('google', 'a@example.com')).resolves.toMatchObject({ id: userId });
     expect(query).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ['the temporary nickname index', 'uq_user_nickname_active'],
+    ['no constraint name', undefined],
+  ])('rethrows a unique violation from %s unchanged (not an account conflict, no re-lookup)', async (_what, constraint) => {
+    const boom = Object.assign(new Error('duplicate key'), { code: '23505', constraint });
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockRejectedValueOnce(boom);
+    await expect(createService(query).upsertGoogleUser('google', 'a@example.com')).rejects.toBe(boom);
+    expect(query).toHaveBeenCalledTimes(2);
   });
 
   it('propagates other insert errors unchanged', async () => {

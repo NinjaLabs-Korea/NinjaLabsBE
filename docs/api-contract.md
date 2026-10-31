@@ -53,7 +53,6 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `INVALID_SIGNATURE` | 401 | 서명 검증에 실패했다 (지갑 연결·에이전트 등록 공통) |
 | `WALLET_LINKED_TO_OTHER_ACCOUNT` | 409 | 이 주소가 이미 다른 계정에 연결돼 있다 |
 | `ACCOUNT_ALREADY_HAS_WALLET` | 409 | 이 계정에 이미 다른 대표 지갑이 연결돼 있다 |
-| `WALLET_ALREADY_LINKED` | 409 | 지갑 유니크 충돌(제약 이름 미상). 구 FE 호환용, 새 코드는 WALLET_LINKED_TO_OTHER_ACCOUNT / ACCOUNT_ALREADY_HAS_WALLET |
 | `INVALID_AGENT_WALLET_ADDRESS` | 400 | 에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다) |
 | `AGENT_PUBLIC_KEY_REQUIRED` | 400 | 에이전트 공개키가 필요하다 |
 | `AGENT_PUBLIC_KEY_MISMATCH` | 400 | inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다 |
@@ -241,7 +240,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | POST | `/wallets/verify` | ✅ | Keplr/Leap: `{address, signature, publicKey}` / EVM: `{address, signature}` → 검증 성공 시 지갑 저장 + NFT 민팅 잡 등록 |
 | GET | `/wallets/me` | ✅ | 내 대표 지갑 (없으면 null — 미연결 상태) |
 
-- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_LINKED_TO_OTHER_ACCOUNT`(이 주소가 다른 계정에 연결됨), `ACCOUNT_ALREADY_HAS_WALLET`(내 대표 지갑이 이미 다른 주소 - 둘 다 409이고 내 지갑이 이미 **같은 주소**면 재시도로 보고 200과 그 지갑을 돌려준다), `WALLET_ALREADY_LINKED`(제약 이름을 알 수 없는 유니크 충돌의 폴백, 구 FE 호환용), `USER_NOT_FOUND`(404 - challenge 뒤에 탈퇴한 계정, 지갑은 저장되지 않는다)
+- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_LINKED_TO_OTHER_ACCOUNT`(이 주소가 다른 계정에 연결됨), `ACCOUNT_ALREADY_HAS_WALLET`(내 대표 지갑이 이미 다른 주소 - 둘 다 409이고 내 지갑이 이미 **같은 주소**면 재시도로 보고 200과 그 지갑을 돌려준다), `USER_NOT_FOUND`(404 - challenge 뒤에 탈퇴한 계정, 지갑은 저장되지 않는다)
 - Keplr/Leap: challenge의 `message`를 `signArbitrary(chainId, address, message)`로 서명.
   응답의 `signature`(base64)와 `pub_key.value`(base64)를 그대로 `signature`, `publicKey`로 전송.
   서버는 ADR-36 sign doc을 재구성해 keccak256/secp256k1로 검증하고 공개키→주소 일치도 확인한다.

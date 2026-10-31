@@ -188,12 +188,16 @@ describe('WalletsService challenge lookup', () => {
     await expect(run(signature)).rejects.toMatchObject({ message: 'ACCOUNT_ALREADY_HAS_WALLET' });
   });
 
-  it('keeps WALLET_ALREADY_LINKED as the fallback for a unique violation on an unknown constraint', async () => {
-    const duplicate = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_something_else' });
+  it.each([
+    ['another unique index (e.g. an NFT job key)', 'uq_nft_job_idempotency'],
+    ['no constraint name', undefined],
+  ])('rethrows a unique violation from %s unchanged: no 409 and no "is it my wallet" lookup', async (_what, constraint) => {
+    const duplicate = Object.assign(new Error('duplicate key'), { code: '23505', constraint });
     const { db, signer, run } = verify([{ id: 'challenge-id', message: 'm', valid: true }], 1, duplicate);
     db.query.mockResolvedValue({ rowCount: 0, rows: [] });
     const signature = await signer.signMessage('m');
-    await expect(run(signature)).rejects.toMatchObject({ message: 'WALLET_ALREADY_LINKED' });
+    await expect(run(signature)).rejects.toBe(duplicate);
+    expect(db.query).not.toHaveBeenCalled();
   });
 
   it('propagates other INSERT failures unchanged (not every error is a duplicate wallet)', async () => {

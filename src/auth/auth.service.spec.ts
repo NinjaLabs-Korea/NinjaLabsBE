@@ -432,6 +432,19 @@ describe('AuthService access token type binding', () => {
     const { service } = createService(jest.fn(async () => { throw new Error('jwt expired'); }));
     await expect(service.verifyAccessToken('t')).rejects.toBeInstanceOf(UnauthorizedException);
   });
+
+  it('sessionUserOf (the `user` of a cookie-mode refresh/exchange) is getMe for the verified token\'s sub, never a second serializer', async () => {
+    const { service } = createService(jest.fn(async () => ({ sub: userId, adm: false, typ: 'access' })));
+    const me = { id: userId, nickname: 'ryan' };
+    const getMe = jest.spyOn(service, 'getMe').mockResolvedValue(me as never);
+    await expect(service.sessionUserOf('t')).resolves.toBe(me);
+    expect(getMe).toHaveBeenCalledWith(userId);
+
+    const { service: forged } = createService(jest.fn(async () => ({ p: 'gstate' })));
+    const neverRead = jest.spyOn(forged, 'getMe');
+    await expect(forged.sessionUserOf('t')).rejects.toMatchObject({ message: 'INVALID_ACCESS_TOKEN' });
+    expect(neverRead).not.toHaveBeenCalled();
+  });
 });
 
 describe('AuthService upsertGoogleUser', () => {

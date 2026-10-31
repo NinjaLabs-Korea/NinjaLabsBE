@@ -127,7 +127,7 @@ describe('AuthController.refresh / me', () => {
     const controller = new AuthController(auth as never, { get: () => undefined } as never, { enabled: false } as never);
     const res = { append: jest.fn() };
     await expect(controller.refresh({ refreshToken: 'r1' }, { headers: { 'user-agent': 'ua' }, ip: '1.2.3.4' } as never, res as never))
-      .resolves.toEqual({ accessToken: 'a', refreshToken: 'r2' });
+      .resolves.toEqual({ accessToken: 'a', refreshToken: 'r2' }); // no `user` in body mode (deprecated, unchanged)
     expect(auth.refresh).toHaveBeenCalledWith('r1', '1.2.3.4', 'ua');
     expect(res.append).not.toHaveBeenCalled();
   });

@@ -25,6 +25,21 @@ import { UserStatusCache } from './user-status-cache';
 export type { SessionUser } from './access-token.verifier';
 export type { OAuthState } from './google-oauth.flow';
 
+/** `GET /auth/me` 응답 = 쿠키 모드 refresh/exchange 응답의 `user` (docs/api-contract.md). 만드는 곳은 AuthService.getMe 하나 */
+export type MeResponse = {
+  id: string;
+  nickname: string;
+  email: string;
+  bio: string;
+  tags: string[];
+  onboardingStep: number;
+  onboardingCompleted: boolean;
+  isAdmin: boolean;
+  isMember: boolean;
+  wallet: { address: string; verifiedAt: Date | null } | null;
+  nft: { status: string; tokenId: string | null } | null;
+};
+
 /**
  * 인증 흐름 (Google OAuth → 자체 JWT 세션)
  *
@@ -106,8 +121,8 @@ export class AuthService {
     return this.oauth.exchangeGoogleCode(code);
   }
 
-  /** GET /auth/me — 프로필 + 온보딩/지갑/NFT 상태 (api-contract.md 응답 형태) */
-  async getMe(userId: string) {
+  /** GET /auth/me: 프로필 + 온보딩/지갑/NFT 상태 (api-contract.md 응답 형태). 쿠키 모드 refresh/exchange의 `user`도 이것 (sessionUserOf) */
+  async getMe(userId: string): Promise<MeResponse> {
     const user = await this.db.query(
       `SELECT u.id, u.nickname, u.email, u.bio, u.onboarding_step,
               u.onboarding_completed_at, u.is_admin, u.is_member,
@@ -149,6 +164,15 @@ export class AuthService {
         ? { status: nft.rows[0].status, tokenId: nft.rows[0].token_id }
         : null,
     };
+  }
+
+  /**
+   * 방금 발급한 access 토큰의 주인에 대한 `GET /auth/me` 응답. 쿠키 모드 refresh/exchange 응답에 `user`로 싣는다.
+   * 토큰을 AuthGuard와 같은 검증기로 읽고 같은 getMe를 부르므로 두 응답이 갈라질 수 없다. FE는 이 값이 있으면 `/auth/me` 왕복을 건너뛴다.
+   */
+  async sessionUserOf(accessToken: string): Promise<MeResponse> {
+    const { userId } = await this.verifyAccessToken(accessToken);
+    return this.getMe(userId);
   }
 
   /** 구글 프로필로 유저를 찾거나 생성한다 */

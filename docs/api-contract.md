@@ -142,8 +142,8 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 |---|---|---|---|
 | GET | `/auth/google` | - | `codeChallenge`(S256, 필수), `returnTo`, `trace`, `turnstileToken`(`TURNSTILE_SECRET_KEY` 설정 시 필수) → 구글 동의 화면. 봇 방지 실패 → FE `/auth/callback#error=TURNSTILE_FAILED`, Cloudflare 불통 → `#error=TURNSTILE_UNAVAILABLE`, challenge 없음/형식 오류 → `#error=AUTH_FAILED` (모두 302, 아래 "Turnstile") |
 | GET | `/auth/google/callback` | - | Google code 교환 → FE `/auth/callback#loginCode=...`. 실패는 `#error=AUTH_FAILED`, DB 일시 장애(503 `DATABASE_UNAVAILABLE` 원인)만 `#error=DATABASE_UNAVAILABLE` |
-| POST | `/auth/exchange` | - | `{code, codeVerifier}` → `{accessToken, refreshToken}`; `Cache-Control: no-store, private`. **쿠키 모드**(`X-Ninja-Session: cookie`): `Set-Cookie: ninja_rt=…` + 본문 `{accessToken}` (아래 "refresh 쿠키 모드") |
-| POST | `/auth/refresh` | - | **쿠키 모드**: 본문 `{}`(또는 없음) + `ninja_rt` 쿠키 → `{accessToken}` + 새 `Set-Cookie`. **본문 모드(deprecated)**: `{refreshToken}` → `{accessToken, refreshToken}` (회전). `Cache-Control: no-store, private`. **재사용 유예 30초**: 방금 회전된 구 토큰이 30초 안에 다시 오면(멀티탭 레이스) 401 대신 이긴 쪽과 **같은 `refreshToken`**(+ 새로 서명한 `accessToken`)을 돌려주고 다시 회전하지 않는다 — 두 탭 모두 그 토큰을 쓰면 된다. 30초가 지났거나 그 후속 토큰이 이미 회전/폐기됐으면 재사용 감지로 보고 `401 INVALID_REFRESH_TOKEN` + 그 토큰에서 파생된 세션 사슬 전체 폐기(재로그인 필요). 정지/삭제된 유저는 항상 401 |
+| POST | `/auth/exchange` | - | `{code, codeVerifier}` → `{accessToken, refreshToken}`; `Cache-Control: no-store, private`. **쿠키 모드**(`X-Ninja-Session: cookie`): `Set-Cookie: ninja_rt=…` + 본문 `{accessToken, user}`(`user` = `GET /auth/me` 응답, 아래 "refresh 쿠키 모드") |
+| POST | `/auth/refresh` | - | **쿠키 모드**: 본문 `{}`(또는 없음) + `ninja_rt` 쿠키 → `{accessToken, user}` + 새 `Set-Cookie` (`user` = 같은 세션의 `GET /auth/me` 응답). **본문 모드(deprecated)**: `{refreshToken}` → `{accessToken, refreshToken}` (회전). `Cache-Control: no-store, private`. **재사용 유예 30초**: 방금 회전된 구 토큰이 30초 안에 다시 오면(멀티탭 레이스) 401 대신 이긴 쪽과 **같은 `refreshToken`**(+ 새로 서명한 `accessToken`)을 돌려주고 다시 회전하지 않는다, 두 탭 모두 그 토큰을 쓰면 된다. 30초가 지났거나 그 후속 토큰이 이미 회전/폐기됐으면 재사용 감지로 보고 `401 INVALID_REFRESH_TOKEN` + 그 토큰에서 파생된 세션 사슬 전체 폐기(재로그인 필요). 정지/삭제된 유저는 항상 401 |
 | POST | `/auth/logout` | - | **쿠키 모드**: 쿠키의 세션 폐기 + 쿠키 삭제(`Max-Age=0`) → 204. **본문 모드(deprecated)**: `{refreshToken}` → 204 |
 | GET | `/auth/me` | ✅ | 현재 유저 프로필 + 온보딩/지갑 상태 |
 
@@ -153,8 +153,12 @@ FE는 `/api/auth/*`를 Next.js rewrite로 BE `/auth/*`에 프록시한다 — �
 
 - **요청별 옵트인**: 헤더 `X-Ninja-Session: cookie`(값은 대소문자·앞뒤 공백 무시). 이 헤더가 없으면 쿠키는 **무시**되고 본문 모드다(그대로 동작 — 옛 탭/스크립트 호환, **deprecated**).
 - **쿠키**: `Set-Cookie: ninja_rt=<refresh>; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=<JWT_REFRESH_TTL 초, 기본 1209600>` — `Domain` 없음. 값은 base64url 64자.
-- `POST /auth/exchange`: 쿠키를 심고 본문은 `{accessToken}` (`refreshToken` 없음 — 그 밖의 필드가 생기면 그대로 둔다).
-- `POST /auth/refresh`: 본문 `{}`(또는 본문 없음) — `ninja_rt`를 읽어 회전하고 새 토큰으로 쿠키를 다시 심는다 → `{accessToken}`. 30초 재사용 유예도 같다(유예 응답은 이긴 쪽과 같은 토큰을 쿠키로). 
+- `POST /auth/exchange`: 쿠키를 심고 본문은 `{accessToken, user}` (`refreshToken` 없음, 그 밖의 필드가 생기면 그대로 둔다).
+- `POST /auth/refresh`: 본문 `{}`(또는 본문 없음), `ninja_rt`를 읽어 회전하고 새 토큰으로 쿠키를 다시 심는다 → `{accessToken, user}`. 30초 재사용 유예도 같다(유예 응답은 이긴 쪽과 같은 토큰을 쿠키로, `user`도 싣는다).
+- **`user` (2026-10-31 추가)**: 쿠키 모드 exchange/refresh 200 응답은 새 access 토큰 주인의 **`GET /auth/me` 응답과 같은 객체**(아래 "`/auth/me` 응답")를 `user`로 싣는다. 만드는 코드는 하나(`AuthService.getMe`, `sessionUserOf`)라 두 응답이 갈라질 수 없다(e2e가 같은 세션의 `/auth/me`와 `toEqual`로 대조). FE는 `user`가 있으면 페이지 로드 세션 복원에서 `/auth/me` 왕복을 건너뛴다.
+  - **추가 필드일 뿐**: 상태 코드, 쿠키, 회전, 30초 유예, 한도, 정지·탈퇴 유저의 401은 그대로다. 본문 모드(deprecated)에는 싣지 않는다.
+  - 세션이 발급·회전된 **뒤** 사용자 조회가 실패하면(DB 순간 장애, 그 사이 탈퇴) 응답은 그대로 200 + 새 쿠키이고 `user`만 빠진다(error 로그 `session.user.omitted`). 그래서 클라이언트는 `user`가 없거나 모양이 틀리면 `GET /auth/me`로 폴백해야 한다.
+  - `user`에 새 비밀은 없다: 같은 토큰으로 `/auth/me`를 부르면 받는 값이다. `Cache-Control: no-store, private`도 같다.
   - **레거시 이전(1회)**: 헤더와 함께 본문 `refreshToken`이 오면(localStorage에 남은 토큰) 본문 토큰을 쓰고 결과를 쿠키로 심는다. 이후 FE는 localStorage 토큰을 지운다.
   - 쿠키가 없으면 `401 INVALID_REFRESH_TOKEN`(쿠키 변경 없음). **쿠키에서 읽은** 토큰이 401이면 쿠키를 지운다(`Max-Age=0`).
 - `POST /auth/logout`: 쿠키(와 본문에 함께 온 레거시 토큰)의 세션을 폐기하고 `Set-Cookie: ninja_rt=; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=0` → 204. 토큰이 없어도 204.

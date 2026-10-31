@@ -95,7 +95,8 @@ export class ApplicationsService {
         );
         return r.rows[0];
       } catch (err: unknown) {
-        if (isUniqueViolation(err)) {
+        // 같은 주체의 동시 첫 지원만 409로 바꾼다. 다른 유니크 충돌(예: 나중에 생길 인덱스)은 그대로 던져 500으로 드러나게 한다
+        if (isUniqueViolation(err, actor.applicationUniqueIndex)) {
           throw new ConflictException('ALREADY_APPLIED');
         }
         throw err;

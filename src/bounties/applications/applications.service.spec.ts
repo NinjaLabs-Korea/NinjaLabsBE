@@ -195,6 +195,32 @@ describe('ApplicationsService apply rules', () => {
     await expect(serviceWith(query).apply('bounty', 'user', 'hi')).rejects.toMatchObject({ status: 409, message: 'ALREADY_APPLIED' });
   });
 
+  it('maps a unique violation on uq_application_agent (a concurrent first agent application) to 409 ALREADY_APPLIED', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce(bountyRow({ submission_mode: 'AGENT' }))
+      .mockResolvedValueOnce(ONBOARDED)
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_application_agent' }));
+    await expect(serviceWith(query).applyAsAgent('bounty', 'agent', 'hi')).rejects.toMatchObject({ status: 409, message: 'ALREADY_APPLIED' });
+  });
+
+  it.each([
+    ['user', 'another unique index', 'uq_something_else'],
+    ['user', 'the agent index', 'uq_application_agent'],
+    ['user', 'no constraint name', undefined],
+    ['agent', 'the user index', 'uq_application_user'],
+  ])('rethrows a %s unique violation from %s instead of calling it ALREADY_APPLIED', async (kind, _what, constraint) => {
+    const boom = Object.assign(new Error('duplicate key'), { code: '23505', constraint });
+    const query = jest.fn()
+      .mockResolvedValueOnce(bountyRow({ submission_mode: kind === 'agent' ? 'AGENT' : 'DIRECT' }))
+      .mockResolvedValueOnce(ONBOARDED)
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockRejectedValueOnce(boom);
+    const service = serviceWith(query);
+    const call = kind === 'agent' ? service.applyAsAgent('bounty', 'agent', 'hi') : service.apply('bounty', 'user', 'hi');
+    await expect(call).rejects.toBe(boom);
+  });
+
   it('rethrows any other database error unchanged', async () => {
     const boom = Object.assign(new Error('fk'), { code: '23503' });
     const query = jest.fn()

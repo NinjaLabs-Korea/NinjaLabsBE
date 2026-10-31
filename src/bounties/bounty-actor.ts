@@ -38,6 +38,14 @@ export class BountyActor {
     return this.kind === 'USER' ? 'applicant_user_id' : 'agent_id';
   }
 
+  /**
+   * bounty_application에서 "주체당 바운티 1행"을 지키는 부분 유니크 인덱스 이름(0004_bounties.sql).
+   * INSERT의 23505가 이 인덱스에서 났을 때만 ALREADY_APPLIED로 바꾼다: 다른 유니크 충돌을 중복 지원으로 숨기지 않도록.
+   */
+  get applicationUniqueIndex(): 'uq_application_user' | 'uq_application_agent' {
+    return this.kind === 'USER' ? 'uq_application_user' : 'uq_application_agent';
+  }
+
   /** bounty_submission에서 이 주체를 식별하는 컬럼 */
   get submissionColumn(): 'submitter_user_id' | 'agent_id' {
     return this.kind === 'USER' ? 'submitter_user_id' : 'agent_id';

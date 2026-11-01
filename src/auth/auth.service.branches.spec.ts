@@ -338,6 +338,7 @@ describe('AuthService.getMe', () => {
   const row = {
     id: userId, nickname: 'ninja', email: 'n@example.com', bio: 'hi', onboarding_step: 4,
     onboarding_completed_at: new Date('2026-10-01T00:00:00Z'), is_admin: true, is_member: false, tags: ['DEV'],
+    avatar_url: '/media/22222222-2222-4222-8222-222222222222',
   };
 
   it('maps the user row to the FE MeResponse with wallet and parent NFT', async () => {
@@ -347,6 +348,7 @@ describe('AuthService.getMe', () => {
     await expect(service.getMe(userId)).resolves.toEqual({
       id: userId, nickname: 'ninja', email: 'n@example.com', bio: 'hi', tags: ['DEV'], onboardingStep: 4,
       onboardingCompleted: true, isAdmin: true, isMember: false,
+      avatarUrl: '/media/22222222-2222-4222-8222-222222222222',
       wallet: { address: 'inj1abc', verifiedAt }, nft: { status: 'MINTED', tokenId: '7' },
     });
     for (const [, params] of query.mock.calls as unknown as Array<[string, unknown[]]>) expect(params).toEqual([userId]);

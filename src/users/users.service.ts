@@ -9,6 +9,7 @@ import { isSavableNickname, normalizeNickname } from './nickname';
 import { ownedAgentIdsSql } from '../agents/owned-agents';
 import { activeUserSql } from './active-user';
 import { ONBOARDING_STEP } from './onboarding-step';
+import { avatarUrlSql } from '../media/media-path';
 
 /** 활성 유저 닉네임 유니크 인덱스 (0019_nickname_unicode_fold.sql, 접힌 닉네임 WHERE deleted_at IS NULL) */
 export const NICKNAME_UNIQUE_INDEX = 'uq_user_nickname_active';
@@ -126,6 +127,7 @@ export class UsersService {
   async publicProfile(nickname: string) {
     const user = await this.db.query(
       `SELECT u.id, u.nickname, u.bio, u.is_member, u.member_role, u.created_at,
+              ${avatarUrlSql('u')} AS avatar_url,
               COALESCE(array_agg(t.tag ORDER BY t.tag) FILTER (WHERE t.tag IS NOT NULL), '{}') AS tags
          FROM "user" u
          LEFT JOIN user_tag t ON t.user_id = u.id

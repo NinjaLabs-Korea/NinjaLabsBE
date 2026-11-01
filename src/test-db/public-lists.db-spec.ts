@@ -63,7 +63,7 @@ describeDb('public lists (members, hall of fame, notices) on a real database', (
       // one row per member even with several links (GROUP BY u.id)
       expect(rows.filter((row) => row.id === linked)).toHaveLength(1);
       expect(Object.keys(rows.find((row) => row.id === linked)!).sort()).toEqual(
-        ['bio', 'id', 'links', 'member_display_order', 'member_role', 'nickname'],
+        ['avatar_url', 'bio', 'id', 'links', 'member_display_order', 'member_role', 'nickname'],
       );
     });
   });

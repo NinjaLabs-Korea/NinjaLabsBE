@@ -643,7 +643,9 @@ describeDb('0021 migration on a database with legacy cohort data', () => {
        VALUES ($1, $2, 'n', '@abcde', '@a', 'LT_1Y', 'KOL', ARRAY['KOL']::text[], 'hi') RETURNING id`, [closed, userId])).rows[0].id;
 
     const { applied } = await applyMigrations(pool);
-    expect(applied).toEqual(['0021_cohort_questions.sql']);
+    // 0021 부터 끝까지 (뒤에 붙는 마이그레이션이 늘어도 이 스펙은 0021 이 적용됐는지만 본다)
+    expect(applied[0]).toBe('0021_cohort_questions.sql');
+    expect(applied).toEqual(migrationFiles().filter((file) => file >= '0021'));
 
     for (const id of [draft, closed]) {
       expect((await db.query<{ questions: unknown }>(`SELECT questions FROM cohort WHERE id = $1`, [id])).rows[0].questions).toEqual(DEFAULT_COHORT_QUESTIONS);

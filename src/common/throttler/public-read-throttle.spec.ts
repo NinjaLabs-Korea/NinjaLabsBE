@@ -53,11 +53,11 @@ describe('PUBLIC_READ_IP_THROTTLE', () => {
 });
 
 describe('sensitive users routes keep their own limits', () => {
-  it('check-nickname stays 30 and DELETE /users/me stays 5', () => {
+  it('check-nickname stays 30, DELETE /users/me stays 5, avatar upload/delete stay 10', () => {
     const limits = Object.getOwnPropertyNames(UsersController.prototype)
       .map((n) => Reflect.getMetadata(LIMIT, (UsersController.prototype as any)[n] as object))
       .filter((l) => l !== undefined)
       .sort((a, b) => a - b);
-    expect(limits).toEqual([5, 30, 600]);
+    expect(limits).toEqual([5, 10, 10, 30, 600]);
   });
 });

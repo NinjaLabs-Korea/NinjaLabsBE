@@ -8,8 +8,12 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
+  UseFilters,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ArrayNotEmpty, IsArray, IsIn, IsNotEmpty, IsString, Length, Matches, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { Throttle } from '@nestjs/throttler';
@@ -26,7 +30,10 @@ import { PUBLIC_READ_IP_THROTTLE } from '../common/throttler/public-read-throttl
 import { MaxChars } from '../common/validation/max-chars';
 import { Trim } from '../common/validation/trim';
 import { HasNoBidiOverride, HasVisibleText } from '../common/validation/visible-text';
+import { MediaFileTooLargeFilter } from '../media/media-file-too-large.filter';
+import { MAX_AVATAR_BYTES, UploadedImage } from '../media/media.service';
 import { AccountWithdrawalService } from './account-withdrawal.service';
+import { UserAvatarService } from './user-avatar.service';
 import { IsNotReservedNickname, IsNotStaticFileNickname, NICKNAME, NormalizeNickname, NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH } from './nickname';
 import { ONBOARDING_STEP } from './onboarding-step';
 import { UsersService } from './users.service';
@@ -76,6 +83,7 @@ export class UsersController {
   constructor(
     private readonly users: UsersService,
     private readonly withdrawal: AccountWithdrawalService,
+    private readonly avatar: UserAvatarService,
   ) {}
 
   /** GET /users/check-nickname?nickname=... - 닉네임 중복 검사 (공개) */
@@ -154,6 +162,36 @@ export class UsersController {
       });
       throw caught;
     }
+  }
+
+  /**
+   * POST /users/me/avatar - 본인 프로필 사진 등록·교체 (multipart `file` 하나) -> 201 `{ avatarUrl: "/media/<uuid>" }`.
+   * 이미지 규칙은 POST /admin/media와 같고(jpeg/png/webp 매직바이트) 상한만 2 MiB다. 400 MEDIA_FILE_REQUIRED · MEDIA_FILE_TOO_LARGE ·
+   * MEDIA_FILE_TYPE_UNSUPPORTED, 404 USER_NOT_FOUND(동시 탈퇴). 옛 사진의 media 행은 같은 트랜잭션에서 지워진다.
+   * multer 한도는 운영자 업로드와 같은 모양(파일 1개, 필드·파트 수, 필드명 길이)이고 fileFilter는 쓰지 않는다
+   * (multer advisory GHSA-q7qp-rjg7-q26m은 async fileFilter에서만 닿는다, audit-allowlist.json).
+   */
+  @Post('me/avatar')
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @UseInterceptors(FileInterceptor('file', {
+    defParamCharset: 'utf8',
+    limits: { files: 1, fileSize: MAX_AVATAR_BYTES, fields: 5, parts: 10, fieldNameSize: 100 },
+  }))
+  @UseFilters(MediaFileTooLargeFilter)
+  uploadAvatar(
+    @Req() req: Request & { user: SessionUser },
+    @UploadedFile() file?: UploadedImage,
+  ) {
+    return this.avatar.replace(req.user.userId, file);
+  }
+
+  /** DELETE /users/me/avatar - 본인 프로필 사진 삭제 -> 200 `{ avatarUrl: null }` (사진이 없어도 멱등). 404 USER_NOT_FOUND(동시 탈퇴) */
+  @Delete('me/avatar')
+  @UseGuards(AuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  removeAvatar(@Req() req: Request & { user: SessionUser }) {
+    return this.avatar.remove(req.user.userId);
   }
 
   /**

@@ -62,11 +62,13 @@ export const AUDIT_ACTIONS = {
   HIGHLIGHT_CREATED: 'platform_highlight',
   HIGHLIGHT_UPDATED: 'platform_highlight',
   HIGHLIGHT_DELETED: 'platform_highlight',
-  // 사용자 (account-withdrawal.service.ts, users.service.ts, member-admin.service.ts)
+  // 사용자 (account-withdrawal.service.ts, users.service.ts, member-admin.service.ts, user-avatar.service.ts)
   USER_WITHDRAWN: 'user',
   USER_NICKNAME_CHANGED: 'user',
   USER_MEMBER_GRANTED: 'user',
   USER_MEMBER_REVOKED: 'user',
+  USER_AVATAR_UPDATED: 'user',
+  USER_AVATAR_REMOVED: 'user',
   // NFT 잡 (nft-jobs-admin.service.ts)
   NFT_JOB_RETRIED: 'nft_job',
 } as const;

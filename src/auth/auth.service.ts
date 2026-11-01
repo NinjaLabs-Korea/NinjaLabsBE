@@ -23,6 +23,7 @@ import { normalizeRefreshTtl, refreshTtlSeconds } from './refresh-ttl';
 import { UserStatusCache } from './user-status-cache';
 import { activeUserSql } from '../users/active-user';
 import { primaryWalletSql } from '../wallets/primary-wallet';
+import { avatarUrlSql } from '../media/media-path';
 
 /**
  * 구글 첫 로그인 INSERT의 23505 중 ACCOUNT_CONFLICT(또는 동시 첫 로그인 복구)로 바꾸는 부분 유니크 인덱스(0014, `deleted_at IS NULL`).
@@ -45,6 +46,8 @@ export type MeResponse = {
   onboardingCompleted: boolean;
   isAdmin: boolean;
   isMember: boolean;
+  /** 프로필 사진 `/media/<uuid>` 또는 null (0022, 2026-11-01 추가 필드) */
+  avatarUrl: string | null;
   wallet: { address: string; verifiedAt: Date | null } | null;
   nft: { status: string; tokenId: string | null } | null;
 };
@@ -135,6 +138,7 @@ export class AuthService {
     const user = await this.db.query(
       `SELECT u.id, u.nickname, u.email, u.bio, u.onboarding_step,
               u.onboarding_completed_at, u.is_admin, u.is_member,
+              ${avatarUrlSql('u')} AS avatar_url,
               COALESCE(array_agg(t.tag) FILTER (WHERE t.tag IS NOT NULL), '{}') AS tags
          FROM "user" u
          LEFT JOIN user_tag t ON t.user_id = u.id
@@ -166,6 +170,7 @@ export class AuthService {
       onboardingCompleted: u.onboarding_completed_at !== null,
       isAdmin: u.is_admin,
       isMember: u.is_member,
+      avatarUrl: u.avatar_url ?? null,
       wallet: wallet.rowCount
         ? { address: wallet.rows[0].address, verifiedAt: wallet.rows[0].verified_at }
         : null,

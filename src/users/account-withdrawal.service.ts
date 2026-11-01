@@ -12,6 +12,7 @@ import { disconnectAllWalletsOfUser } from '../wallets/wallet-disconnection';
 import { normalizeNickname, WITHDRAWN_NICKNAME_PREFIX } from './nickname';
 import { ownedAgentIdsSql } from '../agents/owned-agents';
 import { activeUserSql } from './active-user';
+import { clearAvatarOfUser } from './user-avatar';
 
 /**
  * 승인됐지만 아직 payout이 요청되지 않은(그래서 아직 받을 수 있는) 보상 - 하나라도 있으면 탈퇴를 막는다 (409 WITHDRAWAL_BLOCKED_PENDING_REWARDS).
@@ -117,6 +118,8 @@ export class AccountWithdrawalService {
       );
       await tx.query(`DELETE FROM user_link WHERE user_id = $1`, [userId]);
       await tx.query(`DELETE FROM user_tag WHERE user_id = $1`, [userId]);
+      // 프로필 사진도 지운다 (bio·링크처럼 사람을 알아보게 하는 정보, 옛 /media URL도 404가 된다)
+      await clearAvatarOfUser(tx, userId);
       // 다른 모듈이 소유한 테이블은 그 모듈의 in-transaction 함수로 정리한다 (순서 유지 - 감사 행 순서가 AGENT_REVOKED… → USER_WITHDRAWN)
       await revokeAllSessionsOfUser(tx, userId);
       await disconnectAllWalletsOfUser(tx, userId);

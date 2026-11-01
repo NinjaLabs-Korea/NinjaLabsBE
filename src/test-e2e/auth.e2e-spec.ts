@@ -69,7 +69,7 @@ describeDb('auth over HTTP (e2e)', () => {
     expect(me.headers['cache-control']).toBe('no-store, private');
     // exactly the FE MeResponse (NinjaLabsFE/src/lib/api/me.ts)
     expect(Object.keys(me.body).sort()).toEqual(
-      ['bio', 'email', 'id', 'isAdmin', 'isMember', 'nft', 'nickname', 'onboardingCompleted', 'onboardingStep', 'tags', 'wallet'].sort());
+      ['avatarUrl', 'bio', 'email', 'id', 'isAdmin', 'isMember', 'nft', 'nickname', 'onboardingCompleted', 'onboardingStep', 'tags', 'wallet'].sort());
     expect(me.body).toMatchObject({
       id: claims(ok.body.accessToken).sub, email: `${sub}@example.test`, bio: '', tags: [], onboardingStep: 2,
       onboardingCompleted: false, isAdmin: false, isMember: false, wallet: null, nft: null,

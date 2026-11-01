@@ -121,7 +121,7 @@ describe('UsersController', () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const req = { headers: { 'x-onboarding-trace-id': 't-1' }, requestId: 'req-id-1234', user: { userId, isAdmin: false } } as never;
-    return { users, controller: new UsersController(users as never, {} as never), req, log, error, warn };
+    return { users, controller: new UsersController(users as never, {} as never, {} as never), req, log, error, warn };
   }
 
   it('check-nickname wraps the answer as {available}', async () => {

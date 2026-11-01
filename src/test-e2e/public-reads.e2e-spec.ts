@@ -172,7 +172,7 @@ describeDb('public reads over HTTP (e2e)', () => {
 
     const profile = await e2e.get(`/users/${encodeURIComponent(nickname.toUpperCase())}`); // case-insensitive
     expect(profile.status).toBe(200);
-    expect(Object.keys(profile.body).sort()).toEqual(['agents', 'bio', 'completedBounties', 'created_at', 'id', 'is_member', 'member_role', 'nfts', 'nickname', 'tags']);
+    expect(Object.keys(profile.body).sort()).toEqual(['agents', 'avatar_url', 'bio', 'completedBounties', 'created_at', 'id', 'is_member', 'member_role', 'nfts', 'nickname', 'tags']);
     expect(profile.body).toMatchObject({ nickname, bio: 'builder bio', tags: ['DEV'], is_member: false, agents: [] });
     const byTitle = Object.fromEntries(profile.body.completedBounties.map((b: { title: string }) => [b.title, b]));
     expect(byTitle['No reward']).toMatchObject({ id: noReward, category: 'CONTENT', rewards: [], postedRewards: [], payoutStatus: 'NONE' });
@@ -195,8 +195,8 @@ describeDb('public reads over HTTP (e2e)', () => {
     expect(res.status).toBe(200);
     const mine = res.body.filter((m: { id: string }) => [a.userId, b.userId].includes(m.id));
     expect(mine).toEqual([
-      { id: b.userId, nickname: nickB, bio: 'builder bio', member_role: 'OPS', member_display_order: 10, links: [] },
-      { id: a.userId, nickname: nickA, bio: 'builder bio', member_role: 'DEV', member_display_order: 20, links: [] },
+      { id: b.userId, nickname: nickB, bio: 'builder bio', member_role: 'OPS', member_display_order: 10, links: [], avatar_url: null },
+      { id: a.userId, nickname: nickA, bio: 'builder bio', member_role: 'DEV', member_display_order: 20, links: [], avatar_url: null },
     ]);
   });
 

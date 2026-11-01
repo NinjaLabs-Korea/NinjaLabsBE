@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../common/database/database.service';
+import { avatarUrlSql } from '../media/media-path';
 import { activeUserSql } from '../users/active-user';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class MembersService {
   async list() {
     const r = await this.db.query(
       `SELECT u.id, u.nickname, u.bio, u.member_role, u.member_display_order,
+              ${avatarUrlSql('u')} AS avatar_url,
               COALESCE(json_agg(json_build_object('type', l.link_type, 'url', l.url)
                        ORDER BY l.display_order)
                        FILTER (WHERE l.id IS NOT NULL), '[]') AS links

@@ -3,7 +3,7 @@ import { Wallet } from 'ethers';
 import { AuditService } from '../audit/audit.service';
 import { verifyAdr36Signature } from '../common/crypto/adr36';
 import { getInjectiveAddress } from '../test-e2e/support/injective-sdk.stub';
-import { createMockDb } from '../test-support/mock-db';
+import { createMockDb, SqlHandler } from '../test-support/mock-db';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 import { AgentsService } from './agents.service';
 
@@ -20,7 +20,11 @@ const injKey = (signer = Wallet.createRandom()) => ({
 });
 const { address: INJ_ADDRESS, publicKey: INJ_PUBKEY } = injKey();
 
-/** register()/verify() against a scripted tx: every statement is checked for $n/params drift. */
+/**
+ * 단위 스펙은 입력 분류/검증(주소 형식, 공개키 일치, 서명 방식), 오류 매핑(유니크 위반 -> 409), 바인딩, 메시지 문구만 본다. 등록 점유 규칙(남의 PENDING/REVOKED, 24시간 정리, 롤백),
+ * 소유자 지갑 충돌의 행 효과, 검증의 활성화/키 발급/감사/동시 검증은 src/test-db/agents-register.db-spec.ts와 agents.db-spec.ts가 실 DB 행으로 단언한다.
+ * DB 대역은 엄격 모드: 시나리오가 내지 않아야 할 문장(예: 서명 실패 뒤의 활성화)은 핸들러가 없어 `Unexpected SQL`로 실패한다.
+ */
 function setup(options: {
   insertError?: unknown;
   pendingAfterConflict?: boolean;
@@ -28,30 +32,38 @@ function setup(options: {
   activateError?: unknown;
   ownerWallets?: string[];
   onboarded?: boolean;
+  /** 서명이 맞을 때만 나가는 문장들(키 정리, 활성화, 키 삽입, 감사)을 등록한다 */
+  verifyWrites?: boolean;
+  clearsOtherKeys?: boolean;
 } = {}) {
-  const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
-    if (sql.includes('FROM wallet WHERE user_id = $1 AND disconnected_at IS NULL')) {
-      return { rowCount: (options.ownerWallets ?? []).length, rows: (options.ownerWallets ?? []).map((address) => ({ address })) };
-    }
-    if (sql.includes('onboarding_completed_at IS NOT NULL AS done')) return { rowCount: 1, rows: [{ done: options.onboarded ?? true }] };
-    if (sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')")) return { rowCount: 0, rows: [] };
-    if (sql.includes('INSERT INTO agent (')) {
+  const ok = { rowCount: 1, rows: [] };
+  const handlers: SqlHandler[] = [
+    { match: /onboarding_completed_at IS NOT NULL AS done/, reply: () => ({ rowCount: 1, rows: [{ done: options.onboarded ?? true }] }) },
+    { match: /FROM wallet WHERE user_id = \$1 AND disconnected_at IS NULL$/, reply: () => ({ rowCount: (options.ownerWallets ?? []).length, rows: (options.ownerWallets ?? []).map((address) => ({ address })) }) },
+    { match: /status IN \('REVOKED', 'PENDING_VERIFICATION'\)/, reply: () => ({ rowCount: 0, rows: [] }) },
+    { match: /^INSERT INTO agent \(/, reply: () => {
       if (options.insertError) throw options.insertError;
       return { rowCount: 1, rows: [{ id: agentId }] };
-    }
-    if (sql.includes('SELECT status, public_key, wallet_address, verified_at FROM agent')) {
-      const row = options.verifyRow;
-      return row ? { rowCount: 1, rows: [row] } : { rowCount: 0, rows: [] };
-    }
-    if (sql.includes("SET status = 'ACTIVE'") && options.activateError) throw options.activateError;
-    if (sql.includes('INSERT INTO agent_api_key')) return { rowCount: 1, rows: [{ expires_at: '2027-01-01T00:00:00.000Z' }] };
-    return { rowCount: 1, rows: [] };
+    } },
+    { match: /^SELECT status, public_key, wallet_address, verified_at FROM agent/, reply: () => (options.verifyRow ? { rowCount: 1, rows: [options.verifyRow] } : { rowCount: 0, rows: [] }) },
+  ];
+  if (options.verifyWrites) {
+    handlers.push(
+      ...(options.clearsOtherKeys === false ? [] : [{ match: /^UPDATE agent SET public_key = NULL/, reply: () => ({ rowCount: 0, rows: [] }) }]),
+      { match: /^UPDATE agent SET status = 'ACTIVE'/, reply: () => { if (options.activateError) throw options.activateError; return ok; } },
+      { match: /^INSERT INTO agent_api_key/, reply: () => ({ rowCount: 1, rows: [{ expires_at: '2027-01-01T00:00:00.000Z' }] }) },
+      { match: /^INSERT INTO audit_log/, reply: () => ok },
+    );
+  }
+  handlers.push({
+    match: /^UPDATE agent SET name = \$3, description = \$4/,
+    reply: () => (options.pendingAfterConflict ? { rowCount: 1, rows: [{ id: 'own-pending' }] } : { rowCount: 0, rows: [] }),
   });
-  const query = jest.fn(async (_sql: string, _params?: unknown[]) =>
-    options.pendingAfterConflict ? { rowCount: 1, rows: [{ id: 'own-pending' }] } : { rowCount: 0, rows: [] });
-  const { database, db } = createMockDb({ query, txQuery });
-  const service = new AgentsService(database, new AuditService(database));
-  return { service, db, txQuery, query };
+  const mock = createMockDb({ strict: true, handlers });
+  const service = new AgentsService(mock.database, new AuditService(mock.database));
+  const insertParams = () => mock.txStatements(/^INSERT INTO agent \(/)[0]?.params;
+  const lookupParams = () => mock.txStatements(/status IN \('REVOKED', 'PENDING_VERIFICATION'\)/)[0]?.params;
+  return { service, db: mock.db, mock, insertParams, lookupParams };
 }
 
 describe('AgentsService.register input validation', () => {
@@ -86,44 +98,43 @@ describe('AgentsService.register input validation', () => {
   });
 
   it('an all-upper-case INJ1 address is folded to lower case and registered like the lower-case one', async () => {
-    const { service, txQuery } = setup();
+    const { service, insertParams } = setup();
     await expect(service.register(ownerUserId, 'bot', undefined, INJ_PUBKEY, INJ_ADDRESS.toUpperCase())).resolves.toMatchObject({ agentId, status: 'PENDING_VERIFICATION' });
-    expect(txQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO agent ('))![1]).toContain(INJ_ADDRESS);
+    expect(insertParams()).toContain(INJ_ADDRESS);
   });
 
   it('trims an inj1 address, stores it unchanged otherwise, and binds the public key to both the occupancy check and the INSERT', async () => {
-    const { service, txQuery } = setup();
+    const { service, insertParams, lookupParams } = setup();
     await expect(service.register(ownerUserId, 'bot', 'desc', INJ_PUBKEY, `  ${INJ_ADDRESS}  `)).resolves.toEqual({
       agentId,
       status: 'PENDING_VERIFICATION',
       verificationMessage: AgentsService.verificationMessage(agentId, ownerUserId),
     });
-    expect(txQuery.mock.calls.find(([sql]) => sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')"))?.[1]).toEqual([INJ_ADDRESS, INJ_PUBKEY]);
-    expect(txQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO agent ('))?.[1]).toEqual([ownerUserId, 'bot', 'desc', INJ_PUBKEY, INJ_ADDRESS]);
+    expect(lookupParams()).toEqual([INJ_ADDRESS, INJ_PUBKEY]);
+    expect(insertParams()).toEqual([ownerUserId, 'bot', 'desc', INJ_PUBKEY, INJ_ADDRESS]);
   });
 
   it.each([
     ['the same inj1 address', () => ({ wallet: INJ_ADDRESS, owner: INJ_ADDRESS })],
     ['the 0x form of the same account (wallets are stored as inj1)', () => { const signer = Wallet.createRandom(); return { wallet: signer.address, owner: getInjectiveAddress(signer.address) }; }],
     ['the same address in another letter case', () => ({ wallet: INJ_ADDRESS, owner: INJ_ADDRESS.toUpperCase() })],
-  ])('refuses to register %s as the owner\'s own connected wallet (400 AGENT_WALLET_IS_OWNER_WALLET) and rolls the transaction back', async (_label, pick) => {
+  ])('refuses to register %s as the owner\'s own connected wallet (400 AGENT_WALLET_IS_OWNER_WALLET)', async (_label, pick) => {
     const { wallet, owner } = pick();
-    const { service, txQuery } = setup({ ownerWallets: [owner] });
+    const { service, mock } = setup({ ownerWallets: [owner] });
     const error = await service.register(ownerUserId, 'bot', undefined, wallet === INJ_ADDRESS ? INJ_PUBKEY : undefined, wallet).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as BadRequestException).message).toBe('AGENT_WALLET_IS_OWNER_WALLET');
-    const lookup = txQuery.mock.calls.find(([sql]) => sql.includes('FROM wallet WHERE user_id = $1'))!;
-    expect(lookup[1]).toEqual([ownerUserId]);
+    expect(mock.txStatements(/FROM wallet WHERE user_id = \$1/)[0].params).toEqual([ownerUserId]);
   });
 
   it('an owner who has not finished onboarding is 409 PROFILE_REQUIRED before locking or inserting agents', async () => {
-    const { service, txQuery } = setup({ onboarded: false });
+    const { service, mock } = setup({ onboarded: false });
     await expect(service.register(ownerUserId, 'bot', undefined, undefined, Wallet.createRandom().address)).rejects.toMatchObject({
       status: 409,
       message: 'PROFILE_REQUIRED',
     });
-    expect(txQuery).toHaveBeenCalledTimes(1);
-    expect(txQuery.mock.calls[0][0]).toContain('FOR SHARE');
+    expect(mock.txQuery).toHaveBeenCalledTimes(1);
+    expect(mock.txStatements(/FOR SHARE/)).toHaveLength(1);
   });
 
   it('a different dedicated wallet is fine even when the owner has a connected wallet', async () => {
@@ -134,10 +145,10 @@ describe('AgentsService.register input validation', () => {
   it('an EVM wallet ignores a client publicKey: NULL is stored and the key is not used for the occupancy check (it comes from the signature at verify)', async () => {
     const signer = Wallet.createRandom();
     const someoneElsesKey = Wallet.createRandom().signingKey.compressedPublicKey;
-    const { service, txQuery } = setup();
+    const { service, insertParams, lookupParams } = setup();
     await expect(service.register(ownerUserId, 'bot', undefined, someoneElsesKey, signer.address)).resolves.toMatchObject({ agentId });
-    expect(txQuery.mock.calls.find(([sql]) => sql.includes("status IN ('REVOKED', 'PENDING_VERIFICATION')"))?.[1]).toEqual([signer.address, null]);
-    expect(txQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO agent ('))?.[1]).toEqual([ownerUserId, 'bot', null, null, signer.address]);
+    expect(lookupParams()).toEqual([signer.address, null]);
+    expect(insertParams()).toEqual([ownerUserId, 'bot', null, null, signer.address]);
   });
 
   it.each([
@@ -156,19 +167,19 @@ describe('AgentsService.register input validation', () => {
 
   it.each(['uq_agent_wallet', 'uq_agent_public_key'])('a unique violation on %s with no own PENDING row on that wallet is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED', async (constraint) => {
     const signer = Wallet.createRandom();
-    const { service, query } = setup({ insertError: Object.assign(new Error('dup'), { code: '23505', constraint }) });
+    const { service, mock } = setup({ insertError: Object.assign(new Error('dup'), { code: '23505', constraint }) });
     const error = await service.register(ownerUserId, 'bot', undefined, undefined, signer.address).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ConflictException);
     expect((error as Error).message).toBe('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
-    expect(query.mock.calls[0][1]).toEqual([ownerUserId, signer.address, 'bot', null]);
+    // the own-pending lookup runs outside the rolled-back transaction, scoped to (owner, wallet)
+    expect(mock.statements(/^UPDATE agent SET name/)[0].params).toEqual([ownerUserId, signer.address, 'bot', null]);
   });
 
   it('re-registering the same pending wallet applies the new name and description to the existing row and returns its id', async () => {
     const signer = Wallet.createRandom();
-    const { service, query } = setup({ insertError: Object.assign(new Error('dup'), { code: '23505', constraint: 'uq_agent_wallet' }), pendingAfterConflict: true });
+    const { service, mock } = setup({ insertError: Object.assign(new Error('dup'), { code: '23505', constraint: 'uq_agent_wallet' }), pendingAfterConflict: true });
     await expect(service.register(ownerUserId, 'Renamed Bot', 'new description', undefined, signer.address)).resolves.toMatchObject({ agentId: 'own-pending', status: 'PENDING_VERIFICATION' });
-    expect(query.mock.calls[0][0]).toContain('UPDATE agent SET name = $3, description = $4');
-    expect(query.mock.calls[0][1]).toEqual([ownerUserId, signer.address, 'Renamed Bot', 'new description']);
+    expect(mock.statements(/^UPDATE agent SET name/)[0].params).toEqual([ownerUserId, signer.address, 'Renamed Bot', 'new description']);
   });
 
   it.each([
@@ -176,70 +187,66 @@ describe('AgentsService.register input validation', () => {
     ['no constraint name', undefined],
   ])('rethrows a unique violation from %s unchanged (no pending lookup, no 409 mask)', async (_what, constraint) => {
     const boom = Object.assign(new Error('dup'), { code: '23505', constraint });
-    const { service, query } = setup({ insertError: boom, pendingAfterConflict: true });
+    const { service, mock } = setup({ insertError: boom, pendingAfterConflict: true });
     await expect(service.register(ownerUserId, 'bot', undefined, undefined, Wallet.createRandom().address)).rejects.toBe(boom);
-    expect(query).not.toHaveBeenCalled();
+    expect(mock.statements(/./)).toHaveLength(0);
   });
 
   it('rethrows non-unique database errors unchanged (no pending lookup, no 409 mask)', async () => {
     const boom = Object.assign(new Error('connection reset'), { code: '08006' });
-    const { service, query } = setup({ insertError: boom });
+    const { service, mock } = setup({ insertError: boom });
     await expect(service.register(ownerUserId, 'bot', undefined, undefined, Wallet.createRandom().address)).rejects.toBe(boom);
-    expect(query).not.toHaveBeenCalled();
+    expect(mock.statements(/./)).toHaveLength(0);
   });
 });
 
 describe('AgentsService.verifyAndIssueKey guards', () => {
-  it('404 AGENT_NOT_FOUND when the agent is not the caller\'s (or deleted) - scoped by (id, owner)', async () => {
-    const { service, txQuery } = setup({ verifyRow: null });
+  it('404 AGENT_NOT_FOUND when the agent is not the caller\'s (or deleted) - scoped by (id, owner), nothing else runs', async () => {
+    const { service, mock } = setup({ verifyRow: null });
     const error = await service.verifyAndIssueKey(ownerUserId, agentId, '0xsig').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(NotFoundException);
     expect((error as Error).message).toBe('AGENT_NOT_FOUND');
-    expect(txQuery.mock.calls[0][0]).toContain('deleted_at IS NULL');
-    expect(txQuery.mock.calls[0][1]).toEqual([agentId, ownerUserId]);
-    expect(txQuery).toHaveBeenCalledTimes(1);
+    expect(mock.txStatements(/^SELECT status, public_key/)[0].params).toEqual([agentId, ownerUserId]);
+    expect(mock.txQuery).toHaveBeenCalledTimes(1);
   });
 
   it.each([
     ['ACTIVE', null], ['REVOKED', new Date()], ['SUSPENDED', new Date()],
-  ])('409 AGENT_ALREADY_VERIFIED for a %s agent that was verified, issuing no key', async (status, verified_at) => {
-    const { service, txQuery } = setup({ verifyRow: { status, public_key: null, wallet_address: Wallet.createRandom().address, verified_at } });
+  ])('409 AGENT_ALREADY_VERIFIED for a %s agent that was verified, issuing no key (strict: no write is registered)', async (status, verified_at) => {
+    const { service } = setup({ verifyRow: { status, public_key: null, wallet_address: Wallet.createRandom().address, verified_at } });
     await expect(service.verifyAndIssueKey(ownerUserId, agentId, '0xsig')).rejects.toMatchObject({ status: 409, message: 'AGENT_ALREADY_VERIFIED' });
-    expect(txQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO agent_api_key'))).toBe(false);
   });
 
   it.each(['REVOKED', 'SUSPENDED'])('409 AGENT_NOT_PENDING (not "already verified") for a %s agent that never verified, issuing no key', async (status) => {
-    const { service, txQuery } = setup({ verifyRow: { status, public_key: null, wallet_address: Wallet.createRandom().address, verified_at: null } });
+    const { service } = setup({ verifyRow: { status, public_key: null, wallet_address: Wallet.createRandom().address, verified_at: null } });
     await expect(service.verifyAndIssueKey(ownerUserId, agentId, '0xsig')).rejects.toMatchObject({ status: 409, message: 'AGENT_NOT_PENDING' });
-    expect(txQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO agent_api_key'))).toBe(false);
   });
 
-  it('401 INVALID_SIGNATURE for an EVM signature over a different message, without activating the agent', async () => {
+  it('401 INVALID_SIGNATURE for an EVM signature over a different message, without activating the agent (strict: no write is registered)', async () => {
     const signer = Wallet.createRandom();
-    const { service, txQuery } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
+    const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
     const wrong = await signer.signMessage(AgentsService.verificationMessage(agentId, 'someone-else'));
     const error = await service.verifyAndIssueKey(ownerUserId, agentId, wrong).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(UnauthorizedException);
     expect((error as Error).message).toBe('INVALID_SIGNATURE');
-    expect(txQuery.mock.calls.some(([sql]) => sql.includes("SET status = 'ACTIVE'"))).toBe(false);
   });
 
   it('inj1 agents are verified with ADR-36 against the stored public key and the owner-bound message; a valid one issues a hashed key', async () => {
     const mocked = verifyAdr36Signature as jest.Mock;
     mocked.mockReturnValueOnce(true);
-    const { service, txQuery } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: INJ_PUBKEY, wallet_address: INJ_ADDRESS } });
+    const { service, mock } = setup({ verifyWrites: true, clearsOtherKeys: false, verifyRow: { status: 'PENDING_VERIFICATION', public_key: INJ_PUBKEY, wallet_address: INJ_ADDRESS } });
 
     const verified = await service.verifyAndIssueKey(ownerUserId, agentId, 'adr36-sig');
 
     expect(mocked).toHaveBeenLastCalledWith(INJ_ADDRESS, AgentsService.verificationMessage(agentId, ownerUserId), INJ_PUBKEY, 'adr36-sig');
     expect(verified).toMatchObject({ agentId, status: 'ACTIVE', expiresAt: '2027-01-01T00:00:00.000Z' });
     expect(verified.apiKey).toMatch(/^nj_[A-Za-z0-9_-]{43}$/);
-    const activate = txQuery.mock.calls.find(([sql]) => sql.includes("SET status = 'ACTIVE'"))!;
-    expect(activate[1]).toEqual([agentId, INJ_PUBKEY]);
-    const insert = txQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO agent_api_key'))!;
+    expect(mock.txStatements(/^UPDATE agent SET status = 'ACTIVE'/)[0].params).toEqual([agentId, INJ_PUBKEY]);
+    const insert = mock.txStatements(/^INSERT INTO agent_api_key/)[0];
     // only the lookup prefix and the sha256 are stored - never the raw key
-    expect(insert[1]).toEqual([agentId, agentApiKeyPrefix(verified.apiKey), hashAgentApiKey(verified.apiKey)]);
-    expect(insert[1]).not.toContain(verified.apiKey);
+    expect(insert.params).toEqual([agentId, agentApiKeyPrefix(verified.apiKey), hashAgentApiKey(verified.apiKey)]);
+    expect(insert.params).not.toContain(verified.apiKey);
+    expect(mock.txStatements(/^INSERT INTO audit_log/)[0].params).toEqual([ownerUserId, 'AGENT_VERIFIED', 'agent', agentId]);
   });
 
   it('inj1 agent with a failing ADR-36 check is 401 INVALID_SIGNATURE', async () => {
@@ -247,18 +254,15 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
     await expect(service.verifyAndIssueKey(ownerUserId, agentId, 'bad')).rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
   });
 
-  it('an EVM verify first clears the recovered key off other EVM PENDING rows (unverified keys stored by older clients), then activates', async () => {
+  it('an EVM verify binds the recovered key and the agent id when it clears that key off other EVM PENDING rows; an inj1 verify never issues that statement (strict: not registered)', async () => {
     const signer = Wallet.createRandom();
-    const { service, txQuery } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
+    const { service, mock } = setup({ verifyWrites: true, verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
     await service.verifyAndIssueKey(ownerUserId, agentId, await signer.signMessage(AgentsService.verificationMessage(agentId, ownerUserId)));
-    const statements = txQuery.mock.calls.map(([sql]) => sql);
-    const clear = statements.findIndex((sql) => sql.includes('SET public_key = NULL'));
-    const activate = statements.findIndex((sql) => sql.includes("SET status = 'ACTIVE'"));
-    expect(clear).toBeGreaterThan(0);
-    expect(clear).toBeLessThan(activate);
-    expect(statements[clear]).toContain("status = 'PENDING_VERIFICATION'");
-    expect(statements[clear]).toContain("wallet_address ILIKE '0x%'");
-    expect(txQuery.mock.calls[clear][1]).toEqual([signer.signingKey.compressedPublicKey, agentId]);
+    expect(mock.txStatements(/^UPDATE agent SET public_key = NULL/)[0].params).toEqual([signer.signingKey.compressedPublicKey, agentId]);
+
+    (verifyAdr36Signature as jest.Mock).mockReturnValueOnce(true);
+    const inj = setup({ verifyWrites: true, clearsOtherKeys: false, verifyRow: { status: 'PENDING_VERIFICATION', public_key: INJ_PUBKEY, wallet_address: INJ_ADDRESS } });
+    await expect(inj.service.verifyAndIssueKey(ownerUserId, agentId, 'adr36-sig')).resolves.toMatchObject({ status: 'ACTIVE' });
   });
 
   it('the verification message lists English, Korean and Chinese plus the no-gas line, bound to the agent and the owner', () => {
@@ -274,23 +278,16 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
   it('a pending agent whose owner signed the old Korean-only text still verifies; a signature over another agent does not', async () => {
     const signer = Wallet.createRandom();
     const legacy = ['NinjaLabs AI 에이전트 등록 검증', `agentId: ${agentId}`, `owner: ${ownerUserId}`, '이 서명은 트랜잭션을 발생시키지 않으며 가스비가 들지 않습니다.'].join('\n');
-    const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
+    const { service } = setup({ verifyWrites: true, verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
     await expect(service.verifyAndIssueKey(ownerUserId, agentId, await signer.signMessage(legacy))).resolves.toMatchObject({ status: 'ACTIVE' });
     const other = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
     await expect(other.service.verifyAndIssueKey(ownerUserId, agentId, await signer.signMessage(legacy.replace(agentId, 'other')))).rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
   });
 
-  it('an inj1 verify does not touch other rows (its key was checked against the address at register)', async () => {
-    (verifyAdr36Signature as jest.Mock).mockReturnValueOnce(true);
-    const { service, txQuery } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: INJ_PUBKEY, wallet_address: INJ_ADDRESS } });
-    await service.verifyAndIssueKey(ownerUserId, agentId, 'adr36-sig');
-    expect(txQuery.mock.calls.some(([sql]) => sql.includes('SET public_key = NULL'))).toBe(false);
-  });
-
   it('a uq_agent_public_key violation on activation is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED, never a 500', async () => {
     const signer = Wallet.createRandom();
     const dup = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_agent_public_key' });
-    const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address }, activateError: dup });
+    const { service } = setup({ verifyWrites: true, verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address }, activateError: dup });
     const signature = await signer.signMessage(AgentsService.verificationMessage(agentId, ownerUserId));
     const error = await service.verifyAndIssueKey(ownerUserId, agentId, signature).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ConflictException);
@@ -300,19 +297,8 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
   it('other database errors on activation are rethrown unchanged (a different unique index is not masked as 409)', async () => {
     const signer = Wallet.createRandom();
     const other = Object.assign(new Error('duplicate key'), { code: '23505', constraint: 'uq_agent_wallet' });
-    const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address }, activateError: other });
+    const { service } = setup({ verifyWrites: true, verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address }, activateError: other });
     const signature = await signer.signMessage(AgentsService.verificationMessage(agentId, ownerUserId));
     await expect(service.verifyAndIssueKey(ownerUserId, agentId, signature)).rejects.toBe(other);
-  });
-
-  it('issues a fresh random key on every verify (no fixed or reused key material)', async () => {
-    const signer = Wallet.createRandom();
-    const keys = new Set<string>();
-    for (let i = 0; i < 3; i++) {
-      const { service } = setup({ verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
-      const signature = await signer.signMessage(AgentsService.verificationMessage(agentId, ownerUserId));
-      keys.add((await service.verifyAndIssueKey(ownerUserId, agentId, signature)).apiKey);
-    }
-    expect(keys.size).toBe(3);
   });
 });

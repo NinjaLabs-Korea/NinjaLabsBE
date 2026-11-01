@@ -1,36 +1,33 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { AuditService } from '../../audit/audit.service';
-import { withParamsCheck } from '../../test-support/expect-params-match';
-import { owesUnpaidRewardSql, PAYABLE_REWARD_STATUSES, sqlStatusList } from '../../rewards/payout-status';
 import { createMockDb } from '../../test-support/mock-db';
-import { BountyAdminService } from './bounty-admin.service';
+import { Counts, countsHandler, FUTURE, PAST, transitionSetup } from '../../test-support/lifecycle-mock';
 import { BountyLifecycleService } from './bounty-lifecycle.service';
-import { RewardTokenResolver } from './reward-token.resolver';
 
-type Counts = Partial<Record<'pending' | 'unsubmitted' | 'unresolved' | 'unfunded' | 'unpaid' | 'unawarded', number>>;
-
-const FUTURE = '2999-01-01T00:00:00.000Z';
-const PAST = '2000-01-01T00:00:00.000Z';
-const ZERO: Counts = { pending: 0, unsubmitted: 0, unresolved: 0, unfunded: 0, unpaid: 0, unawarded: 0 };
+/**
+ * 단위 스펙은 카운트 -> 차단 사유 매핑, 마감 판정, 전이표 검사 순서, 취소 연쇄 호출만 본다. 카운트가 실제 행에서 어떻게 나오는지(어떤 상태를 세는가),
+ * 전이표 49조합의 행 결과와 타임스탬프, 취소 연쇄가 바꾸는 행은 src/test-db/bounty-lifecycle.db-spec.ts가 실 DB로 단언한다.
+ * DB 대역은 엄격 모드라 등록하지 않은 문장이 나가면 `Unexpected SQL`로 실패한다.
+ */
 
 /** One counts row per call - the blockers query is a single SELECT of six sub-counts */
 function runnerWith(counts: Counts) {
-  const query = jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [{ ...ZERO, ...counts }] })));
-  return { query, runner: { query } as never };
+  const mock = createMockDb({ strict: true, handlers: [countsHandler(counts)] });
+  return { mock, runner: mock.txClient as never };
 }
 
 describe('BountyLifecycleService.blockers', () => {
   const lifecycle = new BountyLifecycleService();
 
   it('returns no blockers at all for a clean bounty with a future deadline, counting rows of this bounty only', async () => {
-    const { runner, query } = runnerWith({});
+    const { runner, mock } = runnerWith({});
     await expect(lifecycle.blockers(runner, 'bounty-1', { status: 'OPEN', submission_deadline: FUTURE }))
       .resolves.toEqual({
         blockers: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [], CANCELLED: [] },
         blockerDetails: { OPEN: [], SUBMISSION_CLOSED: [], IN_REVIEW: [], COMPLETED: [], CANCELLED: [] },
       });
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0][1]).toEqual(['bounty-1', expect.any(Array)]);
+    expect(mock.txQuery).toHaveBeenCalledTimes(1);
+    // the unresolved-submission set is bound as $2 (the same set an account withdrawal withdraws, bounties/submission-status.ts)
+    expect(mock.txQuery.mock.calls[0][1]).toEqual(['bounty-1', ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
   });
 
   it('an expired submission deadline blocks (re)opening', async () => {
@@ -92,128 +89,90 @@ describe('BountyLifecycleService.blockers', () => {
       'b', { status: 'SUBMISSION_CLOSED', submission_deadline: FUTURE });
     expect(blockers.IN_REVIEW).toEqual([]);
   });
-
-  it('the counting SQL defines each blocker by the statuses the rules talk about', async () => {
-    const { runner, query } = runnerWith({});
-    await lifecycle.blockers(runner, 'b', { status: 'OPEN' });
-    const sql = query.mock.calls[0][0] as string;
-    expect(sql).toContain("bounty_application WHERE bounty_id = $1 AND status = 'PENDING') AS pending");
-    // unresolved = submission-status.ts의 미결 집합을 $2로 바인딩 (탈퇴 시 철회 대상과 같은 집합)
-    expect(sql).toContain('status = ANY($2::text[])) AS unresolved');
-    expect(query.mock.calls[0][1]).toEqual(['b', ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
-    // 보상/payout 규칙은 rewards/payout-status.ts가 단일 출처 - 여기 문자열이 아니라 그 상수/헬퍼로 기대값을 만든다
-    expect(sql).toContain(`status NOT IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})) AS unfunded`);
-    // unpaid = 진행 중 payout만 (CANCELLED/FAILED/PAID는 아님 - 수동 취소한 payout이 COMPLETED를 영구히 막지 않게)
-    expect(sql).toContain("p.status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING')) AS unpaid");
-    // unawarded = 응답의 payoutStatus가 PENDING/PARTIALLY_PAID인 승인 제출 (보상 소진·지급 취소는 막지 않는다)
-    expect(sql).toContain(`s.status = 'APPROVED' AND ${owesUnpaidRewardSql('s', 'b')}) AS unawarded`);
-  });
 });
 
 /**
  * BountyAdminService.transition over the whole table: the bounty row is read under FOR UPDATE, then (for allowed pairs only) the
- * blockers query, then the status UPDATE with the first-entry stamp, then the audit row - all on the transaction client.
+ * blockers query, then the status UPDATE, then the audit row - all on the transaction client.
  */
 describe('BountyAdminService.transition for every pair', () => {
   const ALL = ['DRAFT', 'FUNDING_PENDING', 'OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED', 'CANCELLED'];
-  const ALLOWED: Array<[string, string, string | undefined]> = [
-    ['DRAFT', 'FUNDING_PENDING', undefined], ['DRAFT', 'OPEN', 'opened_at'], ['DRAFT', 'CANCELLED', undefined],
-    ['FUNDING_PENDING', 'OPEN', 'opened_at'], ['FUNDING_PENDING', 'CANCELLED', undefined],
-    ['OPEN', 'SUBMISSION_CLOSED', undefined], ['OPEN', 'CANCELLED', undefined],
-    ['SUBMISSION_CLOSED', 'IN_REVIEW', 'review_started_at'], ['SUBMISSION_CLOSED', 'OPEN', 'opened_at'],
-    ['IN_REVIEW', 'COMPLETED', 'completed_at'], ['IN_REVIEW', 'OPEN', 'opened_at'],
+  const ALLOWED: Array<[string, string]> = [
+    ['DRAFT', 'FUNDING_PENDING'], ['DRAFT', 'OPEN'], ['DRAFT', 'CANCELLED'],
+    ['FUNDING_PENDING', 'OPEN'], ['FUNDING_PENDING', 'CANCELLED'],
+    ['OPEN', 'SUBMISSION_CLOSED'], ['OPEN', 'CANCELLED'],
+    ['SUBMISSION_CLOSED', 'IN_REVIEW'], ['SUBMISSION_CLOSED', 'OPEN'],
+    ['IN_REVIEW', 'COMPLETED'], ['IN_REVIEW', 'OPEN'],
   ];
   const allowedKey = new Set(ALLOWED.map(([from, to]) => `${from}->${to}`));
   const REFUSED = ALL.flatMap((from) => ALL.filter((to) => !allowedKey.has(`${from}->${to}`)).map((to) => [from, to] as const));
 
-  function setup(status: string | null, counts: Counts = {}, deadline = FUTURE) {
-    const query = jest.fn(async (sql: string, _params?: unknown[]) => {
-      if (sql.includes('FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE')) {
-        return status === null ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ status, submission_deadline: deadline }] };
-      }
-      if (sql.includes('AS pending')) return { rowCount: 1, rows: [{ ...ZERO, ...counts }] };
-      return { rowCount: 1, rows: [] };
-    });
-    const dbQuery = jest.fn();
-    const { database } = createMockDb({ query: dbQuery, txQuery: query });
-    const service = new BountyAdminService(database, new AuditService(database), new BountyLifecycleService(), {} as RewardTokenResolver);
-    return { service, query, dbQuery };
-  }
-
-  it.each(ALLOWED)('%s -> %s: UPDATE status (stamp %s), audit BOUNTY_<to>, nothing autocommits', async (from, to, stamp) => {
-    const { service, query, dbQuery } = setup(from);
+  it.each(ALLOWED)('%s -> %s: UPDATE status for this bounty, audit BOUNTY_<to>, nothing autocommits', async (from, to) => {
+    const { service, mock } = transitionSetup(from);
     await expect(service.transition('b', to, 'admin')).resolves.toEqual({ id: 'b', status: to });
-    const update = query.mock.calls.find(([sql]) => (sql as string).startsWith('UPDATE bounty SET status'))!;
-    expect(update[1]).toEqual(['b', to]);
-    expect(update[0]).toBe(stamp
-      ? `UPDATE bounty SET status = $2, ${stamp} = COALESCE(${stamp}, now()) WHERE id = $1`
-      : 'UPDATE bounty SET status = $2 WHERE id = $1');
-    expect(query.mock.calls.at(-1)![1]).toEqual(['admin', `BOUNTY_${to}`, 'bounty', 'b']);
-    expect(dbQuery).not.toHaveBeenCalled();
+    expect(mock.txStatements(/^UPDATE bounty SET status = \$2/)[0].params).toEqual(['b', to]);
+    expect(mock.txStatements(/^INSERT INTO audit_log/)[0].params).toEqual(['admin', `BOUNTY_${to}`, 'bounty', 'b']);
+    expect(mock.db.tx).toHaveBeenCalledTimes(1);
+    expect(mock.db.query).not.toHaveBeenCalled();
   });
 
   it.each(REFUSED)('%s -> %s is 400 INVALID_TRANSITION before the blockers query, nothing written', async (from, to) => {
-    const { service, query } = setup(from);
+    const { service, mock } = transitionSetup(from);
     const error = await service.transition('b', to, 'admin').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as BadRequestException).message).toBe(`INVALID_TRANSITION:${from}->${to}`);
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(mock.txQuery).toHaveBeenCalledTimes(1); // only the row lock
   });
 
   it('a missing or deleted bounty is 404 BOUNTY_NOT_FOUND', async () => {
-    const { service, query } = setup(null);
+    const { service, mock } = transitionSetup(null);
     const error = await service.transition('b', 'OPEN', 'admin').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NotFoundException);
     expect((error as NotFoundException).message).toBe('BOUNTY_NOT_FOUND');
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(mock.txQuery).toHaveBeenCalledTimes(1);
   });
 
   it.each(['DRAFT', 'FUNDING_PENDING', 'OPEN'])('cancelling from %s is not blocked by intake/review/funding counts (only owed winners block CANCELLED)', async (from) => {
-    const { service } = setup(from, { pending: 2, unsubmitted: 1, unresolved: 1, unfunded: 1 }, PAST);
+    const { service } = transitionSetup(from, { pending: 2, unsubmitted: 1, unresolved: 1, unfunded: 1 }, PAST);
     await expect(service.transition('b', 'CANCELLED', 'admin')).resolves.toEqual({ id: 'b', status: 'CANCELLED' });
   });
 
-  it('cancelling rejects the still-PENDING applications in the same transaction, after the status change and before the audit row', async () => {
-    const { service, query } = setup('OPEN', { pending: 2 });
+  it('cancelling also closes the open work (pending applications rejected with the admin as reviewer) inside the same transaction', async () => {
+    const { service, mock } = transitionSetup('OPEN', { pending: 2 });
     await service.transition('b', 'CANCELLED', 'admin');
-    const statements = query.mock.calls.map(([sql]) => sql as string);
-    const statusAt = statements.findIndex((sql) => sql.startsWith('UPDATE bounty SET status'));
-    const rejectAt = statements.findIndex((sql) => sql.startsWith('UPDATE bounty_application'));
-    expect(rejectAt).toBeGreaterThan(statusAt);
-    expect(rejectAt).toBeLessThan(statements.findIndex((sql) => sql.includes('audit_log')));
-    expect(query.mock.calls[rejectAt][0]).toContain('WHERE bounty_id = $1 AND status = $4');
-    expect(query.mock.calls[rejectAt][1]).toEqual(['b', 'REJECTED', 'admin', 'PENDING']);
+    expect(mock.txStatements(/^UPDATE bounty_application/)[0].params).toEqual(['b', 'REJECTED', 'admin', 'PENDING']);
+    expect(mock.db.query).not.toHaveBeenCalled();
   });
 
   it.each(['SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED'])('only cancelling touches applications (a transition to %s does not)', async (to) => {
     const from = { SUBMISSION_CLOSED: 'OPEN', IN_REVIEW: 'SUBMISSION_CLOSED', COMPLETED: 'IN_REVIEW' }[to]!;
-    const { service, query } = setup(from);
+    const { service, mock } = transitionSetup(from);
     await service.transition('b', to, 'admin');
-    expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty_application'))).toBe(false);
+    expect(mock.txStatements(/^UPDATE bounty_application/)).toHaveLength(0);
   });
 
   it.each([{ unpaid: 1 }, { unawarded: 1 }])('cancelling (after a reopen) is refused while an approved winner is still owed %j - 400 UNPAID_WINNERS sentence, row untouched', async (counts) => {
-    const { service, query } = setup('OPEN', counts);
+    const { service, mock } = transitionSetup('OPEN', counts);
     await expect(service.transition('b', 'CANCELLED', 'admin')).rejects.toMatchObject({
       response: { message: ['Record completed payments for all approved winners and finish every pending payout.'] },
     });
-    expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty SET status'))).toBe(false);
+    expect(mock.txStatements(/^UPDATE bounty/)).toHaveLength(0);
   });
 
   it('the blockers of the TARGET status are the 400 body (the full list), and the row is not updated', async () => {
-    const { service, query } = setup('FUNDING_PENDING', { unfunded: 1 }, PAST);
+    const { service, mock } = transitionSetup('FUNDING_PENDING', { unfunded: 1 }, PAST);
     const error = await service.transition('b', 'OPEN', 'admin').catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as BadRequestException).getResponse()).toMatchObject({
       statusCode: 400,
       message: ['Extend the submission deadline before opening this bounty.', 'Confirm all reward deposits before opening this bounty.'],
     });
-    expect(query.mock.calls.some(([sql]) => (sql as string).startsWith('UPDATE bounty'))).toBe(false);
-    expect(query.mock.calls.some(([sql]) => (sql as string).includes('audit_log'))).toBe(false);
+    expect(mock.txStatements(/^UPDATE bounty/)).toHaveLength(0);
+    expect(mock.txStatements(/audit_log/)).toHaveLength(0);
   });
 
   it('blockers of other target statuses do not block this one (SUBMISSION_CLOSED -> IN_REVIEW with pending and unresolved work)', async () => {
-    await expect(setup('SUBMISSION_CLOSED', { pending: 1, unresolved: 1 }).service.transition('b', 'IN_REVIEW', 'admin'))
+    await expect(transitionSetup('SUBMISSION_CLOSED', { pending: 1, unresolved: 1 }).service.transition('b', 'IN_REVIEW', 'admin'))
       .resolves.toEqual({ id: 'b', status: 'IN_REVIEW' });
   });
 });
@@ -221,43 +180,29 @@ describe('BountyAdminService.transition for every pair', () => {
 describe('BountyLifecycleService.closeOpenWork', () => {
   const lifecycle = new BountyLifecycleService();
 
-  it('rejects PENDING applications, rejects unresolved submissions and records one review insert for exactly the closed ids', async () => {
-    const query = jest.fn(async (sql: string, _params?: unknown[]) =>
-      (sql.startsWith('UPDATE bounty_submission') ? { rowCount: 2, rows: [{ id: 's1' }, { id: 's2' }] } : { rowCount: 1, rows: [] }));
-    await lifecycle.closeOpenWork({ query } as never, 'b', 'admin');
-    const statements = query.mock.calls.map(([sql]) => sql as string);
-    expect(statements[0]).toMatch(/^UPDATE bounty_application/);
-    expect(query.mock.calls[0][1]).toEqual(['b', 'REJECTED', 'admin', 'PENDING']);
-    expect(statements[1]).toMatch(/^UPDATE bounty_submission/);
-    expect(query.mock.calls[1][1]).toEqual(['b', 'REJECTED', ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
-    expect(statements[2]).toContain('INSERT INTO submission_review');
-    expect(query.mock.calls[2][1]).toEqual([['s1', 's2'], 'admin', 'REJECT', null]);
-    expect(statements).toHaveLength(3);
-    expect(statements.some((sql) => sql.includes('audit_log'))).toBe(false); // audit decision: BOUNTY_CANCELLED is the only record
+  it('rejects PENDING applications, rejects unresolved submissions and records one review insert for exactly the closed ids, with no audit row', async () => {
+    const { mock } = transitionSetup('OPEN', {}, FUTURE, ['s1', 's2']);
+    await lifecycle.closeOpenWork(mock.txClient as never, 'b', 'admin');
+    expect(mock.txStatements(/^UPDATE bounty_application/)[0].params).toEqual(['b', 'REJECTED', 'admin', 'PENDING']);
+    expect(mock.txStatements(/^UPDATE bounty_submission/)[0].params).toEqual(['b', 'REJECTED', ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
+    expect(mock.txStatements(/^INSERT INTO submission_review/).map(({ params }) => params)).toEqual([[['s1', 's2'], 'admin', 'REJECT', null]]);
+    expect(mock.txQuery).toHaveBeenCalledTimes(3);
+    expect(mock.txStatements(/audit_log/)).toHaveLength(0); // audit decision: BOUNTY_CANCELLED is the only record
   });
 
   it('writes no review row when no submission was left to close', async () => {
-    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 0, rows: [] }));
-    await lifecycle.closeOpenWork({ query } as never, 'b', 'admin');
-    expect(query.mock.calls.some(([sql]) => (sql as string).includes('INSERT INTO submission_review'))).toBe(false);
+    const { mock } = transitionSetup('OPEN');
+    await lifecycle.closeOpenWork(mock.txClient as never, 'b', 'admin');
+    expect(mock.txStatements(/^INSERT INTO submission_review/)).toHaveLength(0);
   });
 
   it.each(['SUBMISSION_CLOSED', 'IN_REVIEW', 'COMPLETED'])('transition to %s does not call closeOpenWork, CANCELLED does', async (to) => {
     const from = { SUBMISSION_CLOSED: 'OPEN', IN_REVIEW: 'SUBMISSION_CLOSED', COMPLETED: 'IN_REVIEW' }[to]!;
     const spy = jest.spyOn(BountyLifecycleService.prototype, 'closeOpenWork');
-    const make = (status: string) => {
-      const query = jest.fn(async (sql: string) => {
-        if (sql.includes('FOR UPDATE')) return { rowCount: 1, rows: [{ status, submission_deadline: FUTURE }] };
-        if (sql.includes('AS pending')) return { rowCount: 1, rows: [{ ...ZERO }] };
-        return { rowCount: 1, rows: [] };
-      });
-      const { database } = createMockDb({ query: jest.fn(), txQuery: query });
-      return new BountyAdminService(database, new AuditService(database), new BountyLifecycleService(), {} as RewardTokenResolver);
-    };
     try {
-      await make(from).transition('b', to, 'admin');
+      await transitionSetup(from).service.transition('b', to, 'admin');
       expect(spy).not.toHaveBeenCalled();
-      await make('OPEN').transition('b', 'CANCELLED', 'admin');
+      await transitionSetup('OPEN').service.transition('b', 'CANCELLED', 'admin');
       expect(spy).toHaveBeenCalledTimes(1);
     } finally {
       spy.mockRestore();

@@ -1,7 +1,7 @@
 import { execFile } from 'child_process';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { Pool } from 'pg';
+import { Client, Pool } from 'pg';
 import { promisify } from 'util';
 import { run as grantAdmin } from '../../scripts/grant-admin';
 import { applyMigrations, sslOptions } from '../../scripts/migrate';
@@ -21,7 +21,7 @@ import { NftsService } from '../nfts/nfts.service';
 import { payoutStatusSql } from '../rewards/payout-status';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { createDb, testConfig, testSslEnv, unique } from './harness';
+import { createDb, testConfig, testSslEnv, unique, waitFor } from './harness';
 
 // 실제 클라이언트는 @injectivelabs/sdk-ts(ESM)를 끌어오므로 DI 메타데이터용 껍데기로 대체한다 (nft-worker 스펙과 동일)
 jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
@@ -584,6 +584,7 @@ describeDb('ops scripts on a real database', () => {
       await expect(opsBounties.remove(bountyId, adminId)).rejects.toMatchObject({ message: 'BOUNTY_HAS_OPEN_FUNDS' });
       const res = await invoke(recordRefund, [rewardId, '--tx', TX.slice(2).toUpperCase()], async () => true);
       expect(res.code).toBe(0);
+      expect(res.out).toContain(`done     reward ${rewardId} REFUNDED (refundedAmount=700)`);
       expect(res.prompts).toHaveLength(1);
       expect(await rewardStatus(rewardId)).toBe('REFUNDED');
       expect(await auditRows('bounty_reward', rewardId)).toEqual([{
@@ -610,6 +611,34 @@ describeDb('ops scripts on a real database', () => {
         after_data: { txHash: TX, refundedAmount: '1200', source: 'scripts/record-refund.js' },
       }]);
       await expect(opsBounties.remove(bountyId, adminId)).resolves.toEqual({ id: bountyId });
+    });
+
+    it('re-checks under the hash lock: a bounty reopened while the script waited is refused, nothing is written (exit 1, no throw)', async () => {
+      // 다른 연결이 같은 해시의 advisory lock(confirmDeposit/markPaid와 공유)을 쥔 동안 스크립트는 잠금 밖 검사를 통과하고 잠금에서 기다린다.
+      // 그 사이 바운티를 OPEN으로 되돌리고 잠금을 풀면, 트랜잭션 안의 재검사가 거부해야 한다 (잠금 없이 쓰거나 재검사를 건너뛰면 REFUNDED가 된다)
+      const TX = freshTx();
+      const { bountyId, rewardId } = await seedRefund();
+      // 이 파일의 pool은 연결 2개(스크립트 트랜잭션 + 조회)라, 잠금을 쥐는 쪽은 pool 밖의 전용 연결을 쓴다
+      const holder = new Client({ connectionString: url, ssl });
+      await holder.connect();
+      let pending: ReturnType<typeof invoke> | undefined;
+      try {
+        await holder.query('BEGIN');
+        await holder.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [TX]);
+        pending = invoke(recordRefund, [rewardId, '--tx', TX, '--yes']);
+        await waitFor(async () => (await pool.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`)).rows[0].n >= 1,
+        'record-refund waiting on the tx hash lock');
+        await pool.query(`UPDATE bounty SET status = 'OPEN' WHERE id = $1`, [bountyId]);
+      } finally {
+        await holder.query('COMMIT');
+        await holder.end();
+      }
+      const res = await pending!;
+      expect(res.code).toBe(1);
+      expect(res.out).toContain(`refused  ${rewardId} - bounty is OPEN, not CANCELLED`);
+      expect(await rewardStatus(rewardId)).toBe('FUNDED');
+      expect(await auditRows('bounty_reward', rewardId)).toEqual([]);
     });
 
     it('accepts a REFUND_PENDING reward', async () => {
@@ -666,6 +695,17 @@ describeDb('ops scripts on a real database', () => {
       expect((await invoke(recordRefund, [ZERO, '--tx', 'abc', '--dry-run'])).out).toContain('--tx must be a 32-byte hex transaction hash');
       expect((await invoke(recordRefund, [ZERO, '--dry-run'])).out).toContain('--tx <hash> is required');
       expect((await invoke(recordRefund, ['not-a-uuid', '--tx', TX])).out).toContain('<reward-id> must be a UUID');
+      // 인자 오류는 정확히 그 인자만 이름으로 알린다(줄 단위) - 두 번째 UUID를 조용히 무시하고 첫 보상만 환불하지 않는다
+      const ZERO2 = '00000000-0000-4000-8000-000000000001';
+      const usageLines = async (argv: string[]) => {
+        const r = await invoke(recordRefund, argv);
+        expect(r.code).toBe(2);
+        return r.out.split('\n').slice(0, -1);
+      };
+      expect(await usageLines([ZERO, ZERO2, '--tx', TX, '--yes'])).toEqual(['expected exactly one <reward-id>, got 2']);
+      expect(await usageLines([ZERO, '--tx', 'abc'])).toEqual(['--tx must be a 32-byte hex transaction hash (64 hex digits, optional 0x prefix)']);
+      expect(await usageLines(['not-a-uuid', '--tx', TX])).toEqual(['<reward-id> must be a UUID']);
+      expect(await usageLines(['not-a-uuid'])).toEqual(['<reward-id> must be a UUID', '--tx <hash> is required']);
       const missing = await invoke(recordRefund, ['00000000-0000-4000-8000-000000000000', '--tx', TX, '--yes']);
       expect(missing.code).toBe(1);
       expect(missing.out).toContain('reward not found');
@@ -1084,6 +1124,16 @@ describeDb('ops scripts on a real database', () => {
       expect((await invoke(forfeitAward, [submissionId, '--reason', '   ', '--admin', adminId, '--dry-run'])).out).toContain('--reason must be 1 to 500 characters');
       expect((await invoke(forfeitAward, ['not-a-uuid', '--reason', 'x', '--admin', adminId, '--dry-run'])).out).toContain('<submission-id> must be a UUID');
       expect((await invoke(forfeitAward, [submissionId, '--reason', 'x', '--admin', 'nope', '--dry-run'])).out).toContain('--admin must be a user UUID');
+      // 두 번째 UUID를 조용히 무시하고 첫 제출만 처리하지 않는다. 오류는 틀린 인자만 줄 단위로 알린다
+      const forfeitUsage = async (argv: string[]) => {
+        const r = await invoke(forfeitAward, argv);
+        expect(r.code).toBe(2);
+        return r.out.split('\n').slice(0, -1);
+      };
+      expect(await forfeitUsage([submissionId, adminId, '--reason', 'x', '--admin', adminId, '--yes'])).toEqual(['expected exactly one <submission-id>, got 2']);
+      expect(await forfeitUsage([submissionId, '--reason', 'x', '--admin', 'nope'])).toEqual(['--admin must be a user UUID']);
+      expect(await forfeitUsage(['not-a-uuid', '--reason', 'x', '--admin', adminId])).toEqual(['<submission-id> must be a UUID']);
+      expect(await forfeitUsage(['not-a-uuid'])).toEqual(['<submission-id> must be a UUID', '--reason <text> is required', '--admin <admin-user-id> is required']);
       const declined = await forfeit(submissionId, adminId, []);
       expect(declined.code).toBe(1);
       expect(declined.out).toContain('aborted  nothing written');

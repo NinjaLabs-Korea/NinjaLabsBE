@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service';
 import { createMockDb } from '../test-support/mock-db';
@@ -42,6 +43,31 @@ describe('RewardsService input checks (before any transaction)', () => {
     const { service, db } = build();
     await expect(service.requestPayout('reward', 'sub', amount, 'admin')).rejects.toThrow('INVALID_TOKEN_AMOUNT');
     expect(db.tx).not.toHaveBeenCalled();
+  });
+});
+
+describe('RewardsService amount type check', () => {
+  // DTO가 문자열을 강제하지만 서비스도 스스로 거부한다: 숫자 100은 정규식 test()에서 '100'으로 바뀌어 통과해 버린다 (부동소수 금액이 SQL까지 갈 수 있음)
+  it.each([100, 1e30, null, undefined])('requestPayout and confirmDeposit reject a non-string amount %p with 400 INVALID_TOKEN_AMOUNT', async (amount) => {
+    const { service, db } = build();
+    await expect(service.requestPayout('reward', 'sub', amount as unknown as string, 'admin')).rejects.toMatchObject({ status: 400, message: 'INVALID_TOKEN_AMOUNT' });
+    await expect(service.confirmDeposit('reward', txHash, amount as unknown as string, 'admin')).rejects.toMatchObject({ status: 400, message: 'INVALID_TOKEN_AMOUNT' });
+    expect(db.tx).not.toHaveBeenCalled();
+  });
+});
+
+describe('RewardsService boot-time self-approval warning', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('warns once at construction, naming the env var, only when PAYOUT_ALLOW_SELF_APPROVAL is on', () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    build();
+    build({ PAYOUT_ALLOW_SELF_APPROVAL: 'false' });
+    expect(warn).not.toHaveBeenCalled();
+    build({ PAYOUT_ALLOW_SELF_APPROVAL: 'true' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('PAYOUT_ALLOW_SELF_APPROVAL=true'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('PAYOUT_SELF_APPROVED'));
   });
 });
 

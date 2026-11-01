@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   ALLOCATED_PAYOUT_STATUSES, allocatedPayoutSumSql, AWAITING_APPROVAL_PAYOUT_STATUSES, OPEN_PAYOUT_STATUSES, owesUnpaidRewardSql,
-  PAYABLE_REWARD_STATUSES, paidPayoutSumSql, PAYOUT_ROW_STATUSES, PAYOUT_STATUSES, payoutStatusSql, recipientActiveSql, rewardCapSql, rewardHeadroomSql, rewardHoldsFundsSql,
+  PAYABLE_REWARD_STATUSES, paidPayoutSumSql, PAYOUT_ROW_STATUSES, PAYOUT_STATUSES, payoutRequestableSql, payoutStatusSql, recipientActiveSql, rewardCapSql, rewardHeadroomSql, rewardHoldsFundsSql,
   SENDABLE_PAYOUT_STATUSES, sqlStatusList, TERMINAL_PAYOUT_STATUSES, UNSETTLED_PAYOUT_STATUSES,
 } from './payout-status';
 
@@ -129,5 +129,46 @@ describe('script copies of the payout status sets match payout-status.ts', () =>
     const block = sql.slice(sql.indexOf("'payout_open'"));
     const list = /p\.status NOT IN \(([^)]*)\)/.exec(block.slice(0, block.indexOf(';')))![1];
     expect(sorted(list.split(',').map((v) => v.trim().replace(/'/g, '')))).toEqual(sorted(TERMINAL_PAYOUT_STATUSES));
+  });
+});
+
+/**
+ * 조각 함수의 입력 가드 - 별칭과 상태 목록은 SQL 문장에 그대로 들어가므로 식별자/대문자 상수만 받고, 어긴 호출부를 오류 메시지의 함수 이름으로 가리킨다.
+ * 기본 별칭(rw, p, s, b)은 인자 없이 부른 결과가 명시한 결과와 같아야 한다 (뮤테이션 테스트가 찾은 빈칸, docs: wiki shared/testing).
+ */
+describe('payout-status fragment guards', () => {
+  it('sqlStatusList rejects a list where only some entries are not upper-case constants, and an entry that merely ends in one', () => {
+    expect(() => sqlStatusList(['PAID', 'paid'])).toThrow('sqlStatusList: expected upper-case status constants');
+    expect(() => sqlStatusList(["1' OR 'PAID"])).toThrow('sqlStatusList: expected upper-case status constants');
+  });
+
+  it.each([
+    ['rewardCapSql', () => rewardCapSql('rw;')],
+    ['allocatedPayoutSumSql', () => allocatedPayoutSumSql('rw;', 'p')],
+    ['allocatedPayoutSumSql', () => allocatedPayoutSumSql('rw', 'p p')],
+    ['paidPayoutSumSql', () => paidPayoutSumSql('rw;', 'p')],
+    ['paidPayoutSumSql', () => paidPayoutSumSql('rw', 'P')],
+    ['rewardHoldsFundsSql', () => rewardHoldsFundsSql('1rw', 'p')],
+    ['payoutRequestableSql', () => payoutRequestableSql('rw;', 's', 'p')],
+    ['payoutRequestableSql', () => payoutRequestableSql('rw', 's;', 'p')],
+    ['payoutRequestableSql', () => payoutRequestableSql('rw', 's', 'p;')],
+    ['recipientActiveSql', () => recipientActiveSql('s.x')],
+    ['payoutStatusSql', () => payoutStatusSql('s;', 'b')],
+    ['payoutStatusSql', () => payoutStatusSql('s', 'b;')],
+  ])('%s refuses a non-identifier alias and names itself', (fn, call) => {
+    expect(call).toThrow(`${fn}: alias must be an identifier`);
+  });
+
+  it('default aliases render the same SQL as passing them explicitly', () => {
+    expect(rewardCapSql()).toBe(rewardCapSql('rw'));
+    expect(allocatedPayoutSumSql()).toBe(allocatedPayoutSumSql('rw', 'p'));
+    expect(paidPayoutSumSql()).toBe(paidPayoutSumSql('rw', 'p'));
+    expect(rewardHoldsFundsSql()).toBe(rewardHoldsFundsSql('rw', 'p'));
+    expect(rewardHeadroomSql()).toBe(rewardHeadroomSql('rw', 'p'));
+    expect(payoutRequestableSql()).toBe(payoutRequestableSql('rw', 's', 'p'));
+    expect(recipientActiveSql()).toBe(recipientActiveSql('s'));
+    expect(payoutStatusSql()).toBe(payoutStatusSql('s', 'b'));
+    expect(owesUnpaidRewardSql()).toBe(owesUnpaidRewardSql('s', 'b'));
+    expect(rewardCapSql()).toBe('LEAST(rw.amount, rw.deposited_amount)');
   });
 });

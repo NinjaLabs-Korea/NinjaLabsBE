@@ -13,3 +13,8 @@ dist/
 .DS_Store
 coverage/
 .claude/settings.local.json
+
+# mutation testing (npm run test:mutation)
+.stryker-tmp/
+reports/
+.mutation-tmp/

@@ -2,9 +2,8 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
-import { DatabaseService } from '../common/database/database.service';
 import { TERMINAL_PAYOUT_STATUSES } from '../rewards/payout-status';
-import { withParamsCheck } from '../test-support/expect-params-match';
+import { createMockDb, SqlHandler } from '../test-support/mock-db';
 import {
   AccountWithdrawalService,
   nicknameConfirmed,
@@ -13,112 +12,107 @@ import {
 } from './account-withdrawal.service';
 import { WithdrawAccountDto } from './users.controller';
 
+/**
+ * 단위 스펙은 차단 검사의 순서와 입력 검사, 커밋 뒤 후처리(감사 호출, 캐시 비우기)만 본다. 실제로 어떤 행이 바뀌는지(유저 익명화, 세션·지갑·에이전트 정리,
+ * 지원·제출 철회, 차단 조건의 SQL, 경합)는 src/test-db/withdrawal.db-spec.ts와 cohorts.db-spec.ts가 실 DB 행으로 단언한다.
+ * DB 대역은 엄격 모드라 등록하지 않은 문장(예: 차단된 탈퇴가 내보내면 안 되는 쓰기)이 나가면 `Unexpected SQL`로 실패한다.
+ */
 describe('AccountWithdrawalService', () => {
   const userId = '11111111-1111-4111-8111-111111111111';
+  const none = { rowCount: 0, rows: [] };
 
-  function setup(options: { user?: { nickname: string } | null; openPayouts?: number; pendingRewards?: number; agents?: string[] } = {}) {
-    const calls: Array<[string, unknown[] | undefined]> = [];
-    const query = jest.fn(async (sql: string, params?: unknown[]) => {
-      calls.push([sql, params]);
-      if (sql.includes('FOR UPDATE')) {
+  /** 차단 검사까지의 읽기 문장만 (쓰기 핸들러 없음: 쓰기가 나가면 strict 가 실패) */
+  function readHandlers(options: { user?: { nickname: string } | null; openPayouts?: number; pendingRewards?: number } = {}): SqlHandler[] {
+    return [
+      { match: /FOR UPDATE$/, reply: () => {
         const user = options.user === undefined ? { nickname: 'Ryan' } : options.user;
-        return user ? { rowCount: 1, rows: [user] } : { rowCount: 0, rows: [] };
-      }
-      if (sql === PENDING_REWARD_SQL) return { rowCount: 1, rows: [{ n: options.pendingRewards ?? 0 }] };
-      if (sql.includes('FROM payout p')) return { rowCount: 1, rows: [{ n: options.openPayouts ?? 0 }] };
-      if (sql.includes('UPDATE agent SET')) {
-        const rows = (options.agents ?? []).map((id) => ({ id }));
-        return { rowCount: rows.length, rows };
-      }
-      return { rowCount: 0, rows: [] };
+        return user ? { rowCount: 1, rows: [user] } : none;
+      } },
+      { match: /FROM payout p JOIN bounty_submission s/, reply: () => ({ rowCount: 1, rows: [{ n: options.openPayouts ?? 0 }] }) },
+      { match: /^SELECT count\(\*\)::int AS n FROM bounty_submission s JOIN bounty b/, reply: () => ({ rowCount: 1, rows: [{ n: options.pendingRewards ?? 0 }] }) },
+    ];
+  }
+
+  /** 성공 경로: 읽기 + 각 모듈이 쓰는 문장 (소유 에이전트 UPDATE 만 id 를 돌려준다) */
+  function writeHandlers(agents: string[]): SqlHandler[] {
+    const ok = () => ({ rowCount: 1, rows: [] });
+    return [
+      { match: /^UPDATE "user" SET status = 'WITHDRAWN'/, reply: ok },
+      { match: /^DELETE FROM user_link/, reply: ok },
+      { match: /^DELETE FROM user_tag/, reply: ok },
+      { match: /^SELECT avatar_media_id FROM "user"/, reply: () => ({ rowCount: 1, rows: [{ avatar_media_id: null }] }) },
+      { match: /^UPDATE auth_session SET revoked_at/, reply: ok },
+      { match: /^UPDATE wallet SET disconnected_at/, reply: ok },
+      { match: /^UPDATE agent SET/, reply: () => ({ rowCount: agents.length, rows: agents.map((id) => ({ id })) }) },
+      { match: /^UPDATE agent_api_key SET/, reply: ok },
+      { match: /^UPDATE bounty_submission SET status = 'WITHDRAWN'/, reply: ok },
+      { match: /^UPDATE bounty_application SET status = 'WITHDRAWN'/, reply: ok },
+      { match: /^UPDATE cohort_application/, reply: ok },
+    ];
+  }
+
+  function setup(options: Parameters<typeof readHandlers>[0] & { agents?: string[]; writes?: boolean } = {}) {
+    const mock = createMockDb({
+      strict: true,
+      handlers: [...readHandlers(options), ...(options.writes ? writeHandlers(options.agents ?? []) : [])],
     });
-    const tx = { query: withParamsCheck(query) };
-    const db = { tx: jest.fn(async (fn: (client: unknown) => Promise<unknown>) => fn(tx)) } as unknown as DatabaseService;
     const record = jest.fn().mockResolvedValue(undefined);
     const forgetUserStatus = jest.fn();
     const service = new AccountWithdrawalService(
-      db,
+      mock.database,
       { record } as unknown as AuditService,
       { forgetUserStatus } as unknown as AuthService,
     );
-    return { service, calls, record, forgetUserStatus, tx };
+    return { service, mock, record, forgetUserStatus };
   }
 
-  it('withdraws in one transaction: user row, sessions, wallets, agents + keys, pending applications, audit', async () => {
-    const { service, calls, record, forgetUserStatus, tx } = setup({ agents: ['a1', 'a2'] });
+  it('withdraws in one transaction with the identity prefix and the bound statuses, audits each revoked agent then the withdrawal with the same tx, and forgets the cached status afterwards', async () => {
+    const { service, mock, record, forgetUserStatus } = setup({ writes: true, agents: ['a1', 'a2'] });
     await expect(service.withdraw(userId, ' ryan ', 1_700_000_000_000)).resolves.toEqual({ ok: true });
 
-    const sqls = calls.map(([sql]) => sql);
-    const userUpdate = calls.find(([sql]) => sql.includes(`SET status = 'WITHDRAWN'`))!;
-    expect(userUpdate[1]).toEqual([userId, 'deleted:1700000000000:', 'withdrawn_']);
-    expect(userUpdate[0]).toContain('google_id = left($2 || google_id, 255)');
-    expect(userUpdate[0]).toContain('email = left($2 || email, 320)');
-    expect(userUpdate[0]).toContain('deleted_at = now()');
-    expect(sqls.some((sql) => sql.includes('UPDATE auth_session SET revoked_at = now()'))).toBe(true);
-    expect(sqls.some((sql) => sql.includes('UPDATE wallet SET disconnected_at = now()'))).toBe(true);
-    expect(sqls.some((sql) => sql.includes(`UPDATE agent_api_key SET status = 'REVOKED'`))).toBe(true);
-    const submissionUpdate = calls.find(([sql]) => sql.includes(`UPDATE bounty_submission SET status = 'WITHDRAWN'`))!;
-    expect(submissionUpdate[1]).toEqual([userId, ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
-    expect(submissionUpdate[0]).toContain('owner_user_id = $1');
-    expect(sqls.some((sql) => sql.includes(`UPDATE bounty_application SET status = 'WITHDRAWN'`) && sql.includes(`status = 'PENDING'`))).toBe(true);
-    const cohortUpdate = calls.find(([sql]) => sql.includes('UPDATE cohort_application'))!;
-    expect(cohortUpdate[1]).toEqual([userId, 'WITHDRAWN', 'SUBMITTED']); // 행은 지우지 않고 SUBMITTED만 철회
+    expect(mock.db.tx).toHaveBeenCalledTimes(1);
+    expect(mock.db.query).not.toHaveBeenCalled();
+    expect(mock.txStatements(/^UPDATE "user" SET status = 'WITHDRAWN'/)[0].params).toEqual([userId, 'deleted:1700000000000:', 'withdrawn_']);
+    expect(mock.txStatements(/^UPDATE bounty_submission SET status = 'WITHDRAWN'/)[0].params)
+      .toEqual([userId, ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
+    expect(mock.txStatements(/^UPDATE cohort_application/)[0].params).toEqual([userId, 'WITHDRAWN', 'SUBMITTED']); // 행은 지우지 않고 SUBMITTED만 철회
     expect(record.mock.calls).toEqual([
-      [userId, 'AGENT_REVOKED', 'agent', 'a1', tx],
-      [userId, 'AGENT_REVOKED', 'agent', 'a2', tx],
-      [userId, 'USER_WITHDRAWN', 'user', userId, tx],
+      [userId, 'AGENT_REVOKED', 'agent', 'a1', mock.txClient],
+      [userId, 'AGENT_REVOKED', 'agent', 'a2', mock.txClient],
+      [userId, 'USER_WITHDRAWN', 'user', userId, mock.txClient],
     ]);
     expect(forgetUserStatus).toHaveBeenCalledWith(userId);
   });
 
-  it('keeps the write order: user row, links/tags, sessions, wallets, agents, keys, submissions, applications, cohort applications', async () => {
-    const { service, calls } = setup({ agents: ['a1'] });
-    await service.withdraw(userId, 'Ryan');
-    const writes = calls.map(([sql]) => sql).filter((sql) => /^\s*(UPDATE|DELETE)/.test(sql));
-    const tables = writes.map((sql) => /^\s*(?:UPDATE|DELETE FROM)\s+("?\w+"?)/.exec(sql)![1]);
-    expect(tables).toEqual([
-      '"user"', 'user_link', 'user_tag', 'auth_session', 'wallet', 'agent', 'agent_api_key', 'bounty_submission', 'bounty_application', 'cohort_application',
-    ]);
-  });
-
-  it('rejects a mismatched confirmation nickname without writing anything', async () => {
-    const { service, calls, record, forgetUserStatus } = setup();
+  it('rejects a mismatched confirmation nickname before any check or write', async () => {
+    const { service, mock, record, forgetUserStatus } = setup();
     await expect(service.withdraw(userId, 'someone-else')).rejects.toMatchObject({ status: 400, message: 'CONFIRM_NICKNAME_MISMATCH' });
-    expect(calls).toHaveLength(1);
+    expect(mock.txQuery).toHaveBeenCalledTimes(1); // only the user lock
     expect(record).not.toHaveBeenCalled();
     expect(forgetUserStatus).not.toHaveBeenCalled();
   });
 
-  it('blocks with 409 WITHDRAWAL_BLOCKED_OPEN_PAYOUTS while a non-terminal payout exists', async () => {
-    const { service, calls } = setup({ openPayouts: 1 });
+  it('blocks with 409 WITHDRAWAL_BLOCKED_OPEN_PAYOUTS, binding the terminal payout statuses, and writes nothing', async () => {
+    const { service, mock, record, forgetUserStatus } = setup({ openPayouts: 1 });
     await expect(service.withdraw(userId, 'Ryan')).rejects.toMatchObject({ status: 409, message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
-    const check = calls.find(([sql]) => sql.includes('FROM payout p'))!;
-    expect(check[1]).toEqual([userId, ['PAID', 'CANCELLED', 'FAILED']]);
-    expect(calls.some(([sql]) => sql.includes(`SET status = 'WITHDRAWN'`))).toBe(false);
+    expect(mock.txStatements(/FROM payout p/)[0].params).toEqual([userId, ['PAID', 'CANCELLED', 'FAILED']]);
+    expect(record).not.toHaveBeenCalled();
+    expect(forgetUserStatus).not.toHaveBeenCalled();
   });
 
-  it('blocks with 409 WITHDRAWAL_BLOCKED_PENDING_REWARDS while an approved submission still has an unrequested, payable reward', async () => {
-    const { service, calls, record } = setup({ pendingRewards: 1 });
+  it('blocks with 409 WITHDRAWAL_BLOCKED_PENDING_REWARDS, binding the in-progress bounty and payable reward statuses, and writes nothing', async () => {
+    const { service, mock, record } = setup({ pendingRewards: 1 });
     await expect(service.withdraw(userId, 'Ryan')).rejects.toMatchObject({ status: 409, message: 'WITHDRAWAL_BLOCKED_PENDING_REWARDS' });
-    const check = calls.find(([sql]) => sql === PENDING_REWARD_SQL)!;
-    expect(check[1]).toEqual([userId, ['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'], ['FUNDED', 'PARTIALLY_PAID', 'PAID']]);
-    expect(calls.some(([sql]) => sql.includes(`SET status = 'WITHDRAWN'`))).toBe(false);
+    expect(mock.txStatements(/FROM bounty_submission s JOIN bounty b/)[0].params)
+      .toEqual([userId, ['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'], ['FUNDED', 'PARTIALLY_PAID', 'PAID']]);
+    expect(mock.txStatements(/FROM bounty_submission s JOIN bounty b/)[0].sql).toBe(PENDING_REWARD_SQL.replace(/\s+/g, ' ').trim());
     expect(record).not.toHaveBeenCalled();
   });
 
   it('checks open payouts first (more specific), then pending rewards', async () => {
-    const { service, calls } = setup({ openPayouts: 1, pendingRewards: 1 });
+    const { service, mock } = setup({ openPayouts: 1, pendingRewards: 1 });
     await expect(service.withdraw(userId, 'Ryan')).rejects.toMatchObject({ message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
-    expect(calls.some(([sql]) => sql === PENDING_REWARD_SQL)).toBe(false);
-  });
-
-  it('the pending-reward query covers my agents, requires no payout row at all and remaining capacity, and binds $n consistently', () => {
-    expect(PENDING_REWARD_SQL).toContain(`s.status = 'APPROVED'`);
-    expect(PENDING_REWARD_SQL).toContain('owner_user_id = $1');
-    expect(PENDING_REWARD_SQL).toContain('NOT EXISTS (SELECT 1 FROM payout p WHERE p.bounty_reward_id = rw.id AND p.submission_id = s.id)');
-    expect(PENDING_REWARD_SQL).toContain('LEAST(rw.amount, rw.deposited_amount) >');
-    expect(PENDING_REWARD_SQL).toContain('b.deleted_at IS NULL');
-    expect(PENDING_REWARD_SQL.match(/\$\d/g)?.sort()).toEqual(['$1', '$1', '$2', '$3']);
+    expect(mock.txStatements(/FROM bounty_submission s JOIN bounty b/)).toHaveLength(0);
   });
 
   it('404 when the user is already withdrawn or suspended', async () => {

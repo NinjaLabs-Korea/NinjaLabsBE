@@ -147,6 +147,24 @@ describeDb('account withdrawal on a real database', () => {
     await expect(withdrawal.withdraw(builder.id, user.nickname)).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
   });
 
+  it('withdrawal strips member and admin standing and disconnects every wallet while keeping the wallet rows for payout history', async () => {
+    const userId = await createUser(db, { isAdmin: true });
+    await db.query(`UPDATE "user" SET is_member = true, member_role = 'CORE', member_display_order = 3 WHERE id = $1`, [userId]);
+    const primary = await createPrimaryWallet(db, userId);
+    await db.query(`INSERT INTO wallet (user_id, chain, address, is_primary) VALUES ($1, 'INJECTIVE', $2, false)`, [userId, `inj1${unique()}`]);
+    const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [userId])).rows[0].nickname;
+
+    await expect(withdrawal.withdraw(userId, nickname)).resolves.toEqual({ ok: true });
+
+    const row = (await db.query<{ is_member: boolean; member_role: string | null; member_display_order: number | null; is_admin: boolean }>(
+      `SELECT is_member, member_role, member_display_order, is_admin FROM "user" WHERE id = $1`, [userId])).rows[0];
+    expect(row).toEqual({ is_member: false, member_role: null, member_display_order: null, is_admin: false });
+    const wallets = await db.query<{ id: string; disconnected_at: Date | null }>(`SELECT id, disconnected_at FROM wallet WHERE user_id = $1`, [userId]);
+    expect(wallets.rowCount).toBe(2); // rows stay
+    expect(wallets.rows.every((wallet) => wallet.disconnected_at !== null)).toBe(true);
+    expect(wallets.rows.map((wallet) => wallet.id)).toContain(primary.id);
+  });
+
   it('a payout sent to my wallet for my agent\'s submission also blocks', async () => {
     const owner = await createUser(db);
     await createPrimaryWallet(db, owner);

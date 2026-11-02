@@ -14,6 +14,7 @@
 7. [장애 대응 플레이북](#7-장애-대응-플레이북)
 8. [testnet → mainnet 전환](#8-testnet--mainnet-전환)
 9. [멀티시그 서명자 문서 템플릿](#9-멀티시그-서명자-문서-템플릿)
+10. [성능 기준선과 부하 점검](#10-성능-기준선과-부하-점검)
 
 ---
 
@@ -429,3 +430,49 @@ railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
 | 날짜 | 변경 | 승인자 | tx |
 |---|---|---|---|
 ```
+
+---
+
+## 10. 성능 기준선과 부하 점검
+
+운영에는 부하를 걸지 않는다. 로컬에서 운영 규모를 흉내 낸 DB에 건다(2026-11-02 기준선, PR 본문에 전후 표).
+
+```sh
+# 1) 빈 DB + 마이그레이션 + 시드 (유저 5천, 멤버 50, 바운티 500, 지원 2만, 제출 1만, 지급 약 2.2천, 공지 300, 하이라이트 100, 기수 3 + 지원서 3천, 감사 로그 20만, NFT/잡 약 3.7천)
+createdb ninja_perf && export DATABASE_URL=postgresql://postgres@127.0.0.1:5432/ninja_perf PGSSLMODE=disable
+npm run migrate && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/seed-perf.sql     # "user"가 비어 있지 않으면 거부한다. 약 4초
+# 2) 운영과 같은 모양으로 BE 기동: TRUST_PROXY=1 THROTTLER_STORAGE=postgres JWT_SECRET=... 로 npm run build && node dist/main.js
+# 3) 엔드포인트별 동시 10/50 (autocannon)
+npm i --no-save autocannon
+JWT_SECRET=... node scripts/perf/load.js all 8 --out=last.json  # 이름 정규식으로 일부만: node scripts/perf/load.js 'audit-logs|nft-jobs' 5
+JWT_SECRET=... node scripts/perf/auth-flow.js 50 400     # exchange(PKCE) -> refresh(쿠키) -> /auth/me
+```
+
+- 느린 쿼리는 `shared_preload_libraries='pg_stat_statements'`로 DB를 띄워 `pg_stat_statements`의 `total_exec_time` 순으로 보고, 후보를 `EXPLAIN (ANALYZE, BUFFERS)`로 확인한다.
+- **머신이 바쁘면 수치가 크게 흔들린다**(같은 코드의 같은 엔드포인트가 다른 시각에 2~5배 차이). 전후 비교는 스키마/코드를 번갈아 바꿔 가며 3회 이상 재고 중앙값을 쓴다.
+- 요청마다 `X-Forwarded-For`를 바꾸는 것은 IP 스로틀(공개 읽기 600/min)을 피하기 위해서다. 실제 사용자는 IP가 다양하다.
+
+기준선(2026-11-02, 로컬 PG14, Node 24, BE 풀 `max: 10`, 동시 50, p95는 autocannon 97.5 백분위, 머신 부하 변동 큼):
+
+| 구분 | 엔드포인트 | rps | p50 ms | p95 ms |
+|---|---|---|---|---|
+| 공개 | `/bounties` | 1835 | 25 | 49 |
+| 공개 | `/bounties/:id` | 5852 | 7 | 18 |
+| 공개 | `/members`, `/users/:nickname`, `/notices`, `/hall-of-fame` | 2000~5000 | 8~21 | 20~42 |
+| 공개 | `/hall-of-fame/stats`, `/cohorts/current` | 9000~11000 | 3~5 | 9~10 |
+| 로그인 | `/auth/me`, `/applications/me`, `/submissions/me`, `/cohorts/applications/me` | 3500~5600 | 7~11 | 14~31 |
+| 로그인 | exchange -> refresh -> me 흐름(동시 50) | | 59 / 60 / 41 | 124 / 101 / 115 |
+| 어드민 | `/admin/users` (빈 검색어 / 검색) | 2521 / 1310 | 17 / 36 | 41 / 63 |
+| 어드민 | `/admin/bounties/:id/operations` | 1152 | 39 | 76 |
+| 어드민 | `/admin/cohorts/:id/applications` | 989 | 45 | 99 |
+| 어드민 | `/admin/nft-jobs` | 1980 | 22 | 51 |
+| 어드민(무거움) | `/admin/audit-logs` (1페이지 / 500페이지) | 755 / 75 | 63 / 653 | 103 / 712 |
+| 어드민(무거움) | `/admin/bounties` (바운티 490개, 응답 1.5MB) | 110 | 429 | 562 |
+| 어드민(무거움) | `/admin/cohorts/:id/applications.csv` (2000행, 동시 50은 비현실적) | 51 | 935 | 1058 (동시 10: 358) |
+
+알려진 비용 구조(코드 변경 없이 수치만 기록):
+- DB 시간은 모든 엔드포인트에서 1ms 안팎이고, 동시 50의 지연은 Node 한 프로세스의 CPU(JSON 직렬화, 스로틀 upsert 왕복)가 정한다. 레플리카를 늘리면 선형으로 줄지만 DB 풀 `max: 10`은 인스턴스당이다.
+- `GET /admin/bounties`는 페이지네이션이 없고 `description`/`requirements`까지 전부 보낸다(FE 편집 폼이 쓴다). 바운티 수백 개부터 응답이 MB 단위다.
+- `GET /admin/audit-logs`는 매 페이지 `count(*)`를 정확히 센다(20만 행에서 약 12ms). 필터 없는 총계는 근사로 바꿀 수 있으나 정확도 결정이 필요하다.
+- `throttler_storage`(UNLOGGED)는 요청마다 upsert 한 번이고 키가 IP별이라, 고유 IP가 많으면 행이 쌓인다(만료 청소는 주기 작업). 이 점검 중 로컬에서 9만 행, 200MB까지 부풀었다.
+

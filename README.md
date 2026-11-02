@@ -53,6 +53,7 @@ scripts/requeue-nft-jobs.js  FAILED nft_job 수동 재시도 (id 또는 --all, -
 scripts/forfeit-award.js     지급할 수 없는 승인 수상의 보상 미지급 처리 (APPROVED → REJECTED, 심사 기록 + 감사 행) - docs/runbook.md §7.4
 scripts/mainnet-preflight.sql 메인넷 전환 전 읽기 전용 점검 (psql) - docs/runbook.md §8
 scripts/find-static-ext-nicknames.sql 정적 파일 확장자로 끝나는 기존 닉네임 목록 (psql, 읽기 전용) - docs/runbook.md §2
+scripts/seed-perf.sql 로컬 부하 점검용 운영 규모 시드 (빈 DB 전용, 운영에 쓰지 않는다), scripts/perf/ 부하 드라이버 - docs/runbook.md §10
 scripts/ops-cli.js           운영 스크립트 공용 (migrate.js와 같은 접속 규칙, 인자, 프롬프트)
 docs/
   api-contract.md      FE와 합의할 REST API 계약 (FE docs/auth-api-contract.md 대응)

@@ -44,7 +44,7 @@ describeDb('completed wins and payout requestability single sources on a real da
     const config = testConfig();
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
     rewards = new RewardsService(db, new NftsService(db, config), audit, config);
-    submissions = new SubmissionsService(db);
+    submissions = new SubmissionsService(db, new AuditService(db));
     submissionReview = new SubmissionReviewService(db, audit);
     adminId = await createUser(db, { isAdmin: true });
   });

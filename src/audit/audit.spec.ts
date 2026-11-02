@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { DatabaseService } from '../common/database/database.service';
+import { currentRequestIp, runWithRequestContext } from '../common/http/request-context';
 import { withParamsCheck } from '../test-support/expect-params-match';
 import { createMockDb } from '../test-support/mock-db';
 import { AuditController, AuditLogsQueryDto } from './audit.controller';
@@ -96,6 +97,42 @@ describe('AuditService.record', () => {
     const failure = Object.assign(new Error('value too long'), { code: '22001' });
     const service = new AuditService({ query: jest.fn().mockRejectedValue(failure) } as unknown as DatabaseService);
     await expect(service.record('u1', 'X'.repeat(101) as AuditAction, 'bounty' as never, 'e')).rejects.toBe(failure);
+  });
+});
+
+describe('AuditService ip_address (request context)', () => {
+  const insert = async (run: (service: AuditService, tx: { query: jest.Mock }) => Promise<void>) => {
+    const tx = { query: jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1 }))) };
+    await run(new AuditService(createMockDb({ query: jest.fn() }).database), tx);
+    return tx.query.mock.calls[0] as [string, unknown[]];
+  };
+
+  it('stores the request IP (req.ip, already resolved by trust proxy) inside an HTTP request', async () => {
+    const [sql, params] = await insert((service, tx) =>
+      runWithRequestContext('203.0.113.7', () => service.record('u1', 'BOUNTY_UPDATED', 'bounty', 'e', tx)));
+    expect(sql).toContain('(actor_user_id, action, entity_type, entity_id, ip_address)');
+    expect(sql).toContain('$5::inet');
+    expect(params).toEqual(['u1', 'BOUNTY_UPDATED', 'bounty', 'e', '203.0.113.7']);
+  });
+
+  it('keeps the IP across awaits and puts it after before/after data, for agent rows too', async () => {
+    const [sql, params] = await insert((service, tx) =>
+      runWithRequestContext('2001:db8::1', async () => {
+        await Promise.resolve();
+        await service.recordAgentAction('agent-1', 'APPLICATION_SUBMITTED', 'bounty_application', 'e', tx, { after: { status: 'PENDING' } });
+      }));
+    expect(sql).toContain('(actor_agent_id, action, entity_type, entity_id, before_data, after_data, ip_address)');
+    expect(params).toEqual(['agent-1', 'APPLICATION_SUBMITTED', 'bounty_application', 'e', null, '{"status":"PENDING"}', '2001:db8::1']);
+  });
+
+  it('leaves ip_address out outside a request (cron, worker) and for a value Postgres inet would reject', async () => {
+    const [outside] = await insert((service, tx) => service.record(undefined, 'NFT_JOB_RETRIED', 'nft_job', 'e', tx));
+    const [zoned, zonedParams] = await insert((service, tx) =>
+      runWithRequestContext('fe80::1%eth0', () => service.record('u1', 'BOUNTY_UPDATED', 'bounty', 'e', tx)));
+    expect(outside).not.toContain('ip_address');
+    expect(zoned).not.toContain('ip_address');
+    expect(zonedParams).toHaveLength(4);
+    expect(currentRequestIp()).toBeNull();
   });
 });
 

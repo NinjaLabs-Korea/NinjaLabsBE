@@ -41,7 +41,7 @@ describeDb('account withdrawal on a real database', () => {
     rewards = new RewardsService(db, new NftsService(db, config), audit, config);
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
-    submissions = new SubmissionsService(db);
+    submissions = new SubmissionsService(db, new AuditService(db));
     submissionReview = new SubmissionReviewService(db, audit);
     adminId = await createUser(db, { isAdmin: true });
     approverId = await createUser(db, { isAdmin: true });
@@ -340,7 +340,7 @@ describeDb('account withdrawal on a real database', () => {
     await withdrawing;
     await expect(approval).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
     expect((await db.query<{ status: string }>(`SELECT status FROM bounty_submission WHERE id = $1`, [submission.id])).rows[0].status).toBe('SUBMITTED');
-    expect(await auditActions(db, 'bounty_submission', submission.id)).toEqual([]);
+    expect(await auditActions(db, 'bounty_submission', submission.id)).toEqual(['SUBMISSION_SUBMITTED']); // no SUBMISSION_APPROVE
   });
 
   it('a withdrawal racing an approval waits for it and then refuses with WITHDRAWAL_BLOCKED_PENDING_REWARDS', async () => {

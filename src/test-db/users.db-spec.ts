@@ -147,7 +147,7 @@ describeDb('users on a real database', () => {
       expect(byTitle.partial.postedRewards).toEqual([{ amount: '10', symbol: 'INJ' }, { amount: '20', symbol: 'USDT' }]);
       expect(byTitle.gone.rewards).toEqual([]);
 
-      const mine = await new SubmissionsService(db).mySubmissions(builder);
+      const mine = await new SubmissionsService(db, new AuditService(db)).mySubmissions(builder);
       expect(Object.fromEntries((mine as Array<{ bounty_title: string; payment_status: string }>).map((row) => [row.bounty_title, row.payment_status])))
         .toEqual(expected);
     });

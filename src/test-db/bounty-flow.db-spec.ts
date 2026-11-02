@@ -37,7 +37,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     rewards = new RewardsService(db, nfts, audit, config);
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
-    submissions = new SubmissionsService(db);
+    submissions = new SubmissionsService(db, new AuditService(db));
     submissionReview = new SubmissionReviewService(db, audit);
     adminId = await createUser(db, { isAdmin: true });
     approverId = await createUser(db, { isAdmin: true });
@@ -171,8 +171,8 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     ]);
     expect(await auditActions(db, 'bounty_reward', rewardId)).toEqual(['REWARD_DEPOSIT_CONFIRMED']);
     expect(await auditActions(db, 'payout', payout.id)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED', 'PAYOUT_PAID']);
-    expect(await auditActions(db, 'bounty_submission', submitted.id)).toEqual(['SUBMISSION_APPROVE']);
-    expect(await auditActions(db, 'bounty_application', application.id)).toEqual(['APPLICATION_APPROVED']);
+    expect(await auditActions(db, 'bounty_submission', submitted.id)).toEqual(['SUBMISSION_SUBMITTED', 'SUBMISSION_RESUBMITTED', 'SUBMISSION_APPROVE']);
+    expect(await auditActions(db, 'bounty_application', application.id)).toEqual(['APPLICATION_SUBMITTED', 'APPLICATION_APPROVED']);
   });
 
   it('advanceRewardStatus leaves a multi-winner reward PARTIALLY_PAID until the pool or the winner count is exhausted', async () => {
@@ -235,7 +235,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     expect(row.rows[0]).toEqual({ status: 'PENDING', message: 'second try', portfolio_url: null, reviewed_by: null, reviewed_at: null, review_note: null, fresh: true });
     const count = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM bounty_application WHERE bounty_id = $1 AND applicant_user_id = $2`, [bountyId, builderId]);
     expect(count.rows[0].n).toBe(1);
-    expect(await auditActions(db, 'bounty_application', first.id)).toEqual(['APPLICATION_REAPPLIED']);
+    expect(await auditActions(db, 'bounty_application', first.id)).toEqual(['APPLICATION_SUBMITTED', 'APPLICATION_WITHDRAWN', 'APPLICATION_REAPPLIED']);
 
     // a PENDING (or reviewed) application is still a conflict
     await expect(applications.apply(bountyId, builderId, 'third')).rejects.toMatchObject({ message: 'ALREADY_APPLIED' });

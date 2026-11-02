@@ -35,6 +35,7 @@
 - **에러 코드는 `common/http/error-codes.ts` 카탈로그에 등록한다** (코드 → HTTP 상태 → 한 줄 의미). 서비스에는 `throw new XxxException('NEW_CODE')` 리터럴로 던지고, 카탈로그와 `docs/api-contract.md` "에러 코드" 표에 같은 행을 추가한다 - 빠지면 `src/test-support/error-codes.spec.ts`가 실패한다.
 - **감사 로그는 `AuditService`로만 남긴다** - 사람/시스템 행위는 `record()`, Agent API 키로 한 행위(유저 id 없음)는 `recordAgentAction()`(`actor_agent_id`). 트랜잭션 안이면 `tx`를 넘긴다.
   action은 `audit/audit-actions.ts` 카탈로그(`AUDIT_ACTIONS`, entity_type까지 타입으로 묶임)의 키만 받는다. 새 action은 카탈로그와 `docs/api-contract.md` "감사 action 카탈로그" 표에 같이 추가한다(`audit/audit-actions.spec.ts`). 이미 쌓인 값은 이름을 바꾸지 않는다.
+  바운티 지원·제출처럼 사람과 에이전트가 같은 경로를 쓰면 `BountyActor.recordAudit()`로 남긴다(행위자 컬럼을 고른다). 돈 감사 행은 `change`에 상태·금액(최소 단위 문자열)·정규화된 해시·id만 넣고, 지갑 주소·이메일·사용자 입력 본문·비밀은 넣지 않는다. `ip_address`는 `AuditService`가 요청 컨텍스트(`common/http/request-context.ts`, `req.ip`)에서 자동으로 채우므로 호출자가 넘기지 않는다. 클라이언트 IP가 필요하면 `X-Forwarded-For`를 직접 읽지 말고 `req.ip`(또는 `currentRequestIp()`)를 쓴다.
 - **운영 알림은 `AlertService.notify(key, message)`로만 보낸다** (`common/alerts/alert.service.ts`, 전역 모듈). 절대 throw하지 않으므로 try/catch 불필요.
   `key`는 고정 문자열(또는 `종류:작은 고정 집합` - 예 `nft-job-failed:MINT_CHILD`)이고 같은 키는 30분에 한 번만 나간다(웹훅 전달 성공 기준 - 실패는 2초 뒤 1회 재시도 후 다음 발생이 다시 시도). 메시지에 비밀·PII(이메일, 닉네임, 요청 본문, 실제 경로 값)를 넣지 않는다 - id·개수·상태·라우트 패턴만.
 

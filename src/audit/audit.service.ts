@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
+import { currentRequestIp } from '../common/http/request-context';
 import { AUDIT_ACTIONS, AuditAction } from './audit-actions';
 
 export const AUDIT_LOG_PAGE_SIZE = 30;
@@ -23,22 +24,7 @@ export class AuditService {
     runner: QueryRunner = this.db,
     change?: AuditChange,
   ): Promise<void> {
-    // before/after 가 없으면 예전과 같은 문장 그대로 (대부분의 호출)
-    if (!change) {
-      await runner.query(
-        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id)
-         VALUES ($1, $2, $3, $4)`,
-        [actorId ?? null, action, entityType, entityId],
-      );
-      return;
-    }
-    await runner.query(
-      `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, before_data, after_data)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
-      [actorId ?? null, action, entityType, entityId,
-       change.before === undefined ? null : JSON.stringify(change.before),
-       change.after === undefined ? null : JSON.stringify(change.after)],
-    );
+    await this.insert(runner, 'actor_user_id', actorId ?? null, action, entityType, entityId, change);
   }
 
   /**
@@ -51,11 +37,42 @@ export class AuditService {
     entityType: (typeof AUDIT_ACTIONS)[A],
     entityId: string,
     runner: QueryRunner = this.db,
+    change?: AuditChange,
   ): Promise<void> {
+    await this.insert(runner, 'actor_agent_id', agentId, action, entityType, entityId, change);
+  }
+
+  /**
+   * 실제 INSERT. 값이 있는 컬럼만 문장에 넣는다 - before/after도 IP도 없는 호출(단위 테스트, 크론·워커)은 예전과 같은 4컬럼 문장이다.
+   * `ip_address`는 HTTP 요청 안에서만 채운다(common/http/request-context.ts: Express `req.ip`, trust proxy 홉 기준). 요청 밖이면 NULL.
+   */
+  private async insert(
+    runner: QueryRunner,
+    actorColumn: 'actor_user_id' | 'actor_agent_id',
+    actorId: string | null,
+    action: string,
+    entityType: string,
+    entityId: string,
+    change?: AuditChange,
+  ): Promise<void> {
+    const columns = [actorColumn, 'action', 'entity_type', 'entity_id'];
+    const values = ['$1', '$2', '$3', '$4'];
+    const params: unknown[] = [actorId, action, entityType, entityId];
+    const add = (column: string, cast: string, value: unknown) => {
+      params.push(value);
+      columns.push(column);
+      values.push(`$${params.length}${cast}`);
+    };
+    if (change) {
+      add('before_data', '::jsonb', change.before === undefined ? null : JSON.stringify(change.before));
+      add('after_data', '::jsonb', change.after === undefined ? null : JSON.stringify(change.after));
+    }
+    const ip = currentRequestIp();
+    if (ip) add('ip_address', '::inet', ip);
     await runner.query(
-      `INSERT INTO audit_log (actor_agent_id, action, entity_type, entity_id)
-       VALUES ($1, $2, $3, $4)`,
-      [agentId, action, entityType, entityId],
+      `INSERT INTO audit_log (${columns.join(', ')})
+       VALUES (${values.join(', ')})`,
+      params,
     );
   }
 

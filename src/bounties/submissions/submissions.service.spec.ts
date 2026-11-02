@@ -1,3 +1,4 @@
+import { AuditService } from '../../audit/audit.service';
 import { createMockDb, SqlHandler } from '../../test-support/mock-db';
 import { SubmissionsService } from './submissions.service';
 
@@ -20,7 +21,7 @@ describe('SubmissionsService check order', () => {
           : { rowCount: 0, rows: [] }),
       }],
     });
-    return { mock, service: new SubmissionsService(mock.database) };
+    return { mock, service: new SubmissionsService(mock.database, new AuditService(mock.database)) };
   }
 
   it('locks the bounty row inside one transaction and never uses the pool', async () => {
@@ -51,7 +52,7 @@ describe('SubmissionsService check order', () => {
         { match: /onboarding_completed_at IS NOT NULL AS done FROM "user"/, reply: () => ({ rowCount: 1, rows: [{ done: false }] }) },
       ],
     });
-    await expect(new SubmissionsService(mock.database).submit('bounty', 'user', input))
+    await expect(new SubmissionsService(mock.database, new AuditService(mock.database)).submit('bounty', 'user', input))
       .rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
     expect(mock.txStatements(/onboarding_completed_at/)[0].params).toEqual(['user']);
   });
@@ -64,7 +65,7 @@ describe('SubmissionsService check order', () => {
         { match: /onboarding_completed_at IS NOT NULL AS done\s*FROM agent a JOIN "user" u/, reply: () => ({ rowCount: 1, rows: [{ done: false }] }) },
       ],
     });
-    await expect(new SubmissionsService(mock.database).submitAsAgent('bounty', 'agent', input))
+    await expect(new SubmissionsService(mock.database, new AuditService(mock.database)).submitAsAgent('bounty', 'agent', input))
       .rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
     expect(mock.txStatements(/FROM agent a JOIN "user" u/)[0].params).toEqual(['agent']);
   });
@@ -74,7 +75,7 @@ describe('SubmissionsService.mySubmissions', () => {
   it('runs one pooled read bound to the user id and returns its rows unchanged', async () => {
     const rows = [{ id: 's1', status: 'SUBMITTED' }];
     const mock = createMockDb({ strict: true, handlers: [{ match: /^SELECT s\.id, s\.status/, reply: () => ({ rowCount: 1, rows }) }] });
-    await expect(new SubmissionsService(mock.database).mySubmissions('user')).resolves.toBe(rows);
+    await expect(new SubmissionsService(mock.database, new AuditService(mock.database)).mySubmissions('user')).resolves.toBe(rows);
     expect(mock.statements(/./)).toHaveLength(1);
     expect(mock.statements(/./)[0].params).toEqual(['user']);
     expect(mock.db.tx).not.toHaveBeenCalled();

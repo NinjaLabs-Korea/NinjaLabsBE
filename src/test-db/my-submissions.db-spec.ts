@@ -22,7 +22,7 @@ describeDb('GET /submissions/me current-revision fields on a real database', () 
     const config = testConfig();
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
     rewards = new RewardsService(db, new NftsService(db, config), audit, config);
-    submissions = new SubmissionsService(db);
+    submissions = new SubmissionsService(db, new AuditService(db));
     adminId = await createUser(db, { isAdmin: true });
   });
   afterAll(async () => db.onApplicationShutdown());

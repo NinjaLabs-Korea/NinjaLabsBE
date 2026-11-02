@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { AuditService } from '../../audit/audit.service';
 import { DatabaseService } from '../../common/database/database.service';
 import { payoutStatusSql } from '../../rewards/payout-status';
 import { BountyActor } from '../bounty-actor';
@@ -28,7 +29,10 @@ export interface SubmitInput {
  */
 @Injectable()
 export class SubmissionsService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly audit: AuditService,
+  ) {}
 
   async submit(bountyId: string, userId: string, input: SubmitInput) {
     return this.submitForActor(bountyId, BountyActor.user(userId), input);
@@ -107,6 +111,10 @@ export class SubmissionsService {
            input.repositoryUrl ?? null, input.commitSha ?? null,
            actor.userId, actor.agentId],
         );
+        // 감사는 같은 tx (실패하면 제출도 롤백). URL·설명(사용자 입력)은 넣지 않는다 - 내용은 submission_revision에 있다
+        await actor.recordAudit(this.audit, 'SUBMISSION_SUBMITTED', 'bounty_submission', submissionId, tx, {
+          after: { status: SubmissionStatus.SUBMITTED, revisionNo: 1, bountyId },
+        });
         return { id: submissionId, revisionNo: 1, status: SubmissionStatus.SUBMITTED };
       }
 
@@ -142,6 +150,10 @@ export class SubmissionsService {
          input.repositoryUrl ?? null, input.commitSha ?? null,
          actor.userId, actor.agentId],
       );
+      await actor.recordAudit(this.audit, 'SUBMISSION_RESUBMITTED', 'bounty_submission', sub.id, tx, {
+        before: { status: sub.status, revisionNo: sub.current_revision_no },
+        after: { status: SubmissionStatus.RESUBMITTED, revisionNo: nextRev, bountyId },
+      });
       return { id: sub.id, revisionNo: nextRev, status: SubmissionStatus.RESUBMITTED };
     });
   }

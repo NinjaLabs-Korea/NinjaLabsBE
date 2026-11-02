@@ -5,7 +5,7 @@ import { ApplicationsService } from './applications.service';
 import { activeUserSql } from '../../users/active-user';
 
 /** apply() runs inside db.tx; pool and tx share the same checked mock, assertions read the raw jest.fn */
-function serviceWith(query: jest.Mock, audit = { record: jest.fn() }) {
+function serviceWith(query: jest.Mock, audit: Record<string, jest.Mock> = { record: jest.fn(), recordAgentAction: jest.fn() }) {
   return new ApplicationsService(createMockDb({ query, txQuery: query }).database, audit as unknown as AuditService);
 }
 
@@ -45,6 +45,33 @@ describe('ApplicationsService submission modes', () => {
       'bounty', null, 'agent', 'hello', 'https://example.com',
     ]);
   });
+
+  it.each([
+    ['user', 'DIRECT', (s: ApplicationsService) => s.apply('bounty', 'user', 'hello'), 'record', 'recordAgentAction'],
+    ['agent', 'AGENT', (s: ApplicationsService) => s.applyAsAgent('bounty', 'agent', 'hello'), 'recordAgentAction', 'record'],
+  ] as const)('audits a first %s application as APPLICATION_SUBMITTED in the same tx, with the right actor column and no user input', async (actor, mode, call, method, other) => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ application_required: true, submission_mode: mode, status: 'OPEN' }] })
+      .mockResolvedValueOnce(ONBOARDED)
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
+    const audit = { record: jest.fn(), recordAgentAction: jest.fn() };
+    await call(serviceWith(query, audit));
+    expect(audit[method]).toHaveBeenCalledWith(actor, 'APPLICATION_SUBMITTED', 'bounty_application', 'new', expect.not.objectContaining({ tx: expect.anything() }), { // the tx client, not the pool
+      after: { status: 'PENDING', bountyId: 'bounty' },
+    });
+    expect(audit[other]).not.toHaveBeenCalled();
+  });
+
+  it('a failed audit insert fails the application (the caller transaction rolls back)', async () => {
+    const boom = new Error('audit down');
+    const query = jest.fn()
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ application_required: true, submission_mode: 'AGENT', status: 'OPEN' }] })
+      .mockResolvedValueOnce(ONBOARDED)
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
+    await expect(serviceWith(query, { record: jest.fn(), recordAgentAction: jest.fn().mockRejectedValue(boom) }).applyAsAgent('bounty', 'agent', 'hi')).rejects.toBe(boom);
+  });
 });
 
 describe('ApplicationsService re-application after withdrawal', () => {
@@ -73,7 +100,7 @@ describe('ApplicationsService re-application after withdrawal', () => {
     expect(query).toHaveBeenCalledTimes(3 + o); // no INSERT
     // the agent path has no user id: the row must carry actor_agent_id (recordAgentAction), not an anonymous record()
     const other = auditMethod === 'record' ? 'recordAgentAction' : 'record';
-    expect(audit[auditMethod]).toHaveBeenCalledWith(kind, 'APPLICATION_REAPPLIED', 'bounty_application', 'app-1', expect.anything());
+    expect(audit[auditMethod]).toHaveBeenCalledWith(kind, 'APPLICATION_REAPPLIED', 'bounty_application', 'app-1', expect.anything(), undefined);
     expect(audit[other]).not.toHaveBeenCalled();
   });
 
@@ -97,12 +124,16 @@ describe('ApplicationsService re-application after withdrawal', () => {
 
 describe('ApplicationsService owner visibility of agent applications', () => {
   function setup() {
-    const query = jest.fn().mockResolvedValue({ rowCount: 1, rows: [{ id: 'app', status: 'WITHDRAWN' }] });
-    return { query, service: new ApplicationsService(createMockDb({ query }).database, { record: jest.fn() } as unknown as AuditService) };
+    const query = jest.fn().mockResolvedValue({ rowCount: 1, rows: [{ id: 'app', status: 'WITHDRAWN', bounty_id: 'bounty' }] });
+    const audit = { record: jest.fn() };
+    const mock = createMockDb({ query: jest.fn(), txQuery: query });
+    return { query, audit, mock, service: new ApplicationsService(mock.database, audit as unknown as AuditService) };
   }
 
   it('lists applications made by the user or by agents the user owns, each with agent {id, name} | null', async () => {
-    const { query, service } = setup();
+    const { mock, service } = setup();
+    const query = mock.db.query as jest.Mock;
+    query.mockResolvedValue({ rowCount: 0, rows: [] });
     await service.myApplications('user');
     const [sql, params] = query.mock.calls[0];
     expect(params).toEqual(['user']);
@@ -118,8 +149,13 @@ describe('ApplicationsService owner visibility of agent applications', () => {
   });
 
   it('lets the owner withdraw a pending application made by one of their agents', async () => {
-    const { query, service } = setup();
+    const { query, audit, mock, service } = setup();
     await expect(service.withdraw('app', 'user')).resolves.toEqual({ id: 'app', status: 'WITHDRAWN' });
+    expect(mock.db.tx).toHaveBeenCalledTimes(1);
+    // the withdrawing person is the actor (even for an agent's application), in the same tx as the UPDATE
+    expect(audit.record).toHaveBeenCalledWith('user', 'APPLICATION_WITHDRAWN', 'bounty_application', 'app', expect.not.objectContaining({ tx: expect.anything() }), {
+      before: { status: 'PENDING' }, after: { status: 'WITHDRAWN', bountyId: 'bounty' },
+    });
     const [sql, params] = query.mock.calls[0];
     expect(params).toEqual(['app', 'user']);
     expect(sql).toContain("status = 'PENDING'");
@@ -179,11 +215,9 @@ describe('ApplicationsService apply rules', () => {
       .mockResolvedValueOnce(ONBOARDED)
       .mockResolvedValueOnce({ rowCount: 0, rows: [] })
       .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'new', status: 'PENDING' }] });
-    const audit = { record: jest.fn() };
-    await serviceWith(query, audit).apply('bounty', 'user', 'hello');
+    await serviceWith(query).apply('bounty', 'user', 'hello');
     expect(query.mock.calls[2][0]).toContain('applicant_user_id = $2 FOR UPDATE');
     expect(query.mock.calls[3][1]).toEqual(['bounty', 'user', null, 'hello', null]);
-    expect(audit.record).not.toHaveBeenCalled(); // first applications are not audited, only re-applications
   });
 
   it('maps a unique violation on INSERT (a concurrent first application) to 409 ALREADY_APPLIED', async () => {
@@ -252,8 +286,10 @@ describe('ApplicationsService apply rules', () => {
 
   it('withdraw of a non-pending, foreign or unknown application is 404 APPLICATION_NOT_FOUND_OR_NOT_PENDING', async () => {
     const query = jest.fn().mockResolvedValue({ rowCount: 0, rows: [] });
-    const service = new ApplicationsService(createMockDb({ query }).database, { record: jest.fn() } as unknown as AuditService);
+    const audit = { record: jest.fn() };
+    const service = new ApplicationsService(createMockDb({ query, txQuery: query }).database, audit as unknown as AuditService);
     await expect(service.withdraw('app', 'someone-else')).rejects.toMatchObject({ status: 404, message: 'APPLICATION_NOT_FOUND_OR_NOT_PENDING' });
+    expect(audit.record).not.toHaveBeenCalled();
   });
 
   it.each([

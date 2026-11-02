@@ -24,7 +24,7 @@ describeDb('submission review on a real database', () => {
     db = createDb();
     const audit = new AuditService(db);
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(testConfig()));
-    submissions = new SubmissionsService(db);
+    submissions = new SubmissionsService(db, new AuditService(db));
     review = new SubmissionReviewService(db, audit);
     adminId = await createUser(db, { isAdmin: true });
   });

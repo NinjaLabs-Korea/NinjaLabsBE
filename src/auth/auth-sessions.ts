@@ -2,9 +2,9 @@ import { Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { JWT_SIGN_OPTIONS } from './jwt-algorithm';
 import { createHash, randomBytes, randomUUID } from 'crypto';
-import { isIP } from 'net';
 import { QueryResult } from 'pg';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
+import { inetOrNull } from '../common/http/request-context';
 import { decryptGraceToken, encryptGraceToken, REFRESH_REUSE_GRACE } from './refresh-grace';
 import { activeUserSql } from '../users/active-user';
 
@@ -43,10 +43,6 @@ export async function revokeAllSessionsOfUser(runner: QueryRunner, userId: strin
   );
 }
 
-/** auth_session.ip_address(INET)에 넣어도 되는 값만 통과 - Node의 isIP는 존 ID(`fe80::1%eth0`)를 받지만 Postgres inet은 거부한다 */
-function inetOrNull(ip: string | undefined): string | null {
-  return ip && isIP(ip) && !ip.includes('%') ? ip : null;
-}
 
 export class AuthSessions {
   /**

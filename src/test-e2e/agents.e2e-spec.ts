@@ -148,12 +148,12 @@ describeDb('agents over HTTP (e2e)', () => {
       expect(verified.status).toBe(201);
       e2e.trackTokens(verified.body);
       expect(verified.body).toMatchObject({ agentId: registered.agentId, status: 'ACTIVE' });
-      expect(await agentKey(registered.agentId)).toBe(victimWallet.signingKey.compressedPublicKey);
+      expect(await agentKey(registered.agentId)).toBe(Buffer.from(victimWallet.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64'));
       // the attacker's row is untouched otherwise and can still be verified by its real key holder
       const attackerVerify = await e2e.post(`/agents/${squat.body.agentId}/verify`, { signature: await attackerWallet.signMessage(squat.body.verificationMessage) }, { token: attacker.accessToken });
       expect(attackerVerify.status).toBe(201);
       e2e.trackTokens(attackerVerify.body);
-      expect(await agentKey(squat.body.agentId)).toBe(attackerWallet.signingKey.compressedPublicKey);
+      expect(await agentKey(squat.body.agentId)).toBe(Buffer.from(attackerWallet.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64'));
     });
 
     it("EVM: a squat row stored before this fix (a PENDING 0x agent holding the victim's key) is cleared by the victim's verify → 201", async () => {
@@ -169,7 +169,7 @@ describeDb('agents over HTTP (e2e)', () => {
       expect(verified.status).toBe(201);
       e2e.trackTokens(verified.body);
       expect(await agentKey(legacy.rows[0].id)).toBeNull();
-      expect(await agentKey(registered.agentId)).toBe(victimWallet.signingKey.compressedPublicKey);
+      expect(await agentKey(registered.agentId)).toBe(Buffer.from(victimWallet.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64'));
     });
 
     it('EVM: if the recovered key is held by an ACTIVE agent anyway (data drift), verify is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED and stays pending', async () => {

@@ -53,6 +53,13 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `INVALID_SIGNATURE` | 401 | 서명 검증에 실패했다 (지갑 연결·에이전트 등록 공통) |
 | `WALLET_LINKED_TO_OTHER_ACCOUNT` | 409 | 이 주소가 이미 다른 계정에 연결돼 있다 |
 | `ACCOUNT_ALREADY_HAS_WALLET` | 409 | 이 계정에 이미 다른 대표 지갑이 연결돼 있다 |
+| `WALLET_CHANGE_REQUIRES_WALLET` | 409 | 교체할 대표 지갑이 없다. 최초 연결을 먼저 완료해야 한다 |
+| `WALLET_CHANGE_DISABLED` | 503 | 수령 지갑 교체 기능이 운영 안전 확인 전 비활성화되어 있다 |
+| `WALLET_CHANGE_STALE` | 409 | 교체 요청의 기존 지갑이 현재 대표 지갑과 다르다. 현재 지갑으로 새 요청을 발급해야 한다 |
+| `WALLET_CHANGE_SAME_ADDRESS` | 400 | 같은 계정 주소로는 교체할 수 없다. 0x와 inj1 표기만 다른 경우도 같은 지갑이다 |
+| `WALLET_CHANGE_BLOCKED_PAYOUTS` | 409 | 본인 또는 소유 에이전트의 미정산 지급이 있다. FAILED 지급도 정리 후 교체해야 한다 |
+| `WALLET_CHANGE_BLOCKED_NFT_JOBS` | 409 | 미완료 NFT 또는 민팅·연결 작업이 있다. 실패 작업도 해결 후 교체해야 한다 |
+| `WALLET_CHANGE_NOT_FOUND` | 404 | 본인의 지갑 교체 요청이 없거나 새 요청으로 대체됐다 |
 | `INVALID_AGENT_WALLET_ADDRESS` | 400 | 에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다) |
 | `AGENT_PUBLIC_KEY_REQUIRED` | 400 | 에이전트 공개키가 필요하다 |
 | `AGENT_PUBLIC_KEY_MISMATCH` | 400 | inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다 |
@@ -253,6 +260,52 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
   0x `address`와 hex `signature`를 전송한다. 서버는 서명자를 복구한 뒤 대응되는 `inj1` 주소로
   정규화해 저장하므로 CW-721 NFT의 수신 주소로도 사용할 수 있다.
 
+### 대표 수령 지갑 교체 (2026-11-02, migration 0024)
+
+기본 비활성화다. 운영 호환성 확인 뒤 서버가 `WALLET_REPLACEMENT_ENABLED=true`로 켜기 전에는
+아래 두 API 모두 503 `WALLET_CHANGE_DISABLED`이며 기존 최초 연결/지갑 조회에는 영향이 없다.
+
+최초 연결 API와 분리한 **기존 지갑 접근이 가능한 사용자의 수령 지갑 교체**다. 관리자가 주소를 덮어쓰거나
+FE가 주소만 변환해서 교체하는 기능이 아니다. 양쪽 지갑의 서명이 모두 필요하며, 체인 송금은 실행하지 않는다.
+
+| Method | Path | Auth | 요청 → 응답 |
+|---|---|---|---|
+| POST | `/wallets/replacement/challenge` | ✅ | `{currentAddress, newAddress}` → 201 `{id, currentAddress, newAddress, currentMessage, newMessage, expiresAt}` (camelCase, ISO 만료 시각, 5분 유효). 새 발급은 본인의 미완료 교체 요청을 대체한다 |
+| POST | `/wallets/replacement/verify` | ✅ | `{challengeId, currentSignature, newSignature, currentPublicKey?, newPublicKey?}` → 201 `{id, chain, address, verified_at, created_at}` (지갑 행 응답, 주소는 정규 `inj1…`). 양쪽 메시지를 각각 해당 지갑으로 서명한다. ADR-36 주소에는 그쪽 `PublicKey`가 필수, EVM 주소는 EIP-191로 공개키 복구 |
+
+두 경로 모두 세션 인증, 각 IP당 10회/분, `Cache-Control: no-store, private`. 주소는 255자, 서명은 4096자,
+공개키는 256자 이내. 서명 원문은 서버 응답 그대로 사용하고, 양쪽 메시지를 서로 바꾸거나 같은 서명을 재사용하면 안 된다.
+`challengeId`는 UUID다. 이 요청에는 별도의 `address`나 `newAddress`를 다시 보내지 않는다(알 수 없는 필드 400).
+
+- 0x와 inj1 표기가 달라도 같은 계정이면 교체할 수 없다. 현재 주소는 실제 대표 지갑과 일치해야 하고,
+  새 주소는 다른 계정에 연결되어 있거나 본인의 전용 에이전트 지갑이면 안 된다(기존 분리 정책 유지).
+- 본인·소유 에이전트·본인 수령 지갑에 묶인 **미정산 payout 전부**가 없어야 한다.
+  `REQUESTED`, `AWAITING_MULTISIG_APPROVAL`, `APPROVED`, `BROADCASTING`, **`FAILED`**를 차단한다.
+  `FAILED`는 송금 미착지를 뜻하지 않는다. 실제 체인 상태를 운영자가 확인하고 기존 정산 절차로 해결해야 한다.
+- 본인 NFT가 `MINTED`/`ATTACHED`여야 하고, 관련 NFT job도 `SUCCEEDED`/`CANCELLED`여야 한다.
+  실패한 NFT/잡을 포함해 미완료 작업은 먼저 해결한다. 두 조건은 발급 시점과 검증 시점에 모두 재검사한다.
+- 기존 wallet 행은 삭제·주소 변경하지 않고 비대표/연결 해제로 남긴다. 새 wallet 행을 대표로 생성하며,
+  기존 NFT 및 payout FK, 지급 주소, 온보딩 상태는 바꾸지 않는다. 부모 NFT도 재발급하지 않는다.
+- **이후 보상금은 새 대표 지갑**, 부모에 연결되는 **이후 완료 NFT는 기존 부모 NFT의 지갑**을 사용한다.
+  지갑 교체로 NFT 포트폴리오를 옮기거나 기존 지갑에 대한 접근을 복구하지는 않는다.
+- 같은 `challengeId`와 유효한 두 서명으로 재전송하면 동일 지갑을 반환하고 추가 교체/감사를 만들지 않는다.
+  완료 요청은 만료 시각 이후 24시간이 지날 때까지 보존되고, 이후 정기 정리 대상이다. 완료 후에는 원래 5분이
+  지나도 보존 중 재전송할 수 있지만, 다른 교체가 이미 끝났으면 `WALLET_CHANGE_STALE`이다.
+  네트워크 오류 시 새 challenge부터 만들지 말고 기존 verify를 재시도하거나 `/auth/me`로 결과를 확인한다.
+- 지급 요청·탈퇴·에이전트 등록과 유저 행 잠금으로 직렬화한다. 지급 요청이 먼저면 교체를 거부하고,
+  교체가 먼저면 지급 요청이 새 지갑을 선택한다. 중간 DB 오류는 기존 지갑을 포함한 전체 교체를 롤백한다.
+
+FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 지갑 주소로 challenge 발급 → 구 지갑으로
+`currentMessage` 서명 → 신 지갑으로 `newMessage` 서명 → verify → `/auth/me`, `/wallets/me` 재조회 및 캐시 갱신.
+지갑 전환 중 로그인 세션과 challenge를 유지하고, 양쪽 계정이 예상 주소인지 확인한다.
+서명 취소/지갑 연결 실패 시 verify하지 않으면 기존 연결은 그대로다. FE 변경은 이 BE 작업에 포함되지 않는다.
+
+오류 처리: `WALLET_CHANGE_BLOCKED_PAYOUTS`/`WALLET_CHANGE_BLOCKED_NFT_JOBS`(409)는 작업 해결 후 재시도,
+`CHALLENGE_EXPIRED`(400)/`WALLET_CHANGE_NOT_FOUND`(404)는 새 요청 발급,
+`WALLET_CHANGE_STALE`(409)은 `/auth/me` 갱신 후 처음부터 진행,
+`INVALID_SIGNATURE`(401)는 주소·원문·서명을 확인한다. 나머지 코드는 위 오류표 참고.
+**기존 지갑 분실·해킹 복구, 관리자 강제 교체, NFT 이전은 지원하지 않는다.**
+
 ## 바운티 (공개 읽기)
 
 | Method | Path | Auth | 설명 |
@@ -447,6 +500,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | `USER_MEMBER_REVOKED` | `user` | 상동 (`isMember: false`) |
 | `USER_AVATAR_UPDATED` | `user` | `POST /users/me/avatar` 프로필 사진 등록·교체 (before/after `avatarMediaId`) |
 | `USER_AVATAR_REMOVED` | `user` | `DELETE /users/me/avatar` 프로필 사진 삭제 (before `avatarMediaId`; 사진이 없던 멱등 호출은 기록 없음) |
+| `WALLET_REPLACED` | `user` | 대표 수령 지갑 교체. before/after `walletId`, 기존 NFT·지급 기록은 유지 |
 | `NFT_JOB_RETRIED` | `nft_job` | `POST /admin/nft-jobs/:id/retry` |
 | `ADMIN_GRANTED` | `user` | 운영 스크립트 `scripts/grant-admin.js` (actor NULL) |
 | `ADMIN_REVOKED` | `user` | 상동 |

@@ -149,7 +149,7 @@ describeDb('agent registration, verification and key rules on a real database', 
       const { agentId, signer, verificationMessage } = await pending(ownerId);
       const verified = await agents.verifyAndIssueKey(ownerId, agentId, await sign(signer, verificationMessage));
       expect(verified.apiKey).toMatch(/^nj_[A-Za-z0-9_-]{43}$/);
-      expect(await agentRow(agentId)).toMatchObject({ status: 'ACTIVE', public_key: signer.signingKey.compressedPublicKey });
+      expect(await agentRow(agentId)).toMatchObject({ status: 'ACTIVE', public_key: injKey(signer).publicKey });
       expect((await agentRow(agentId)).verified_at).toBeInstanceOf(Date);
       const keys = await keyRows(agentId);
       expect(keys).toHaveLength(1);
@@ -212,7 +212,7 @@ describeDb('agent registration, verification and key rules on a real database', 
       const { agentId, verificationMessage } = await pending(ownerId, signer);
       await expect(agents.verifyAndIssueKey(ownerId, agentId, await sign(signer, verificationMessage))).resolves.toMatchObject({ status: 'ACTIVE' });
       expect((await agentRow(legacy.agentId)).public_key).toBeNull();
-      expect((await agentRow(agentId)).public_key).toBe(key);
+      expect((await agentRow(agentId)).public_key).toBe(injKey(signer).publicKey);
 
       // inj1: nothing else is touched
       const inj = injKey();

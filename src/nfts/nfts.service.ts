@@ -69,18 +69,21 @@ export class NftsService {
   ) {
     const contract = this.contractAddress();
     const parent = (await tx.query(
-      `SELECT id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`,
+      `SELECT id, owner_wallet_id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`,
       [userId],
-    )) as QueryResult<{ id: string }>;
+    )) as QueryResult<{ id: string; owner_wallet_id: string }>;
     // 부모 NFT 미보유(지갑 미연결 등)면 부모부터 재유도 - decisions.md 참고
     const parentId = parent.rowCount ? parent.rows[0].id : null;
+    // Receiving-wallet replacement moves money, not the Ninja portfolio. Keep future children
+    // on the parent's original wallet as well; a new payout recipient must not split the NFT tree.
+    const nftWalletId = parent.rowCount ? parent.rows[0].owner_wallet_id : walletId;
 
     const nft = (await tx.query(
       `INSERT INTO nft (owner_user_id, owner_wallet_id, parent_nft_id, bounty_id, submission_id, nft_type, contract_address)
        VALUES ($1, $2, $3, $4, $5, 'BOUNTY_COMPLETION_CHILD', $6)
        ON CONFLICT DO NOTHING
        RETURNING id`,
-      [userId, walletId, parentId, bountyId, submissionId, contract],
+      [userId, nftWalletId, parentId, bountyId, submissionId, contract],
     )) as QueryResult<{ id: string }>;
     if (!nft.rowCount) return null;
     const nftId = nft.rows[0].id;

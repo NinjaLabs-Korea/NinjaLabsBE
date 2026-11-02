@@ -45,7 +45,7 @@ describeDb('agent lifecycle on a real database', () => {
     const signer = Wallet.createRandom();
     const { agentId, apiKey } = await registerAndVerify(ownerId, signer);
     expect(await agentRow(agentId)).toMatchObject({ status: 'ACTIVE', deleted_at: null, wallet_address: signer.address });
-    expect((await agentRow(agentId)).public_key).toMatch(/^0x0[23][0-9a-f]{64}$/);
+    expect((await agentRow(agentId)).public_key).toBe(Buffer.from(signer.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64'));
     await expect(keys.authenticate(apiKey)).resolves.toMatchObject({ agentId, ownerUserId: ownerId, name: 'bot' });
     // verifying twice is refused
     await expect(agents.verifyAndIssueKey(ownerId, agentId, '0x00')).rejects.toMatchObject({ message: 'AGENT_ALREADY_VERIFIED' });

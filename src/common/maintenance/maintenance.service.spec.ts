@@ -20,7 +20,7 @@ describe('MaintenanceService crons', () => {
     const { service, query, log } = setup();
     await service.sweep();
     const sqls = query.mock.calls.map(([sql]) => sql as string);
-    expect(sqls).toHaveLength(4);
+    expect(sqls).toHaveLength(5);
     expect(sqls[0]).toContain(`DELETE FROM wallet_verification_challenge WHERE expires_at < now() - interval '1 day'`);
     expect(sqls[1]).toContain('DELETE FROM auth_session');
     expect(sqls[1]).toContain(`(revoked_at IS NOT NULL AND revoked_at < now() - interval '30 days')`);
@@ -29,7 +29,8 @@ describe('MaintenanceService crons', () => {
     expect(sqls[3]).toContain('DELETE FROM throttler_storage');
     expect(sqls[3]).toContain('expires_at <= now() AND (blocked_until IS NULL OR blocked_until <= now())');
     expect(sqls.some((sql) => sql.includes('grace_refresh_token'))).toBe(false);
-    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=3 sessions=2 login_codes=5 throttles=7');
+    expect(sqls[4]).toContain('DELETE FROM wallet_replacement_challenge');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=3 sessions=2 login_codes=5 throttles=7 wallet_replacements=0');
   });
 
   it('clearGraceCopies runs every 5 minutes and nulls grace copies past the 30 s window, logging only when it cleared some', async () => {
@@ -82,10 +83,10 @@ describe('MaintenanceService crons', () => {
     query.mockRejectedValueOnce(new Error('first'));
     query.mockRejectedValueOnce(new Error('canceling statement due to statement timeout'));
     await service.sweep();
-    expect(query).toHaveBeenCalledTimes(4);
+    expect(query).toHaveBeenCalledTimes(5);
     expect(error).toHaveBeenCalledWith('maintenance sweep challenges failed: first');
     expect(error).toHaveBeenCalledWith('maintenance sweep sessions failed: canceling statement due to statement timeout');
-    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=failed sessions=failed login_codes=5 throttles=7');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=failed sessions=failed login_codes=5 throttles=7 wallet_replacements=0');
   });
 
   it('runs at most once at a time', async () => {
@@ -111,16 +112,16 @@ describe('MaintenanceService - robustness', () => {
   it('reports 0 when the driver gives rowCount null', async () => {
     const { service, log } = setup(jest.fn().mockResolvedValue({ rowCount: null, rows: [] }));
     await service.sweep();
-    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=0 sessions=0 login_codes=0 throttles=0');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=0 sessions=0 login_codes=0 throttles=0 wallet_replacements=0');
   });
 
   it('keeps going after a failing statement and logs a non-Error rejection as text', async () => {
     const query = jest.fn().mockResolvedValueOnce({ rowCount: 1 }).mockRejectedValueOnce('lock timeout').mockResolvedValue({ rowCount: 4 });
     const { service, log, error } = setup(query);
     await service.sweep();
-    expect(query).toHaveBeenCalledTimes(4);
+    expect(query).toHaveBeenCalledTimes(5);
     expect(error).toHaveBeenCalledWith('maintenance sweep sessions failed: lock timeout');
-    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=1 sessions=failed login_codes=4 throttles=4');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=1 sessions=failed login_codes=4 throttles=4 wallet_replacements=4');
   });
 
   it('runs again on the next tick after a failure (the in-progress flag is reset)', async () => {
@@ -128,7 +129,7 @@ describe('MaintenanceService - robustness', () => {
     const { service, log } = setup(query);
     await service.sweep();
     await service.sweep();
-    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=2 sessions=2 login_codes=2 throttles=2');
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=2 sessions=2 login_codes=2 throttles=2 wallet_replacements=2');
   });
 
   it('clearGraceCopies runs at most once at a time and independently of a running sweep', async () => {
@@ -145,7 +146,7 @@ describe('MaintenanceService - robustness', () => {
     expect(query.mock.calls.filter(([sql]) => sql.includes('grace_refresh_token'))).toHaveLength(1);
     releaseGrace();
     await grace;
-    for (let i = 0; i < 4; i++) { releaseSweep(); await new Promise((resolve) => setImmediate(resolve)); }
+    for (let i = 0; i < 5; i++) { releaseSweep(); await new Promise((resolve) => setImmediate(resolve)); }
     await sweep;
     expect(error).not.toHaveBeenCalled();
   });
@@ -172,7 +173,7 @@ describe('MaintenanceService - shutdown', () => {
     expect(drained).toBe(false);
     releaseFirst();
     await Promise.all([sweep, shutdown]);
-    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=1 sessions=0 login_codes=0 throttles=0'); // the sweep completed
+    expect(log).toHaveBeenCalledWith('maintenance sweep: challenges=1 sessions=0 login_codes=0 throttles=0 wallet_replacements=0'); // the sweep completed
     query.mockClear();
     await service.sweep();
     await service.clearGraceCopies();

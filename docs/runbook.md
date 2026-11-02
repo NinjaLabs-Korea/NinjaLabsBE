@@ -181,6 +181,12 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 실제 복구(운영): Supabase 대시보드 복원(같은 프로젝트를 덮어씀) 또는 새 프로젝트에 `pg_restore` 후 Railway `DATABASE_URL`/`DATABASE_CA_CERT` 교체 → 재배포. 복원 시점 이후의 온체인 사실(입금·지급 tx, 민팅)은 DB에 없으므로 §7.4의 대조 절차로 다시 맞춘다.
 
+**복원 전에** `NFT_MINTING_ENABLED=false`, `WALLET_REPLACEMENT_ENABLED=false`로 두고 모든 API/worker를 중지·드레인한다.
+구버전은 플래그를 모르므로 실제 종료를 확인한다. 이미 전송된 tx는 취소되지 않는다. 복원 후 체인 대조가 끝나기 전 켜지 않는다.
+0027 이후 새 NFT는 같은 user/submission UUID로 다시 만들면 같은 NFT UUID를 사용하지만,
+기존 랜덤 NFT ID와 복원 범위 밖의 user/submission에는 적용되지 않는다. 기존 ID를 바꾸지 말고 발급 이력과 대조해 복원한다.
+환경값이 true로 남은 복원을 자동 감지하지 않는다. 상세 순서/롤백 최저 조건은 [배포 체크리스트](wallet-replacement-release.md#4-롤백복원-경계).
+
 ## 6. 업타임 모니터 (GET /health)
 
 `GET /health`는 DB에 `SELECT 1`을 보낸다 - 정상 `200 {"status":"ok","db":"up"}`, DB 장애 시 **`503 {"status":"degraded","db":"down"}`**. 인증 없이 열려 있고 rate limit 대상이 아니다(`@SkipThrottle()` - 한도 저장소가 DB를 치는 production에서 DB 장애 때 응답이 타임아웃으로 늘어지지 않게).
@@ -231,7 +237,9 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
     WHERE status IN ('PENDING', 'FAILED') ORDER BY scheduled_at LIMIT 20;
    ```
 2. `last_error`로 분류:
-   - `NFT_CONTRACT_ADDRESS / MASTER_WALLET_MNEMONIC not configured` → env 누락. 잡은 실패하지 않고 1시간씩 미뤄진다. env를 넣고 재배포하면 다음 폴링부터 돈다.
+   - 먼저 `NFT_MINTING_ENABLED`를 확인한다. 미설정/빈 값/`true`면 기존 자동 발급 유지.
+     명시적 `false`와 그 밖의 비어 있지 않은 잘못된 값은 워커를 선점/고아 정리 없이 중지하고 retry_count도 늘리지 않는다.
+   - `NFT_CONTRACT_ADDRESS / MASTER_WALLET_MNEMONIC not configured` → env 누락. 워커 활성 상태에서는 잡을 실패시키지 않고 1시간씩 미룬다. 설정·체인 대조 후 활성화한다.
    - `parent NFT not minted yet - attach deferred` → 정상 대기(부모 민팅이 끝나면 자동으로 당겨진다). 부모 잡을 본다.
    - 가스 부족(`insufficient funds`) → 마스터 지갑 주소에 INJ 충전.
    - RPC/gRPC 타임아웃 → `INJECTIVE_GRPC_ENDPOINT`를 다른 노드로 바꾸고 재배포.
@@ -311,7 +319,35 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
      - 받을 몫이 남은 수상자로 세지 않으므로 COMPLETED·CANCELLED 차단이 풀린다. 취소한다면 §7.7로 입금액 − `PAID` 전액을 환불·기록한 뒤 삭제할 수 있다.
    - 수령 지갑이 틀림 → SQL로 `recipient_wallet_id`를 바꾸지 않는다. 수령 지갑은 요청 시점의 대표 지갑이므로 먼저 3번으로 지갑 이력을 확인한다.
    - 잘못된 주소로 **실제 송금됨** → 온체인 회수는 불가. 수령자 연락/추가 지급 여부를 결정하고, 결정과 tx를 사후 기록에 남긴다.
-3. 수령 지갑은 payout 요청 시점의 대표 지갑이다. 사용자가 지갑을 바꿨다고 주장하면 `wallet` 행의 `verified_at`과 비교한다(MVP는 지갑 교체 불허, decisions.md).
+3. 수령 지갑은 payout 요청 시점의 대표 지갑이다. 교체 이력은 `audit_log`의 `WALLET_REPLACED`(before/after `walletId`)와 옛/새 `wallet`의 `verified_at`, `disconnected_at`으로 확인한다. 과거 payout의 `recipient_wallet_id`는 교체로 바뀌지 않는다.
+
+### 7.4.1 대표 수령 지갑 교체
+
+운영 배포 전 [wallet-replacement-release.md](wallet-replacement-release.md)의 **읽기 전용 정규 식별자 검사와 계약 응답 확인**을 먼저 수행한다.
+
+- BE를 배포하기 전에 `0024_wallet_replacement.sql`을 적용한다(일반 Railway preDeploy 마이그레이션 경로).
+  FE 연동은 별도 릴리스다. 먼저 BE의 호환 API와 0024–0028 스키마를 배포하고 구버전 writer를 드레인한다.
+  `WALLET_REPLACEMENT_ENABLED`는 기본 OFF다. 운영 점검 후 정확히 `true`로 켜기 전에는 두 교체 API가
+  503 `WALLET_CHANGE_DISABLED`를 반환한다. 기능 OFF는 이미 완료된 교체/이력을 되돌리지 않는다.
+  [롤백 경계와 배포 순서](wallet-replacement-release.md)를 따른다.
+- 구·신 지갑의 소유 증명을 받는 `/wallets/replacement/challenge`·`verify`만 사용한다.
+  SQL로 기존 `wallet.address`나 payout 수령자를 덮어쓰지 않는다. 실패 시 기존 연결은 롤백되며,
+  응답 유실은 동일 verify 재전송 또는 `/auth/me`로 확인한다(구체적 만료/재시도 계약은 api-contract.md).
+- `WALLET_CHANGE_BLOCKED_PAYOUTS`: 본인·소유 에이전트·본인 wallet 수령 건의 미정산 payout을 먼저 확인한다.
+  `FAILED`도 차단한다. 체인에서 이미 송금됐을 수 있으므로 확인 없이 취소해서 교체를 우회하면 안 된다.
+- `WALLET_CHANGE_BLOCKED_NFT_JOBS`: 본인 NFT와 관련 잡을 확인하고 §7.3의 기존 복구 절차로 해결한다.
+- 기존 부모 NFT와 이후 완료 NFT는 **기존 부모 지갑**에 남고, **이후 보상금만 새 대표 지갑**으로 받는다.
+  기존 지갑을 분실한 사용자를 위한 복구/강제 이전 절차는 없다. 관리자 수동 교체로 우회하지 않는다.
+- `wallet_replacement_challenge`에는 서명을 저장하지 않는다. 만료 시각으로부터 24시간 지난 행은 MaintenanceService가
+  정리하며, `WALLET_REPLACED` 감사 이력과 과거 wallet 행은 그대로 남는다.
+
+- `0025_agent_canonical_identity.sql`은 기존 `0x`/`inj1` 주소·hex/base64 키를 정규 계정/키 기준으로 비교한다.
+  충돌 시 `AGENT_CANONICAL_IDENTITY_CONFLICT`로 전체 롤백하며 자동 소유자 변경/이력 삭제를 하지 않는다.
+  운영자가 먼저 `node scripts/check-agent-identities.js`(읽기 전용)를 실행하고 충돌이 있으면 반영을 멈춘다.
+- `0028_agent_identity_reservations.sql`은 검증된 소유자 예약을 보존하고 구버전의 별칭 등록/활성화도 DB에서 거부한다.
+  `AGENT_CANONICAL_RESERVATION_CONFLICT`면 자동 정리하지 말고 소유 증명·이력을 확인한다. 예약/트리거를 삭제해 우회하지 않는다.
+- 이미 연결 완료된 NFT는 민팅 잡의 마지막 기록 실패로 FAILED가 되지 않는다. 기존 FAILED 중 `attached_at`이 있는 행을
+  재시도하면 ATTACHED로 복구하고 재민팅하지 않는다. token_id만 있으면 기존처럼 MINTED로 복구한다.
 
 ### 7.5 `JWT_SECRET` 유출
 `JWT_SECRET`은 access 토큰·OAuth state 서명과 refresh 유예 사본 암호화(HKDF) 키다. 유출되면 누구나 임의 사용자 id로 access 토큰을 위조할 수 있다(어드민 라우트는 AdminGuard가 DB `is_admin`을 다시 보므로, 실제 어드민의 user id를 아는 경우에만 통과).
@@ -332,12 +368,13 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 ### 7.6 마스터 지갑 니모닉(`MASTER_WALLET_MNEMONIC`) 유출
 마스터 지갑은 **NFT 민팅 전용**이다. 보상금은 멀티시그(§9)에 있으므로 이 지갑으로 움직일 수 없어야 한다 - 마스터 지갑 주소가 멀티시그 서명자가 아님을 §9 표로 확인한다.
-1. **민팅 중지**: Railway에서 `MASTER_WALLET_MNEMONIC`을 비우고 재배포 → 워커가 잡을 실패시키지 않고 1시간씩 미룬다.
+1. **민팅 중지**: `NFT_MINTING_ENABLED=false` 및 `MASTER_WALLET_MNEMONIC`을 비우고 재배포한다. 모든 구버전 워커도 실제 종료·드레인한다.
+   새 워커는 잡을 선점/실행하지 않는다. 이미 전송된 tx는 취소되지 않으므로 확인해야 한다.
 2. **자금 이동**: 유출된 주소의 남은 INJ(가스)를 새 지갑으로 옮긴다(공격자보다 먼저).
 3. **새 지갑 생성**: 오프라인에서 새 니모닉 생성, 하드웨어/비밀 저장소에 보관(env는 Railway에만). 새 주소에 가스 INJ 충전.
 4. **컨트랙트 권한 이전**: CW-721 컨트랙트의 minter(소유권)를 새 주소로 넘긴다 - cw721-base 계열은 `update_ownership { transfer_ownership: { new_owner } }` 실행 후 새 지갑으로 `accept_ownership`(컨트랙트 버전에 맞는 메시지를 확인). 유출된 키로 먼저 실행해야 하므로 2번과 같이 서두른다. 권한을 이미 빼앗겼으면 새 컨트랙트 배포 + `NFT_CONTRACT_ADDRESS` 교체(§8의 NFT 항목과 같은 결정이 필요).
 5. **무단 민팅 확인**: 유출 시점 이후 마스터 주소의 tx를 익스플로러에서 보고, 컨트랙트의 토큰 중 `nft.id`(token_id = nft UUID)와 맞지 않는 것을 목록화한다.
-6. 새 니모닉을 `MASTER_WALLET_MNEMONIC`에 넣고 재배포 → 미뤄진 잡이 돈다. FAILED가 있으면 §7.3의 재시도.
+6. 새 니모닉·체인 이력 대조 후 `NFT_MINTING_ENABLED=true`로 재배포 → 미뤄진 잡이 돈다. FAILED가 있으면 §7.3의 재시도.
 7. 운영 전 과제: 니모닉을 env 대신 KMS/Vault로(security.md "운영 전").
 
 ### 7.7 환불 기록 - 취소된 바운티의 입금을 스폰서에게 돌려준 뒤
@@ -366,7 +403,7 @@ railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
   -v expected_nft_contract=<mainnet CW-721 inj1…>'
 ```
 - **blocker**(0행이어야 진행): `custody_placeholder`(열린 보상의 custody가 `PENDING_MULTISIG_SETUP`/잘못된 모양/새 멀티시그와 다름), `erc20_testnet_chain`(열린 ERC-20 보상이 1439 또는 다른 USDC), `payout_open`(끝나지 않은 payout), `nft_job_unfinished`(대기·진행·실패 잡 - 전환 후 메인넷에 민팅된다).
-- **review**: `reward_funded_on_testnet`(테스트넷 입금 - 메인넷 재입금 또는 환불/취소 결정), `nft_contracts`(테스트넷 컨트랙트의 NFT - 재민팅 여부), `nickname_case_folding`(행이 나오면 DB `lc_ctype`이 비-ASCII 대문자를 못 접어 `Café`/`CAFÉ` 닉네임이 둘 다 가입된다 - UTF-8 로케일 DB인지 확인), `active_admins`, `platform_settings`(표시용 - 서버 코드가 이 테이블을 읽지 않으므로 민팅 스위치가 아니다. 민팅을 멈추려면 `MASTER_WALLET_MNEMONIC`/`NFT_CONTRACT_ADDRESS` env, §7.6), `last_migration`.
+- **review**: `reward_funded_on_testnet`(테스트넷 입금 - 메인넷 재입금 또는 환불/취소 결정), `nft_contracts`(테스트넷 컨트랙트의 NFT - 재민팅 여부), `nickname_case_folding`(행이 나오면 DB `lc_ctype`이 비-ASCII 대문자를 못 접어 `Café`/`CAFÉ` 닉네임이 둘 다 가입된다 - UTF-8 로케일 DB인지 확인), `active_admins`, `platform_settings`(표시용 - 서버 코드가 이 테이블을 읽지 않으므로 민팅 스위치가 아니다. `NFT_MINTING_ENABLED=false`와 모든 구버전 워커 드레인으로 중지, §7.6), `last_migration`.
 - blocker 정리는 운영자 화면(바운티 취소, payout 완료 기록)으로 하고, 화면이 없는 것(잡 취소, 테스트 보상 정리)은 두 운영자 합의 하에 SQL + 감사 행으로 한다(§7.4의 형식).
 
 ### 8.2 env 변경

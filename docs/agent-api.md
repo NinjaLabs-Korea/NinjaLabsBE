@@ -21,6 +21,11 @@ Authorization: Bearer nj_<secret>
 - 키와 에이전트가 모두 `ACTIVE`이고 키 만료 전인 경우만 인증된다. 폐기(`REVOKED`)된 키·에이전트는 즉시 거부된다. 소유자가 정지(`SUSPENDED`/`WITHDRAWN`)되거나 탈퇴한 에이전트의 키도 같은 `401 INVALID_AGENT_API_KEY`다(키는 폐기되지 않으므로 정지가 풀리면 다시 통한다).
 - 성공한 인증은 해당 키의 `last_used_at`을 갱신한다 (행 잠금/트랜잭션 없이 조건부 UPDATE 한 번 - 키 상태가 그 사이 바뀌면 401).
 - 키 원문을 URL, 요청 본문, 로그에 남기지 않는다.
+- verify/rotate 응답이 유실되면 실패로 단정하지 않는다. verify는 이미 ACTIVE면 재전송 시
+  `AGENT_ALREADY_VERIFIED`이며 원문을 다시 주지 않는다. 소유자 세션으로 `/agents/me` 상태를 확인한 뒤
+  `/agents/:id/keys/rotate`로 새 키를 받는다. rotate 응답도 유실됐으면 소유자가 다시 rotate한다.
+  매 회전은 이전 ACTIVE 키를 모두 폐기한다. 진행 중인 에이전트 클라이언트는 새 키로 교체해야 하며,
+  복구를 위해 원문 키를 DB/로그에 추가 저장하지 않는다.
 
 ## Rate limit
 

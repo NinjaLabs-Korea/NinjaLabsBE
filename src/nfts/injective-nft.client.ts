@@ -5,6 +5,7 @@ import {
   MsgBroadcasterWithPk,
   MsgExecuteContract,
   PrivateKey,
+  getEthereumAddress,
 } from '@injectivelabs/sdk-ts';
 import { getNetworkEndpoints, Network, NetworkEndpoints } from '@injectivelabs/networks';
 
@@ -81,11 +82,21 @@ export class InjectiveNftClient {
   /**
    * 토큰이 이미 온체인에 존재하는가 - cw721 `owner_of` 스마트 쿼리.
    * mint 브로드캐스트와 DB 갱신 사이에 워커가 죽으면 재실행 시 같은 token_id로 다시 민팅해 컨트랙트가 거부하므로,
-   * 민팅 전에 이 값으로 복구 여부를 판단한다. 컨트랙트의 "not found" 응답만 false, 네트워크 오류는 그대로 던진다.
+   * 민팅 전에 이 값으로 복구 여부를 판단한다. CW-721 storage type의 미존재만 false,
+   * 통신/계약 미존재/알 수 없는 응답은 그대로 실패시킨다.
    */
   async tokenExists(tokenId: string): Promise<boolean> {
     try {
-      await this.getWasm().fetchSmartContractState(this.contractAddress(), { owner_of: { token_id: tokenId } });
+      const response = await this.getWasm().fetchSmartContractState(this.contractAddress(), { owner_of: { token_id: tokenId } });
+      // protobuf success alone is not mint evidence: validate the CW-721 response bytes.
+      if (!(response?.data instanceof Uint8Array) || !response.data.length || response.data.length > 65_536) {
+        throw new Error('INVALID_NFT_OWNER_RESPONSE');
+      }
+      try {
+        const decoded = JSON.parse(Buffer.from(response.data).toString('utf8')) as { owner?: unknown };
+        if (typeof decoded?.owner !== 'string' || !decoded.owner.startsWith('inj1')) throw new Error();
+        getEthereumAddress(decoded.owner); // checksum validation; legitimate transfers remain valid
+      } catch { throw new Error('INVALID_NFT_OWNER_RESPONSE'); }
       return true;
     } catch (err) {
       if (InjectiveNftClient.isNotFound(err)) return false;
@@ -93,13 +104,16 @@ export class InjectiveNftClient {
     }
   }
 
-  /** cw721-base는 없는 토큰에 `... not found` 류의 컨트랙트 오류를 돌려준다 (sdk-ts 예외는 message/originalMessage에 담는다) */
+  /** sdk-ts message/originalMessage 안의 typed CW-721 storage absence만 인식한다. */
   private static isNotFound(err: unknown): boolean {
     const texts = [
       err instanceof Error ? err.message : String(err),
       (err as { originalMessage?: unknown })?.originalMessage,
     ];
-    return texts.some((text) => typeof text === 'string' && /not found/i.test(text));
+    // Transport 404, missing contracts and unknown formats are not token absence.
+    return texts.some((text) => typeof text === 'string'
+      && /\bcw721(?:_base)?::[A-Za-z0-9_:]*(?:TokenInfo|NftInfo)\b/.test(text)
+      && /\bnot found\b/i.test(text));
   }
 
   /**

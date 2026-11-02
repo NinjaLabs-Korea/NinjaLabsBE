@@ -38,6 +38,7 @@ function setup(options: {
 } = {}) {
   const ok = { rowCount: 1, rows: [] };
   const handlers: SqlHandler[] = [
+    { match: /^SELECT id FROM "user" .* FOR SHARE$/, reply: () => ({ rowCount: 1, rows: [{ id: ownerUserId }] }) },
     { match: /onboarding_completed_at IS NOT NULL AS done/, reply: () => ({ rowCount: 1, rows: [{ done: options.onboarded ?? true }] }) },
     { match: /FROM wallet WHERE user_id = \$1 AND disconnected_at IS NULL$/, reply: () => ({ rowCount: (options.ownerWallets ?? []).length, rows: (options.ownerWallets ?? []).map((address) => ({ address })) }) },
     { match: /status IN \('REVOKED', 'PENDING_VERIFICATION'\)/, reply: () => ({ rowCount: 0, rows: [] }) },
@@ -49,6 +50,8 @@ function setup(options: {
   ];
   if (options.verifyWrites) {
     handlers.push(
+      { match: /^SELECT 1 FROM agent_identity_reservation/, reply: () => ({ rowCount: 0, rows: [] }) },
+      { match: /^SELECT id, status, public_key, wallet_address, verified_at FROM agent/, reply: () => ({ rowCount: 1, rows: [{ id: agentId, ...options.verifyRow }] }) },
       ...(options.clearsOtherKeys === false ? [] : [{ match: /^UPDATE agent SET public_key = NULL/, reply: () => ({ rowCount: 0, rows: [] }) }]),
       { match: /^UPDATE agent SET status = 'ACTIVE'/, reply: () => { if (options.activateError) throw options.activateError; return ok; } },
       { match: /^INSERT INTO agent_api_key/, reply: () => ({ rowCount: 1, rows: [{ expires_at: '2027-01-01T00:00:00.000Z' }] }) },
@@ -207,7 +210,7 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
     expect(error).toBeInstanceOf(NotFoundException);
     expect((error as Error).message).toBe('AGENT_NOT_FOUND');
     expect(mock.txStatements(/^SELECT status, public_key/)[0].params).toEqual([agentId, ownerUserId]);
-    expect(mock.txQuery).toHaveBeenCalledTimes(1);
+    expect(mock.txQuery).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -258,7 +261,7 @@ describe('AgentsService.verifyAndIssueKey guards', () => {
     const signer = Wallet.createRandom();
     const { service, mock } = setup({ verifyWrites: true, verifyRow: { status: 'PENDING_VERIFICATION', public_key: null, wallet_address: signer.address } });
     await service.verifyAndIssueKey(ownerUserId, agentId, await signer.signMessage(AgentsService.verificationMessage(agentId, ownerUserId)));
-    expect(mock.txStatements(/^UPDATE agent SET public_key = NULL/)[0].params).toEqual([signer.signingKey.compressedPublicKey, agentId]);
+    expect(mock.txStatements(/^UPDATE agent SET public_key = NULL/)[0].params).toEqual([injKey(signer).publicKey, agentId]);
 
     (verifyAdr36Signature as jest.Mock).mockReturnValueOnce(true);
     const inj = setup({ verifyWrites: true, clearsOtherKeys: false, verifyRow: { status: 'PENDING_VERIFICATION', public_key: INJ_PUBKEY, wallet_address: INJ_ADDRESS } });

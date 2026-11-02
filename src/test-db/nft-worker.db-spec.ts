@@ -94,6 +94,46 @@ describeDb('nft_job worker on a real database', () => {
     return r.rows[0];
   }
 
+  it('cannot undo a peer attachment when mint bookkeeping fails on its fifth attempt; operator retry stays ATTACHED', async () => {
+    const user = await createUser(db), wallet = await createPrimaryWallet(db, user);
+    const { nftId: parent } = (await nfts.enqueueParentMint(user, wallet.id))!;
+    await db.query(`UPDATE nft SET status = 'MINTED', token_id = id::text WHERE id = $1`, [parent]);
+    await db.query(`UPDATE nft_job SET status = 'SUCCEEDED' WHERE nft_id = $1`, [parent]);
+    const child = await childJob(user, wallet.id);
+    type Claimed = Parameters<NftJobWorker['process']>[0];
+    const claim = async (id: string) => (await db.query<Claimed>(`UPDATE nft_job SET status='PROCESSING', started_at=now(), claim_token=gen_random_uuid()
+      WHERE id=$1 RETURNING id,nft_id,job_type,retry_count,scheduled_at,claim_token`, [id])).rows[0];
+    await db.query(`UPDATE nft_job SET retry_count = 4 WHERE id = $1`, [child.jobId]);
+    const a = createWorker(chainStub(async () => 'tx-mint')), b = createWorker(chainStub(async () => 'unused'));
+    const original = db.query.bind(db);
+    let injected = false;
+    const spy = jest.spyOn(db, 'query').mockImplementation(async (sql, params) => {
+      if (!injected && sql.includes("SET status = 'SUCCEEDED'") && params?.[0] === child.jobId) {
+        injected = true;
+        const attach = await attachJob(child.nftId);
+        await b['process'](await claim(attach.id));
+        expect((await nftRow(child.nftId)).status).toBe('ATTACHED');
+        throw new Error('one controlled final job-write failure');
+      }
+      return original(sql, params);
+    });
+    try { await a['process'](await claim(child.jobId)); } finally { spy.mockRestore(); }
+    expect(injected).toBe(true);
+    expect((await nftRow(child.nftId)).status).toBe('ATTACHED');
+    expect((await jobRow(child.jobId)).status).toBe('FAILED');
+    await new NftJobsAdminService(db, new AuditService(db)).retry(child.jobId, user);
+    await a['process'](await claim(child.jobId));
+    expect((await nftRow(child.nftId)).status).toBe('ATTACHED');
+    expect((await jobRow(child.jobId)).status).toBe('SUCCEEDED');
+    expect((await attachJob(child.nftId)).status).toBe('SUCCEEDED');
+    // Reconcile a legacy FAILED row whose successful attachment timestamp was preserved.
+    await db.query(`UPDATE nft SET status='FAILED' WHERE id=$1`, [child.nftId]);
+    await db.query(`UPDATE nft_job SET status='FAILED' WHERE id=$1`, [child.jobId]);
+    await new NftJobsAdminService(db, new AuditService(db)).retry(child.jobId, user);
+    expect((await nftRow(child.nftId)).status).toBe('ATTACHED');
+    await a['process'](await claim(child.jobId));
+  });
+
   it('a rejected mint schedules a retry (+1, +10min, last_error) and a healthy job later in the same batch still succeeds', async () => {
     const failing = await parentJob('2 minutes');
     const healthy = await parentJob('1 minute');

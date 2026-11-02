@@ -43,6 +43,11 @@ describe('.railway/railway.ts production origins', () => {
     expect(envValue('OPS_ALERT_WEBHOOK_URL')).toBeUndefined();
   });
 
+  it.each(['WALLET_REPLACEMENT_ENABLED', 'NFT_MINTING_ENABLED'])('%s preserves an operator pause; IaC never forces true', (key) => {
+    expect(source).toMatch(new RegExp(`\\b${key}:\\s*preserve\\(\\)`));
+    expect(envValue(key)).toBeUndefined();
+  });
+
   it.each(['DATABASE_URL', 'DATABASE_CA_CERT', 'GOOGLE_CLIENT_SECRET', 'JWT_SECRET', 'MASTER_WALLET_MNEMONIC', 'REWARD_MULTISIG_ADDRESS', 'INJECTIVE_GRPC_ENDPOINT', 'TURNSTILE_SECRET_KEY'])(
     '%s is preserve()d (set in the Railway dashboard, never a literal in git)',
     (key) => {

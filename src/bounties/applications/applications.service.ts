@@ -78,14 +78,15 @@ export class ApplicationsService {
           RETURNING id, status, applied_at`,
           [existing.rows[0].id, message, portfolioUrl ?? null],
         );
-        // 에이전트 키로 낸 재지원은 유저 id가 없다 - 행위자 없는 행은 운영 스크립트 기록으로 읽히므로 에이전트 id를 남긴다
-        if (actor.kind === 'AGENT') await this.audit.recordAgentAction(actor.id, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
-        else await this.audit.record(actor.id, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
+        // 에이전트 키로 낸 재지원은 유저 id가 없다 - 행위자 없는 행은 운영 스크립트 기록으로 읽히므로 에이전트 id를 남긴다(recordAudit).
+        // change를 붙이지 않는다: 이 행은 before/after 없이 쌓여 왔고, 바운티는 지원 행에서 찾는다
+        await actor.recordAudit(this.audit, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
         return reopened.rows[0];
       }
 
+      let created: { id: string; status: string; applied_at: string };
       try {
-        const r = await tx.query(
+        const r = await tx.query<{ id: string; status: string; applied_at: string }>(
           `INSERT INTO bounty_application
              (bounty_id, applicant_user_id, agent_id, message, portfolio_url)
            VALUES ($1, $2, $3, $4, $5)
@@ -93,7 +94,7 @@ export class ApplicationsService {
           [bountyId, actor.userId, actor.agentId,
            message, portfolioUrl ?? null],
         );
-        return r.rows[0];
+        created = r.rows[0];
       } catch (err: unknown) {
         // 같은 주체의 동시 첫 지원만 409로 바꾼다. 다른 유니크 충돌(예: 나중에 생길 인덱스)은 그대로 던져 500으로 드러나게 한다
         if (isUniqueViolation(err, actor.applicationUniqueIndex)) {
@@ -101,6 +102,11 @@ export class ApplicationsService {
         }
         throw err;
       }
+      // 신규 지원 감사 - 같은 tx라 감사 INSERT가 실패하면 지원도 롤백된다. 메시지·포트폴리오 URL(사용자 입력)은 넣지 않는다
+      await actor.recordAudit(this.audit, 'APPLICATION_SUBMITTED', 'bounty_application', created.id, tx, {
+        after: { status: created.status, bountyId },
+      });
+      return created;
     });
   }
 
@@ -123,17 +129,26 @@ export class ApplicationsService {
     return r.rows;
   }
 
-  /** 지원 철회 - 본인 지원 또는 내 에이전트의 지원 (PENDING만) */
+  /**
+   * 지원 철회 - 본인 지원 또는 내 에이전트의 지원 (PENDING만). 감사 `APPLICATION_WITHDRAWN`은 같은 tx이고 행위자는 철회한 유저다
+   * (에이전트 지원을 소유자가 철회해도 사람 행위 - 철회는 Agent API에 없다).
+   */
   async withdraw(applicationId: string, userId: string) {
-    const r = await this.db.query(
-      `UPDATE bounty_application SET status = 'WITHDRAWN'
-        WHERE id = $1 AND status = 'PENDING'
-          AND (applicant_user_id = $2
-               OR agent_id = ANY(${ownedAgentIdsSql('$2', 'live')}))
-        RETURNING id, status`,
-      [applicationId, userId],
-    );
-    if (!r.rowCount) throw new NotFoundException('APPLICATION_NOT_FOUND_OR_NOT_PENDING');
-    return r.rows[0];
+    return this.db.tx(async (tx) => {
+      const r = await tx.query<{ id: string; status: string; bounty_id: string }>(
+        `UPDATE bounty_application SET status = 'WITHDRAWN'
+          WHERE id = $1 AND status = 'PENDING'
+            AND (applicant_user_id = $2
+                 OR agent_id = ANY(${ownedAgentIdsSql('$2', 'live')}))
+          RETURNING id, status, bounty_id`,
+        [applicationId, userId],
+      );
+      if (!r.rowCount) throw new NotFoundException('APPLICATION_NOT_FOUND_OR_NOT_PENDING');
+      const { id, status, bounty_id: bountyId } = r.rows[0];
+      await this.audit.record(userId, 'APPLICATION_WITHDRAWN', 'bounty_application', id, tx, {
+        before: { status: 'PENDING' }, after: { status, bountyId },
+      });
+      return { id, status };
+    });
   }
 }

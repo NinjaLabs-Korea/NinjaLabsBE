@@ -10,6 +10,7 @@ import { RequestLoggingInterceptor } from './common/http/request-logging.interce
 import { corsOriginsValue, requireUsableCorsOrigins, trustProxyHops } from './common/bootstrap-checks';
 import { OriginAllowlist } from './common/origin-allowlist';
 import { REQUEST_ID_HEADER, requestIdMiddleware } from './common/http/request-id';
+import { RequestContextInterceptor } from './common/http/request-context';
 
 /**
  * keep-alive 유휴 한도 - Node 기본값은 5초라 Railway 엣지 프록시(자기 쪽 유휴 한도가 더 길다)가 이미 닫힌 연결에 요청을 재사용해 간헐적 502가 난다.
@@ -75,5 +76,6 @@ export function configureApp(app: NestExpressApplication): void {
 
   // 관측: 5xx 한 줄 로그(응답 포맷은 Nest 기본 유지) + 5분 20건 초과 5xx 버스트 운영 알림 + 요청 로그(method path status ms, /health 제외)
   app.useGlobalFilters(new HttpExceptionFilter(app.get(HttpAdapterHost).httpAdapter, app.get(AlertService)));
-  app.useGlobalInterceptors(new RequestLoggingInterceptor());
+  // RequestContextInterceptor: 감사 행의 ip_address(req.ip, trust proxy 기준) - common/http/request-context.ts
+  app.useGlobalInterceptors(new RequestLoggingInterceptor(), new RequestContextInterceptor());
 }

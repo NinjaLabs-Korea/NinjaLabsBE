@@ -43,7 +43,7 @@ describeDb('bounty rules on a real database', () => {
     rewards = new RewardsService(db, nfts, audit, config);
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
-    submissions = new SubmissionsService(db);
+    submissions = new SubmissionsService(db, new AuditService(db));
     submissionReview = new SubmissionReviewService(db, audit);
     adminId = await createUser(db, { isAdmin: true });
     approverId = await createUser(db, { isAdmin: true });
@@ -407,7 +407,7 @@ describeDb('bounty rules on a real database', () => {
       const { fulfilled, rejected } = split(await Promise.allSettled([applications.apply(id, builder, 'again A'), applications.apply(id, builder, 'again B')]));
       expect(fulfilled).toEqual([expect.objectContaining({ id: first.id, status: 'PENDING' })]);
       expect(rejected.map((e) => e.message)).toEqual(['ALREADY_APPLIED']);
-      expect(await auditActions(db, 'bounty_application', first.id)).toEqual(['APPLICATION_REAPPLIED']);
+      expect(await auditActions(db, 'bounty_application', first.id)).toEqual(['APPLICATION_SUBMITTED', 'APPLICATION_WITHDRAWN', 'APPLICATION_REAPPLIED']);
       const count = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM bounty_application WHERE bounty_id = $1`, [id]);
       expect(count.rows[0].n).toBe(1);
     });
@@ -428,7 +428,7 @@ describeDb('bounty rules on a real database', () => {
       expect(rejected[0].message).toBe('APPLICATION_NOT_FOUND_OR_NOT_PENDING');
       const status = (await db.query<{ status: string }>(`SELECT status FROM bounty_application WHERE id = $1`, [application.id])).rows[0].status;
       expect(status).toBe((fulfilled[0] as { status: string }).status);
-      expect(await auditActions(db, 'bounty_application', application.id)).toEqual(status === 'APPROVED' ? ['APPLICATION_APPROVED'] : []);
+      expect(await auditActions(db, 'bounty_application', application.id)).toEqual(['APPLICATION_SUBMITTED', status === 'APPROVED' ? 'APPLICATION_APPROVED' : 'APPLICATION_WITHDRAWN']);
     });
 
     it('the same user submitting twice at once: one submission row with revisions 1 and 2 (serialized on the bounty row)', async () => {

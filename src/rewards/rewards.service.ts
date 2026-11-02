@@ -77,7 +77,11 @@ export class RewardsService {
         if (short.rowCount) throw new BadRequestException('DEPOSIT_BELOW_REWARD_AMOUNT');
         throw new NotFoundException('REWARD_NOT_FOUND_OR_NOT_PENDING');
       }
-      await this.audit.record(adminId, 'REWARD_DEPOSIT_CONFIRMED', 'bounty_reward', rewardId, tx);
+      // 돈 감사 행에는 운영자 화면에 이미 보이는 값만(금액은 토큰 최소 단위 문자열, 해시는 정규화된 값) - 지갑 주소·이메일은 넣지 않는다
+      await this.audit.record(adminId, 'REWARD_DEPOSIT_CONFIRMED', 'bounty_reward', rewardId, tx, {
+        before: { status: 'DEPOSIT_PENDING' },
+        after: { status: r.rows[0].status, txHash: hash, depositedAmount, bountyId: r.rows[0].bounty_id },
+      });
       return r.rows[0];
     }));
   }
@@ -137,7 +141,10 @@ export class RewardsService {
       );
       // 새 payout이 아직 지급 전이므로 PAID였던 보상은 PARTIALLY_PAID로 돌아간다 (FUNDED는 그대로 - 지급된 것이 없다)
       await this.advanceRewardStatus(tx, rewardId);
-      await this.audit.record(adminId, 'PAYOUT_REQUESTED', 'payout', r.rows[0].id, tx);
+      // 수령 지갑은 주소가 아니라 wallet id만 남긴다 (주소는 payout 행 -> wallet에서 운영자 화면이 보여 준다)
+      await this.audit.record(adminId, 'PAYOUT_REQUESTED', 'payout', r.rows[0].id, tx, {
+        after: { status: r.rows[0].status, amount, rewardId, submissionId, recipientWalletId: wallet.rows[0].wallet_id },
+      });
       return r.rows[0];
     });
   }
@@ -149,8 +156,8 @@ export class RewardsService {
    */
   async markApproved(payoutId: string, adminId: string) {
     return this.db.tx(async (tx) => {
-      const current = await tx.query<{ requested_by: string }>(
-        `SELECT requested_by FROM payout
+      const current = await tx.query<{ requested_by: string; status: string; amount: string }>(
+        `SELECT requested_by, status, amount::text AS amount FROM payout
           WHERE id = $1 AND status IN (${sqlStatusList(AWAITING_APPROVAL_PAYOUT_STATUSES)}) FOR UPDATE`,
         [payoutId],
       );
@@ -167,7 +174,11 @@ export class RewardsService {
       if (selfApproval) {
         this.logger.warn(`payout ${payoutId}: approved by the admin who requested it (${PAYOUT_ALLOW_SELF_APPROVAL_ENV}=true) - audited as PAYOUT_SELF_APPROVED`);
       }
-      await this.audit.record(adminId, selfApproval ? 'PAYOUT_SELF_APPROVED' : 'PAYOUT_APPROVED', 'payout', payoutId, tx);
+      // requestedBy를 같이 남겨 2인 규칙(누가 요청, 누가 승인)이 이 한 행으로 읽힌다
+      await this.audit.record(adminId, selfApproval ? 'PAYOUT_SELF_APPROVED' : 'PAYOUT_APPROVED', 'payout', payoutId, tx, {
+        before: { status: current.rows[0].status },
+        after: { status: r.rows[0].status, amount: current.rows[0].amount, requestedBy: current.rows[0].requested_by },
+      });
       return r.rows[0];
     });
   }
@@ -184,8 +195,8 @@ export class RewardsService {
     const hash = normalizeTxHash(txHash);
     return this.db.tx(async (tx) => {
       await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [hash]);
-      const target = await tx.query<{ bounty_id: string }>(
-        `SELECT rw.bounty_id FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id WHERE p.id = $1 FOR UPDATE OF p`,
+      const target = await tx.query<{ bounty_id: string; status: string }>(
+        `SELECT rw.bounty_id, p.status FROM payout p JOIN bounty_reward rw ON rw.id = p.bounty_reward_id WHERE p.id = $1 FOR UPDATE OF p`,
         [payoutId],
       );
       if (!target.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
@@ -210,10 +221,11 @@ export class RewardsService {
         submission_id: string;
         recipient_wallet_id: string;
         bounty_reward_id: string;
+        amount: string;
       }>(
         `UPDATE payout SET status = 'PAID', payout_tx_hash = $2, paid_at = now()
           WHERE id = $1 AND status IN (${sqlStatusList(SENDABLE_PAYOUT_STATUSES)})
-          RETURNING id, status, payout_tx_hash, submission_id, recipient_wallet_id, bounty_reward_id`,
+          RETURNING id, status, payout_tx_hash, submission_id, recipient_wallet_id, bounty_reward_id, amount::text AS amount`,
         [payoutId, hash],
       );
       if (!payout.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
@@ -238,8 +250,13 @@ export class RewardsService {
         payout.rows[0].submission_id,
       );
       await this.advanceRewardStatus(tx, payout.rows[0].bounty_reward_id);
-      await this.audit.record(adminId, 'PAYOUT_PAID', 'payout', payoutId, tx);
-      return payout.rows[0];
+      // after_data.txHash는 isRecordedRefund(action = 'REWARD_REFUNDED'만 본다)의 대상이 아니다 - 지급 해시 재사용 판정은 payout 행으로 한다
+      const { amount, ...paid } = payout.rows[0];
+      await this.audit.record(adminId, 'PAYOUT_PAID', 'payout', payoutId, tx, {
+        before: { status: target.rows[0].status },
+        after: { status: paid.status, txHash: hash, amount },
+      });
+      return paid;
     });
   }
 

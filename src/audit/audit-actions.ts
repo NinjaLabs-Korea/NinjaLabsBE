@@ -20,10 +20,15 @@ export const AUDIT_ACTIONS = {
   BOUNTY_IN_REVIEW: 'bounty',
   BOUNTY_COMPLETED: 'bounty',
   BOUNTY_CANCELLED: 'bounty',
-  // 바운티 지원 (application-review.service.ts, applications.service.ts)
+  // 바운티 지원 (application-review.service.ts, applications.service.ts; 사람·에이전트 키 둘 다 - BountyActor.recordAudit)
+  APPLICATION_SUBMITTED: 'bounty_application',
   APPLICATION_APPROVED: 'bounty_application',
   APPLICATION_REJECTED: 'bounty_application',
   APPLICATION_REAPPLIED: 'bounty_application',
+  APPLICATION_WITHDRAWN: 'bounty_application',
+  // 제출 (submissions.service.ts; 사람·에이전트 키 둘 다 - BountyActor.recordAudit)
+  SUBMISSION_SUBMITTED: 'bounty_submission',
+  SUBMISSION_RESUBMITTED: 'bounty_submission',
   // 제출 심사 (submission-review.service.ts, SubmissionDecision 전부)
   SUBMISSION_START_REVIEW: 'bounty_submission',
   SUBMISSION_REQUEST_REVISION: 'bounty_submission',

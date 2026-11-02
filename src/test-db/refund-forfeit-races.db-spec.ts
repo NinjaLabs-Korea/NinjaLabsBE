@@ -23,7 +23,7 @@ describeDb('refund / delete / forfeit across rules and races', () => {
   const audit = new AuditService(db);
   const bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
   const rewards = new RewardsService(db, new NftsService(db, config), audit, config);
-  const subs = new SubmissionsService(db);
+  const subs = new SubmissionsService(db, new AuditService(db));
   let pool: Pool;
   beforeAll(() => { pool = new Pool({ connectionString: process.env[TEST_DB_URL_ENV], max: 4 }); });
   afterAll(async () => { await pool.end(); await db.onApplicationShutdown(); });

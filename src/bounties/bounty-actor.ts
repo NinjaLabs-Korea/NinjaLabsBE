@@ -1,5 +1,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { DatabaseService } from '../common/database/database.service';
+import { AuditChange, AuditService } from '../audit/audit.service';
+import { AUDIT_ACTIONS, AuditAction } from '../audit/audit-actions';
+import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { activeUserSql } from '../users/active-user';
 
 /**
@@ -49,6 +51,22 @@ export class BountyActor {
   /** bounty_submission에서 이 주체를 식별하는 컬럼 */
   get submissionColumn(): 'submitter_user_id' | 'agent_id' {
     return this.kind === 'USER' ? 'submitter_user_id' : 'agent_id';
+  }
+
+  /**
+   * 이 주체가 한 행위의 감사 행 - 사람은 `actor_user_id`(record), 에이전트 키는 `actor_agent_id`(recordAgentAction).
+   * 둘 다 빈 행은 운영 스크립트 기록으로 읽히므로 에이전트 행위를 record()로 남기지 않는다. 트랜잭션 안이면 tx를 넘긴다.
+   */
+  async recordAudit<A extends AuditAction>(
+    audit: AuditService,
+    action: A,
+    entityType: (typeof AUDIT_ACTIONS)[A],
+    entityId: string,
+    runner: QueryRunner,
+    change?: AuditChange,
+  ): Promise<void> {
+    if (this.kind === 'AGENT') await audit.recordAgentAction(this.id, action, entityType, entityId, runner, change);
+    else await audit.record(this.id, action, entityType, entityId, runner, change);
   }
 
   /**

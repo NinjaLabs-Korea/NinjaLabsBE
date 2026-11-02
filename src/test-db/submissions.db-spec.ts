@@ -35,7 +35,7 @@ describeDb('submission rules on a real database', () => {
     rewards = new RewardsService(db, new NftsService(db, config), audit, config);
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
-    submissions = new SubmissionsService(db);
+    submissions = new SubmissionsService(db, new AuditService(db));
     submissionReview = new SubmissionReviewService(db, audit);
     adminId = await createUser(db, { isAdmin: true });
   });

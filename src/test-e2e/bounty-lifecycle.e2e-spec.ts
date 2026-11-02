@@ -409,9 +409,9 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
       const id = await createBounty(bountyForm({ submissionMode: 'agent', reward: { amount: 0, currency: 'INJ' } }));
       expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
       const bot = await registerAgent(owner, 'gamma-bot');
-      const applied = await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'gamma applies' }, { token: bot.apiKey });
+      const applied = await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'gamma applies' }, { token: bot.apiKey, ip: '198.51.100.71' });
       expect(applied.status).toBe(201);
-      await e2e.post(`/applications/${applied.body.id}/withdraw`, undefined, { token: owner.accessToken });
+      await e2e.post(`/applications/${applied.body.id}/withdraw`, undefined, { token: owner.accessToken, ip: '198.51.100.72' });
       const again = await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'gamma again', portfolioUrl: 'https://gamma.example' }, { token: bot.apiKey });
       expect(again.status).toBe(201);
       expect(again.body).toMatchObject({ id: applied.body.id, status: 'PENDING' });
@@ -419,9 +419,38 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
       const row = await e2e.db.query(`SELECT status, message, portfolio_url FROM bounty_application WHERE id = $1`, [applied.body.id]);
       expect(row.rows[0]).toEqual({ status: 'PENDING', message: 'gamma again', portfolio_url: 'https://gamma.example' });
       const audit = await e2e.get(`/admin/audit-logs?entityType=bounty_application&entityId=${applied.body.id}`, asAdmin);
-      expect(audit.body.items.map((i: { action: string }) => i.action)).toEqual(['APPLICATION_REAPPLIED']);
+      // newest first: the agent's first application and re-application, the owner's withdrawal in between
+      expect(audit.body.items.map((i: { action: string }) => i.action).sort()).toEqual(['APPLICATION_REAPPLIED', 'APPLICATION_SUBMITTED', 'APPLICATION_WITHDRAWN']);
+      const byAction = (action: string) => audit.body.items.find((i: { action: string }) => i.action === action);
       // no user id on an Agent API call - the row must still say who acted (an empty actor reads as an ops-script row)
-      expect(audit.body.items[0]).toMatchObject({ actor_user_id: null, actor_agent_id: bot.agentId });
+      expect(byAction('APPLICATION_REAPPLIED')).toMatchObject({ actor_user_id: null, actor_agent_id: bot.agentId });
+      expect(byAction('APPLICATION_SUBMITTED')).toMatchObject({ actor_user_id: null, actor_agent_id: bot.agentId, after_data: { status: 'PENDING', bountyId: id } });
+      expect(byAction('APPLICATION_WITHDRAWN')).toMatchObject({ actor_user_id: owner.userId, actor_agent_id: null });
+      // ip_address = req.ip under trust proxy 1 (the X-Forwarded-For client), not in the API response
+      expect(byAction('APPLICATION_SUBMITTED')).not.toHaveProperty('ip_address');
+      const ips = await e2e.db.query<{ action: string; ip: string }>(
+        `SELECT action, host(ip_address) AS ip FROM audit_log WHERE entity_id = $1 AND action IN ('APPLICATION_SUBMITTED', 'APPLICATION_WITHDRAWN') ORDER BY action`, [applied.body.id]);
+      expect(ips.rows).toEqual([{ action: 'APPLICATION_SUBMITTED', ip: '198.51.100.71' }, { action: 'APPLICATION_WITHDRAWN', ip: '198.51.100.72' }]);
+    });
+
+    it('an agent submission and resubmission via /agent-api/v1 are audited as the agent, in the same transaction as the submission', async () => {
+      const owner = await e2e.loginOnboarded();
+      const id = await createBounty(bountyForm({ submissionMode: 'agent', intakeEnabled: false, reward: { amount: 0, currency: 'INJ' } }));
+      expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
+      const bot = await registerAgent(owner, 'delta-bot');
+      const first = await e2e.post(`/agent-api/v1/bounties/${id}/submissions`, { submissionUrl: 'https://delta.example/1', description: 'v1' }, { token: bot.apiKey, ip: '198.51.100.81' });
+      expect(first.status).toBe(201);
+      expect((await e2e.post(`/agent-api/v1/bounties/${id}/submissions`, { submissionUrl: 'https://delta.example/2', description: 'v2' }, { token: bot.apiKey })).status).toBe(201);
+      const audit = await e2e.get(`/admin/audit-logs?entityType=bounty_submission&entityId=${first.body.id}`, asAdmin);
+      expect(audit.body.items).toEqual([
+        expect.objectContaining({ action: 'SUBMISSION_RESUBMITTED', actor_user_id: null, actor_agent_id: bot.agentId, actor_agent_name: 'delta-bot',
+          before_data: { status: 'SUBMITTED', revisionNo: 1 }, after_data: { status: 'RESUBMITTED', revisionNo: 2, bountyId: id } }),
+        expect.objectContaining({ action: 'SUBMISSION_SUBMITTED', actor_user_id: null, actor_agent_id: bot.agentId,
+          before_data: null, after_data: { status: 'SUBMITTED', revisionNo: 1, bountyId: id } }),
+      ]);
+      expect(JSON.stringify(audit.body.items)).not.toContain('delta.example');
+      const ip = await e2e.db.query<{ ip: string }>(`SELECT host(ip_address) AS ip FROM audit_log WHERE entity_id = $1 AND action = 'SUBMISSION_SUBMITTED'`, [first.body.id]);
+      expect(ip.rows[0].ip).toBe('198.51.100.81');
     });
   });
 
@@ -461,7 +490,11 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     const mine = await e2e.get('/applications/me', { token: builder.accessToken });
     expect(mine.body).toEqual([expect.objectContaining({ id: first.body.id, status: 'PENDING', message: 'second', review_note: null, reviewed_at: null, bounty_id: id })]);
     const audit = await e2e.get(`/admin/audit-logs?entityType=bounty_application&entityId=${first.body.id}`, asAdmin);
-    expect(audit.body.items).toEqual([expect.objectContaining({ action: 'APPLICATION_REAPPLIED', actor_user_id: builder.userId })]);
+    expect(audit.body.items).toEqual([
+      expect.objectContaining({ action: 'APPLICATION_REAPPLIED', actor_user_id: builder.userId }),
+      expect.objectContaining({ action: 'APPLICATION_WITHDRAWN', actor_user_id: builder.userId }),
+      expect.objectContaining({ action: 'APPLICATION_SUBMITTED', actor_user_id: builder.userId }),
+    ]);
 
     expect((await e2e.post(`/bounties/${id}/applications`, applyBody('third'), { token: builder.accessToken })).body)
       .toEqual({ statusCode: 409, error: 'Conflict', message: 'ALREADY_APPLIED' });

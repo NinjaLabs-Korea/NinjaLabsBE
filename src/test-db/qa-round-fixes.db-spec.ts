@@ -33,7 +33,7 @@ describeDb('QA round fixes on a real database', () => {
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(testConfig()));
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
-    submissions = new SubmissionsService(db);
+    submissions = new SubmissionsService(db, new AuditService(db));
     adminId = await createUser(db, { isAdmin: true });
   });
   afterAll(async () => db.onApplicationShutdown());
@@ -97,7 +97,7 @@ describeDb('QA round fixes on a real database', () => {
     expect(cascaded.rows.map((row) => [row.n, row.on_current])).toEqual([[1, 1], [1, 1]]);
     // audit decision: the cascade is a system effect of one admin action, BOUNTY_CANCELLED is its only audit row
     const audits = await db.query<{ action: string; entity_id: string }>(
-      `SELECT action, entity_id FROM audit_log WHERE entity_id = ANY($1::uuid[]) AND action LIKE 'SUBMISSION\\_%'`, [[...open, sent[0].id]]);
+      `SELECT action, entity_id FROM audit_log WHERE entity_id = ANY($1::uuid[]) AND action LIKE 'SUBMISSION\\_%' AND action NOT IN ('SUBMISSION_SUBMITTED', 'SUBMISSION_RESUBMITTED')` /* the submitter's own rows */, [[...open, sent[0].id]]);
     const byId = (id: string) => audits.rows.filter((row) => row.entity_id === id).map((row) => row.action);
     expect(byId(sent[0].id)).toEqual(['SUBMISSION_REJECT']);
     expect(byId(sent[1].id)).toEqual([]); // cascaded: no audit row

@@ -12,10 +12,10 @@ import { RewardInput } from './reward-token.resolver';
 import { MaxChars } from '../../common/validation/max-chars';
 import { IsOptionalNotNull } from '../../common/validation/optional-not-null';
 
-const CATEGORIES = ['DEV', 'DESIGN', 'CONTENT', 'OTHER'];
-const SUBMISSION_MODES = ['DIRECT', 'AGENT'];
+export const CATEGORIES = ['DEV', 'DESIGN', 'CONTENT', 'OTHER'];
+export const SUBMISSION_MODES = ['DIRECT', 'AGENT'];
 /** bounty_reward.token_type CHECK (0011) */
-const TOKEN_TYPES = ['NATIVE', 'CW20', 'ERC20'];
+export const TOKEN_TYPES = ['NATIVE', 'CW20', 'ERC20'];
 /** 한 바운티의 최대 수상자 수 - 실제 운영 규모(수십 명)보다 넉넉한 상한. 그 위는 오타나 남용이다 */
 const MAX_WINNERS_LIMIT = 1000;
 

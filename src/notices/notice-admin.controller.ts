@@ -8,7 +8,7 @@ import { NoticeAdminService } from './notice-admin.service';
 import { IsCalendarDate } from '../common/validation/calendar-date';
 import { IsOptionalNotNull } from '../common/validation/optional-not-null';
 
-const NOTICE_CATEGORIES = ['NINJALABS', 'INJECTIVE_ECOSYSTEM', 'EVENT', 'RECRUITMENT', 'OTHER'];
+export const NOTICE_CATEGORIES = ['NINJALABS', 'INJECTIVE_ECOSYSTEM', 'EVENT', 'RECRUITMENT', 'OTHER'];
 
 export class CreateNoticeDto {
   @DisplayTitle(200) title!: string;

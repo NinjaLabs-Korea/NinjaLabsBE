@@ -9,6 +9,9 @@ import { MaxPgInt } from '../common/validation/optional-not-null';
 import { MaxChars } from '../common/validation/max-chars';
 import { Trim } from '../common/validation/trim';
 
+/** 공개 멤버 페이지의 역할 (user.member_role) */
+export const MEMBER_ROLES = ['CORE', 'DEV', 'DESIGN', 'OPS'];
+
 export class SetMemberDto {
   @IsBoolean()
   isMember!: boolean;
@@ -16,7 +19,7 @@ export class SetMemberDto {
   // 멤버로 지정할 때는 역할이 필수다 - 없으면 member_role NULL로 저장돼 공개 멤버 페이지가 Core로 잘못 분류한다.
   // 해제(isMember false)에는 역할을 보내지 않아도 된다 (보내도 무시하고 NULL로 지운다)
   @ValidateIf((dto: SetMemberDto) => dto.isMember === true || dto.role !== undefined)
-  @IsIn(['CORE', 'DEV', 'DESIGN', 'OPS'])
+  @IsIn(MEMBER_ROLES)
   role?: string;
 
   @IsOptional()

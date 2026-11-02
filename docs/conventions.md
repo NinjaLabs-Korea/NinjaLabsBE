@@ -26,6 +26,10 @@
   mock DB 유닛 테스트는 이를 잡지 못하므로 새 SQL 흐름은 `src/test-db`에 실 DB 테스트를 추가한다.
 - **유니크 충돌 판별은 `isUniqueViolation(err)`** (`common/database/pg-errors.ts`).
 
+## API 계약 산출물 (`contract/`)
+
+- **DTO·에러 코드·FE용 상수를 추가하거나 바꾸면 `npm run contract:export`로 `contract/*.json`을 다시 생성해 같은 PR에 커밋한다** (CI verify 잡이 재생성 후 diff가 있으면 실패). 생성물은 손으로 고치지 않는다. `@nestjs/swagger`는 devDependency이고 계약 전용 컴파일에서만 쓰므로 런타임 코드에 `@nestjs/swagger` import·`@ApiProperty`를 넣지 않는다(운영 의존성이 되고, `required` 키는 필수 필드를 선택으로 뒤집는다). DTO를 `.dto.ts`/`.controller.ts`/`cohort-fields.ts` 밖의 파일에 새로 두면 `scripts/contract-export.js`의 `DTO_FILE_SUFFIXES`에 추가한다(빠지면 생성기가 멈춘다).
+
 ## 에러 코드, 감사 로그, 운영 알림
 
 - **에러 코드는 `common/http/error-codes.ts` 카탈로그에 등록한다** (코드 → HTTP 상태 → 한 줄 의미). 서비스에는 `throw new XxxException('NEW_CODE')` 리터럴로 던지고, 카탈로그와 `docs/api-contract.md` "에러 코드" 표에 같은 행을 추가한다 - 빠지면 `src/test-support/error-codes.spec.ts`가 실패한다.

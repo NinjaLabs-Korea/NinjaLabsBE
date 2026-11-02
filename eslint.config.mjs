@@ -4,7 +4,8 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   // .stryker-tmp, .mutation-tmp, reports: 뮤테이션 테스트(npm run test:mutation*)의 작업 사본과 결과물
-  { ignores: ['dist/**', 'node_modules/**', 'scripts/**', '.stryker-tmp/**', '.mutation-tmp/**', 'reports/**'] },
+  // .contract-build: npm run contract:export의 임시 컴파일 출력
+  { ignores: ['dist/**', '.contract-build/**', 'node_modules/**', 'scripts/**', '.stryker-tmp/**', '.mutation-tmp/**', 'reports/**'] },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {

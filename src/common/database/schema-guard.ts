@@ -24,7 +24,7 @@ export function assertSchemaCurrent(shipped: readonly string[], applied: Iterabl
 /**
  * 기동 시 스키마 검사 - 새 BE 코드가 옛 스키마 위에서 뜨면 `/auth/exchange`·`/auth/refresh`처럼 새 컬럼을 쓰는 라우트가
  * 요청마다 500이 되므로, 아직 적용되지 않은 마이그레이션이 있으면 listen 전에 기동을 거부한다 (main.ts가 메시지를 찍고 exit 1).
- * 배포 순서는 README "배포" 참고: `.railway/railway.ts`의 preDeploy(`npm run migrate`)가 새 컨테이너 기동 전에 적용한다.
+ * 배포 순서는 docs/deployment.md "배포 순서" 참고: `.railway/railway.ts`의 preDeploy(`npm run migrate`)가 새 컨테이너 기동 전에 적용한다.
  */
 @Injectable()
 export class SchemaGuard implements OnModuleInit {

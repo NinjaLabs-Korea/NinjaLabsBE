@@ -3,7 +3,7 @@ import { join, relative } from 'path';
 import { listSourceFiles } from './source-files';
 
 /**
- * 정적 가드 - 제출/지원서/payout 상태 **집합**을 문자열 리터럴로 새로 만들지 못하게 한다 (README "코드 배치 규칙").
+ * 정적 가드 - 제출/지원서/payout 상태 **집합**을 문자열 리터럴로 새로 만들지 못하게 한다 (docs/conventions.md "상태와 SQL").
  *
  * 규칙 집합(심사 가능·미결·확정 등)은 bounties/submission-status.ts, bounties/application-status.ts가 단일 출처다.
  * payout 상태 집합(진행 중·종료·배정·미정산 등)과 배정 상한식 LEAST(…amount, …deposited_amount)는 rewards/payout-status.ts가 단일 출처다 -

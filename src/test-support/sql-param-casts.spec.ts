@@ -3,7 +3,7 @@ import { join, relative } from 'path';
 import { listSourceFiles } from './source-files';
 
 /**
- * 정적 가드 - 같은 SQL 문장 안에서 같은 `$n`이 서로 다른 타입으로 추론되게 쓰였는지 검사한다 (README "코드 배치 규칙").
+ * 정적 가드 - 같은 SQL 문장 안에서 같은 `$n`이 서로 다른 타입으로 추론되게 쓰였는지 검사한다 (docs/conventions.md "상태와 SQL").
  *
  * node-pg는 파라미터 타입을 보내지 않으므로 Postgres가 문맥에서 추론한다. 한 문장에서 같은 `$n`이
  *   (a) 한 번은 `$n::type`, 한 번은 bare로,

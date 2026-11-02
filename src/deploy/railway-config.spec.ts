@@ -5,7 +5,7 @@ import { SHUTDOWN_DRAIN_TIMEOUT_MS } from '../common/lifecycle/single-flight-tas
 
 /**
  * production 배포 설정(.railway/railway.ts)의 오리진 허용 목록에 개발용 오리진이 섞이지 않았는지 - 텍스트로 검사한다
- * (railway/iac는 ESM이라 jest로 실행하지 않는다). 로컬 오리진은 .env로만 준다 (README "로컬 오리진").
+ * (railway/iac는 ESM이라 jest로 실행하지 않는다). 로컬 오리진은 .env로만 준다 (docs/deployment.md "로컬 오리진").
  */
 describe('.railway/railway.ts production origins', () => {
   const source = readFileSync(join(__dirname, '..', '..', '.railway', 'railway.ts'), 'utf8');

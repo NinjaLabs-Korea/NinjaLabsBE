@@ -1,4 +1,5 @@
 import { Wallet } from 'ethers';
+import { verifyAdr36Signature } from '../common/crypto/adr36';
 import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
 import { WalletsService } from '../wallets/wallets.service';
@@ -9,10 +10,12 @@ import { createDb, createUser, testConfig } from './harness';
 // Signatures are REAL EIP-191 signatures from an ethers wallet - the bech32 conversion is the only fake.
 jest.mock('@injectivelabs/sdk-ts', () => ({
   getInjectiveAddress: (evm: string) => `inj1${evm.slice(2).toLowerCase()}`,
-  getEthereumAddress: (inj: string) => inj,
+  getEthereumAddress: (inj: string) => (inj.startsWith('inj1') ? `0x${inj.slice(4)}` : inj), // inverse of getInjectiveAddress, so inj1 -> 0x -> inj1 round-trips
 }));
 // ADR-36 (Keplr/Leap) verification pulls @cosmjs/@noble ESM as well; not exercised on the EVM path.
 jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
+
+const adr36 = verifyAdr36Signature as jest.MockedFunction<typeof verifyAdr36Signature>;
 
 describeDb('wallet challenge/verify on a real database', () => {
   let db: DatabaseService;
@@ -23,6 +26,7 @@ describeDb('wallet challenge/verify on a real database', () => {
     wallets = new WalletsService(db, new NftsService(db, testConfig()));
   });
   afterAll(async () => db.onApplicationShutdown());
+  beforeEach(() => { adr36.mockReset().mockReturnValue(false); });
 
   async function openChallenges(userId: string) {
     const r = await db.query<{ n: number }>(
@@ -206,5 +210,93 @@ describeDb('wallet challenge/verify on a real database', () => {
     await wallets.verifySignature(userId, signer.address, await signer.signMessage(challenge.message));
     const user = await db.query<{ onboarding_step: number }>(`SELECT onboarding_step FROM "user" WHERE id = $1`, [userId]);
     expect(user.rows[0].onboarding_step).toBe(5);
+  });
+  describe('ADR-36 (Keplr/Leap, inj1...) with the cryptography switched by a verdict', () => {
+    // a real compressed secp256k1 key in the base64 form wallets report
+    const keyOf = (signer: { signingKey: { compressedPublicKey: string } }) => Buffer.from(signer.signingKey.compressedPublicKey.slice(2), 'hex').toString('base64');
+    const injOf = (signer: { address: string }) => `inj1${signer.address.slice(2).toLowerCase()}`;
+
+    it('verifies against the stored challenge message with the supplied key, then stores the inj1 address and that key and burns the challenge', async () => {
+      const userId = await createUser(db, { onboarded: false });
+      const signer = Wallet.createRandom();
+      const inj = injOf(signer);
+      adr36.mockReturnValue(true);
+      const challenge = await wallets.createChallenge(userId, inj);
+      await expect(wallets.verifySignature(userId, inj, 'base64-sig', keyOf(signer))).resolves.toMatchObject({ chain: 'INJECTIVE', address: inj });
+      expect(adr36).toHaveBeenCalledWith(inj, challenge.message, keyOf(signer), 'base64-sig');
+      const row = await db.query(`SELECT address, public_key FROM wallet WHERE user_id = $1`, [userId]);
+      expect(row.rows).toEqual([{ address: inj, public_key: keyOf(signer) }]);
+      expect(await openChallenges(userId)).toBe(0);
+    });
+
+    it('without a public key the ADR-36 path cannot verify: 401 INVALID_SIGNATURE, verifier not consulted, challenge left open, no wallet', async () => {
+      const userId = await createUser(db, { onboarded: false });
+      const inj = injOf(Wallet.createRandom());
+      adr36.mockReturnValue(true); // would pass if it were (wrongly) consulted
+      await wallets.createChallenge(userId, inj);
+      await expect(wallets.verifySignature(userId, inj, 'base64-sig')).rejects.toMatchObject({ status: 401, message: 'INVALID_SIGNATURE' });
+      expect(adr36).not.toHaveBeenCalled();
+      expect(await openChallenges(userId)).toBe(1);
+      expect((await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [userId])).rowCount).toBe(0);
+    });
+
+    it('a signature the verifier refuses is 401 INVALID_SIGNATURE: no wallet, challenge still open for another try', async () => {
+      const userId = await createUser(db, { onboarded: false });
+      const signer = Wallet.createRandom();
+      const inj = injOf(signer);
+      await wallets.createChallenge(userId, inj);
+      await expect(wallets.verifySignature(userId, inj, 'sig', keyOf(signer))).rejects.toMatchObject({ status: 401, message: 'INVALID_SIGNATURE' });
+      expect(adr36).toHaveBeenCalledTimes(1);
+      expect(await openChallenges(userId)).toBe(1);
+      expect((await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [userId])).rowCount).toBe(0);
+    });
+
+    it('an EVM signature over the challenge message cannot be replayed on the inj1 form of the same account (the scheme follows the address form)', async () => {
+      const userId = await createUser(db, { onboarded: false });
+      const signer = Wallet.createRandom();
+      const inj = injOf(signer);
+      const challenge = await wallets.createChallenge(userId, inj);
+      await expect(wallets.verifySignature(userId, inj, await signer.signMessage(challenge.message))).rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
+    });
+  });
+
+  it('a signature over an older, superseded challenge message is refused: only the latest challenge for the pair exists', async () => {
+    const userId = await createUser(db, { onboarded: false });
+    const signer = Wallet.createRandom();
+    const old = await wallets.createChallenge(userId, signer.address);
+    const latest = await wallets.createChallenge(userId, signer.address);
+    expect(await openChallenges(userId)).toBe(1);
+    await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(old.message))).rejects.toMatchObject({ message: 'INVALID_SIGNATURE' });
+    await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(latest.message))).resolves.toMatchObject({ chain: 'INJECTIVE' });
+  });
+
+  it('an agent whose wallet is stored as 0x or as inj1 blocks the owner link in either form (400 AGENT_WALLET_IS_OWNER_WALLET), consuming nothing', async () => {
+    for (const store of [(signer: { address: string }) => signer.address, (signer: { address: string }) => `inj1${signer.address.slice(2).toLowerCase()}`]) {
+      const signer = Wallet.createRandom();
+      const userId = await createUser(db, { onboarded: false });
+      await db.query(`INSERT INTO agent (owner_user_id, name, wallet_address, status, verified_at) VALUES ($1, 'twin', $2, 'ACTIVE', now())`, [userId, store(signer)]);
+      const challenge = await wallets.createChallenge(userId, signer.address);
+      await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(challenge.message)))
+        .rejects.toMatchObject({ status: 400, message: 'AGENT_WALLET_IS_OWNER_WALLET' });
+      expect((await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [userId])).rowCount).toBe(0);
+      expect(await openChallenges(userId)).toBe(1);
+    }
+    // an agent on a different wallet does not get in the way
+    const signer = Wallet.createRandom();
+    const userId = await createUser(db, { onboarded: false });
+    await db.query(`INSERT INTO agent (owner_user_id, name, wallet_address, status, verified_at) VALUES ($1, 'other', $2, 'ACTIVE', now())`, [userId, Wallet.createRandom().address]);
+    const challenge = await wallets.createChallenge(userId, signer.address);
+    await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(challenge.message))).resolves.toMatchObject({ chain: 'INJECTIVE' });
+  });
+
+  it('myWallet: null without a connected primary wallet, the row with one, and not a disconnected one', async () => {
+    const userId = await createUser(db);
+    await expect(wallets.myWallet(userId)).resolves.toBeNull();
+    const signer = Wallet.createRandom();
+    const challenge = await wallets.createChallenge(userId, signer.address);
+    const linked = await wallets.verifySignature(userId, signer.address, await signer.signMessage(challenge.message));
+    await expect(wallets.myWallet(userId)).resolves.toMatchObject({ id: linked.id, chain: 'INJECTIVE', address: `inj1${signer.address.slice(2).toLowerCase()}` });
+    await db.query(`UPDATE wallet SET disconnected_at = now() WHERE user_id = $1`, [userId]);
+    await expect(wallets.myWallet(userId)).resolves.toBeNull();
   });
 });

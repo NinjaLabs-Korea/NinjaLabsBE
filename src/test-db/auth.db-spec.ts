@@ -258,6 +258,119 @@ describeDb('auth sessions on a real database', () => {
     await expect(auth.refresh(b.refreshToken)).resolves.toMatchObject({ refreshToken: expect.any(String) });
   });
 
+  it('rotation consumes the presented row (revoked, grace copy dropped), signs the owner\'s admin flag into the new access token and stamps expires_at from JWT_REFRESH_TTL', async () => {
+    const shortTtl = new AuthService(
+      db,
+      new JwtService({ secret: TEST_JWT_SECRET, signOptions: { expiresIn: '15m' } }),
+      testConfig({ JWT_REFRESH_TTL: '15m' }),
+      TEST_JWT_SECRET,
+    );
+    const adminId = await createUser(db, { isAdmin: true });
+    const t1 = await shortTtl.issueSession(adminId, true);
+    const t2 = await shortTtl.refresh(t1.refreshToken, '10.0.0.2', 'jest-rotate');
+    const t3 = await shortTtl.refresh(t2.refreshToken);
+    await expect(shortTtl.verifyAccessToken(t3.accessToken)).resolves.toEqual({ userId: adminId, isAdmin: true });
+
+    const rows = await sessionRows(adminId);
+    expect(rows).toHaveLength(3);
+    const byHash = new Map(rows.map((row) => [row.refresh_token_hash, row]));
+    // t2 was rotated into t3: it is revoked and its sealed grace copy is gone; t3 is the only open row and keeps a copy
+    expect(byHash.get(sha256(t2.refreshToken))).toMatchObject({ grace_refresh_token: null });
+    expect(byHash.get(sha256(t2.refreshToken))!.revoked_at).not.toBeNull();
+    expect(byHash.get(sha256(t3.refreshToken))).toMatchObject({ revoked_at: null });
+    expect(byHash.get(sha256(t3.refreshToken))!.grace_refresh_token).not.toBeNull();
+    const msLeft = byHash.get(sha256(t3.refreshToken))!.expires_at.getTime() - Date.now();
+    expect(msLeft).toBeGreaterThan(14 * 60_000);
+    expect(msLeft).toBeLessThanOrEqual(15 * 60_000);
+    const meta = await db.query(`SELECT host(ip_address) AS ip, user_agent FROM auth_session WHERE refresh_token_hash = $1`, [sha256(t2.refreshToken)]);
+    expect(meta.rows[0]).toEqual({ ip: '10.0.0.2', user_agent: 'jest-rotate' });
+  });
+
+  it.each([
+    ['suspended', `UPDATE "user" SET status = 'SUSPENDED' WHERE id = $1`],
+    ['soft-deleted', `UPDATE "user" SET deleted_at = now() WHERE id = $1`],
+  ])('a %s owner is never rotated or graced: the old token is consumed with a 401, and a successor pair is not handed out inside the grace window', async (_label, makeInactive) => {
+    // (1) plain rotation attempt
+    const first = await createUser(db);
+    const session = await auth.issueSession(first, false);
+    await db.query(makeInactive, [first]);
+    await expect(auth.refresh(session.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    let rows = await sessionRows(first);
+    expect(rows).toHaveLength(1); // no replacement row
+    expect(rows[0].revoked_at).not.toBeNull();
+
+    // (2) the owner rotated legitimately a moment ago, then became inactive: replaying the old token must not return the successor pair
+    const second = await createUser(db);
+    const a = await auth.issueSession(second, false);
+    const b = await auth.refresh(a.refreshToken);
+    await db.query(makeInactive, [second]);
+    await expect(auth.refresh(a.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    await expect(auth.refresh(b.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    rows = await sessionRows(second);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.revoked_at !== null && row.grace_refresh_token === null)).toBe(true);
+  });
+
+  it('two concurrent rotations of the same token: one rotates, the other receives the SAME successor pair; exactly one new session row', async () => {
+    const user = await auth.upsertGoogleUser(unique('google-'), `${unique()}@example.test`);
+    const t1 = await auth.issueSession(user.id, false);
+    const results = await Promise.all([auth.refresh(t1.refreshToken), auth.refresh(t1.refreshToken)]);
+    expect(results[1].refreshToken).toBe(results[0].refreshToken);
+    for (const result of results) {
+      await expect(auth.verifyAccessToken(result.accessToken)).resolves.toEqual({ userId: user.id, isAdmin: false });
+    }
+    const rows = await sessionRows(user.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((row) => row.revoked_at === null)).toHaveLength(1);
+    // the shared pair keeps working as the live session
+    await expect(auth.refresh(results[0].refreshToken)).resolves.toMatchObject({ refreshToken: expect.any(String) });
+  });
+
+  it('inside the 30s window the grace is still refused (401 + chain revoked) when the successor expired, was itself rotated, or its sealed copy is unreadable', async () => {
+    // successor expired
+    const expiredUser = await createUser(db);
+    const e1 = await auth.issueSession(expiredUser, false);
+    const e2 = await auth.refresh(e1.refreshToken);
+    await db.query(`UPDATE auth_session SET expires_at = now() - interval '1 second' WHERE refresh_token_hash = $1`, [sha256(e2.refreshToken)]);
+    await expect(auth.refresh(e1.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    expect((await sessionRows(expiredUser)).every((row) => row.revoked_at !== null)).toBe(true);
+
+    // successor itself rotated: replaying the first token is reuse even though it is inside the window
+    const rotatedUser = await createUser(db);
+    const r1 = await auth.issueSession(rotatedUser, false);
+    const r2 = await auth.refresh(r1.refreshToken);
+    const r3 = await auth.refresh(r2.refreshToken);
+    await expect(auth.refresh(r1.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    expect((await sessionRows(rotatedUser)).every((row) => row.revoked_at !== null)).toBe(true);
+    await expect(auth.refresh(r3.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+
+    // successor's sealed copy cannot be decrypted (garbage)
+    const corruptUser = await createUser(db);
+    const c1 = await auth.issueSession(corruptUser, false);
+    const c2 = await auth.refresh(c1.refreshToken);
+    await db.query(`UPDATE auth_session SET grace_refresh_token = 'x.y.z' WHERE refresh_token_hash = $1`, [sha256(c2.refreshToken)]);
+    await expect(auth.refresh(c1.refreshToken)).rejects.toMatchObject({ message: 'INVALID_REFRESH_TOKEN' });
+    expect((await sessionRows(corruptUser)).every((row) => row.revoked_at !== null)).toBe(true);
+  });
+
+  it('upsertGoogleUser: concurrent first logins of one Google account end on one row for both callers; another account\'s email is ACCOUNT_CONFLICT; a soft-deleted account does not block a fresh one', async () => {
+    const googleId = unique('google-');
+    const email = `${unique()}@example.test`;
+    const [x, y] = await Promise.all([auth.upsertGoogleUser(googleId, email), auth.upsertGoogleUser(googleId, email)]);
+    expect(y.id).toBe(x.id);
+    const count = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM "user" WHERE google_id = $1`, [googleId]);
+    expect(count.rows[0].n).toBe(1);
+
+    // same email, different Google account: the partial unique index on the active email row
+    await expect(auth.upsertGoogleUser(unique('google-'), email)).rejects.toMatchObject({ message: 'ACCOUNT_CONFLICT' });
+
+    // tombstoned account: the same Google id signs up again as a NEW user (unique indexes only cover deleted_at IS NULL)
+    await db.query(`UPDATE "user" SET deleted_at = now() WHERE id = $1`, [x.id]);
+    const again = await auth.upsertGoogleUser(googleId, email);
+    expect(again.id).not.toBe(x.id);
+    expect(again.onboarding_step).toBe(2);
+  });
+
   it('getMe reflects wallet and parent NFT state', async () => {
     const userId = await createUser(db, { onboarded: false });
     await expect(auth.getMe(userId)).resolves.toMatchObject({ id: userId, wallet: null, nft: null, onboardingCompleted: false, tags: [] });

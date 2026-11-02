@@ -1,36 +1,29 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../audit/audit.service';
-import { createMockDb } from '../../test-support/mock-db';
+import { createMockDb, SqlHandler } from '../../test-support/mock-db';
 import { SubmissionReviewService } from './submission-review.service';
 
 /**
- * Answers by statement shape: the locked bounty (`FOR UPDATE OF b`), the locked submission, the approved count, the UPDATE,
- * the review INSERT (current revision resolved in SQL) and the audit INSERT.
+ * 단위 스펙은 결정 -> 상태 매핑, 검사 순서, 바인딩만 본다. 심사 가능 상태 x 결정 표, 리비전 가드, 코멘트 규칙, max_winners 경계,
+ * 제출자 계정 잠금, 리뷰 행이 가리키는 리비전은 src/test-db/submission-review.db-spec.ts가 실 DB 행으로 단언한다.
+ * DB 대역은 엄격 모드라, 오류가 나야 하는 시점 뒤의 문장이 나가면 `Unexpected SQL`로 실패한다.
  */
-function setup(options: {
-  bounty?: { id: string; status: string; max_winners: number } | null;
-  submission?: { id: string; status: string; current_revision_no: number } | null;
-  approved?: number;
-  submitterActive?: boolean;
-} = {}) {
-  const bounty = options.bounty === undefined ? { id: 'bounty', status: 'OPEN', max_winners: 3 } : options.bounty;
-  const submission = options.submission === undefined ? { id: 'sub', status: 'SUBMITTED', current_revision_no: 1 } : options.submission;
-  const query = jest.fn(async (sql: string, _params?: unknown[]) => {
-    if (sql.includes('FOR UPDATE OF b')) return bounty ? { rowCount: 1, rows: [bounty] } : { rowCount: 0, rows: [] };
-    if (sql.includes('FOR SHARE OF u')) return options.submitterActive === false ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ id: 'user' }] };
-    if (sql.includes('FROM bounty_submission WHERE id = $1 FOR UPDATE')) return submission ? { rowCount: 1, rows: [submission] } : { rowCount: 0, rows: [] };
-    if (sql.includes("status = 'APPROVED'")) return { rowCount: 1, rows: [{ count: String(options.approved ?? 0) }] };
-    return { rowCount: 1, rows: [] };
-  });
-  const dbQuery = jest.fn();
-  const { database, db } = createMockDb({ query: dbQuery, txQuery: query });
-  const service = new SubmissionReviewService(database, new AuditService(database));
-  const call = (fragment: string) => query.mock.calls.find(([sql]) => (sql as string).includes(fragment));
-  const wrote = () => query.mock.calls.some(([sql]) => /^\s*(UPDATE|INSERT)/.test(sql as string));
-  return { service, query, db, dbQuery, call, wrote };
+function setup(options: { bountyStatus?: string; submissionStatus?: string; revision?: number; approveLocks?: boolean } = {}) {
+  const ok = { rowCount: 1, rows: [] };
+  const handlers: SqlHandler[] = [
+    { match: /FOR UPDATE OF b$/, reply: () => ({ rowCount: 1, rows: [{ id: 'bounty', status: options.bountyStatus ?? 'OPEN', max_winners: 3 }] }) },
+    { match: /FROM bounty_submission WHERE id = \$1 FOR UPDATE$/, reply: () => ({ rowCount: 1, rows: [{ id: 'sub', status: options.submissionStatus ?? 'SUBMITTED', current_revision_no: options.revision ?? 1 }] }) },
+    { match: /^UPDATE bounty_submission SET status = \$2/, reply: () => ok },
+    { match: /^INSERT INTO submission_review/, reply: () => ok },
+    { match: /^INSERT INTO audit_log/, reply: () => ok },
+    // approval-only statements: when approveLocks is false they are not registered, so a non-approval decision that issues them fails
+    ...(options.approveLocks === false ? [] : [
+      { match: /FOR SHARE OF u$/, reply: () => ({ rowCount: 1, rows: [{ id: 'user' }] }) },
+      { match: /^SELECT count\(\*\) FROM bounty_submission/, reply: () => ({ rowCount: 1, rows: [{ count: '0' }] }) },
+    ]),
+  ];
+  const mock = createMockDb({ strict: true, handlers });
+  return { mock, service: new SubmissionReviewService(mock.database, new AuditService(mock.database)) };
 }
-
-const errorOf = (promise: Promise<unknown>) => promise.then(() => undefined, (caught: unknown) => caught as Error);
 
 describe('SubmissionReviewService decisions', () => {
   it.each([
@@ -38,165 +31,58 @@ describe('SubmissionReviewService decisions', () => {
     ['REQUEST_REVISION', 'REVISION_REQUESTED'],
     ['APPROVE', 'APPROVED'],
     ['REJECT', 'REJECTED'],
-  ])('%s moves a SUBMITTED submission to %s and records the review against the current revision', async (decision, status) => {
-    const { service, call, dbQuery } = setup({ submission: { id: 'sub', status: 'SUBMITTED', current_revision_no: 4 } });
+  ])('%s moves a SUBMITTED submission to %s and records the review and the audit entry in the same transaction', async (decision, status) => {
+    const { service, mock } = setup({ revision: 4 });
     await expect(service.review('sub', decision, 'note', 'admin', 4)).resolves.toEqual({ id: 'sub', status });
-    expect(call('UPDATE bounty_submission SET status = $2')![1]).toEqual(['sub', status]);
-    expect(call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', decision, 'note']);
-    expect(call('INSERT INTO audit_log')![1]).toEqual(['admin', `SUBMISSION_${decision}`, 'bounty_submission', 'sub']);
-    expect(dbQuery).not.toHaveBeenCalled();
+    expect(mock.txStatements(/^UPDATE bounty_submission SET status = \$2/)[0].params).toEqual(['sub', status]);
+    expect(mock.txStatements(/^INSERT INTO submission_review/)[0].params).toEqual([['sub'], 'admin', decision, 'note']);
+    expect(mock.txStatements(/^INSERT INTO audit_log/)[0].params).toEqual(['admin', `SUBMISSION_${decision}`, 'bounty_submission', 'sub']);
+    expect(mock.db.tx).toHaveBeenCalledTimes(1);
+    expect(mock.db.query).not.toHaveBeenCalled();
   });
 
-  it('stores a blank or padded comment as NULL / trimmed (the submitter sees it as the review comment)', async () => {
+  it('stores a blank comment as NULL and a padded one trimmed (the submitter sees it as the review comment)', async () => {
     const blank = setup();
     await blank.service.review('sub', 'APPROVE', '  \n ', 'admin');
-    expect(blank.call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', 'APPROVE', null]);
+    expect(blank.mock.txStatements(/^INSERT INTO submission_review/)[0].params).toEqual([['sub'], 'admin', 'APPROVE', null]);
     const padded = setup();
     await padded.service.review('sub', 'APPROVE', '  nice work ', 'admin');
-    expect(padded.call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', 'APPROVE', 'nice work']);
+    expect(padded.mock.txStatements(/^INSERT INTO submission_review/)[0].params).toEqual([['sub'], 'admin', 'APPROVE', 'nice work']);
   });
 
-  it('an unknown decision is refused before any transaction is opened', async () => {
-    const { service, db } = setup();
-    const error = await errorOf(service.review('sub', 'DELETE', undefined, 'admin'));
-    expect(error).toBeInstanceOf(NotFoundException);
-    expect(error!.message).toBe('INVALID_DECISION');
-    expect(db.tx).not.toHaveBeenCalled();
+  it('an unknown decision is 404 INVALID_DECISION before any transaction is opened', async () => {
+    const { service, mock } = setup();
+    await expect(service.review('sub', 'DELETE', undefined, 'admin')).rejects.toMatchObject({ status: 404, message: 'INVALID_DECISION' });
+    expect(mock.db.tx).not.toHaveBeenCalled();
   });
 
-  it('a submission without a live bounty (unknown id or soft-deleted bounty) is 404 SUBMISSION_NOT_FOUND', async () => {
-    const { service, wrote } = setup({ bounty: null });
-    await expect(service.review('sub', 'APPROVE', undefined, 'admin')).rejects.toMatchObject({ status: 404, message: 'SUBMISSION_NOT_FOUND' });
-    expect(wrote()).toBe(false);
+  it.each(['DRAFT', 'FUNDING_PENDING', 'COMPLETED', 'CANCELLED'])('a %s bounty is 400 BOUNTY_REVIEW_CLOSED before the submission or the submitter is read', async (status) => {
+    const { service, mock } = setup({ bountyStatus: status });
+    await expect(service.review('sub', 'APPROVE', 'x', 'admin')).rejects.toMatchObject({ status: 400, message: 'BOUNTY_REVIEW_CLOSED' });
+    expect(mock.txQuery).toHaveBeenCalledTimes(1);
   });
 
-  it('a submission row that vanished between the two locks is 404 SUBMISSION_NOT_FOUND', async () => {
-    const { service, wrote } = setup({ submission: null });
-    await expect(service.review('sub', 'APPROVE', undefined, 'admin')).rejects.toMatchObject({ message: 'SUBMISSION_NOT_FOUND' });
-    expect(wrote()).toBe(false);
+  it.each(['APPROVED', 'REJECTED', 'WITHDRAWN'])('a %s submission is 400 SUBMISSION_NOT_REVIEWABLE and nothing is written', async (submissionStatus) => {
+    const { service, mock } = setup({ submissionStatus });
+    await expect(service.review('sub', 'REJECT', 'x', 'admin')).rejects.toMatchObject({ status: 400, message: 'SUBMISSION_NOT_REVIEWABLE' });
+    expect(mock.txStatements(/^UPDATE bounty_submission/)).toHaveLength(0);
   });
 
-  it.each(['DRAFT', 'FUNDING_PENDING', 'COMPLETED', 'CANCELLED'])('no review on a %s bounty → 400 BOUNTY_REVIEW_CLOSED, before the submission is read', async (status) => {
-    const { service, query } = setup({ bounty: { id: 'bounty', status, max_winners: 1 } });
-    const error = await errorOf(service.review('sub', 'REJECT', 'x', 'admin'));
-    expect(error).toBeInstanceOf(BadRequestException);
-    expect(error!.message).toBe('BOUNTY_REVIEW_CLOSED');
-    expect(query).toHaveBeenCalledTimes(1);
+  it('the stale-revision guard is checked before the comment rule and before any winner count', async () => {
+    const { service, mock } = setup({ submissionStatus: 'RESUBMITTED', revision: 2 });
+    await expect(service.review('sub', 'REQUEST_REVISION', undefined, 'admin', 1)).rejects.toMatchObject({ message: 'SUBMISSION_REVISION_CHANGED' });
+    expect(mock.txStatements(/^SELECT count/)).toHaveLength(0);
   });
 
-  it.each(['OPEN', 'SUBMISSION_CLOSED', 'IN_REVIEW'])('reviews are allowed while the bounty is %s', async (status) => {
-    const { service } = setup({ bounty: { id: 'bounty', status, max_winners: 1 } });
-    await expect(service.review('sub', 'START_REVIEW', undefined, 'admin')).resolves.toEqual({ id: 'sub', status: 'IN_REVIEW' });
-  });
-
-  // reviewable statuses × decisions - REVISION_REQUESTED only accepts REJECT (closing an abandoned revision), finalized ones nothing
-  const DECISIONS = ['START_REVIEW', 'REQUEST_REVISION', 'APPROVE', 'REJECT'];
-  const matrix: Array<[string, string, boolean]> = [];
-  for (const status of ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW']) for (const d of DECISIONS) matrix.push([status, d, !(status === 'IN_REVIEW' && d === 'START_REVIEW')]);
-  for (const d of DECISIONS) matrix.push(['REVISION_REQUESTED', d, d === 'REJECT']);
-  for (const status of ['APPROVED', 'REJECTED', 'WITHDRAWN']) for (const d of DECISIONS) matrix.push([status, d, false]);
-
-  it.each(matrix)('submission %s + %s → reviewable=%s', async (status, decision, reviewable) => {
-    const { service, wrote } = setup({ submission: { id: 'sub', status, current_revision_no: 1 } });
-    const error = await errorOf(service.review('sub', decision, 'feedback', 'admin', 1));
-    if (reviewable) {
-      expect(error).toBeUndefined();
-      expect(wrote()).toBe(true);
-    } else {
-      expect(error).toBeInstanceOf(BadRequestException);
-      expect(error!.message).toBe('SUBMISSION_NOT_REVIEWABLE');
-      expect(wrote()).toBe(false);
-    }
-  });
-});
-
-describe('SubmissionReviewService revision guard and feedback', () => {
-  it('revisionNo omitted skips the stale-revision check and reviews whatever is current', async () => {
-    const { service, call } = setup({ submission: { id: 'sub', status: 'RESUBMITTED', current_revision_no: 7 } });
-    await expect(service.review('sub', 'APPROVE', undefined, 'admin')).resolves.toEqual({ id: 'sub', status: 'APPROVED' });
-    expect(call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', 'APPROVE', null]);
-  });
-
-  it.each([[1, 2], [3, 2]])('revisionNo %i while the current revision is %i → 400 SUBMISSION_REVISION_CHANGED, nothing written', async (seen, current) => {
-    const { service, wrote } = setup({ submission: { id: 'sub', status: 'RESUBMITTED', current_revision_no: current } });
-    await expect(service.review('sub', 'APPROVE', undefined, 'admin', seen)).rejects.toMatchObject({ status: 400, message: 'SUBMISSION_REVISION_CHANGED' });
-    expect(wrote()).toBe(false);
-  });
-
-  it.each([undefined, '', '   \n\t'])('REQUEST_REVISION needs actionable feedback (comment %p → 400 REVISION_COMMENT_REQUIRED)', async (comment) => {
-    const { service, wrote } = setup();
-    await expect(service.review('sub', 'REQUEST_REVISION', comment, 'admin')).rejects.toMatchObject({ message: 'REVISION_COMMENT_REQUIRED' });
-    expect(wrote()).toBe(false);
-  });
-
-  it('rejecting an abandoned revision request also needs a comment; rejecting a fresh submission does not', async () => {
-    const abandoned = setup({ submission: { id: 'sub', status: 'REVISION_REQUESTED', current_revision_no: 2 } });
-    await expect(abandoned.service.review('sub', 'REJECT', ' ', 'admin', 2)).rejects.toMatchObject({ message: 'REVISION_COMMENT_REQUIRED' });
-    expect(abandoned.wrote()).toBe(false);
-    await expect(setup().service.review('sub', 'REJECT', undefined, 'admin')).resolves.toEqual({ id: 'sub', status: 'REJECTED' });
-  });
-
-  it('the review row is written for the submission\'s current revision, and a missing snapshot (legacy row) falls back to revision_id NULL inside the same INSERT', async () => {
-    const { service, call } = setup({ submission: { id: 'sub', status: 'SUBMITTED', current_revision_no: 3 } });
-    await service.review('sub', 'START_REVIEW', undefined, 'admin');
-    const sql = call('INSERT INTO submission_review')![0] as string;
-    expect(sql).toContain('sr.revision_no = s.current_revision_no'); // scalar subselect: NULL when no snapshot row exists
-    expect(call('INSERT INTO submission_review')![1]).toEqual([['sub'], 'admin', 'START_REVIEW', null]);
-  });
-});
-
-describe('SubmissionReviewService max winners', () => {
-  it.each([[1, 0, true], [1, 1, false], [3, 2, true], [3, 3, false], [3, 4, false]])(
-    'max_winners %i with %i already approved → approve allowed=%s',
-    async (maxWinners, approved, allowed) => {
-      const { service, call, wrote } = setup({ bounty: { id: 'bounty-9', status: 'IN_REVIEW', max_winners: maxWinners }, approved });
-      const error = await errorOf(service.review('sub', 'APPROVE', undefined, 'admin'));
-      expect(call("status = 'APPROVED'")![1]).toEqual(['bounty-9']);
-      if (allowed) {
-        expect(error).toBeUndefined();
-      } else {
-        expect(error).toBeInstanceOf(BadRequestException);
-        expect(error!.message).toBe('MAX_WINNERS_REACHED');
-        expect(wrote()).toBe(false);
-      }
-    },
-  );
-
-  it('max_winners is compared numerically even when the driver returns it as a string', async () => {
-    const { service } = setup({ bounty: { id: 'b', status: 'OPEN', max_winners: '10' as unknown as number }, approved: 9 });
-    await expect(service.review('sub', 'APPROVE', undefined, 'admin')).resolves.toEqual({ id: 'sub', status: 'APPROVED' });
-  });
-
-  it.each(['START_REVIEW', 'REQUEST_REVISION', 'REJECT'])('%s is not counted against max_winners even when the cap is reached', async (decision) => {
-    const { service, call } = setup({ bounty: { id: 'b', status: 'OPEN', max_winners: 1 }, approved: 1 });
-    await expect(service.review('sub', decision, 'fix it', 'admin')).resolves.toBeDefined();
-    expect(call("SELECT count(*) FROM bounty_submission")).toBeUndefined();
-  });
-});
-
-describe('SubmissionReviewService approval and the submitter account', () => {
-  it('APPROVE locks the submitter (or the agent owner) user row FOR SHARE, active and not deleted, before the submission row', async () => {
-    const { service, query } = setup();
+  it('approval binds the submitter lock to the submission id and the winner count to the bounty id', async () => {
+    const { service, mock } = setup();
     await service.review('sub', 'APPROVE', undefined, 'admin');
-    const sqls = query.mock.calls.map(([sql]) => sql as string);
-    const userLock = sqls.findIndex((sql) => sql.includes('FOR SHARE OF u'));
-    expect(userLock).toBeGreaterThan(-1);
-    expect(userLock).toBeLessThan(sqls.findIndex((sql) => sql.includes('FROM bounty_submission WHERE id = $1 FOR UPDATE')));
-    expect(sqls[userLock]).toContain('COALESCE(s.submitter_user_id, a.owner_user_id)');
-    expect(sqls[userLock]).toContain('u.deleted_at IS NULL');
-    expect(sqls[userLock]).toContain("u.status = 'ACTIVE'");
-    expect(query.mock.calls[userLock][1]).toEqual(['sub']);
+    expect(mock.txStatements(/FOR SHARE OF u$/)[0].params).toEqual(['sub']);
+    expect(mock.txStatements(/^SELECT count\(\*\) FROM bounty_submission/)[0].params).toEqual(['bounty']);
   });
 
-  it('APPROVE of a withdrawn or suspended submitter is 404 USER_NOT_FOUND and writes nothing', async () => {
-    const { service, wrote } = setup({ submitterActive: false });
-    await expect(service.review('sub', 'APPROVE', undefined, 'admin')).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
-    expect(wrote()).toBe(false);
-  });
-
-  it.each(['START_REVIEW', 'REQUEST_REVISION', 'REJECT'])('%s does not need the submitter lock (rejecting a withdrawn user submission stays possible)', async (decision) => {
-    const { service, call } = setup({ submitterActive: false });
-    await expect(service.review('sub', decision, 'feedback', 'admin')).resolves.toMatchObject({ id: 'sub' });
-    expect(call('FOR SHARE OF u')).toBeUndefined();
+  it.each(['START_REVIEW', 'REQUEST_REVISION', 'REJECT'])('%s neither locks the submitter nor counts winners (strict: those statements are not registered for it)', async (decision) => {
+    const { service } = setup({ approveLocks: false });
+    await expect(service.review('sub', decision, 'fix it', 'admin')).resolves.toMatchObject({ id: 'sub' });
   });
 });

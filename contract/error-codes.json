@@ -190,6 +190,55 @@
       ]
     },
     {
+      "code": "WALLET_CHANGE_REQUIRES_WALLET",
+      "ko": "교체할 대표 지갑이 없다. 최초 연결을 먼저 완료해야 한다",
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "WALLET_CHANGE_DISABLED",
+      "ko": "수령 지갑 교체 기능이 운영 안전 확인 전 비활성화되어 있다",
+      "statuses": [
+        503
+      ]
+    },
+    {
+      "code": "WALLET_CHANGE_STALE",
+      "ko": "교체 요청의 기존 지갑이 현재 대표 지갑과 다르다. 현재 지갑으로 새 요청을 발급해야 한다",
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "WALLET_CHANGE_SAME_ADDRESS",
+      "ko": "같은 계정 주소로는 교체할 수 없다. 0x와 inj1 표기만 다른 경우도 같은 지갑이다",
+      "statuses": [
+        400
+      ]
+    },
+    {
+      "code": "WALLET_CHANGE_BLOCKED_PAYOUTS",
+      "ko": "본인 또는 소유 에이전트의 미정산 지급이 있다. FAILED 지급도 정리 후 교체해야 한다",
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "WALLET_CHANGE_BLOCKED_NFT_JOBS",
+      "ko": "미완료 NFT 또는 민팅·연결 작업이 있다. 실패 작업도 해결 후 교체해야 한다",
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "WALLET_CHANGE_NOT_FOUND",
+      "ko": "본인의 지갑 교체 요청이 없거나 새 요청으로 대체됐다",
+      "statuses": [
+        404
+      ]
+    },
+    {
       "code": "INVALID_AGENT_WALLET_ADDRESS",
       "ko": "에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다)",
       "statuses": [

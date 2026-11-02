@@ -18,6 +18,7 @@ import { BountyActor } from '../bounties/bounty-actor';
 import { completedWinSql } from '../bounties/completed-wins';
 import { agentApiKeyPrefix, hashAgentApiKey } from './agent-api-key';
 import { revokeActiveAgentKeys } from './agent-revocation';
+import { lockActiveAgentOwner } from './agent-owner-lock';
 
 /**
  * 에이전트 등록 INSERT가 부딪힐 수 있는 지갑·공개키 부분 유니크 인덱스(0014, `deleted_at IS NULL AND status <> 'REVOKED'`).
@@ -88,6 +89,9 @@ export class AgentsService {
         );
         // 본인 지갑 검사는 INSERT 뒤에 한다: 던지면 이 트랜잭션 전체(위의 버려진 행 정리 포함)가 롤백된다
         await this.assertNotOwnerWallet(tx, ownerUserId, isEvm ? getInjectiveAddress(normalizedAddress) : normalizedAddress);
+        // INSERT may have waited for a concurrent revoke. Recheck its committed
+        // verified reservation on a fresh snapshot before giving another owner this account.
+        await this.retireReusableAgents(tx, ownerUserId, storedPublicKey, normalizedAddress);
         return inserted;
       });
       return {
@@ -159,9 +163,10 @@ export class AgentsService {
       `SELECT id, owner_user_id, status, verified_at IS NOT NULL AS verified,
               (status = 'PENDING_VERIFICATION' AND created_at < now() - interval '24 hours') AS abandoned
          FROM agent
-        WHERE (wallet_address = $1 OR ($2::text IS NOT NULL AND public_key = $2::text))
+        WHERE (COALESCE(agent_account_key(wallet_address),wallet_address) = COALESCE(agent_account_key($1::text),$1::text)
+          OR ($2::text IS NOT NULL AND COALESCE(agent_public_key_id(public_key),public_key) = COALESCE(agent_public_key_id($2::text),$2::text)))
           AND status IN ('REVOKED', 'PENDING_VERIFICATION') AND deleted_at IS NULL
-        FOR UPDATE`,
+        ORDER BY id FOR UPDATE`,
       [walletAddress, publicKey],
     )) as { rows: Array<{ id: string; owner_user_id: string; status: string; verified: boolean; abandoned: boolean }> };
     const retire: string[] = [];
@@ -222,6 +227,7 @@ export class AgentsService {
     // 상태 확인 → 서명 검증 → ACTIVE 전환 → key 발급을 한 트랜잭션에서, 에이전트 행을 잠근 채 수행한다.
     // 동시 verify 두 번이면 두 번째는 잠금 해제 후 ACTIVE를 보고 AGENT_ALREADY_VERIFIED로 거부된다.
     const expires = await this.db.tx(async (tx) => {
+      await lockActiveAgentOwner(tx, ownerUserId);
       const r = await tx.query<{
         status: string;
         public_key: string | null;
@@ -229,8 +235,7 @@ export class AgentsService {
         verified_at: Date | null;
       }>(
         `SELECT status, public_key, wallet_address, verified_at FROM agent
-          WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL
-          FOR UPDATE`,
+          WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL`,
         [agentId, ownerUserId],
       );
       if (!r.rowCount) throw new NotFoundException('AGENT_NOT_FOUND');
@@ -248,23 +253,62 @@ export class AgentsService {
       if (!verified) {
         throw new UnauthorizedException('INVALID_SIGNATURE');
       }
+      // New writes use base64 for both schemes. The DB index also normalizes legacy hex
+      // values, so pre-existing keys stay usable without rewriting signing addresses.
+      const verifiedKey = verified.publicKey && canonicalPublicKeyBase64(isEvmAddress(agent.wallet_address)
+        ? Buffer.from(verified.publicKey.slice(2), 'hex').toString('base64') : verified.publicKey);
 
-      if (verified.publicKey && isEvmAddress(agent.wallet_address)) {
+      // A pending row may have been created by a legacy writer before the DB
+      // guard was installed. Reject it before cleanup, activation or key issuance.
+      const reserved = await tx.query(
+        `SELECT 1 FROM agent_identity_reservation WHERE owner_user_id <> $1 AND identity = ANY(ARRAY[
+          'account:' || COALESCE(agent_account_key($2::text),$2::text),
+          'key:' || COALESCE(agent_public_key_id($3::text),$3::text)
+        ]) LIMIT 1`, [ownerUserId, agent.wallet_address, verifiedKey]);
+      if (reserved.rowCount) throw new ConflictException('AGENT_KEY_OR_WALLET_ALREADY_REGISTERED');
+
+      // Legacy pending rows can carry each other's unproven EVM keys. Lock own
+      // row AND cleanup candidates in one total order, never own-row-first.
+      const locked = await tx.query<{
+        id: string; status: string; public_key: string | null; wallet_address: string; verified_at: Date | null;
+      }>(
+        `SELECT id, status, public_key, wallet_address, verified_at FROM agent
+          WHERE (id = $1 AND owner_user_id = $2 AND deleted_at IS NULL)
+             OR ($3::text IS NOT NULL AND wallet_address ILIKE '0x%'
+                 AND agent_public_key_id(public_key) = agent_public_key_id($3::text)
+                 AND status = 'PENDING_VERIFICATION' AND deleted_at IS NULL)
+          ORDER BY id FOR UPDATE`,
+        [agentId, ownerUserId, isEvmAddress(agent.wallet_address) ? verifiedKey : null],
+      );
+      const current = locked.rows.find((row) => row.id === agentId);
+      if (!current) throw new NotFoundException('AGENT_NOT_FOUND');
+      if (current.status !== 'PENDING_VERIFICATION') {
+        if (current.status === 'ACTIVE' || current.verified_at) throw new ConflictException('AGENT_ALREADY_VERIFIED');
+        throw new ConflictException('AGENT_NOT_PENDING');
+      }
+      // Identity is immutable through this API, but never trust the unlocked read
+      // if a manual repair or another writer changed it while the proof was checked.
+      if (current.wallet_address !== agent.wallet_address ||
+          (!isEvmAddress(current.wallet_address) && current.public_key !== agent.public_key)) {
+        throw new UnauthorizedException('INVALID_SIGNATURE');
+      }
+
+      if (verifiedKey && isEvmAddress(agent.wallet_address)) {
         // 이 수정 전 등록된 EVM PENDING 행에는 클라이언트가 보낸(검증 안 된) public_key가 남아 있을 수 있다 - 남의 키를 붙여 둔 행이
         // 아래 UPDATE를 uq_agent_public_key 위반으로 막지 않도록, 서명으로 방금 증명된 이 키를 쥔 다른 EVM PENDING 행의 키를 비운다.
         // EVM verify는 저장된 키를 쓰지 않으므로(서명에서 복원) 그 행들의 동작은 바뀌지 않는다.
         await tx.query(
           `UPDATE agent SET public_key = NULL
-            WHERE public_key = $1 AND id <> $2 AND status = 'PENDING_VERIFICATION' AND deleted_at IS NULL
+            WHERE agent_public_key_id(public_key) = agent_public_key_id($1::text) AND id <> $2 AND status = 'PENDING_VERIFICATION' AND deleted_at IS NULL
               AND wallet_address ILIKE '0x%'`,
-          [verified.publicKey, agentId],
+          [verifiedKey, agentId],
         );
       }
       await tx.query(
         `UPDATE agent
             SET status = 'ACTIVE', verified_at = now(), public_key = COALESCE($2, public_key)
           WHERE id = $1`,
-        [agentId, verified.publicKey],
+        [agentId, verifiedKey],
       );
       const expiresAt = await this.insertKey(tx, agentId, key);
       // 첫 API key 발급도 rotate와 같은 자격 증명 발급이다 - 감사 없이는 ACTIVE 에이전트가 언제 생겼는지 알 수 없다
@@ -300,6 +344,7 @@ export class AgentsService {
   async rotateKey(ownerUserId: string, agentId: string) {
     const key = this.generateApiKey();
     const expires = await this.db.tx(async (tx) => {
+      await lockActiveAgentOwner(tx, ownerUserId);
       const agent = await this.lockOwnedAgent(tx, ownerUserId, agentId);
       if (agent.status !== 'ACTIVE') throw new ConflictException('AGENT_NOT_ACTIVE');
       await revokeActiveAgentKeys(tx, agentId);
@@ -316,6 +361,7 @@ export class AgentsService {
    */
   async revoke(ownerUserId: string, agentId: string) {
     await this.db.tx(async (tx) => {
+      await lockActiveAgentOwner(tx, ownerUserId);
       const agent = await this.lockOwnedAgent(tx, ownerUserId, agentId);
       if (agent.status === 'REVOKED') return;
       await tx.query(`UPDATE agent SET status = 'REVOKED' WHERE id = $1`, [agentId]);

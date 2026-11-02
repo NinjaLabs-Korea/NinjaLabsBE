@@ -10,10 +10,10 @@ describe('NftsService', () => {
   const parentNftId = '55555555-5555-4555-8555-555555555555';
   const newNftId = '66666666-6666-4666-8666-666666666666';
 
-  function setup(options: { contract?: string; nftInserted?: boolean; parentExists?: boolean } = {}) {
+  function setup(options: { contract?: string; nftInserted?: boolean; parentExists?: boolean; parentWalletId?: string } = {}) {
     const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
-      if (sql.includes(`SELECT id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`)) {
-        return options.parentExists ? { rowCount: 1, rows: [{ id: parentNftId }] } : { rowCount: 0, rows: [] };
+      if (sql.includes(`SELECT id, owner_wallet_id FROM nft WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`)) {
+        return options.parentExists ? { rowCount: 1, rows: [{ id: parentNftId, owner_wallet_id: options.parentWalletId ?? walletId }] } : { rowCount: 0, rows: [] };
       }
       if (sql.includes('INSERT INTO nft (')) {
         return options.nftInserted === false ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{ id: newNftId }] };
@@ -65,6 +65,11 @@ describe('NftsService', () => {
   });
 
   describe('enqueueChildMint', () => {
+    it('anchors future completion NFTs to the existing parent wallet, not the replacement payout wallet', async () => {
+      const { service, txQuery } = setup({ parentExists: true, parentWalletId: 'original-parent-wallet' });
+      await service.enqueueChildMint(userId, walletId, bountyId, submissionId);
+      expect(txQuery.mock.calls[1][1]![1]).toBe('original-parent-wallet');
+    });
     it('links the child to the user\'s parent NFT and queues MINT_CHILD keyed by the submission', async () => {
       const { service, txQuery } = setup({ contract: 'inj1contract', parentExists: true });
       await expect(service.enqueueChildMint(userId, walletId, bountyId, submissionId)).resolves.toEqual({ nftId: newNftId, parentId: parentNftId });

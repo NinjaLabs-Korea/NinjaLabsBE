@@ -58,6 +58,13 @@ export const ERROR_CODES = {
   INVALID_SIGNATURE: { statuses: [401], ko: '서명 검증에 실패했다 (지갑 연결·에이전트 등록 공통)' },
   WALLET_LINKED_TO_OTHER_ACCOUNT: { statuses: [409], ko: '이 주소가 이미 다른 계정에 연결돼 있다' },
   ACCOUNT_ALREADY_HAS_WALLET: { statuses: [409], ko: '이 계정에 이미 다른 대표 지갑이 연결돼 있다' },
+  WALLET_CHANGE_REQUIRES_WALLET: { statuses: [409], ko: '교체할 대표 지갑이 없다. 최초 연결을 먼저 완료해야 한다' },
+  WALLET_CHANGE_DISABLED: { statuses: [503], ko: '수령 지갑 교체 기능이 운영 안전 확인 전 비활성화되어 있다' },
+  WALLET_CHANGE_STALE: { statuses: [409], ko: '교체 요청의 기존 지갑이 현재 대표 지갑과 다르다. 현재 지갑으로 새 요청을 발급해야 한다' },
+  WALLET_CHANGE_SAME_ADDRESS: { statuses: [400], ko: '같은 계정 주소로는 교체할 수 없다. 0x와 inj1 표기만 다른 경우도 같은 지갑이다' },
+  WALLET_CHANGE_BLOCKED_PAYOUTS: { statuses: [409], ko: '본인 또는 소유 에이전트의 미정산 지급이 있다. FAILED 지급도 정리 후 교체해야 한다' },
+  WALLET_CHANGE_BLOCKED_NFT_JOBS: { statuses: [409], ko: '미완료 NFT 또는 민팅·연결 작업이 있다. 실패 작업도 해결 후 교체해야 한다' },
+  WALLET_CHANGE_NOT_FOUND: { statuses: [404], ko: '본인의 지갑 교체 요청이 없거나 새 요청으로 대체됐다' },
 
   // ── 에이전트 ──
   INVALID_AGENT_WALLET_ADDRESS: { statuses: [400], ko: '에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다)' },

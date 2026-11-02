@@ -60,6 +60,8 @@ export function e2eEnv(): Record<string, string> {
     INJECTIVE_NETWORK: 'testnet',
     INJECTIVE_GRPC_ENDPOINT: '',
     NFT_CONTRACT_ADDRESS: 'inj1e2econtract',
+    NFT_MINTING_ENABLED: '', // legacy/no-setting behavior: automatic issuance remains ON (fake chain only)
+    WALLET_REPLACEMENT_ENABLED: '', // feature suite explicitly opts in
     MASTER_WALLET_MNEMONIC: E2E_SECRETS.MASTER_WALLET_MNEMONIC,
     REWARD_MULTISIG_ADDRESS: 'inj1e2emultisig',
     INJECTIVE_EVM_CHAIN_ID: '1439',

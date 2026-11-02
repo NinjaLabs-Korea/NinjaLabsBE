@@ -61,6 +61,7 @@ export class MaintenanceService implements BeforeApplicationShutdown {
         `DELETE FROM throttler_storage
           WHERE expires_at <= now() AND (blocked_until IS NULL OR blocked_until <= now())`,
       ),
+      wallet_replacements: await this.deleteRows('wallet_replacements', `DELETE FROM wallet_replacement_challenge WHERE expires_at < now() - interval '1 day'`),
     };
     this.logger.log(
       `maintenance sweep: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`,

@@ -67,7 +67,8 @@
       "USER_MEMBER_GRANTED": "user",
       "USER_MEMBER_REVOKED": "user",
       "USER_NICKNAME_CHANGED": "user",
-      "USER_WITHDRAWN": "user"
+      "USER_WITHDRAWN": "user",
+      "WALLET_REPLACED": "user"
     },
     "scriptActions": {
       "ADMIN_GRANTED": "user",

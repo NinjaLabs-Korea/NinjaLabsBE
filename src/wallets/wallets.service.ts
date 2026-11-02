@@ -5,8 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { getInjectiveAddress, getEthereumAddress } from '@injectivelabs/sdk-ts';
-import { getAddress } from 'ethers';
+import { getInjectiveAddress } from '@injectivelabs/sdk-ts';
 import { randomBytes } from 'crypto';
 import { isEvmAddress, signatureSchemeFor } from '../common/crypto/wallet-signature';
 import { DatabaseService } from '../common/database/database.service';
@@ -14,6 +13,8 @@ import { isUniqueViolation } from '../common/database/pg-errors';
 import { NftsService } from '../nfts/nfts.service';
 import { primaryWalletSql } from './primary-wallet';
 import { ONBOARDING_STEP } from '../users/onboarding-step';
+import { normalizeWalletAddress, sameWalletAccount } from './wallet-address';
+import { activeUserSql } from '../users/active-user';
 
 /** wallet의 부분 유니크 인덱스(0002): 주소는 플랫폼 전체에서 1개, 유저당 활성 대표 지갑 1개. verifySignature는 이 둘의 23505만 409로 바꾼다 */
 export const WALLET_ADDRESS_UNIQUE_INDEX = 'uq_wallet_chain_address_active';
@@ -36,35 +37,17 @@ export class WalletsService {
   ) {}
 
   private normalizeChallengeAddress(address: string): string {
-    const trimmed = address.trim();
-    if (/^0x/i.test(trimmed)) {
-      try {
-        return getAddress(trimmed);
-      } catch {
-        throw new BadRequestException('INVALID_INJECTIVE_ADDRESS');
-      }
-    }
-
-    if (!trimmed.startsWith('inj1')) {
-      throw new BadRequestException('INVALID_INJECTIVE_ADDRESS');
-    }
-
-    try {
-      // decode + re-encode so an invalid or non-Injective bech32 address is rejected.
-      return getInjectiveAddress(getEthereumAddress(trimmed));
-    } catch {
-      throw new BadRequestException('INVALID_INJECTIVE_ADDRESS');
-    }
+    return normalizeWalletAddress(address);
   }
 
   /** 에이전트 지갑(0x 또는 inj1로 저장)이 이 inj1 주소와 같은 계정인가 */
   private sameAccount(agentWallet: string, injectiveAddress: string): boolean {
-    try {
-      const inj = isEvmAddress(agentWallet) ? getInjectiveAddress(agentWallet) : agentWallet;
-      return inj.toLowerCase() === injectiveAddress.toLowerCase();
-    } catch {
-      return false;
-    }
+    return sameWalletAccount(agentWallet, injectiveAddress);
+  }
+
+  private async lockOwner(tx: Pick<DatabaseService, 'query'>, userId: string) {
+    const owner = await tx.query(`SELECT id FROM "user" WHERE id = $1 AND ${activeUserSql('')} FOR UPDATE`, [userId]);
+    if (!owner.rowCount) throw new NotFoundException('USER_NOT_FOUND');
   }
 
   async createChallenge(userId: string, address: string) {
@@ -84,6 +67,9 @@ export class WalletsService {
     // 같은 (user, wallet)의 미사용 challenge는 지우고 새로 발급 - 열린 challenge는 항상 최대 1개 (만료 행 정리는 MaintenanceService 크론).
     // 같은 (user, wallet)의 동시 발급은 트랜잭션 범위 advisory lock으로 직렬화한다 - 두 요청이 서로의 DELETE를 보지 못한 채 INSERT하면 2개가 열린다
     return this.db.tx(async (tx) => {
+      // All wallet writers use owner → challenge/advisory → wallet. Lock before
+      // challenge renewal too, otherwise its DELETE/FK can invert verification.
+      await this.lockOwner(tx, userId);
       await tx.query(
         `SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text))`,
         [userId, normalizedAddress],
@@ -95,7 +81,7 @@ export class WalletsService {
       );
       const r = await tx.query<{ id: string; nonce: string; message: string; expires_at: string }>(
         `INSERT INTO wallet_verification_challenge (user_id, wallet_address, nonce, message, expires_at)
-         VALUES ($1, $2, $3, $4, now() + interval '5 minutes')
+         VALUES ($1, $2, $3, $4, clock_timestamp() + interval '5 minutes')
          RETURNING id, nonce, message, expires_at`,
         [userId, normalizedAddress, nonce, message],
       );
@@ -118,9 +104,12 @@ export class WalletsService {
       // challenge 조회(행 잠금) → 서명 검증 → 소비(조건부 UPDATE) → 지갑 저장을 한 트랜잭션에서.
       // 같은 challenge로 동시에 두 번 verify하면 잠금 뒤 두 번째는 used_at이 찍힌 행을 보고 CHALLENGE_EXPIRED로 끝난다 (지갑은 1개만 저장).
       await this.db.tx(async (tx) => {
+        // Serialize before reserving either wallet unique-index entry. Taking the
+        // owner lock after INSERT deadlocks against replacement of the same target.
+        await this.lockOwner(tx, userId);
         // 유효한(미사용·미만료) 최신 challenge를 우선 고르고, 없으면 최신 무효 행으로 "없음"과 "만료/사용됨"을 구분한다
         const challenge = await tx.query<{ id: string; message: string; valid: boolean }>(
-          `SELECT id, message, (used_at IS NULL AND expires_at > now()) AS valid
+          `SELECT id, message, (used_at IS NULL AND expires_at > clock_timestamp()) AS valid
              FROM wallet_verification_challenge
             WHERE user_id = $1 AND wallet_address = $2
             ORDER BY valid DESC, created_at DESC
@@ -139,8 +128,8 @@ export class WalletsService {
 
         // 소비는 조건부 UPDATE로 - 조회와 소비 사이에 만료됐거나(경계) 이미 쓰였으면 0행 → 400 CHALLENGE_EXPIRED
         const consumed = await tx.query(
-          `UPDATE wallet_verification_challenge SET used_at = now()
-            WHERE id = $1 AND used_at IS NULL AND expires_at > now()
+          `UPDATE wallet_verification_challenge SET used_at = clock_timestamp()
+            WHERE id = $1 AND used_at IS NULL AND expires_at > clock_timestamp()
             RETURNING id`,
           [challengeId],
         );

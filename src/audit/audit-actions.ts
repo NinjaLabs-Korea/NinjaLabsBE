@@ -74,6 +74,7 @@ export const AUDIT_ACTIONS = {
   USER_MEMBER_REVOKED: 'user',
   USER_AVATAR_UPDATED: 'user',
   USER_AVATAR_REMOVED: 'user',
+  WALLET_REPLACED: 'user',
   // NFT 잡 (nft-jobs-admin.service.ts)
   NFT_JOB_RETRIED: 'nft_job',
 } as const;

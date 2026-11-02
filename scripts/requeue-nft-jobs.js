@@ -11,7 +11,7 @@
  * 한 트랜잭션에서:
  *   - nft_job: status FAILED → PENDING, retry_count 0(새로 5회), scheduled_at now(), started_at/processed_at NULL. last_error는 남긴다
  *     (다음 시도가 덮어쓰고 성공하면 비운다 - 무엇 때문에 실패했는지 재시도 직전까지 보이게).
- *   - nft: 그 잡의 nft가 FAILED면 token_id가 있으면(민팅은 끝났고 attach가 실패) MINTED, 없으면 PENDING으로 되돌린다
+ *   - nft: FAILED면 attached_at 이력이 있으면 ATTACHED, 그 외 token_id가 있으면 MINTED, 없으면 PENDING으로 복구
  *     - 워커의 ATTACH 분기는 MINTED/ATTACHING만, MINT 분기는 MINTED/ATTACHED가 아니면 민팅하므로 두 경우 모두 다시 돈다.
  *   - audit_log: 잡마다 NFT_JOB_REQUEUED (actor NULL, entity_type 'nft_job').
  * FAILED가 아닌 잡 id는 건너뛰고 이유를 출력한다. 워커가 다음 1분 폴링에서 집는다.
@@ -53,7 +53,7 @@ async function requeueJobs(pool, ids) {
         [jobIds],
       );
       await client.query(
-        `UPDATE nft SET status = CASE WHEN token_id IS NOT NULL THEN 'MINTED' ELSE 'PENDING' END
+        `UPDATE nft SET status = CASE WHEN attached_at IS NOT NULL THEN 'ATTACHED' WHEN token_id IS NOT NULL THEN 'MINTED' ELSE 'PENDING' END
           WHERE status = 'FAILED' AND id = ANY($1::uuid[])`,
         [[...new Set(jobs.map((job) => job.nft_id))]],
       );

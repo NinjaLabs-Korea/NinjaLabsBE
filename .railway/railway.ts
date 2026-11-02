@@ -56,6 +56,10 @@ export default defineRailway(() => {
       // 비워 두되 자리는 잡는다: 대시보드에서 넣은 값이 `railway config apply` 때 삭제 대상이 되지 않게 (src/auth/fe-origins.ts)
       AUTH_ALLOWED_REDIRECT_ORIGINS: preserve(),
       // ── 선택 운영 스위치 (기본값이면 비워 둔다) - 대시보드에서 넣은 값이 `railway config apply` 때 삭제 대상이 되지 않게 자리만 잡는다 ──
+      // 교체 기능만 기본 OFF. 호환 배포/old writer 드레인 후 정확히 true로 켠다.
+      WALLET_REPLACEMENT_ENABLED: preserve(),
+      // NFT는 미설정/빈 값이면 기존 자동 발급 유지. 명시적 false로 중지한 운영자 선택은 apply로 풀지 않는다.
+      NFT_MINTING_ENABLED: preserve(),
       // payout 2인 규칙 탈출구 (기본 false - 운영자 1인일 때만 true, docs/deployment.md env 표)
       PAYOUT_ALLOW_SELF_APPROVAL: preserve(),
       // 구 access 토큰 전환기 경계 (기본 = 프로세스 시작 시각, 2026-11-30 이후 코드와 함께 제거)

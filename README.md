@@ -13,6 +13,11 @@ Injective 생태계 빌더 커뮤니티 & 바운티 마켓플레이스의 백엔
 
 ## 빠르게 시작하기
 
+새 수령 지갑 교체만 기본 OFF다. 호환 배포·구버전 드레인 후 `WALLET_REPLACEMENT_ENABLED=true`로 켠다.
+기존 NFT 자동 발급은 새 설정 없이 유지된다(기존 체인 설정/자격 증명 필요).
+중지할 때만 `NFT_MINTING_ENABLED=false`로 설정한다. 복원 전에는 반드시 명시적으로 중지·드레인하고 체인 대조 후 재개한다.
+상세 순서는 [운영 반영 체크리스트](docs/wallet-replacement-release.md)를 따른다.
+
 ```bash
 npm install
 cp .env.example .env        # DATABASE_URL 등 채우기

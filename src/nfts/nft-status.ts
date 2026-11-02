@@ -22,6 +22,10 @@ export type NftStatus = (typeof NFT_STATUSES)[number];
 export const PARENT_READY: readonly NftStatus[] = ['MINTED', 'ATTACHED'];
 /** 민팅 잡이 다시 민팅하지 않고 건너뛰는, 이미 민팅된 NFT 자신의 상태 (멱등성. 부모 조건인 PARENT_READY와 따로 둔다) */
 export const MINT_ALREADY_DONE: readonly NftStatus[] = ['MINTED', 'ATTACHED'];
+/** All other job states may still mint/attach later, including operator-retryable failures. */
+export const TERMINAL_NFT_JOB_STATUSES = ['SUCCEEDED', 'CANCELLED'] as const;
+/** Wallet replacement must not change receiving settings while mint/attach or recovery is unresolved. */
+export const WALLET_CHANGE_READY_NFT_STATUSES: readonly NftStatus[] = ['MINTED', 'ATTACHED'];
 /** attach 대상이 될 수 있는 자식 상태 (아직 ATTACHED가 아닌 민팅 완료분) */
 export const ATTACHABLE: readonly NftStatus[] = ['MINTED', 'ATTACHING'];
 /** 민팅이 끝난 상태 (공개 통계의 "완료 NFT") */
@@ -60,8 +64,8 @@ export const REQUEUE_JOB_SQL = `UPDATE nft_job
           WHERE id = ANY($1::uuid[]) AND status = 'FAILED'`;
 
 /**
- * 재큐한 잡의 FAILED nft 복구. $1 = nft id 배열. token_id가 있으면 민팅은 끝났고 attach가 실패한 것이라 MINTED(재민팅 금지),
- * 없으면 PENDING. 워커의 tokenExists 복구도 token_id 기준이고 워커는 token_id와 minted_at을 같은 UPDATE에서 쓴다.
+ * 재큐한 잡의 FAILED nft 복구. $1 = nft id 배열. 기존 연결 완료 이력이 있으면 ATTACHED를 복원한다.
+ * 그 외 token_id가 있으면 MINTED(재민팅 금지), 없으면 PENDING. token_id와 minted_at은 같은 UPDATE에서 쓴다.
  */
-export const RESTORE_NFT_AFTER_REQUEUE_SQL = `UPDATE nft SET status = CASE WHEN token_id IS NOT NULL THEN 'MINTED' ELSE 'PENDING' END
+export const RESTORE_NFT_AFTER_REQUEUE_SQL = `UPDATE nft SET status = CASE WHEN attached_at IS NOT NULL THEN 'ATTACHED' WHEN token_id IS NOT NULL THEN 'MINTED' ELSE 'PENDING' END
           WHERE status = 'FAILED' AND id = ANY($1::uuid[])`;

@@ -84,6 +84,7 @@ function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise
  */
 type ClaimedJob = { id: string; nft_id: string; job_type: string; retry_count: number; scheduled_at: Date; claim_token: string };
 class JobClaimLostError extends Error {}
+class MintingPausedError extends Error {}
 /** execute()의 결과 - 'deferred'면 잡을 성공으로 닫지 않고 PENDING으로 되돌려 나중에 다시 시도한다 */
 type JobOutcome = 'done' | 'deferred';
 /** execute()가 읽어 mint/attach 실행기에 넘기는 NFT 행 */
@@ -154,6 +155,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
   }
 
   private async pollOnce() {
+    if (!this.mintingEnabled()) return; // explicit pause; do not claim jobs or consume retries
     await this.requeueStaleJobs();
     if (this.polling.isStopping) return; // 종료 중 - 새로 선점하지 않는다
 
@@ -164,7 +166,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
     // RETURNING 순서는 힙 순서(서브쿼리의 ORDER BY와 무관) - 오래 기다린 잡부터 처리하도록 다시 정렬한다
     const batch = [...jobs.rows].sort((a, b) => a.scheduled_at.getTime() - b.scheduled_at.getTime());
     for (const [index, job] of batch.entries()) {
-      if (this.polling.isStopping) {
+      if (this.polling.isStopping || !this.mintingEnabled()) {
         await this.releaseUnstarted(batch.slice(index));
         return;
       }
@@ -176,6 +178,13 @@ export class NftJobWorker implements BeforeApplicationShutdown {
         this.logger.error(`nft_job ${job.id} processing threw: ${this.sanitizeError(err)}`);
       }
     }
+  }
+
+  private mintingEnabled(): boolean {
+    const value = this.config.get<string>('NFT_MINTING_ENABLED');
+    // Backward compatible: an absent/empty setting preserves existing automatic
+    // issuance. Explicit false (and malformed non-empty values) pauses safely.
+    return value === undefined || value === '' || value === 'true';
   }
 
   /**
@@ -244,6 +253,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
   }
 
   private async process(job: ClaimedJob) {
+    if (!this.mintingEnabled()) { await this.releaseUnstarted([job]); return; }
     // 선점 시점의 started_at은 배치 전체의 것 - 느린 배치 꼬리가 다른 인스턴스의 고아 정리(15분)에 걸리지 않도록 잡별로 다시 찍는다.
     // PROCESSING만으로는 다른 인스턴스의 재선점을 구분하지 못한다. 실행별 토큰까지 비교한다.
     const owned = await this.db.query(
@@ -291,6 +301,15 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       );
       if (!done.rowCount) this.logger.warn(`nft_job ${job.id} finished but was no longer PROCESSING - result not recorded by this instance`);
     } catch (err) {
+      if (err instanceof MintingPausedError) {
+        // No broadcast was started by this attempt. Release only our own claim,
+        // atomically with the UI phase reset; pauses do not spend a retry.
+        await this.withClaim(job, async (tx) => {
+          await tx.query(`UPDATE nft SET status = 'PENDING' WHERE id = $1 AND status = 'MINTING' AND token_id IS NULL`, [job.nft_id]);
+          await tx.query(`UPDATE nft_job SET status = 'PENDING', claim_token = NULL WHERE id = $1`, [job.id]);
+        });
+        return;
+      }
       if (err instanceof JobClaimLostError) {
         this.logger.warn(`nft_job ${job.id} claim expired - ignoring the previous attempt`);
         return;
@@ -310,7 +329,9 @@ export class NftJobWorker implements BeforeApplicationShutdown {
           [job.id, exhausted ? 'FAILED' : 'PENDING', message, job.claim_token],
         );
         if (result.rowCount && exhausted) {
-          await tx.query(`UPDATE nft SET status = 'FAILED' WHERE id = $1`, [job.nft_id]);
+          // A peer may have attached this NFT before this mint job's bookkeeping failed.
+          // Never undo that completed phase; retry restores legacy FAILED attachments too.
+          await tx.query(`UPDATE nft SET status = 'FAILED' WHERE id = $1 AND status <> 'ATTACHED' AND attached_at IS NULL`, [job.nft_id]);
         }
         return result;
       });
@@ -386,6 +407,7 @@ export class NftJobWorker implements BeforeApplicationShutdown {
       } else {
         // A slow tokenExists call may have outlived this claim. Check again before broadcasting.
         await this.withClaim(job, async () => undefined);
+        if (!this.mintingEnabled()) throw new MintingPausedError();
         const txHash = await this.chain.mint(nft.id, nft.owner_address, nft.metadata_uri);
         await this.ownedQuery(job,
           `UPDATE nft

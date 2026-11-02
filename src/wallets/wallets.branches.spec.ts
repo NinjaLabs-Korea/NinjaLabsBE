@@ -22,6 +22,7 @@ function setup() {
   const mock = createMockDb({
     strict: true,
     handlers: [
+      { match: /^SELECT id FROM "user" .* FOR UPDATE$/, reply: () => ({ rowCount: 1, rows: [{ id: userId }] }) },
       { match: /^SELECT pg_advisory_xact_lock/, reply: () => ({ rowCount: 1, rows: [] }) },
       { match: /^DELETE FROM wallet_verification_challenge/, reply: () => ({ rowCount: 0, rows: [] }) },
       { match: /^INSERT INTO wallet_verification_challenge/, reply: (params) => {

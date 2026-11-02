@@ -20,11 +20,12 @@ jest.mock('../common/crypto/adr36', () => ({
  * 롤백 시 챌린지 소비 취소)은 실 Postgres 위의 `src/test-db/wallets.db-spec.ts`가 행으로 단언한다.
  */
 const STMT = {
+  owner: /^SELECT id FROM "user" .* FOR UPDATE$/,
   lock: /^SELECT pg_advisory_xact_lock/,
   purge: /^DELETE FROM wallet_verification_challenge/,
   issue: /^INSERT INTO wallet_verification_challenge/,
   lookup: /^SELECT id, message, .* FROM wallet_verification_challenge/,
-  consume: /^UPDATE wallet_verification_challenge SET used_at = now\(\)/,
+  consume: /^UPDATE wallet_verification_challenge SET used_at = clock_timestamp\(\)/,
   agents: /^SELECT wallet_address FROM agent WHERE owner_user_id/,
   walletInsert: /^INSERT INTO wallet /,
   onboarding: /^UPDATE "user" SET onboarding_step/,
@@ -42,6 +43,7 @@ describe('WalletsService EVM verification', () => {
     const { database, db, txClient } = createMockDb({
       strict: true,
       handlers: [
+        on(STMT.owner, () => ({ rowCount: 1, rows: [{ id: 'user-id' }] })),
         on(STMT.myWallet, () => ({ rowCount: 1, rows: [{ id: 'wallet-id', chain: 'INJECTIVE', address: mockCanonicalInjectiveAddress }] })),
         on(STMT.lock, () => ({ rowCount: 1, rows: [] })),
         on(STMT.purge, () => ({ rowCount: 0, rows: [] })),
@@ -81,6 +83,7 @@ describe('WalletsService createChallenge', () => {
     const { database, db, txQuery } = createMockDb({
       strict: true,
       handlers: [
+        on(STMT.owner, () => ({ rowCount: 1, rows: [{ id: 'user-id' }] })),
         on(STMT.lock, () => ({ rowCount: 1, rows: [] })),
         on(STMT.purge, () => ({ rowCount: 2, rows: [] })),
         on(STMT.issue, (params) => ({ rowCount: 1, rows: [{ id: 'challenge-id', nonce: params![2], message: params![3] }] })),
@@ -95,7 +98,7 @@ describe('WalletsService createChallenge', () => {
     expect(db.query).not.toHaveBeenCalled();
     // lock, purge and insert all bind the same normalized (user, wallet) pair; the SQL clauses are asserted on a real database
     const bound = (txQuery.mock.calls as Array<[string, unknown[]]>).map(([, params]) => params.slice(0, 2));
-    expect(bound).toEqual([['user-id', signer.address], ['user-id', signer.address], ['user-id', signer.address]]);
+    expect(bound).toEqual([['user-id'], ['user-id', signer.address], ['user-id', signer.address], ['user-id', signer.address]]);
   });
 });
 
@@ -104,6 +107,7 @@ describe('WalletsService challenge lookup', () => {
     const mock = createMockDb({
       strict: true,
       handlers: [
+        on(STMT.owner, () => ({ rowCount: 1, rows: [{ id: 'user-id' }] })),
         on(STMT.lookup, () => ({ rowCount: rows.length, rows })),
         on(STMT.consume, () => ({ rowCount: consumeRowCount, rows: consumeRowCount ? [{ id: rows[0]?.id }] : [] })),
         on(STMT.agents, () => ({ rowCount: 0, rows: [] })),
@@ -130,13 +134,13 @@ describe('WalletsService challenge lookup', () => {
     await expect(run()).rejects.toMatchObject({ message: 'CHALLENGE_NOT_FOUND' });
     expect(db.tx).toHaveBeenCalledTimes(1);
     expect(db.query).not.toHaveBeenCalled();
-    expect(txQuery).toHaveBeenCalledTimes(1);
+    expect(txQuery).toHaveBeenCalledTimes(2);
   });
 
   it('reports CHALLENGE_EXPIRED when only used or expired challenges exist, without touching anything', async () => {
     const { txQuery, run } = verify([{ id: 'old', message: 'm', valid: false }]);
     await expect(run()).rejects.toMatchObject({ message: 'CHALLENGE_EXPIRED' });
-    expect(txQuery).toHaveBeenCalledTimes(1);
+    expect(txQuery).toHaveBeenCalledTimes(2);
   });
 
   it('reports CHALLENGE_EXPIRED when the conditional consume matches no row (used or expired between lookup and consume), storing no wallet', async () => {

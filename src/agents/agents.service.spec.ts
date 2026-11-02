@@ -27,6 +27,7 @@ describe('AgentsService key rotation and revocation', () => {
 
   function setup(status: string | null) {
     const handlers: SqlHandler[] = [
+      { match: /^SELECT id FROM "user" .* FOR SHARE$/, reply: () => ({ rowCount: 1, rows: [{ id: ownerUserId }] }) },
       { match: /FOR UPDATE$/, reply: () => (status ? { rowCount: 1, rows: [{ status }] } : { rowCount: 0, rows: [] }) },
       { match: /^UPDATE agent_api_key SET status = 'REVOKED'/, reply: () => ok },
       { match: /^UPDATE agent SET status = 'REVOKED'/, reply: () => ok },
@@ -58,7 +59,7 @@ describe('AgentsService key rotation and revocation', () => {
   ])('refuses to rotate when the agent status is %s (%s) before touching any key', async (status, code) => {
     const { service, mock } = setup(status);
     await expect(service.rotateKey(ownerUserId, agentId)).rejects.toMatchObject({ message: code });
-    expect(mock.txQuery).toHaveBeenCalledTimes(1);
+    expect(mock.txQuery).toHaveBeenCalledTimes(2);
   });
 
   it('revokes the agent and its keys and audits inside the same transaction', async () => {
@@ -73,7 +74,7 @@ describe('AgentsService key rotation and revocation', () => {
   it('is idempotent: revoking an already revoked agent writes nothing and returns the same body', async () => {
     const { service, mock } = setup('REVOKED');
     await expect(service.revoke(ownerUserId, agentId)).resolves.toEqual({ agentId, status: 'REVOKED' });
-    expect(mock.txQuery).toHaveBeenCalledTimes(1);
+    expect(mock.txQuery).toHaveBeenCalledTimes(2);
   });
 
   it('rejects revoking an agent the caller does not own', async () => {

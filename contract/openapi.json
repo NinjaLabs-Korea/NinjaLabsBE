@@ -1295,6 +1295,67 @@
         ],
         "type": "object"
       },
+      "WalletReplacementChallengeDto": {
+        "properties": {
+          "currentAddress": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          },
+          "newAddress": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          }
+        },
+        "required": [
+          "currentAddress",
+          "newAddress"
+        ],
+        "type": "object"
+      },
+      "WalletReplacementVerifyDto": {
+        "properties": {
+          "challengeId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "currentPublicKey": {
+            "maxLength": 256,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          },
+          "currentSignature": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          },
+          "newPublicKey": {
+            "maxLength": 256,
+            "minLength": 1,
+            "nullable": true,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          },
+          "newSignature": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          }
+        },
+        "required": [
+          "challengeId",
+          "currentSignature",
+          "newSignature"
+        ],
+        "type": "object"
+      },
       "WithdrawAccountDto": {
         "properties": {
           "confirmNickname": {
@@ -3433,6 +3494,54 @@
         },
         "tags": [
           "Wallets"
+        ]
+      }
+    },
+    "/wallets/replacement/challenge": {
+      "post": {
+        "operationId": "WalletReplacementController_challenge",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WalletReplacementChallengeDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "WalletReplacement"
+        ]
+      }
+    },
+    "/wallets/replacement/verify": {
+      "post": {
+        "operationId": "WalletReplacementController_verify",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WalletReplacementVerifyDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "WalletReplacement"
         ]
       }
     },

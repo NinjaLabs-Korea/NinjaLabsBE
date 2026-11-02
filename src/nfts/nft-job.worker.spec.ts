@@ -116,7 +116,7 @@ describe('NftJobWorker', () => {
         return options.tokenExists ?? false;
       }),
     };
-    const config = { get: jest.fn((key: string) => (key === 'MASTER_WALLET_MNEMONIC' ? options.mnemonic : undefined)) };
+    const config = { get: jest.fn((key: string) => key === 'MASTER_WALLET_MNEMONIC' ? options.mnemonic : undefined) };
     const alerts = { notify: jest.fn(async () => true) };
     const worker = new NftJobWorker(
       mock.database,

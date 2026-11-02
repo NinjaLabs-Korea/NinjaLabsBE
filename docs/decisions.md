@@ -49,9 +49,16 @@
 | **[구현 2026-10-30] 탈퇴와 참여의 동시성** | 기수 지원·재지원, 바운티 지원·재지원·제출·재제출은 활성 유저(에이전트면 소유자)의 행을 `FOR SHARE`로 잠근다. 탈퇴가 먼저면 409 `PROFILE_REQUIRED`, 참여가 먼저면 탈퇴가 그 기록까지 `WITHDRAWN`으로 정리한다. 지원/제출 행 잠금 전에 유저를 잠가 탈퇴와 순서를 맞춘다 | `bounties/bounty-actor.ts` `assertOnboarded`, test-db `participation-withdrawal-races.db-spec`. API·스키마 변경 없음 |
 | 동일 구글 계정 재가입 | **허용** - 단 이전 활동과 연결되지 않는 새 계정 | 0014부터 `uq_user_google_id`/`uq_user_email`은 `deleted_at IS NULL` 부분 인덱스라 충돌하지 않지만, 탈퇴 시 google_id/email에 `deleted:{ms}:` 프리픽스를 붙여 원래 식별자로 다시 찾히지 않게 한다 (구현됨, test-db `withdrawal.db-spec`) |
 | 멤버 해제 시 멤버 정보 | member_role/display_order NULL 처리, bio·링크는 유지 | `members/member-admin.service.ts` setMember 반영됨 |
-| 지갑 교체 | MVP **불허** (연결 해제 후 재연결만 운영자 문의) | NFT가 지갑에 귀속되므로 교체는 NFT 이전 문제를 수반 - Phase 3 논의 |
+| 지갑 교체 | **대표 수령 지갑에 한해 허용** (2026-11-02, 이전 MVP 불허 정책 대체). 기존·새 지갑 이중 서명, 미정산 payout(`FAILED` 포함)·미완료 NFT/잡이 있으면 거부 | `/wallets/replacement/challenge`·`verify`, 0024. 기존 지갑 행/NFT/지급 이력 보존, 부모 NFT 재발급/이전 없음. 이후 보상금은 새 대표 지갑, 완료 NFT는 기존 부모 지갑에 발급. 지급 요청·탈퇴·에이전트 등록과 유저 잠금 직렬화. 분실 복구·관리자 강제 교체는 별도 정책 필요. FE 연동 계약은 [api-contract.md](api-contract.md) "대표 수령 지갑 교체" |
 
 ## 에이전트
+
+2026-11-02 무결성 보완(0025): 같은 계정의 0x/inj1 표기와 같은 압축 공개키의 hex/base64 표기는 동일 식별자다.
+서명 주소/방식과 이력은 유지하며, 기존 중복은 자동 합치지 않고 배포 전 운영자가 확인한다.
+신규 검증 키는 base64로 저장하고 기존 hex 키도 호환한다. verify/rotate/revoke는 사용자 → agent 잠금 순서를 따른다.
+0028은 한 번 검증된 계정/키의 소유자를 별도 예약으로 보존한다. 구버전의 문자열 비교를 우회한 등록도 DB에서 거부한다.
+미검증 PENDING/REVOKED는 영구 예약을 만들지 않는다. 기존 검증 소유자는 이력을 지우지 않고 재등록할 수 있다.
+예약이 서로 다른 검증 소유자에게 걸려 있으면 마이그레이션을 중단하며 자동으로 소유자를 선택하지 않는다.
 
 | 항목 | MVP 디폴트 | 근거 / 비고 |
 |---|---|---|

@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { InjectiveNftClient } from './injective-nft.client';
+import { getInjectiveAddress } from '../test-e2e/support/injective-sdk.stub';
 
 // @injectivelabs/sdk-ts는 ESM이라 jest(commonjs)에서 못 불러온다 - 생성자 인자만 기록하는 껍데기로 대체한다
 const wasmCtor = jest.fn();
@@ -7,6 +8,7 @@ const broadcasterCtor = jest.fn();
 /** cw721 `owner_of` smart query - tests script its answer (resolved = token exists, rejected = contract/network error) */
 const fetchSmartContractState = jest.fn(async (..._args: unknown[]) => ({}));
 jest.mock('@injectivelabs/sdk-ts', () => ({
+  getEthereumAddress: jest.requireActual('../test-e2e/support/injective-sdk.stub').getEthereumAddress,
   ChainGrpcWasmApi: class { constructor(endpoint: string) { wasmCtor(endpoint); } fetchSmartContractState = (...args: unknown[]) => fetchSmartContractState(...args); },
   MsgBroadcasterWithPk: class { constructor(options: unknown) { broadcasterCtor(options); } broadcast = jest.fn(async () => ({ txHash: 'tx' })); },
   MsgExecuteContract: { fromJSON: jest.fn((msg: unknown) => msg) },
@@ -25,7 +27,7 @@ const config = (values: Record<string, string | undefined>) =>
 beforeEach(() => {
   wasmCtor.mockClear();
   broadcasterCtor.mockClear();
-  fetchSmartContractState.mockReset().mockResolvedValue({});
+  fetchSmartContractState.mockReset().mockResolvedValue({ data: Buffer.from(JSON.stringify({ owner: getInjectiveAddress('0x' + '11'.repeat(20)), approvals: [] })) });
 });
 
 describe('InjectiveNftClient endpoints', () => {
@@ -85,15 +87,18 @@ describe('InjectiveNftClient tokenExists', () => {
 
   it.each([
     ['a cw721 "not found" contract error in message', new Error('query wasm contract failed: cw721_base::state::TokenInfo not found')],
-    ['sdk-ts originalMessage carrying "not found"', Object.assign(new Error('Request failed'), { originalMessage: 'token_id not found: query wasm contract failed' })],
-    ['any casing of not found', new Error('NOT FOUND')],
-    ['a non-Error rejection whose text says not found', 'owner_of: not found'],
+    ['sdk-ts originalMessage carrying typed absence', Object.assign(new Error('Request failed'), { originalMessage: 'query wasm contract failed: cw721::state::NftInfo not found' })],
+    ['a typed error with key context', new Error('query wasm contract failed: type: cw721_base::state::TokenInfo<Empty>; key: [01] NOT FOUND')],
   ])('returns false (token not minted yet) for %s', async (_label, rejection) => {
     fetchSmartContractState.mockRejectedValueOnce(rejection);
     await expect(client().tokenExists('token-1')).resolves.toBe(false);
   });
 
   it.each([
+    ['an upstream HTTP 404', new Error('upstream HTTP 404 Not Found')],
+    ['plain ambiguous absence', new Error('NOT FOUND')],
+    ['contract absence', new Error('query wasm contract failed: cosmwasm_std::ContractInfo not found')],
+    ['an unstructured rejection', 'owner_of: not found'],
     ['a network error', new Error('ECONNREFUSED 10.0.0.1:443')],
     ['a gRPC unavailable error', Object.assign(new Error('14 UNAVAILABLE: no connection established'), { originalMessage: 'Connection dropped' })],
     ['a contract error that is not "not found"', new Error('query wasm contract failed: unauthorized')],
@@ -101,6 +106,14 @@ describe('InjectiveNftClient tokenExists', () => {
     fetchSmartContractState.mockRejectedValueOnce(failure);
     await expect(client().tokenExists('token-1')).rejects.toBe(failure);
   });
+
+  it.each([{}, { data: new Uint8Array() }, { data: Buffer.from('not-json') },
+    { data: Buffer.from('{}') }, { data: Buffer.from('{"owner":"inj1bad"}') }, { data: Buffer.alloc(65_537) }])(
+    'rejects malformed owner_of success %j', async (response) => {
+      fetchSmartContractState.mockResolvedValueOnce(response);
+      await expect(client().tokenExists('token-1')).rejects.toThrow('INVALID_NFT_OWNER_RESPONSE');
+    },
+  );
 });
 
 describe('InjectiveNftClient configuration and mint', () => {

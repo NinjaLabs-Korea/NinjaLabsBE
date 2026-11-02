@@ -192,6 +192,66 @@ describeDb('reward and payout rules on a real database', () => {
       await rewards.markPaid(b, fakeTxHash(), adminId);
       expect(await status()).toBe('PAID');
     });
+
+    it('keeps the reward PARTIALLY_PAID while another payout is still unsettled, even when the winner count is reached', async () => {
+      // maxWinners를 낮춘 뒤(첫 지급 전 운영자 수정에 해당) 두 번째 payout이 아직 APPROVED인 상태: PAID 수(1) >= maxWinners(1)이지만
+      // 미정산 payout이 남았으므로 보상을 PAID로 닫으면 안 된다 (advanceRewardStatus의 unsettled_count = 0 조건)
+      const funded = await openFunded({ amount: '1000', maxWinners: 2 });
+      const a = await approvedPayout(funded.rewardId, (await approvedWinner(funded.bountyId)).submissionId, '400');
+      const b = await approvedPayout(funded.rewardId, (await approvedWinner(funded.bountyId)).submissionId, '400');
+      await db.query(`UPDATE bounty SET max_winners = 1 WHERE id = $1`, [funded.bountyId]);
+      const status = async () => (await db.query<{ status: string }>(`SELECT status FROM bounty_reward WHERE id = $1`, [funded.rewardId])).rows[0].status;
+      await rewards.markPaid(a, fakeTxHash(), adminId);
+      expect(await status()).toBe('PARTIALLY_PAID');
+      await rewards.markPaid(b, fakeTxHash(), adminId);
+      expect(await status()).toBe('PAID');
+    });
+  });
+
+  describe('reward status recompute leaves non-payable rewards alone', () => {
+    it('paying an APPROVED payout of a reward an operator moved to REFUND_PENDING records the payment but keeps REFUND_PENDING', async () => {
+      // REFUND_PENDING은 코드가 쓰지 않고 운영자 수동 SQL로만 생긴다 - markPaid의 재계산(advanceRewardStatus)이 그 결정을 PARTIALLY_PAID/PAID로 덮으면 안 된다
+      const { payoutId, rewardId } = await readyPayout({ amount: '1000' });
+      await db.query(`UPDATE bounty_reward SET status = 'REFUND_PENDING' WHERE id = $1`, [rewardId]);
+      await expect(rewards.markPaid(payoutId, fakeTxHash(), adminId)).resolves.toMatchObject({ status: 'PAID' });
+      expect((await db.query<{ status: string }>(`SELECT status FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0].status).toBe('REFUND_PENDING');
+    });
+  });
+
+  describe('refund hash lookup (audit_log REWARD_REFUNDED only)', () => {
+    /** runbook §7.4의 수동 정정처럼 다른 action의 감사 행이 after_data에 txHash를 담아도 환불 증빙이 아니다 */
+    async function auditWithTxHash(action: string, hash: string) {
+      await db.query(
+        `INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, before_data, after_data)
+         VALUES (NULL, $1, 'payout', $2, '{}'::jsonb, jsonb_build_object('txHash', $3::text))`,
+        [action, randomUUID(), hash],
+      );
+    }
+
+    it('a txHash in a non-refund audit row does not block markPaid or confirmDeposit', async () => {
+      const { payoutId } = await readyPayout();
+      const paidHash = fakeTxHash();
+      await auditWithTxHash('PAYOUT_CORRECTED_MANUAL', normalized(paidHash));
+      await expect(rewards.markPaid(payoutId, paidHash, adminId)).resolves.toMatchObject({ status: 'PAID' });
+
+      const { id: bountyId } = await bounties.create(adminId, {
+        title: unique('deposit-audit-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
+        category: 'DEV', applicationRequired: false, submissionMode: 'DIRECT', maxWinners: 1,
+        submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+        reward: { tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount: '10' },
+      });
+      const rewardId = (await db.query<{ id: string }>(`SELECT id FROM bounty_reward WHERE bounty_id = $1`, [bountyId])).rows[0].id;
+      const depositHash = fakeTxHash();
+      await auditWithTxHash('PAYOUT_CANCELLED_MANUAL', normalized(depositHash));
+      await expect(rewards.confirmDeposit(rewardId, depositHash, '10', adminId)).resolves.toMatchObject({ status: 'FUNDED' });
+    });
+
+    it('the same txHash under REWARD_REFUNDED is 409 TX_HASH_ALREADY_USED for both', async () => {
+      const { payoutId } = await readyPayout();
+      const hash = fakeTxHash();
+      await auditWithTxHash('REWARD_REFUNDED', normalized(hash));
+      await expect(rewards.markPaid(payoutId, hash, adminId)).rejects.toMatchObject({ status: 409, message: 'TX_HASH_ALREADY_USED' });
+    });
   });
 
   describe('confirmDeposit', () => {
@@ -235,6 +295,12 @@ describeDb('reward and payout rules on a real database', () => {
 
     it('the 404 comes before the self-approval check (an unknown payout never reveals a 403)', async () => {
       await expect(rewards.markApproved(randomUUID(), adminId)).rejects.toMatchObject({ status: 404, message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
+    });
+
+    it('the requester re-approving a payout that is already APPROVED gets 404, not 403 (status check before the two-person rule)', async () => {
+      const { payoutId } = await readyPayout(); // adminId requested, approverId approved
+      await expect(rewards.markApproved(payoutId, adminId)).rejects.toMatchObject({ status: 404, message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
+      expect(await auditActions(db, 'payout', payoutId)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED']);
     });
   });
 

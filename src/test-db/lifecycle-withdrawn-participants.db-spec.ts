@@ -79,4 +79,32 @@ describeDb('lifecycle blockers for participants who left', () => {
     await db.query(`UPDATE agent SET deleted_at = now() WHERE id = $1`, [agentIds[1]]);
     expect(await count()).toBe(0);
   });
+
+  it('an approved agent counts as submitted once the agent itself submitted (submissions are matched by agent_id, not only by user)', async () => {
+    const { id: bountyId } = await bounties.create(adminId, {
+      title: unique('bounty-'), sponsorName: 'S', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
+      category: 'DEV', applicationRequired: true, submissionMode: 'AGENT', maxWinners: 1,
+      submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+    });
+    await bounties.transition(bountyId, 'OPEN', adminId);
+    const owner = await createUser(db);
+    const agent = await db.query<{ id: string }>(
+      `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at)
+       VALUES ($1, 'bot', $2, $3, 'ACTIVE', now()) RETURNING id`,
+      [owner, unique('pk-'), `0x${unique()}`],
+    );
+    const application = await applications.applyAsAgent(bountyId, agent.rows[0].id, 'hi');
+    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
+    const count = async () => {
+      const r = await lifecycle.blockers(db, bountyId, { status: 'OPEN' });
+      return r.blockerDetails.SUBMISSION_CLOSED.find((b) => b.code === 'UNSUBMITTED_PARTICIPANTS')?.count ?? 0;
+    };
+    expect(await count()).toBe(1);
+    await db.query(
+      `INSERT INTO bounty_submission (bounty_id, agent_id, submission_url, description, status)
+       VALUES ($1, $2, 'https://example.test/agent', 'd', 'SUBMITTED')`,
+      [bountyId, agent.rows[0].id],
+    );
+    expect(await count()).toBe(0);
+  });
 });

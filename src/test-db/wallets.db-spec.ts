@@ -2,6 +2,7 @@ import { Wallet } from 'ethers';
 import { verifyAdr36Signature } from '../common/crypto/adr36';
 import { DatabaseService } from '../common/database/database.service';
 import { NftsService } from '../nfts/nfts.service';
+import { disconnectAllWalletsOfUser } from '../wallets/wallet-disconnection';
 import { WalletsService } from '../wallets/wallets.service';
 import { describeDb } from './describe-db';
 import { createDb, createUser, testConfig } from './harness';
@@ -9,7 +10,10 @@ import { createDb, createUser, testConfig } from './harness';
 // @injectivelabs/sdk-ts is ESM-only and cannot be loaded by jest; only its address helpers are used on the EVM path.
 // Signatures are REAL EIP-191 signatures from an ethers wallet - the bech32 conversion is the only fake.
 jest.mock('@injectivelabs/sdk-ts', () => ({
-  getInjectiveAddress: (evm: string) => `inj1${evm.slice(2).toLowerCase()}`,
+  getInjectiveAddress: (evm: string) => {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(evm)) throw new Error('invalid address'); // like the real SDK, a malformed 0x value throws
+    return `inj1${evm.slice(2).toLowerCase()}`;
+  },
   getEthereumAddress: (inj: string) => (inj.startsWith('inj1') ? `0x${inj.slice(4)}` : inj), // inverse of getInjectiveAddress, so inj1 -> 0x -> inj1 round-trips
 }));
 // ADR-36 (Keplr/Leap) verification pulls @cosmjs/@noble ESM as well; not exercised on the EVM path.
@@ -298,5 +302,128 @@ describeDb('wallet challenge/verify on a real database', () => {
     await expect(wallets.myWallet(userId)).resolves.toMatchObject({ id: linked.id, chain: 'INJECTIVE', address: `inj1${signer.address.slice(2).toLowerCase()}` });
     await db.query(`UPDATE wallet SET disconnected_at = now() WHERE user_id = $1`, [userId]);
     await expect(wallets.myWallet(userId)).resolves.toBeNull();
+  });
+  // ── 변이 확인(mutation/sql-mutants.mjs K 계열)에서 살아남았던 변형을 잡는 단언 ──
+  describe('challenge ownership, selection order and expiry (survivors of the K mutants)', () => {
+    async function insertChallenge(userId: string, address: string, message: string, options: { usedAt?: string | null; createdAt: string; expiresIn?: string }) {
+      await db.query(
+        `INSERT INTO wallet_verification_challenge (user_id, wallet_address, nonce, message, used_at, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + $7::interval)`,
+        [userId, address, `n-${Math.random().toString(16).slice(2)}`, message, options.usedAt ?? null, options.createdAt, options.expiresIn ?? '5 minutes'],
+      );
+    }
+
+    it('issuing a challenge never touches another user\'s open challenge for the same address', async () => {
+      const signer = Wallet.createRandom();
+      const [alice, bob] = [await createUser(db), await createUser(db)];
+      await wallets.createChallenge(alice, signer.address);
+      await wallets.createChallenge(bob, signer.address);
+      expect(await openChallenges(alice)).toBe(1);
+      expect(await openChallenges(bob)).toBe(1);
+    });
+
+    it('a challenge expires about 5 minutes after it was issued (not hours later)', async () => {
+      const userId = await createUser(db);
+      const challenge = await wallets.createChallenge(userId, Wallet.createRandom().address);
+      const left = await db.query<{ seconds: number }>(
+        `SELECT extract(epoch FROM (expires_at - now()))::float AS seconds FROM wallet_verification_challenge WHERE id = $1`, [challenge.id]);
+      expect(left.rows[0].seconds).toBeGreaterThan(4 * 60);
+      expect(left.rows[0].seconds).toBeLessThanOrEqual(5 * 60);
+    });
+
+    it('verify only ever uses the caller\'s own challenge: another user\'s signature over their challenge is 400 CHALLENGE_NOT_FOUND and leaves it open', async () => {
+      const signer = Wallet.createRandom();
+      const [alice, bob] = [await createUser(db, { onboarded: false }), await createUser(db, { onboarded: false })];
+      const challenge = await wallets.createChallenge(alice, signer.address);
+      const signature = await signer.signMessage(challenge.message);
+      await expect(wallets.verifySignature(bob, signer.address, signature)).rejects.toMatchObject({ status: 400, message: 'CHALLENGE_NOT_FOUND' });
+      expect(await openChallenges(alice)).toBe(1);
+      expect((await db.query(`SELECT 1 FROM wallet WHERE user_id = $1`, [bob])).rowCount).toBe(0);
+    });
+
+    it('verify prefers the valid challenge over a newer used one', async () => {
+      const signer = Wallet.createRandom();
+      const userId = await createUser(db, { onboarded: false });
+      const message = 'valid, older';
+      await insertChallenge(userId, signer.address, message, { createdAt: '2026-01-01T00:00:00Z' });
+      await insertChallenge(userId, signer.address, 'used, newer', { createdAt: '2026-01-02T00:00:00Z', usedAt: '2026-01-02T00:01:00Z' });
+      await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(message))).resolves.toMatchObject({ chain: 'INJECTIVE' });
+    });
+
+    it('verify prefers the valid challenge over a newer expired one', async () => {
+      const signer = Wallet.createRandom();
+      const userId = await createUser(db, { onboarded: false });
+      const message = 'valid, older';
+      await insertChallenge(userId, signer.address, message, { createdAt: '2026-01-01T00:00:00Z' });
+      await insertChallenge(userId, signer.address, 'expired, newer', { createdAt: '2026-01-02T00:00:00Z', expiresIn: '-1 minute' });
+      await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(message))).resolves.toMatchObject({ chain: 'INJECTIVE' });
+    });
+
+    it('with several valid challenges verify checks the newest message, not the oldest', async () => {
+      const signer = Wallet.createRandom();
+      const userId = await createUser(db, { onboarded: false });
+      await insertChallenge(userId, signer.address, 'older', { createdAt: '2026-01-01T00:00:00Z' });
+      await insertChallenge(userId, signer.address, 'newer', { createdAt: '2026-01-02T00:00:00Z' });
+      await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage('newer'))).resolves.toMatchObject({ chain: 'INJECTIVE' });
+    });
+  });
+
+  describe('agent wallet conflict edge cases (survivors of the K mutants)', () => {
+    async function linkWithAgentWallet(agentWallet: (signerInj: string) => string, deleted = false) {
+      const signer = Wallet.createRandom();
+      const userId = await createUser(db, { onboarded: false });
+      await db.query(
+        `INSERT INTO agent (owner_user_id, name, wallet_address, status, verified_at, deleted_at)
+         VALUES ($1, 'twin', $2, 'ACTIVE', now(), CASE WHEN $3::boolean THEN now() END)`,
+        [userId, agentWallet(`inj1${signer.address.slice(2).toLowerCase()}`), deleted],
+      );
+      const challenge = await wallets.createChallenge(userId, signer.address);
+      return wallets.verifySignature(userId, signer.address, await signer.signMessage(challenge.message));
+    }
+
+    it('a soft-deleted agent on the same wallet does not block linking it', async () => {
+      await expect(linkWithAgentWallet((inj) => inj, true)).resolves.toMatchObject({ chain: 'INJECTIVE' });
+    });
+
+    it('the comparison is case-insensitive: an upper-case INJ1 agent wallet still blocks', async () => {
+      const signer = Wallet.createRandom();
+      const userId = await createUser(db, { onboarded: false });
+      await db.query(`INSERT INTO agent (owner_user_id, name, wallet_address, status, verified_at) VALUES ($1, 'twin', $2, 'ACTIVE', now())`,
+        [userId, `inj1${signer.address.slice(2).toLowerCase()}`.toUpperCase()]);
+      const challenge = await wallets.createChallenge(userId, signer.address);
+      await expect(wallets.verifySignature(userId, signer.address, await signer.signMessage(challenge.message)))
+        .rejects.toMatchObject({ message: 'AGENT_WALLET_IS_OWNER_WALLET' });
+    });
+
+    it('a malformed 0x agent wallet (cannot be converted) never blocks linking', async () => {
+      await expect(linkWithAgentWallet(() => '0xnot-a-real-address')).resolves.toMatchObject({ chain: 'INJECTIVE' });
+    });
+  });
+
+  describe('primary wallet predicate and wallet disconnection (survivors of the K mutants)', () => {
+    it('myWallet ignores a connected wallet that is not primary', async () => {
+      const userId = await createUser(db);
+      await db.query(`INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, false, now())`, [userId, `inj1${Wallet.createRandom().address.slice(2).toLowerCase()}`]);
+      await expect(wallets.myWallet(userId)).resolves.toBeNull();
+    });
+
+    it('disconnectAllWalletsOfUser disconnects only that user\'s connected wallets and keeps an earlier disconnected_at', async () => {
+      const [leaving, staying] = [await createUser(db), await createUser(db)];
+      const address = () => `inj1${Wallet.createRandom().address.slice(2).toLowerCase()}`;
+      const insert = (userId: string, disconnectedAt: string | null) => db.query<{ id: string }>(
+        `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at, disconnected_at) VALUES ($1, 'INJECTIVE', $2, $3, now(), $4) RETURNING id`,
+        [userId, address(), disconnectedAt === null, disconnectedAt]);
+      const connected = (await insert(leaving, null)).rows[0].id;
+      const earlier = (await insert(leaving, '2020-01-01T00:00:00Z')).rows[0].id;
+      const other = (await insert(staying, null)).rows[0].id;
+
+      await db.tx((tx) => disconnectAllWalletsOfUser(tx, leaving));
+
+      const rows = await db.query<{ id: string; disconnected_at: Date | null }>(`SELECT id, disconnected_at FROM wallet WHERE id = ANY($1::uuid[])`, [[connected, earlier, other]]);
+      const byId = new Map(rows.rows.map((row) => [row.id, row.disconnected_at]));
+      expect(byId.get(connected)).toBeInstanceOf(Date);
+      expect(byId.get(earlier)?.toISOString()).toBe('2020-01-01T00:00:00.000Z');
+      expect(byId.get(other)).toBeNull();
+    });
   });
 });

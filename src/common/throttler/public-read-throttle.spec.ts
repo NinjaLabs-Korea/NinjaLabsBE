@@ -1,12 +1,14 @@
 import 'reflect-metadata';
 import { RequestMethod } from '@nestjs/common';
 import { METHOD_METADATA } from '@nestjs/common/constants';
+import { AuthGuard } from '../../auth/auth.guard';
 import { BountiesController } from '../../bounties/bounties.controller';
 import { HighlightsController } from '../../highlights/highlights.controller';
 import { MediaController } from '../../media/media.controller';
 import { MembersController } from '../../members/members.controller';
 import { NoticesController } from '../../notices/notices.controller';
 import { UsersController } from '../../users/users.controller';
+import { USER_AVATAR_THROTTLER, UserThrottlerGuard } from '../../users/user-throttler.guard';
 import { PUBLIC_READ_IP_THROTTLE } from './public-read-throttle';
 
 const LIMIT = 'THROTTLER:LIMITdefault';
@@ -53,11 +55,16 @@ describe('PUBLIC_READ_IP_THROTTLE', () => {
 });
 
 describe('sensitive users routes keep their own limits', () => {
-  it('check-nickname stays 30, DELETE /users/me stays 5, avatar upload/delete stay 10', () => {
+  it('check-nickname stays 30, DELETE /users/me stays 5; avatar upload/delete have no IP override (global 120) but a per-user 10/min guard', () => {
     const limits = Object.getOwnPropertyNames(UsersController.prototype)
       .map((n) => Reflect.getMetadata(LIMIT, (UsersController.prototype as any)[n] as object))
       .filter((l) => l !== undefined)
       .sort((a, b) => a - b);
-    expect(limits).toEqual([5, 10, 10, 30, 600]);
+    expect(limits).toEqual([5, 30, 600]);
+    for (const handler of ['uploadAvatar', 'removeAvatar']) {
+      const guards = Reflect.getMetadata('__guards__', (UsersController.prototype as any)[handler] as object) as unknown[];
+      expect(guards).toEqual([AuthGuard, UserThrottlerGuard]); // AuthGuard first: the user bucket needs req.user
+    }
+    expect(USER_AVATAR_THROTTLER).toMatchObject({ ttl: 60_000, limit: 10 });
   });
 });

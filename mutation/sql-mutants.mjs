@@ -1,7 +1,7 @@
 /**
  * 돈 경로 SQL 표적 변형 목록 - mutation/run-sql-mutants.mjs가 하나씩 적용한다.
  *   id    고정 식별자 (P: payout-status.ts, R: rewards.service.ts, L: bounty-lifecycle.service.ts, D: 삭제 가드, W: 탈퇴 가드,
- *         C: completed-wins.ts, F: record-refund.js, A: forfeit-award.js)
+ *         C: completed-wins.ts, F: record-refund.js, A: forfeit-award.js, K: 지갑 연결(wallets), V: 제출 심사)
  *   from  원문 (파일에 정확히 한 번 나와야 한다. 코드가 바뀌어 STALE이 되면 여기를 고친다)
  *   to    바꿀 값
  *   why   어떤 버그를 흉내 내나
@@ -15,6 +15,12 @@ const AW = 'src/users/account-withdrawal.service.ts';
 const CW = 'src/bounties/completed-wins.ts';
 const RR = 'scripts/record-refund.js';
 const FA = 'scripts/forfeit-award.js';
+const WS = 'src/wallets/wallets.service.ts';
+const PW = 'src/wallets/primary-wallet.ts';
+const WD = 'src/wallets/wallet-disconnection.ts';
+const SR = 'src/bounties/submissions/submission-review.service.ts';
+const SY = 'src/bounties/submissions/system-review.ts';
+const SP = 'src/bounties/submission-status.ts';
 
 export const MUTANTS = [
   // ── payout-status.ts: 상태 집합 (원소 하나 빠짐 / 더함) ──
@@ -120,4 +126,69 @@ export const MUTANTS = [
   { id: 'A3', file: FA, from: "b.status AS bounty_status, b.deleted_at IS NOT NULL AS bounty_deleted,", to: "b.status AS bounty_status, false AS bounty_deleted,", why: '보상 미지급: 삭제된 바운티 허용' },
   { id: 'A4', file: FA, from: "await client.query(`UPDATE bounty_submission SET status = 'REJECTED', reviewed_at = now() WHERE id = $1`, [submissionId]);", to: "await client.query(`UPDATE bounty_submission SET reviewed_at = now() WHERE id = $1`, [submissionId]);", why: '보상 미지급: 제출이 APPROVED로 남음 (COMPLETED 계속 차단)' },
   { id: 'A5', file: FA, from: "`SELECT id, is_admin, status, deleted_at IS NOT NULL AS deleted FROM \"user\" WHERE id = $1`", to: "`SELECT id, is_admin, status, false AS deleted FROM \"user\" WHERE id = $1`", why: '보상 미지급: 탈퇴한 운영자 id 허용', equivalent: '회원 탈퇴(account-withdrawal.service.ts)는 status = WITHDRAWN과 deleted_at을 같은 UPDATE로 쓴다. refusalReason이 status !== ACTIVE로 이미 거부하므로 deleted 열은 방어적 중복이다(순수 함수 분기는 forfeit-award.spec.ts가 따로 덮는다)' },
+
+  // ── wallets.service.ts / primary-wallet.ts / wallet-disconnection.ts (지갑 연결: challenge 발급·verify·대표 지갑) ──
+  { id: 'K1', file: WS, from: '          WHERE user_id = $1 AND wallet_address = $2 AND used_at IS NULL`,', to: '          WHERE user_id = $1 AND wallet_address = $2`,', why: 'challenge 재발급: 사용된 challenge까지 지움' },
+  { id: 'K2', file: WS, from: '          WHERE user_id = $1 AND wallet_address = $2 AND used_at IS NULL`,', to: '          WHERE user_id = $1 AND used_at IS NULL AND $2::text IS NOT NULL`,', why: 'challenge 재발급: 같은 유저의 다른 지갑 challenge까지 지움' },
+  { id: 'K3', file: WS, from: '          WHERE user_id = $1 AND wallet_address = $2 AND used_at IS NULL`,', to: '          WHERE wallet_address = $2 AND used_at IS NULL AND $1::uuid IS NOT NULL`,', why: 'challenge 재발급: 다른 유저의 같은 주소 challenge까지 지움' },
+  { id: 'K4', file: WS, from: "`SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text))`", to: "`SELECT hashtext($1::text || ':' || $2::text)`", why: 'challenge 발급 advisory lock 제거 (동시 발급이 2개 열림)' },
+  { id: 'K5', file: WS, from: "VALUES ($1, $2, $3, $4, now() + interval '5 minutes')", to: "VALUES ($1, $2, $3, $4, now() + interval '5 hours')", why: 'challenge 만료 시간 5분 -> 5시간' },
+  { id: 'K6', file: WS, from: "VALUES ($1, $2, $3, $4, now() + interval '5 minutes')", to: "VALUES ($1, $2, $3, $4, now() - interval '5 minutes')", why: 'challenge가 발급 즉시 만료' },
+  { id: 'K7', file: WS, from: '            ORDER BY valid DESC, created_at DESC', to: '            ORDER BY created_at DESC', why: 'verify: 유효 challenge보다 최신 무효 행을 먼저 고름' },
+  { id: 'K8', file: WS, from: '            ORDER BY valid DESC, created_at DESC', to: '            ORDER BY valid DESC, created_at ASC', why: 'verify: 가장 오래된 challenge를 고름 (옛 메시지 재사용)' },
+  { id: 'K9', file: WS, from: '(used_at IS NULL AND expires_at > now()) AS valid', to: '(expires_at > now()) AS valid', why: 'verify: 이미 쓴 challenge도 유효로 봄 (재사용)' },
+  { id: 'K10', file: WS, from: '(used_at IS NULL AND expires_at > now()) AS valid', to: '(used_at IS NULL) AS valid', why: 'verify: 만료된 challenge도 유효로 봄' },
+  { id: 'K11', file: WS, from: '            WHERE user_id = $1 AND wallet_address = $2\n            ORDER BY valid', to: '            WHERE wallet_address = $2 AND $1::uuid IS NOT NULL\n            ORDER BY valid', why: 'verify: 다른 유저가 발급받은 challenge로 검증' },
+  { id: 'K12', file: WS, from: '            LIMIT 1\n              FOR UPDATE`,', to: '            LIMIT 1`,', why: 'verify: challenge 행 잠금 제거 (같은 challenge 동시 verify)', equivalent: '행 잠금이 없어도 소비 UPDATE의 used_at IS NULL 조건이 같은 challenge의 동시 verify를 직렬화해 한쪽만 통과시킨다. 결과가 같다' },
+  { id: 'K13', file: WS, from: "WHERE id = $1 AND used_at IS NULL AND expires_at > now()\n            RETURNING id`", to: "WHERE id = $1 AND expires_at > now()\n            RETURNING id`", why: 'challenge 소비: 사용 여부 조건 누락', equivalent: '조회의 valid(미사용)가 이미 같은 트랜잭션에서 사용 여부를 확인하고 행을 잠갔다. 소비 UPDATE 조건은 중복 안전장치다' },
+  { id: 'K14', file: WS, from: "WHERE id = $1 AND used_at IS NULL AND expires_at > now()\n            RETURNING id`", to: "WHERE id = $1 AND used_at IS NULL\n            RETURNING id`", why: 'challenge 소비: 만료 조건 누락', equivalent: 'now()는 트랜잭션 시작 시각이라 조회의 valid 판정과 같은 시각이다. 같은 트랜잭션에서는 갈릴 수 없다' },
+  { id: 'K15', file: WS, from: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED' AND deleted_at IS NULL", to: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL", why: '에이전트 지갑 충돌: 폐기된 에이전트도 막음' },
+  { id: 'K16', file: WS, from: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED' AND deleted_at IS NULL", to: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED'", why: '에이전트 지갑 충돌: 삭제된 에이전트도 막음' },
+  { id: 'K17', file: WS, from: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED' AND deleted_at IS NULL", to: "SELECT wallet_address FROM agent WHERE status <> 'REVOKED' AND deleted_at IS NULL AND $1::uuid IS NOT NULL", why: '에이전트 지갑 충돌: 남의 에이전트 지갑도 막음' },
+  { id: 'K18', file: WS, from: "VALUES ($1, 'INJECTIVE', $2, $3, true, now())", to: "VALUES ($1, 'INJECTIVE', $2, $3, false, now())", why: '연결 지갑이 대표가 아님' },
+  { id: 'K19', file: WS, from: "VALUES ($1, 'INJECTIVE', $2, $3, true, now())", to: "VALUES ($1, 'INJECTIVE', $2, $3, true, NULL)", why: '연결 지갑이 verified_at 없이 저장' },
+  { id: 'K20', file: WS, from: 'SET onboarding_step = GREATEST(onboarding_step, ${ONBOARDING_STEP.PROFILE})', to: 'SET onboarding_step = LEAST(onboarding_step, ${ONBOARDING_STEP.PROFILE})', why: '온보딩 단계가 앞으로만 가지 않음 (LEAST)' },
+  { id: 'K21', file: WS, from: 'SET onboarding_step = GREATEST(onboarding_step, ${ONBOARDING_STEP.PROFILE})', to: 'SET onboarding_step = ${ONBOARDING_STEP.PROFILE}', why: '온보딩 단계가 되돌아감' },
+  { id: 'K22', file: WS, from: '            WHERE id = $1 AND deleted_at IS NULL`,\n          [userId],\n        );\n        // 동시 탈퇴', to: '            WHERE id = $1`,\n          [userId],\n        );\n        // 동시 탈퇴', why: '단계 UPDATE가 탈퇴한 유저를 갱신 (동시 탈퇴 감지 상실)' },
+  { id: 'K23', file: PW, from: 'return `${c}is_primary = true AND ${c}disconnected_at IS NULL`;', to: 'return `${c}disconnected_at IS NULL`;', why: '대표 지갑 조건에서 is_primary 누락' },
+  { id: 'K24', file: PW, from: 'return `${c}is_primary = true AND ${c}disconnected_at IS NULL`;', to: 'return `${c}is_primary = true`;', why: '대표 지갑 조건에서 연결 해제 여부 누락 (해제된 지갑이 대표)' },
+  { id: 'K25', file: WD, from: '      WHERE user_id = $1 AND disconnected_at IS NULL`,', to: '      WHERE user_id = $1`,', why: '탈퇴 지갑 해제: 이미 해제된 지갑의 시각을 덮어씀' },
+  { id: 'K26', file: WD, from: '      WHERE user_id = $1 AND disconnected_at IS NULL`,', to: '      WHERE disconnected_at IS NULL AND $1::uuid IS NOT NULL`,', why: '탈퇴 지갑 해제: 다른 유저의 지갑까지 해제' },
+  { id: 'K27', file: WS, from: 'if (mine?.address === injectiveAddress) return mine;', to: 'if (mine) return mine;', why: '재시도 멱등: 다른 주소 연결 시도도 성공으로 돌려줌' },
+  { id: 'K28', file: WS, from: 'if (isUniqueViolation(err, WALLET_ADDRESS_UNIQUE_INDEX)) throw new ConflictException', to: 'if (isUniqueViolation(err, WALLET_PRIMARY_UNIQUE_INDEX)) throw new ConflictException', why: '충돌 코드 뒤바뀜 (WALLET_LINKED_TO_OTHER_ACCOUNT 대 ACCOUNT_ALREADY_HAS_WALLET)' },
+  { id: 'K29', file: WS, from: 'return inj.toLowerCase() === injectiveAddress.toLowerCase();', to: 'return inj === injectiveAddress;', why: '에이전트 지갑 비교가 대소문자 구분' },
+  { id: 'K30', file: WS, from: '    } catch {\n      return false;\n    }\n  }\n\n  async createChallenge', to: '    } catch {\n      return true;\n    }\n  }\n\n  async createChallenge', why: '에이전트 지갑 형식이 깨졌을 때 충돌로 봄' },
+  { id: 'K31', file: WS, from: "const inj = isEvmAddress(agentWallet) ? getInjectiveAddress(agentWallet) : agentWallet;", to: "const inj = agentWallet;", why: '0x로 저장된 에이전트 지갑을 inj1로 변환하지 않고 비교' },
+  { id: 'K32', file: WS, from: "const injectiveAddress = isEvmAddress(normalizedAddress)\n      ? getInjectiveAddress(normalizedAddress)\n      : normalizedAddress;", to: "const injectiveAddress = normalizedAddress;", why: '0x 서명 지갑을 inj1로 변환하지 않고 저장' },
+  { id: 'K33', file: WS, from: "[userId, injectiveAddress, verified.publicKey],", to: "[userId, injectiveAddress, pubKey ?? verified.publicKey],", why: '클라이언트가 보낸 publicKey를 그대로 저장' },
+  { id: 'K34', file: WS, from: "WHERE user_id = $1 AND ${primaryWalletSql('')}`,", to: "WHERE ${primaryWalletSql('')} AND $1::uuid IS NOT NULL`,", why: '내 지갑 조회: 유저 조건 누락 (남의 대표 지갑)' },
+
+  // ── submission-review.service.ts / system-review.ts / submission-status.ts (제출 심사) ──
+  { id: 'V1', file: SR, from: 'WHERE s.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`', to: 'WHERE s.id = $1 FOR UPDATE OF b`', why: '심사: 삭제된 바운티의 제출도 심사' },
+  { id: 'V2', file: SR, from: 'WHERE s.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`', to: 'WHERE s.id = $1 AND b.deleted_at IS NULL`', why: '심사: 바운티 행 잠금 제거 (동시 승인이 max_winners 초과)' },
+  { id: 'V3', file: SR, from: 'if (!BountyStatusPolicy.isInProgress(parent.rows[0].status))', to: 'if (false)', why: '심사: 바운티 상태 검사 제거 (종료된 바운티도 심사)' },
+  { id: 'V4', file: SR, from: "\n                  AND ${activeUserSql('u')}\n            WHERE s.id = $1", to: "\n            WHERE s.id = $1", why: '승인: 제출자 활성 검사 제거 (정지/탈퇴 제출자 승인)' },
+  { id: 'V5', file: SR, from: 'JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id)', to: 'JOIN "user" u ON u.id = s.submitter_user_id', why: '승인: 에이전트 제출의 소유자를 확인하지 않음' },
+  { id: 'V6', file: SR, from: '            FOR SHARE OF u`', to: '`', why: '승인: 제출자 유저 행 FOR SHARE 제거 (탈퇴와 경합)' },
+  { id: 'V7', file: SR, from: 'if (decision === SubmissionDecision.APPROVE) {\n        const submitter', to: 'if (decision === SubmissionDecision.APPROVE && false) {\n        const submitter', why: '승인: 제출자 검사 블록 전체 제거' },
+  { id: 'V8', file: SR, from: 'WHERE id = $1 FOR UPDATE`,\n        [submissionId],\n      );\n      if (!sub.rowCount)', to: 'WHERE id = $1`,\n        [submissionId],\n      );\n      if (!sub.rowCount)', why: '심사: 제출 행 잠금 제거 (동시 심사가 서로 덮어씀)' },
+  { id: 'V9', file: SR, from: 'if (!SubmissionStatusPolicy.canReview(sub.rows[0].status, decision)) {', to: 'if (false) {', why: '심사: 심사 가능 상태 검사 제거' },
+  { id: 'V10', file: SR, from: 'if (revisionNo !== undefined && revisionNo !== sub.rows[0].current_revision_no) {', to: 'if (revisionNo !== undefined && revisionNo > sub.rows[0].current_revision_no) {', why: '심사: 지난 리비전 번호(작은 값)를 현재로 받아들임' },
+  { id: 'V11', file: SR, from: 'if (revisionNo !== undefined && revisionNo !== sub.rows[0].current_revision_no) {', to: 'if (revisionNo !== undefined && revisionNo < sub.rows[0].current_revision_no) {', why: '심사: 아직 없는 리비전 번호(큰 값)를 현재로 받아들임' },
+  { id: 'V12', file: SR, from: "&& !comment?.trim()) {", to: "&& !comment) {", why: '코멘트 필수: 공백만 있는 코멘트 허용' },
+  { id: 'V13', file: SR, from: "if (SubmissionStatusPolicy.requiresComment(sub.rows[0].status, decision) && !comment?.trim()) {", to: "if (SubmissionStatusPolicy.requiresComment(sub.rows[0].status, decision) && false) {", why: '코멘트 필수 규칙 제거' },
+  { id: 'V14', file: SR, from: ">= Number(parent.rows[0].max_winners)", to: "> Number(parent.rows[0].max_winners)", why: 'max_winners 경계 >= -> > (한 명 더 승인)' },
+  { id: 'V15', file: SR, from: ">= Number(parent.rows[0].max_winners)", to: ">= Number(parent.rows[0].max_winners) * 1000000", why: 'max_winners 검사 무력화' },
+  { id: 'V16', file: SR, from: "`SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`", to: "`SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status <> 'REJECTED'`", why: '승인 수 집계가 승인 외 상태까지 셈' },
+  { id: 'V17', file: SR, from: "`SELECT count(*) FROM bounty_submission WHERE bounty_id = $1 AND status = 'APPROVED'`", to: "`SELECT count(*) FROM bounty_submission WHERE status = 'APPROVED' AND $1::uuid IS NOT NULL`", why: '승인 수 집계가 다른 바운티 승인까지 셈' },
+  { id: 'V18', file: SR, from: "`UPDATE bounty_submission SET status = $2, reviewed_at = now() WHERE id = $1`", to: "`UPDATE bounty_submission SET status = $2 WHERE id = $1`", why: '심사: reviewed_at 기록 누락' },
+  { id: 'V19', file: SR, from: "comment?.trim() || null);", to: "comment || null);", why: '심사 코멘트를 trim하지 않고 저장' },
+  { id: 'V20', file: SR, from: "`SUBMISSION_${decision as SubmissionDecision}`", to: "`SUBMISSION_REVIEWED`", why: '감사 행 액션 이름이 결정을 구분하지 않음' },
+  { id: 'V21', file: SR, from: "recordReviews(tx, [submissionId], adminId, decision as SubmissionDecision,", to: "recordReviews(tx, [], adminId, decision as SubmissionDecision,", why: '심사 기록(submission_review) 누락' },
+  { id: 'V22', file: SY, from: "sr.revision_no = s.current_revision_no)", to: "sr.revision_no = 1)", why: '심사 기록이 현재 리비전이 아니라 1번 리비전을 가리킴' },
+  { id: 'V23', file: SY, from: "$2::uuid, $3::text, $4::text", to: "$2::uuid, $3::text, NULL::text", why: '심사 기록에 코멘트가 저장되지 않음' },
+  { id: 'V24', file: SP, from: "(AWAITING_REVIEW.includes(status) && !(status === SubmissionStatus.IN_REVIEW && decision === SubmissionDecision.START_REVIEW)) ||", to: "(AWAITING_REVIEW.includes(status)) ||", why: 'IN_REVIEW에 START_REVIEW 중복 허용' },
+  { id: 'V25', file: SP, from: "decision === SubmissionDecision.REQUEST_REVISION || isAbandonedRevisionReject(status, decision),", to: "decision === SubmissionDecision.REQUEST_REVISION,", why: '버려진 리비전 반려에 코멘트 불필요' },
+  { id: 'V26', file: SP, from: "status === SubmissionStatus.REVISION_REQUESTED && decision === SubmissionDecision.REJECT;", to: "status === SubmissionStatus.REVISION_REQUESTED;", why: '수정 요청 중인 제출에 모든 결정 허용 (승인 포함)' },
+  { id: 'V27', file: SP, from: "const AWAITING_REVIEW: readonly string[] = [\n  SubmissionStatus.SUBMITTED,\n  SubmissionStatus.RESUBMITTED,\n  SubmissionStatus.IN_REVIEW,\n];", to: "const AWAITING_REVIEW: readonly string[] = [\n  SubmissionStatus.SUBMITTED,\n  SubmissionStatus.IN_REVIEW,\n];", why: '심사 대기에서 RESUBMITTED 누락' },
 ];

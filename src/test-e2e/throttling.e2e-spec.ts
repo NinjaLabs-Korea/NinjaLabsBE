@@ -1,6 +1,6 @@
 import { Wallet } from 'ethers';
 import { describeDb } from '../test-db/describe-db';
-import { E2eApp, Session, startApp } from './support/harness';
+import { E2eApp, multipart, PNG_1x1, Session, startApp } from './support/harness';
 
 /** 공개 읽기(600/min)가 아닌 라우트 - 전역 120/min을 검증할 때 쓴다 (인증 없이 401) */
 const NON_PUBLIC_ROUTE = '/wallets/me';
@@ -213,6 +213,28 @@ describeDb('throttling over HTTP (e2e)', () => {
   });
 
   // The browser navigates to these two routes (not fetch): a JSON 429 would be the page the user sees.
+  describe('profile avatar upload: keyed by the logged-in user, not the IP', () => {
+    const upload = (session: Session, ip: string) => {
+      const form = multipart([{ name: 'file', value: PNG_1x1, filename: 'me.png', contentType: 'image/png' }]);
+      return e2e.request('POST', '/users/me/avatar', { body: form.body, headers: { 'content-type': form.contentType }, token: session.accessToken, ip });
+    };
+
+    it('the 11th upload in a minute by one user is 429 even from changing IPs; another user (even on the same IP) has a separate bucket', async () => {
+      const [a, b] = [await e2e.login(), await e2e.login()];
+      const statuses = await burst(10, (i) => upload(a, `203.0.113.${160 + i}`));
+      expect(statuses).toEqual(Array(10).fill(201));
+      const eleventh = await upload(a, '203.0.113.200');
+      expect(eleventh.status).toBe(429);
+      expect(eleventh.body).toEqual(TOO_MANY);
+      expect(Number(eleventh.headers['retry-after-user-avatar'])).toBeGreaterThan(0);
+      expect(eleventh.headers['retry-after']).toBeUndefined(); // the IP bucket is not what tripped
+      // user B on the very IP user A just used (a shared proxy egress) is not affected
+      expect((await upload(b, '203.0.113.200')).status).toBe(201);
+      // DELETE has its own bucket per handler: A can still delete
+      expect((await e2e.delete('/users/me/avatar', { token: a.accessToken, ip: '203.0.113.201' })).status).toBe(200);
+    });
+  });
+
   describe('browser-navigated Google routes', () => {
     it.each([
       ['/auth/google?codeChallenge=' + 'c'.repeat(43), '203.0.113.150'],

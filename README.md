@@ -34,8 +34,9 @@ npm run start:dev           # http://localhost:4000
 | `npm run test:e2e` | 앱 전체를 띄운 HTTP e2e (`TEST_DATABASE_URL` 필요) |
 | `npm run test:mutation` | 돈 경로 뮤테이션 테스트 (수동, CI 아님) |
 | `npm run build` | 프로덕션 빌드 |
+| `npm run contract:export` | API 계약 산출물 `contract/*.json` 재생성 (OpenAPI 요청 스키마, 에러 코드, 상수. DB·env 불필요, CI가 최신인지 검사) |
 
-**PR 전 체크** (CI와 같다): `npm run lint && npm run typecheck && npm test && npm run build`, Postgres가 있으면 `npm run test:db`와 `npm run test:e2e`까지. 자세한 내용은 [docs/testing.md](docs/testing.md).
+**PR 전 체크** (CI와 같다): `npm run lint && npm run typecheck && npm test && npm run build && npm run contract:export`(그 뒤 `contract/`에 diff가 없어야 한다), Postgres가 있으면 `npm run test:db`와 `npm run test:e2e`까지. 자세한 내용은 [docs/testing.md](docs/testing.md).
 
 ## 코드 구조
 
@@ -66,6 +67,8 @@ npm run start:dev           # http://localhost:4000
 | `bounties/submission-status.ts` | 제출물 상태, 심사 결정표, 코멘트 필수 규칙 |
 | `bounties/application-status.ts` | 지원서 상태, 심사 결정, 재지원 규칙 |
 | `rewards/payout-status.ts` | payout 상태 집합, 배정 상한식, 제출별 지급 상태 SQL |
+
+FE가 알아야 하는 상수(상태 집합, 전이표, 카테고리·역할 등)를 새로 만들거나 바꾸면 `scripts/contract-export.js`의 `buildConstants()`에 넣고 `npm run contract:export`로 `contract/`를 다시 생성해 같이 커밋한다.
 
 ### 공통 인프라 (`src/common/` 외)
 
@@ -99,6 +102,7 @@ npm run start:dev           # http://localhost:4000
 | `find-static-ext-nicknames.sql` | 정적 파일 확장자로 끝나는 기존 닉네임 목록 (읽기 전용) | §2 |
 | `seed-perf.sql`, `perf/` | 로컬 부하 점검용 시드와 부하 드라이버 (운영에 쓰지 않는다) | §10 |
 | `audit-gate.js` | CI의 `npm audit` 게이트 (`audit-allowlist.json`) | |
+| `contract-export.js` | `npm run contract:export`: API 계약 산출물 `contract/*.json` 생성 (운영 데이터 무관) | |
 | `ops-cli.js`, `ops-alert.js` | 스크립트 공용 접속·인자·프롬프트, 웹훅 전송 | |
 
 ## 꼭 지킬 규칙

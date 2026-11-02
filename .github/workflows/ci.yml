@@ -30,6 +30,17 @@ jobs:
       # Unit tests mock the database; no Postgres service is needed.
       - run: npm test
       - run: npm run build
+      # API 계약 산출물(contract/*.json)이 소스와 같은지: 다시 생성해서 달라지면(새 파일 포함) 실패한다.
+      # DB·env 없이 돈다(scripts/contract-export.js: 계약 전용 컴파일 + NestFactory preview 모드). 고치는 법: npm run contract:export 후 커밋
+      - run: npm run contract:export
+      - name: contract/ is up to date
+        run: |
+          if [ -n "$(git status --porcelain -- contract/)" ]; then
+            git status --porcelain -- contract/
+            git diff -- contract/ | head -200
+            echo "::error::contract/ is stale. Run npm run contract:export and commit the result."
+            exit 1
+          fi
 
   db-tests:
     name: Real-database tests (Postgres 16)

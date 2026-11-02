@@ -1,6 +1,8 @@
 # deps / build
 node_modules/
 dist/
+# npm run contract:export 의 계약 전용 컴파일 출력 (끝나면 지워지지만 실패 시 남는다)
+.contract-build/
 *.tsbuildinfo
 
 # env - 절대 커밋 금지

@@ -1,0 +1,3466 @@
+{
+  "components": {
+    "schemas": {
+      "AgentApplyDto": {
+        "properties": {
+          "message": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasVisibleText"
+            ]
+          },
+          "portfolioUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isPublicHttpUrl"
+            ]
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "AgentSubmitDto": {
+        "properties": {
+          "commitSha": {
+            "nullable": true,
+            "pattern": "^(?:[0-9a-fA-F]{4,64})?$",
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasVisibleText"
+            ]
+          },
+          "repositoryUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isPublicHttpUrl"
+            ]
+          },
+          "submissionUrl": {
+            "type": "string",
+            "x-rules": [
+              "isPublicHttpUrl"
+            ]
+          }
+        },
+        "required": [
+          "submissionUrl",
+          "description"
+        ],
+        "type": "object"
+      },
+      "AnswerInputDto": {
+        "properties": {
+          "choices": {
+            "items": {
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "nullable": true,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "other": {
+            "maxLength": 60,
+            "nullable": true,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          },
+          "questionId": {
+            "pattern": "^[A-Za-z0-9_-]{1,40}$",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          }
+        },
+        "required": [
+          "questionId"
+        ],
+        "type": "object"
+      },
+      "ApplyDto": {
+        "properties": {
+          "message": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasVisibleText"
+            ]
+          },
+          "portfolioUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isPublicHttpUrl"
+            ]
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "ChallengeDto": {
+        "properties": {
+          "address": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "type": "object"
+      },
+      "CohortApplicationFields": {
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerInputDto"
+            },
+            "maxItems": 30,
+            "type": "array"
+          },
+          "displayName": {
+            "maxLength": 60,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          },
+          "intro": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "telegram": {
+            "pattern": "^@[A-Za-z][A-Za-z0-9_]{4,31}$",
+            "type": "string"
+          },
+          "twitter": {
+            "pattern": "^@[A-Za-z0-9_]{1,15}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "displayName",
+          "telegram",
+          "twitter",
+          "answers",
+          "intro"
+        ],
+        "type": "object"
+      },
+      "CohortQuestionInputDto": {
+        "properties": {
+          "help": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LocalizedTextInputDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "id": {
+            "nullable": true,
+            "pattern": "^[A-Za-z0-9_-]{1,40}$",
+            "type": "string"
+          },
+          "label": {
+            "$ref": "#/components/schemas/LocalizedTextInputDto"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/CohortQuestionOptionInputDto"
+            },
+            "maxItems": 100,
+            "nullable": true,
+            "type": "array"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "type": {
+            "enum": [
+              "SHORT_TEXT",
+              "LONG_TEXT",
+              "SINGLE_CHOICE",
+              "MULTI_CHOICE"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "label",
+          "required"
+        ],
+        "type": "object"
+      },
+      "CohortQuestionOptionInputDto": {
+        "properties": {
+          "id": {
+            "nullable": true,
+            "pattern": "^[A-Za-z0-9_-]{1,40}$",
+            "type": "string"
+          },
+          "label": {
+            "$ref": "#/components/schemas/LocalizedTextInputDto"
+          },
+          "withDetail": {
+            "nullable": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "CohortQuestionsDto": {
+        "properties": {
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/CohortQuestionInputDto"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "type": "object"
+      },
+      "CompleteProfileDto": {
+        "properties": {
+          "bio": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "nickname": {
+            "maxLength": 50,
+            "minLength": 2,
+            "pattern": "^(?!.*[\\p{Default_Ignorable_Code_Point}\\u115F\\u1160\\u3164\\uFFA0\\p{Variation_Selector}\\uFF00-\\uFFEF\\u{1D400}-\\u{1D7FF}])(?!.*[\\u0131\\u0237\\u0250-\\u02FF\\u1D00-\\u1DBF\\u2100-\\u218F\\uA730-\\uA7FF\\uAB30-\\uAB6F])(?!(?=.*[A-Za-z\\u00C0-\\u024F])(?=.*[\\p{Script=Cyrillic}\\p{Script=Greek}\\p{Script=Coptic}\\p{Script=Armenian}\\p{Script=Cherokee}\\p{Script=Lisu}\\p{Script=Georgian}\\p{Script=Canadian_Aboriginal}\\p{Script=Tifinagh}\\p{Script=Vai}\\p{Script=Glagolitic}\\p{Script=Osage}\\p{Script=Deseret}\\p{Script=Adlam}\\p{Script=Runic}\\p{Script=Ogham}]))(?!.*\\p{M}{4})(?!.*[_.-]\\p{M})[\\p{L}\\p{N}][\\p{L}\\p{N}\\p{M}_.-]*[\\p{L}\\p{N}\\p{M}]$",
+            "type": "string",
+            "x-pattern-flags": "u",
+            "x-rules": [
+              "isNotReservedNickname",
+              "isNotStaticFileNickname"
+            ]
+          },
+          "tags": {
+            "items": {
+              "enum": [
+                "DEV",
+                "DESIGN",
+                "CONTENT",
+                "OTHER"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "nickname",
+          "bio",
+          "tags"
+        ],
+        "type": "object"
+      },
+      "ConfirmDepositDto": {
+        "properties": {
+          "depositedAmount": {
+            "pattern": "^[1-9][0-9]{0,29}$",
+            "type": "string"
+          },
+          "txHash": {
+            "maxLength": 255,
+            "pattern": "\\S",
+            "type": "string",
+            "x-length-unit": "codepoint"
+          }
+        },
+        "required": [
+          "txHash",
+          "depositedAmount"
+        ],
+        "type": "object"
+      },
+      "CreateBountyDto": {
+        "properties": {
+          "applicationDeadline": {
+            "nullable": true,
+            "pattern": "^(?!0000)",
+            "type": "string",
+            "x-rules": [
+              "isDateString"
+            ]
+          },
+          "applicationRequired": {
+            "type": "boolean"
+          },
+          "category": {
+            "enum": [
+              "DEV",
+              "DESIGN",
+              "CONTENT",
+              "OTHER"
+            ],
+            "type": "string"
+          },
+          "coverImageUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isHttpUrlOrMediaPath"
+            ]
+          },
+          "description": {
+            "maxLength": 50000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "evaluationCriteria": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "maxWinners": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "requirements": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "reward": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RewardDto"
+              }
+            ],
+            "nullable": true
+          },
+          "sponsorName": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          },
+          "submissionDeadline": {
+            "pattern": "^(?!0000)",
+            "type": "string",
+            "x-rules": [
+              "isDateString"
+            ]
+          },
+          "submissionMode": {
+            "enum": [
+              "DIRECT",
+              "AGENT"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          }
+        },
+        "required": [
+          "title",
+          "sponsorName",
+          "summary",
+          "description",
+          "requirements",
+          "evaluationCriteria",
+          "category",
+          "applicationRequired",
+          "submissionMode",
+          "maxWinners",
+          "submissionDeadline"
+        ],
+        "type": "object"
+      },
+      "CreateCohortDto": {
+        "properties": {
+          "closesAt": {
+            "nullable": true,
+            "pattern": "^(?!0000)",
+            "type": "string",
+            "x-rules": [
+              "isDateString"
+            ]
+          },
+          "description": {
+            "maxLength": 10000,
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          },
+          "opensAt": {
+            "nullable": true,
+            "pattern": "^(?!0000)",
+            "type": "string",
+            "x-rules": [
+              "isDateString"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "CreateHighlightDto": {
+        "properties": {
+          "bountyId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "displayOrder": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "imageUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isHttpUrlOrMediaPath"
+            ]
+          },
+          "linkUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isHttpUrlOrSitePath"
+            ]
+          },
+          "publish": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          },
+          "type": {
+            "enum": [
+              "MILESTONE",
+              "FEATURED_BOUNTY",
+              "PROJECT",
+              "PARTNERSHIP",
+              "AWARD",
+              "OTHER"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "description"
+        ],
+        "type": "object"
+      },
+      "CreateNoticeDto": {
+        "properties": {
+          "body": {
+            "maxLength": 50000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "category": {
+            "enum": [
+              "NINJALABS",
+              "INJECTIVE_ECOSYSTEM",
+              "EVENT",
+              "RECRUITMENT",
+              "OTHER"
+            ],
+            "type": "string"
+          },
+          "eventDate": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isCalendarDate"
+            ]
+          },
+          "externalUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isPublicHttpUrl"
+            ]
+          },
+          "publish": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "summary": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride"
+            ]
+          },
+          "thumbnailUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isHttpUrlOrMediaPath"
+            ]
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          }
+        },
+        "required": [
+          "title",
+          "body",
+          "category"
+        ],
+        "type": "object"
+      },
+      "LocalizedTextInputDto": {
+        "properties": {
+          "en": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string"
+          },
+          "ko": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "zh": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "ko"
+        ],
+        "type": "object"
+      },
+      "LoginCodeDto": {
+        "properties": {
+          "code": {
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "type": "string"
+          },
+          "codeVerifier": {
+            "pattern": "^[A-Za-z0-9._~-]{43,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "codeVerifier"
+        ],
+        "type": "object"
+      },
+      "MarkPaidDto": {
+        "properties": {
+          "txHash": {
+            "maxLength": 255,
+            "pattern": "\\S",
+            "type": "string",
+            "x-length-unit": "codepoint"
+          }
+        },
+        "required": [
+          "txHash"
+        ],
+        "type": "object"
+      },
+      "RefreshDto": {
+        "properties": {
+          "refreshToken": {
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "RegisterAgentDto": {
+        "properties": {
+          "description": {
+            "maxLength": 1000,
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          },
+          "publicKey": {
+            "nullable": true,
+            "type": "string"
+          },
+          "walletAddress": {
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          }
+        },
+        "required": [
+          "name",
+          "walletAddress"
+        ],
+        "type": "object"
+      },
+      "RequestPayoutDto": {
+        "properties": {
+          "amount": {
+            "pattern": "^[1-9][0-9]{0,29}$",
+            "type": "string"
+          },
+          "rewardId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "submissionId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rewardId",
+          "submissionId",
+          "amount"
+        ],
+        "type": "object"
+      },
+      "ReviewApplicationDto": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "APPROVED",
+              "REJECTED"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride"
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "type": "object"
+      },
+      "ReviewCohortApplicationDto": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "ACCEPTED",
+              "REJECTED"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "type": "object"
+      },
+      "ReviewSubmissionDto": {
+        "properties": {
+          "comment": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "isNotForfeitMarker"
+            ]
+          },
+          "decision": {
+            "enum": [
+              "START_REVIEW",
+              "REQUEST_REVISION",
+              "APPROVE",
+              "REJECT"
+            ],
+            "type": "string"
+          },
+          "revisionNo": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "type": "object"
+      },
+      "RewardDto": {
+        "properties": {
+          "amount": {
+            "pattern": "^[1-9][0-9]{0,29}$",
+            "type": "string"
+          },
+          "displaySymbol": {
+            "pattern": "^[A-Za-z0-9]{1,12}$",
+            "type": "string"
+          },
+          "evmChainId": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "tokenContractAddress": {
+            "maxLength": 255,
+            "nullable": true,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          },
+          "tokenDenom": {
+            "maxLength": 128,
+            "nullable": true,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          },
+          "tokenType": {
+            "enum": [
+              "NATIVE",
+              "CW20",
+              "ERC20"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "tokenType",
+          "displaySymbol",
+          "amount"
+        ],
+        "type": "object"
+      },
+      "SetMemberDto": {
+        "properties": {
+          "displayOrder": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "nullable": true,
+            "type": "integer"
+          },
+          "isMember": {
+            "type": "boolean"
+          },
+          "role": {
+            "enum": [
+              "CORE",
+              "DEV",
+              "DESIGN",
+              "OPS"
+            ],
+            "type": "string",
+            "x-rules": [
+              "validateIf"
+            ]
+          }
+        },
+        "required": [
+          "isMember"
+        ],
+        "type": "object"
+      },
+      "SubmitDto": {
+        "properties": {
+          "commitSha": {
+            "nullable": true,
+            "pattern": "^(?:[0-9a-fA-F]{4,64})?$",
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasVisibleText"
+            ]
+          },
+          "repositoryUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isPublicHttpUrl"
+            ]
+          },
+          "submissionUrl": {
+            "type": "string",
+            "x-rules": [
+              "isPublicHttpUrl"
+            ]
+          }
+        },
+        "required": [
+          "submissionUrl",
+          "description"
+        ],
+        "type": "object"
+      },
+      "TransitionBountyDto": {
+        "properties": {
+          "to": {
+            "enum": [
+              "DRAFT",
+              "FUNDING_PENDING",
+              "OPEN",
+              "SUBMISSION_CLOSED",
+              "IN_REVIEW",
+              "COMPLETED",
+              "CANCELLED"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "type": "object"
+      },
+      "TransitionCohortDto": {
+        "properties": {
+          "to": {
+            "enum": [
+              "OPEN",
+              "CLOSED"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "type": "object"
+      },
+      "UpdateBountyDto": {
+        "properties": {
+          "applicationDeadline": {
+            "nullable": true,
+            "pattern": "^(?!0000)",
+            "type": "string",
+            "x-rules": [
+              "isDateString"
+            ]
+          },
+          "applicationRequired": {
+            "type": "boolean"
+          },
+          "category": {
+            "enum": [
+              "DEV",
+              "DESIGN",
+              "CONTENT",
+              "OTHER"
+            ],
+            "type": "string"
+          },
+          "coverImageUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isSafeUrl"
+            ]
+          },
+          "description": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "evaluationCriteria": {
+            "maxLength": 40000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "maxWinners": {
+            "maximum": 1000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "requirements": {
+            "maxLength": 40000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "sponsorName": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          },
+          "submissionDeadline": {
+            "pattern": "^(?!0000)",
+            "type": "string",
+            "x-rules": [
+              "isDateString"
+            ]
+          },
+          "submissionMode": {
+            "enum": [
+              "DIRECT",
+              "AGENT"
+            ],
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateCohortApplicationDto": {
+        "properties": {
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerInputDto"
+            },
+            "maxItems": 30,
+            "type": "array"
+          },
+          "displayName": {
+            "maxLength": 60,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          },
+          "intro": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "telegram": {
+            "pattern": "^@[A-Za-z][A-Za-z0-9_]{4,31}$",
+            "type": "string"
+          },
+          "twitter": {
+            "pattern": "^@[A-Za-z0-9_]{1,15}$",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateCohortDto": {
+        "properties": {
+          "closesAt": {
+            "nullable": true,
+            "pattern": "^(?!0000)",
+            "type": "string",
+            "x-rules": [
+              "isDateString"
+            ]
+          },
+          "description": {
+            "maxLength": 10000,
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          },
+          "opensAt": {
+            "nullable": true,
+            "pattern": "^(?!0000)",
+            "type": "string",
+            "x-rules": [
+              "isDateString"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UpdateHighlightDto": {
+        "properties": {
+          "description": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "displayOrder": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "imageUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isSafeUrl"
+            ]
+          },
+          "linkUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isSafeUrl"
+            ]
+          },
+          "publish": {
+            "type": "boolean"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          },
+          "type": {
+            "enum": [
+              "MILESTONE",
+              "FEATURED_BOUNTY",
+              "PROJECT",
+              "PARTNERSHIP",
+              "AWARD",
+              "OTHER"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateNoticeDto": {
+        "properties": {
+          "body": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride",
+              "hasVisibleText"
+            ]
+          },
+          "category": {
+            "enum": [
+              "NINJALABS",
+              "INJECTIVE_ECOSYSTEM",
+              "EVENT",
+              "RECRUITMENT",
+              "OTHER"
+            ],
+            "type": "string"
+          },
+          "eventDate": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isCalendarDate"
+            ]
+          },
+          "externalUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isSafeUrl"
+            ]
+          },
+          "publish": {
+            "type": "boolean"
+          },
+          "summary": {
+            "maxLength": 1000,
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "hasNoBidiOverride"
+            ]
+          },
+          "thumbnailUrl": {
+            "nullable": true,
+            "type": "string",
+            "x-rules": [
+              "isSafeUrl"
+            ]
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint",
+            "x-rules": [
+              "hasVisibleText",
+              "isPlainDisplayText"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "VerifyAgentDto": {
+        "properties": {
+          "signature": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "signature"
+        ],
+        "type": "object"
+      },
+      "VerifyDto": {
+        "properties": {
+          "address": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "publicKey": {
+            "minLength": 1,
+            "nullable": true,
+            "type": "string"
+          },
+          "signature": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "signature"
+        ],
+        "type": "object"
+      },
+      "WithdrawAccountDto": {
+        "properties": {
+          "confirmNickname": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string",
+            "x-length-unit": "codepoint"
+          }
+        },
+        "required": [
+          "confirmNickname"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "contact": {},
+    "description": "NinjaLabs BE API 계약 (npm run contract:export로 생성, 손으로 고치지 않는다).\n요청 본문·query 스키마는 런타임 ValidationPipe(whitelist + forbidNonWhitelisted + transform)의 class-validator 규칙에서 왔다.\nx-length-unit: codepoint 는 Postgres char_length 기준 길이, x-rules 는 표준 키워드로 표현 못 한 검증 규칙 이름이다 (의미는 BE src/common/validation/).\n응답 스키마는 아직 없다: 핸들러에 반환 타입이 없어 비어 있는 것이 정상이며, 응답 모양은 BE docs/api-contract.md 서술이 기준이다.\n에러 응답은 { statusCode, message: ERROR_CODE, error } 이고 코드 목록은 contract/error-codes.json 이다.",
+    "title": "NinjaLabs API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/admin/applications/{id}/review": {
+      "post": {
+        "operationId": "ApplicationReviewController_review",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewApplicationDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "ApplicationReview"
+        ]
+      }
+    },
+    "/admin/audit-logs": {
+      "get": {
+        "operationId": "AuditController_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entityType",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entityId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Audit"
+        ]
+      }
+    },
+    "/admin/bounties": {
+      "get": {
+        "operationId": "BountyAdminController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "BountyAdmin"
+        ]
+      },
+      "post": {
+        "operationId": "BountyAdminController_create",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBountyDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "BountyAdmin"
+        ]
+      }
+    },
+    "/admin/bounties/{id}": {
+      "delete": {
+        "operationId": "BountyAdminController_remove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "BountyAdmin"
+        ]
+      },
+      "patch": {
+        "operationId": "BountyAdminController_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBountyDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "BountyAdmin"
+        ]
+      }
+    },
+    "/admin/bounties/{id}/operations": {
+      "get": {
+        "operationId": "BountyAdminController_operations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "BountyAdmin"
+        ]
+      }
+    },
+    "/admin/bounties/{id}/transition": {
+      "post": {
+        "operationId": "BountyAdminController_transition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionBountyDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "BountyAdmin"
+        ]
+      }
+    },
+    "/admin/cohort-applications/{id}/review": {
+      "post": {
+        "operationId": "CohortAdminController_review",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCohortApplicationDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      }
+    },
+    "/admin/cohorts": {
+      "get": {
+        "operationId": "CohortAdminController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      },
+      "post": {
+        "operationId": "CohortAdminController_create",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCohortDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      }
+    },
+    "/admin/cohorts/{id}": {
+      "delete": {
+        "operationId": "CohortAdminController_remove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      },
+      "get": {
+        "operationId": "CohortAdminController_detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      },
+      "patch": {
+        "operationId": "CohortAdminController_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCohortDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      }
+    },
+    "/admin/cohorts/{id}/applications": {
+      "get": {
+        "operationId": "CohortAdminController_listApplications",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "SUBMITTED",
+                "ACCEPTED",
+                "REJECTED",
+                "WITHDRAWN"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "questionId",
+            "required": false,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "optionId",
+            "required": false,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "activityType",
+            "required": false,
+            "schema": {
+              "enum": [
+                "DEVELOPER",
+                "CONTENT_CREATOR",
+                "KOL",
+                "COMMUNITY_MARKETING",
+                "RESEARCHER",
+                "BIZDEV",
+                "STUDENT",
+                "OTHER"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interestArea",
+            "required": false,
+            "schema": {
+              "enum": [
+                "DEVELOPER",
+                "CONTENT_CREATOR",
+                "KOL",
+                "COMMUNITY_MARKETING",
+                "RESEARCHER",
+                "BIZDEV",
+                "OTHER"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "maxLength": 320,
+              "type": "string",
+              "x-length-unit": "codepoint"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      }
+    },
+    "/admin/cohorts/{id}/applications.csv": {
+      "get": {
+        "operationId": "CohortAdminController_csv",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "SUBMITTED",
+                "ACCEPTED",
+                "REJECTED",
+                "WITHDRAWN"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "questionId",
+            "required": false,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "optionId",
+            "required": false,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,40}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "activityType",
+            "required": false,
+            "schema": {
+              "enum": [
+                "DEVELOPER",
+                "CONTENT_CREATOR",
+                "KOL",
+                "COMMUNITY_MARKETING",
+                "RESEARCHER",
+                "BIZDEV",
+                "STUDENT",
+                "OTHER"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "interestArea",
+            "required": false,
+            "schema": {
+              "enum": [
+                "DEVELOPER",
+                "CONTENT_CREATOR",
+                "KOL",
+                "COMMUNITY_MARKETING",
+                "RESEARCHER",
+                "BIZDEV",
+                "OTHER"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "maxLength": 320,
+              "type": "string",
+              "x-length-unit": "codepoint"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      }
+    },
+    "/admin/cohorts/{id}/questions": {
+      "put": {
+        "operationId": "CohortAdminController_putQuestions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CohortQuestionsDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      }
+    },
+    "/admin/cohorts/{id}/transition": {
+      "post": {
+        "operationId": "CohortAdminController_transition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionCohortDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "CohortAdmin"
+        ]
+      }
+    },
+    "/admin/highlights": {
+      "get": {
+        "operationId": "HighlightAdminController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "HighlightAdmin"
+        ]
+      },
+      "post": {
+        "operationId": "HighlightAdminController_create",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHighlightDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "HighlightAdmin"
+        ]
+      }
+    },
+    "/admin/highlights/{id}": {
+      "delete": {
+        "operationId": "HighlightAdminController_remove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "HighlightAdmin"
+        ]
+      },
+      "patch": {
+        "operationId": "HighlightAdminController_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHighlightDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "HighlightAdmin"
+        ]
+      }
+    },
+    "/admin/media": {
+      "post": {
+        "operationId": "MediaController_upload",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Media"
+        ]
+      }
+    },
+    "/admin/nft-jobs": {
+      "get": {
+        "operationId": "NftJobsAdminController_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "FAILED",
+                "PENDING",
+                "PROCESSING"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "NftJobsAdmin"
+        ]
+      }
+    },
+    "/admin/nft-jobs/{id}/retry": {
+      "post": {
+        "operationId": "NftJobsAdminController_retry",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "NftJobsAdmin"
+        ]
+      }
+    },
+    "/admin/notices": {
+      "get": {
+        "operationId": "NoticeAdminController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "NoticeAdmin"
+        ]
+      },
+      "post": {
+        "operationId": "NoticeAdminController_create",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNoticeDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "NoticeAdmin"
+        ]
+      }
+    },
+    "/admin/notices/{id}": {
+      "delete": {
+        "operationId": "NoticeAdminController_remove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "NoticeAdmin"
+        ]
+      },
+      "patch": {
+        "operationId": "NoticeAdminController_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateNoticeDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "NoticeAdmin"
+        ]
+      }
+    },
+    "/admin/payouts": {
+      "post": {
+        "operationId": "RewardsAdminController_requestPayout",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestPayoutDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "RewardsAdmin"
+        ]
+      }
+    },
+    "/admin/payouts/{id}/approve": {
+      "post": {
+        "operationId": "RewardsAdminController_approvePayout",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "RewardsAdmin"
+        ]
+      }
+    },
+    "/admin/payouts/{id}/paid": {
+      "post": {
+        "operationId": "RewardsAdminController_markPaid",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkPaidDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "RewardsAdmin"
+        ]
+      }
+    },
+    "/admin/rewards/{id}/confirm-deposit": {
+      "post": {
+        "operationId": "RewardsAdminController_confirmDeposit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmDepositDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "RewardsAdmin"
+        ]
+      }
+    },
+    "/admin/submissions/{id}/review": {
+      "post": {
+        "operationId": "SubmissionReviewController_review",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewSubmissionDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "SubmissionReview"
+        ]
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "operationId": "MemberAdminController_searchUsers",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "maxLength": 320,
+              "type": "string",
+              "x-length-unit": "codepoint"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "MemberAdmin"
+        ]
+      }
+    },
+    "/admin/users/{id}/member": {
+      "post": {
+        "operationId": "MemberAdminController_setMember",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetMemberDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "MemberAdmin"
+        ]
+      }
+    },
+    "/agent-api/v1/bounties/{id}/applications": {
+      "post": {
+        "operationId": "AgentApiController_apply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentApplyDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "AgentApi"
+        ]
+      }
+    },
+    "/agent-api/v1/bounties/{id}/submissions": {
+      "post": {
+        "operationId": "AgentApiController_submit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentSubmitDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "AgentApi"
+        ]
+      }
+    },
+    "/agent-api/v1/me": {
+      "get": {
+        "operationId": "AgentApiController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "AgentApi"
+        ]
+      }
+    },
+    "/agents": {
+      "post": {
+        "operationId": "AgentsController_register",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterAgentDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/agents/me": {
+      "get": {
+        "operationId": "AgentsController_mine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/agents/{id}/keys/rotate": {
+      "post": {
+        "operationId": "AgentsController_rotateKey",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/agents/{id}/revoke": {
+      "post": {
+        "operationId": "AgentsController_revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/agents/{id}/verify": {
+      "post": {
+        "operationId": "AgentsController_verify",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyAgentDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/applications/me": {
+      "get": {
+        "operationId": "ApplicationsController_mine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Applications"
+        ]
+      }
+    },
+    "/applications/{id}/withdraw": {
+      "post": {
+        "operationId": "ApplicationsController_withdraw",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Applications"
+        ]
+      }
+    },
+    "/auth/exchange": {
+      "post": {
+        "operationId": "AuthController_exchange",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginCodeDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/google": {
+      "get": {
+        "operationId": "AuthController_googleRedirect",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/google/callback": {
+      "get": {
+        "operationId": "AuthController_googleCallback",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "operationId": "AuthController_logout",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "operationId": "AuthController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "operationId": "AuthController_refresh",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/bounties": {
+      "get": {
+        "operationId": "BountiesController_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Bounties"
+        ]
+      }
+    },
+    "/bounties/{id}": {
+      "get": {
+        "operationId": "BountiesController_detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Bounties"
+        ]
+      }
+    },
+    "/bounties/{id}/applications": {
+      "post": {
+        "operationId": "ApplicationsController_apply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Applications"
+        ]
+      }
+    },
+    "/bounties/{id}/submissions": {
+      "post": {
+        "operationId": "SubmissionsController_submit",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Submissions"
+        ]
+      }
+    },
+    "/cohorts/applications/me": {
+      "get": {
+        "operationId": "CohortsController_mine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Cohorts"
+        ]
+      }
+    },
+    "/cohorts/applications/{id}": {
+      "patch": {
+        "operationId": "CohortsController_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCohortApplicationDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Cohorts"
+        ]
+      }
+    },
+    "/cohorts/applications/{id}/withdraw": {
+      "post": {
+        "operationId": "CohortsController_withdraw",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Cohorts"
+        ]
+      }
+    },
+    "/cohorts/current": {
+      "get": {
+        "operationId": "CohortsController_current",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Cohorts"
+        ]
+      }
+    },
+    "/cohorts/{id}/applications": {
+      "post": {
+        "operationId": "CohortsController_apply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CohortApplicationFields"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Cohorts"
+        ]
+      }
+    },
+    "/hall-of-fame": {
+      "get": {
+        "operationId": "HighlightsController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Highlights"
+        ]
+      }
+    },
+    "/hall-of-fame/stats": {
+      "get": {
+        "operationId": "HighlightsController_stats",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Highlights"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "HealthController_check",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/media/{id}": {
+      "get": {
+        "operationId": "MediaController_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Media"
+        ]
+      }
+    },
+    "/members": {
+      "get": {
+        "operationId": "MembersController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Members"
+        ]
+      }
+    },
+    "/notices": {
+      "get": {
+        "operationId": "NoticesController_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "enum": [
+                "eventDate"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Notices"
+        ]
+      }
+    },
+    "/notices/{id}": {
+      "get": {
+        "operationId": "NoticesController_detail",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Notices"
+        ]
+      }
+    },
+    "/submissions/me": {
+      "get": {
+        "operationId": "SubmissionsController_mine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Submissions"
+        ]
+      }
+    },
+    "/users/check-nickname": {
+      "get": {
+        "operationId": "UsersController_checkNickname",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/users/me": {
+      "delete": {
+        "operationId": "UsersController_withdraw",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawAccountDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/users/me/avatar": {
+      "delete": {
+        "operationId": "UsersController_removeAvatar",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Users"
+        ]
+      },
+      "post": {
+        "operationId": "UsersController_uploadAvatar",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/users/me/complete-onboarding": {
+      "post": {
+        "operationId": "UsersController_completeOnboarding",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/users/me/profile": {
+      "post": {
+        "operationId": "UsersController_completeProfile",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteProfileDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/users/{nickname}": {
+      "get": {
+        "operationId": "UsersController_publicProfile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "nickname",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/wallets/challenge": {
+      "post": {
+        "operationId": "WalletsController_challenge",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChallengeDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Wallets"
+        ]
+      }
+    },
+    "/wallets/me": {
+      "get": {
+        "operationId": "WalletsController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Wallets"
+        ]
+      }
+    },
+    "/wallets/verify": {
+      "post": {
+        "operationId": "WalletsController_verify",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Wallets"
+        ]
+      }
+    }
+  },
+  "servers": [],
+  "tags": []
+}

@@ -7,13 +7,15 @@ import { recordReviews } from '../submissions/system-review';
 import { participantUserIdSql } from '../../agents/owned-agents';
 
 /** 전이 차단 사유 코드 - 운영 화면(FE admin.operations.blockers.<code>)이 이 코드로 번역한다. 추가 시 FE 메시지도 함께. */
-export type LifecycleBlockerCode =
-  | 'DEADLINE_PASSED'
-  | 'REWARDS_UNFUNDED'
-  | 'PENDING_APPLICATIONS'
-  | 'UNSUBMITTED_PARTICIPANTS'
-  | 'UNRESOLVED_SUBMISSIONS'
-  | 'UNPAID_WINNERS';
+export const LIFECYCLE_BLOCKER_CODES = [
+  'DEADLINE_PASSED',
+  'REWARDS_UNFUNDED',
+  'PENDING_APPLICATIONS',
+  'UNSUBMITTED_PARTICIPANTS',
+  'UNRESOLVED_SUBMISSIONS',
+  'UNPAID_WINNERS',
+] as const;
+export type LifecycleBlockerCode = (typeof LIFECYCLE_BLOCKER_CODES)[number];
 
 type LifecycleBlocker = { code: LifecycleBlockerCode; count?: number; message: string };
 

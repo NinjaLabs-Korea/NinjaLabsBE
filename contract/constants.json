@@ -1,0 +1,365 @@
+{
+  "application": {
+    "reviewDecisions": [
+      "APPROVED",
+      "REJECTED"
+    ],
+    "statuses": [
+      "PENDING",
+      "APPROVED",
+      "REJECTED",
+      "WITHDRAWN"
+    ]
+  },
+  "audit": {
+    "actions": {
+      "AGENT_KEY_ROTATED": "agent",
+      "AGENT_REVOKED": "agent",
+      "AGENT_VERIFIED": "agent",
+      "APPLICATION_APPROVED": "bounty_application",
+      "APPLICATION_REAPPLIED": "bounty_application",
+      "APPLICATION_REJECTED": "bounty_application",
+      "BOUNTY_CANCELLED": "bounty",
+      "BOUNTY_COMPLETED": "bounty",
+      "BOUNTY_CREATED": "bounty",
+      "BOUNTY_DELETED": "bounty",
+      "BOUNTY_FUNDING_PENDING": "bounty",
+      "BOUNTY_IN_REVIEW": "bounty",
+      "BOUNTY_OPEN": "bounty",
+      "BOUNTY_SUBMISSION_CLOSED": "bounty",
+      "BOUNTY_UPDATED": "bounty",
+      "COHORT_APPLICATION_ACCEPTED": "cohort_application",
+      "COHORT_APPLICATION_REAPPLIED": "cohort_application",
+      "COHORT_APPLICATION_REJECTED": "cohort_application",
+      "COHORT_APPLICATION_SUBMITTED": "cohort_application",
+      "COHORT_APPLICATION_UPDATED": "cohort_application",
+      "COHORT_APPLICATION_WITHDRAWN": "cohort_application",
+      "COHORT_CLOSED": "cohort",
+      "COHORT_CREATED": "cohort",
+      "COHORT_DELETED": "cohort",
+      "COHORT_OPENED": "cohort",
+      "COHORT_QUESTIONS_UPDATED": "cohort",
+      "COHORT_REOPENED": "cohort",
+      "COHORT_UPDATED": "cohort",
+      "HIGHLIGHT_CREATED": "platform_highlight",
+      "HIGHLIGHT_DELETED": "platform_highlight",
+      "HIGHLIGHT_UPDATED": "platform_highlight",
+      "NFT_JOB_RETRIED": "nft_job",
+      "NOTICE_CREATED": "notice",
+      "NOTICE_DELETED": "notice",
+      "NOTICE_PUBLISHED": "notice",
+      "NOTICE_UPDATED": "notice",
+      "PAYOUT_APPROVED": "payout",
+      "PAYOUT_PAID": "payout",
+      "PAYOUT_REQUESTED": "payout",
+      "PAYOUT_SELF_APPROVED": "payout",
+      "REWARD_DEPOSIT_CONFIRMED": "bounty_reward",
+      "SUBMISSION_APPROVE": "bounty_submission",
+      "SUBMISSION_REJECT": "bounty_submission",
+      "SUBMISSION_REQUEST_REVISION": "bounty_submission",
+      "SUBMISSION_START_REVIEW": "bounty_submission",
+      "USER_AVATAR_REMOVED": "user",
+      "USER_AVATAR_UPDATED": "user",
+      "USER_MEMBER_GRANTED": "user",
+      "USER_MEMBER_REVOKED": "user",
+      "USER_NICKNAME_CHANGED": "user",
+      "USER_WITHDRAWN": "user"
+    },
+    "scriptActions": {
+      "ADMIN_GRANTED": "user",
+      "ADMIN_REVOKED": "user",
+      "NFT_JOB_REQUEUED": "nft_job",
+      "PAYOUT_CANCELLED_MANUAL": "payout",
+      "PAYOUT_CORRECTED_MANUAL": "payout",
+      "REWARD_REFUNDED": "bounty_reward",
+      "SUBMISSION_AWARD_FORFEITED": "bounty_submission"
+    }
+  },
+  "bounty": {
+    "categories": [
+      "DEV",
+      "DESIGN",
+      "CONTENT",
+      "OTHER"
+    ],
+    "inProgressStatuses": [
+      "OPEN",
+      "SUBMISSION_CLOSED",
+      "IN_REVIEW"
+    ],
+    "lifecycleBlockerCodes": [
+      "DEADLINE_PASSED",
+      "REWARDS_UNFUNDED",
+      "PENDING_APPLICATIONS",
+      "UNSUBMITTED_PARTICIPANTS",
+      "UNRESOLVED_SUBMISSIONS",
+      "UNPAID_WINNERS"
+    ],
+    "rewardTokenTypes": [
+      "NATIVE",
+      "CW20",
+      "ERC20"
+    ],
+    "statuses": [
+      "DRAFT",
+      "FUNDING_PENDING",
+      "OPEN",
+      "SUBMISSION_CLOSED",
+      "IN_REVIEW",
+      "COMPLETED",
+      "CANCELLED"
+    ],
+    "submissionModes": [
+      "DIRECT",
+      "AGENT"
+    ],
+    "transitions": {
+      "CANCELLED": [],
+      "COMPLETED": [],
+      "DRAFT": [
+        "FUNDING_PENDING",
+        "OPEN",
+        "CANCELLED"
+      ],
+      "FUNDING_PENDING": [
+        "OPEN",
+        "CANCELLED"
+      ],
+      "IN_REVIEW": [
+        "COMPLETED",
+        "OPEN"
+      ],
+      "OPEN": [
+        "SUBMISSION_CLOSED",
+        "CANCELLED"
+      ],
+      "SUBMISSION_CLOSED": [
+        "IN_REVIEW",
+        "OPEN"
+      ]
+    }
+  },
+  "cohort": {
+    "activityTypes": [
+      "DEVELOPER",
+      "CONTENT_CREATOR",
+      "KOL",
+      "COMMUNITY_MARKETING",
+      "RESEARCHER",
+      "BIZDEV",
+      "STUDENT",
+      "OTHER"
+    ],
+    "applicationStatuses": [
+      "SUBMITTED",
+      "ACCEPTED",
+      "REJECTED",
+      "WITHDRAWN"
+    ],
+    "interestAreas": [
+      "DEVELOPER",
+      "CONTENT_CREATOR",
+      "KOL",
+      "COMMUNITY_MARKETING",
+      "RESEARCHER",
+      "BIZDEV",
+      "OTHER"
+    ],
+    "limits": {
+      "answersMax": 30,
+      "helpMax": 500,
+      "labelMax": 200,
+      "longTextMax": 2000,
+      "maxQuestions": 30,
+      "optionLabelMax": 60,
+      "optionMax": 20,
+      "optionMin": 2,
+      "otherMax": 60,
+      "shortTextMax": 200
+    },
+    "questionIdPattern": "^[A-Za-z0-9_-]{1,40}$",
+    "questionTypes": [
+      "SHORT_TEXT",
+      "LONG_TEXT",
+      "SINGLE_CHOICE",
+      "MULTI_CHOICE"
+    ],
+    "reviewDecisions": [
+      "ACCEPTED",
+      "REJECTED"
+    ],
+    "statuses": [
+      "DRAFT",
+      "OPEN",
+      "CLOSED"
+    ],
+    "transitionTargets": [
+      "OPEN",
+      "CLOSED"
+    ],
+    "transitions": {
+      "CLOSED": [
+        "OPEN"
+      ],
+      "DRAFT": [
+        "OPEN"
+      ],
+      "OPEN": [
+        "CLOSED"
+      ]
+    },
+    "web3Experiences": [
+      "LT_1Y",
+      "Y1_3",
+      "GT_3Y"
+    ]
+  },
+  "members": {
+    "roles": [
+      "CORE",
+      "DEV",
+      "DESIGN",
+      "OPS"
+    ]
+  },
+  "nft": {
+    "attachable": [
+      "MINTED",
+      "ATTACHING"
+    ],
+    "mintAlreadyDone": [
+      "MINTED",
+      "ATTACHED"
+    ],
+    "mintedOrLater": [
+      "MINTED",
+      "ATTACHING",
+      "ATTACHED"
+    ],
+    "parentReady": [
+      "MINTED",
+      "ATTACHED"
+    ],
+    "statuses": [
+      "PENDING",
+      "MINTING",
+      "MINTED",
+      "ATTACHING",
+      "ATTACHED",
+      "FAILED"
+    ]
+  },
+  "nickname": {
+    "staticFileExtensions": [
+      "ico",
+      "png",
+      "jpg",
+      "jpeg",
+      "gif",
+      "svg",
+      "webp",
+      "avif",
+      "txt",
+      "xml",
+      "json",
+      "js",
+      "css",
+      "map",
+      "woff",
+      "woff2",
+      "ttf"
+    ],
+    "withdrawnPrefix": "withdrawn_"
+  },
+  "notices": {
+    "categories": [
+      "NINJALABS",
+      "INJECTIVE_ECOSYSTEM",
+      "EVENT",
+      "RECRUITMENT",
+      "OTHER"
+    ]
+  },
+  "pagination": {
+    "maxPage": 100000
+  },
+  "payout": {
+    "allocatedStatuses": [
+      "REQUESTED",
+      "AWAITING_MULTISIG_APPROVAL",
+      "APPROVED",
+      "BROADCASTING",
+      "PAID",
+      "FAILED"
+    ],
+    "awaitingApprovalStatuses": [
+      "REQUESTED",
+      "AWAITING_MULTISIG_APPROVAL"
+    ],
+    "openStatuses": [
+      "REQUESTED",
+      "AWAITING_MULTISIG_APPROVAL",
+      "APPROVED",
+      "BROADCASTING"
+    ],
+    "rowStatuses": [
+      "REQUESTED",
+      "AWAITING_MULTISIG_APPROVAL",
+      "APPROVED",
+      "BROADCASTING",
+      "PAID",
+      "FAILED",
+      "CANCELLED"
+    ],
+    "sendableStatuses": [
+      "APPROVED",
+      "BROADCASTING"
+    ],
+    "submissionPayoutStatuses": [
+      "PAID",
+      "PARTIALLY_PAID",
+      "PENDING",
+      "NONE"
+    ],
+    "terminalStatuses": [
+      "PAID",
+      "CANCELLED",
+      "FAILED"
+    ],
+    "unsettledStatuses": [
+      "REQUESTED",
+      "AWAITING_MULTISIG_APPROVAL",
+      "APPROVED",
+      "BROADCASTING",
+      "FAILED"
+    ]
+  },
+  "reward": {
+    "payableStatuses": [
+      "FUNDED",
+      "PARTIALLY_PAID",
+      "PAID"
+    ],
+    "tokenDecimals": {
+      "INJ": 18,
+      "USDC": 6
+    }
+  },
+  "submission": {
+    "reviewDecisions": [
+      "START_REVIEW",
+      "REQUEST_REVISION",
+      "APPROVE",
+      "REJECT"
+    ],
+    "statuses": [
+      "SUBMITTED",
+      "IN_REVIEW",
+      "REVISION_REQUESTED",
+      "RESUBMITTED",
+      "APPROVED",
+      "REJECTED",
+      "WITHDRAWN"
+    ]
+  }
+}

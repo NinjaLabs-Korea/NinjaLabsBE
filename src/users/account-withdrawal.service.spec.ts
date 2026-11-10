@@ -13,7 +13,7 @@ import {
 import { WithdrawAccountDto } from './users.controller';
 
 /**
- * 단위 스펙은 차단 검사의 순서와 입력 검사, 커밋 뒤 후처리(감사 호출, 캐시 비우기)만 본다. 실제로 어떤 행이 바뀌는지(유저 익명화, 세션·에이전트 정리,
+ * 단위 스펙은 차단 검사의 순서와 입력 검사, 커밋 뒤 후처리(감사 호출, 캐시 비우기)만 본다. 실제로 어떤 행이 바뀌는지(유저 익명화, 세션 정리,
  * 지원·제출 철회, 차단 조건의 SQL, 경합)는 src/test-db/withdrawal.db-spec.ts와 cohorts.db-spec.ts가 실 DB 행으로 단언한다.
  * DB 대역은 엄격 모드라 등록하지 않은 문장(예: 차단된 탈퇴가 내보내면 안 되는 쓰기)이 나가면 `Unexpected SQL`로 실패한다.
  */
@@ -33,8 +33,8 @@ describe('AccountWithdrawalService', () => {
     ];
   }
 
-  /** 성공 경로: 읽기 + 각 모듈이 쓰는 문장 (소유 에이전트 UPDATE 만 id 를 돌려준다) */
-  function writeHandlers(agents: string[]): SqlHandler[] {
+  /** 성공 경로: 읽기 + 각 모듈이 쓰는 문장 (전부 rowCount 1) */
+  function writeHandlers(): SqlHandler[] {
     const ok = () => ({ rowCount: 1, rows: [] });
     return [
       { match: /^UPDATE "user" SET status = 'WITHDRAWN'/, reply: ok },
@@ -42,8 +42,6 @@ describe('AccountWithdrawalService', () => {
       { match: /^DELETE FROM user_tag/, reply: ok },
       { match: /^SELECT avatar_media_id FROM "user"/, reply: () => ({ rowCount: 1, rows: [{ avatar_media_id: null }] }) },
       { match: /^UPDATE auth_session SET revoked_at/, reply: ok },
-      { match: /^UPDATE agent SET/, reply: () => ({ rowCount: agents.length, rows: agents.map((id) => ({ id })) }) },
-      { match: /^UPDATE agent_api_key SET/, reply: ok },
       { match: /^UPDATE bounty_submission SET status = 'WITHDRAWN'/, reply: ok },
       { match: /^UPDATE bounty_application SET status = 'WITHDRAWN'/, reply: ok },
       { match: /^UPDATE bounty_submission SET payout_address = NULL/, reply: ok },
@@ -51,10 +49,10 @@ describe('AccountWithdrawalService', () => {
     ];
   }
 
-  function setup(options: Parameters<typeof readHandlers>[0] & { agents?: string[]; writes?: boolean } = {}) {
+  function setup(options: Parameters<typeof readHandlers>[0] & { writes?: boolean } = {}) {
     const mock = createMockDb({
       strict: true,
-      handlers: [...readHandlers(options), ...(options.writes ? writeHandlers(options.agents ?? []) : [])],
+      handlers: [...readHandlers(options), ...(options.writes ? writeHandlers() : [])],
     });
     const record = jest.fn().mockResolvedValue(undefined);
     const forgetUserStatus = jest.fn();
@@ -66,8 +64,8 @@ describe('AccountWithdrawalService', () => {
     return { service, mock, record, forgetUserStatus };
   }
 
-  it('withdraws in one transaction with the identity prefix and the bound statuses, audits each revoked agent then the withdrawal with the same tx, and forgets the cached status afterwards', async () => {
-    const { service, mock, record, forgetUserStatus } = setup({ writes: true, agents: ['a1', 'a2'] });
+  it('withdraws in one transaction with the identity prefix and the bound statuses, audits the withdrawal with the same tx, and forgets the cached status afterwards', async () => {
+    const { service, mock, record, forgetUserStatus } = setup({ writes: true });
     await expect(service.withdraw(userId, ' ryan ', 1_700_000_000_000)).resolves.toEqual({ ok: true });
 
     expect(mock.db.tx).toHaveBeenCalledTimes(1);
@@ -78,8 +76,6 @@ describe('AccountWithdrawalService', () => {
     expect(mock.txStatements(/^UPDATE bounty_submission SET payout_address = NULL/)[0].params).toEqual([userId]); // 지급 주소는 지우고 payout 스냅샷은 건드리지 않는다
     expect(mock.txStatements(/^UPDATE cohort_application/)[0].params).toEqual([userId, 'WITHDRAWN', 'SUBMITTED']); // 행은 지우지 않고 SUBMITTED만 철회
     expect(record.mock.calls).toEqual([
-      [userId, 'AGENT_REVOKED', 'agent', 'a1', mock.txClient],
-      [userId, 'AGENT_REVOKED', 'agent', 'a2', mock.txClient],
       [userId, 'USER_WITHDRAWN', 'user', userId, mock.txClient],
     ]);
     expect(forgetUserStatus).toHaveBeenCalledWith(userId);
@@ -97,7 +93,7 @@ describe('AccountWithdrawalService', () => {
     const { service, mock, record, forgetUserStatus } = setup({ openPayouts: 1 });
     await expect(service.withdraw(userId, 'Ryan')).rejects.toMatchObject({ status: 409, message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
     expect(mock.txStatements(/FROM payout p/)[0].params).toEqual([userId, ['PAID', 'CANCELLED', 'FAILED']]);
-    // 수령자는 제출(제출자/소유 에이전트)로 판단한다. 지갑 테이블은 더 보지 않는다(BE PR2)
+    // 수령자는 제출(제출자)로 판단한다. 지갑 테이블은 더 보지 않는다(BE PR2)
     expect(mock.txStatements(/FROM payout p/)[0].sql).not.toMatch(/wallet/);
     expect(record).not.toHaveBeenCalled();
     expect(forgetUserStatus).not.toHaveBeenCalled();

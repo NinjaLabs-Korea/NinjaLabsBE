@@ -37,12 +37,12 @@ describeDb('validation over HTTP (e2e)', () => {
       const upload = multipart([{ name: 'file', value: PNG_1x1, filename: 'cover.png', contentType: 'image/png' }]);
       const media = await e2e.request('POST', '/admin/media', { body: upload.body, headers: { 'content-type': upload.contentType }, token: admin.accessToken });
       expect(media.status).toBe(201);
-      const form = bountyForm({ coverImage: media.body.url, intakeEnabled: true, submissionMode: 'agent' });
+      const form = bountyForm({ coverImage: media.body.url, intakeEnabled: true });
       const created = await e2e.post('/admin/bounties', saveAdminBountyBody(form, true), asAdmin());
       expect(created.status).toBe(201);
       const id = created.body.id;
       let row = (await e2e.get('/admin/bounties', asAdmin())).body.find((r: { id: string }) => r.id === id);
-      expect(row).toMatchObject({ cover_image_url: media.body.url, category: 'DESIGN', submission_mode: 'AGENT', application_required: true, status: 'FUNDING_PENDING' });
+      expect(row).toMatchObject({ cover_image_url: media.body.url, category: 'DESIGN', submission_mode: 'DIRECT', application_required: true, status: 'FUNDING_PENDING' });
 
       const cleared = await e2e.patch(`/admin/bounties/${id}`, saveAdminBountyBody({ ...form, slug: id, coverImage: null, deadline: row.submission_deadline }, false), asAdmin());
       expect(cleared.status).toBe(200);
@@ -145,8 +145,6 @@ describeDb('validation over HTTP (e2e)', () => {
       const id = await openBounty(bountyForm({ intakeEnabled: true, reward: { amount: 0, currency: 'INJ' } }));
       expect((await e2e.post(`/bounties/${id}/applications`, applyBody(long(4001)), { token: user.accessToken })).body)
         .toEqual(badRequest(['message must be shorter than or equal to 4000 characters']));
-      expect((await e2e.post('/agents', { name: long(101), walletAddress: '0x0000000000000000000000000000000000000001' }, { token: user.accessToken })).body)
-        .toEqual(badRequest(['name must be shorter than or equal to 100 characters']));
       expect((await e2e.post('/admin/notices', saveAdminPostBody({ slug: '', title: 't', bodyMarkdown: long(50_001), category: 'OTHER', status: 'draft', thumbnail: null, externalUrl: null }, true), asAdmin())).body.message)
         .toEqual(expect.arrayContaining(['body must be shorter than or equal to 50000 characters']));
       // the JSON body limit itself (express default 100kb) → 413 from body-parser, not a 500
@@ -172,8 +170,6 @@ describeDb('validation over HTTP (e2e)', () => {
         .toEqual(badRequest(['sponsorName must be shorter than or equal to 100 characters']));
       // create had the same variation-selector gap
       expect((await e2e.post('/admin/notices', { title: vs, body: 'b', category: 'OTHER' }, asAdmin())).status).toBe(400);
-      expect((await e2e.post('/agents', { name: '❤️'.repeat(51), walletAddress: '0x0000000000000000000000000000000000000001' }, { token: user.accessToken })).body)
-        .toEqual(badRequest(['name must be shorter than or equal to 100 characters']));
     });
 
     it('UPDATE DTOs: null for a NOT NULL column → 400 (was a 23502 500); nullable URL columns still clear with null', async () => {
@@ -213,17 +209,11 @@ describeDb('validation over HTTP (e2e)', () => {
       expect(e2e.linesFor('HttpException').slice(errorsBefore)).toEqual([]);
     });
 
-    it('non-string values in auth/agent bodies → 400 (were TypeError 500s, /auth/refresh and /auth/logout without login)', async () => {
-      const U = { token: user.accessToken };
+    it('non-string values in auth bodies → 400 (were TypeError 500s, /auth/refresh and /auth/logout without login)', async () => {
       for (const [path, json, token] of [
         ['/auth/refresh', { refreshToken: 123 }, undefined],
         ['/auth/refresh', { refreshToken: { a: 1 } }, undefined],
         ['/auth/logout', { refreshToken: ['x'] }, undefined],
-        ['/agents', { name: 'n', walletAddress: 123 }, U.token],
-        ['/agents', { name: 'n', walletAddress: ['0x0000000000000000000000000000000000000001'] }, U.token],
-        ['/agents', { name: 'n', walletAddress: `inj1${'q'.repeat(300)}`, publicKey: 'k' }, U.token],
-        ['/agents', { name: 'n', walletAddress: 'inj1abc', publicKey: { k: 1 } }, U.token],
-        [`/agents/${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}/verify`, { signature: 1 }, U.token],
       ] as const) {
         const res = await e2e.post(path, json, { token });
         expect([path, JSON.stringify(json), res.status]).toEqual([path, JSON.stringify(json), 400]);
@@ -253,7 +243,6 @@ describeDb('validation over HTTP (e2e)', () => {
         ['GET', '/bounties/123', undefined, undefined], ['GET', '/notices/abc', undefined, undefined], ['GET', '/media/x', undefined, undefined],
         ['POST', '/bounties/1/applications', user.accessToken, applyBody('hi')], ['POST', '/applications/1/withdraw', user.accessToken, undefined],
         ['PATCH', '/admin/bounties/not-a-uuid', admin.accessToken, { title: 'x' }], ['POST', '/admin/payouts/1/approve', admin.accessToken, undefined],
-        ['POST', '/agents/1/verify', user.accessToken, { signature: '0x00' }],
       ] as const) {
         const res = await e2e.request(method, path, { token, json });
         expect([path, res.body]).toEqual([path, badRequest('Validation failed (uuid is expected)')]);

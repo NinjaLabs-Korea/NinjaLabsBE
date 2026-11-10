@@ -77,14 +77,6 @@ describe('AuditService.record', () => {
     ]);
   });
 
-  it('recordAgentAction fills actor_agent_id and leaves actor_user_id NULL (an Agent API key has no user)', async () => {
-    const tx = { query: jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1 }))) };
-    await new AuditService(createMockDb({ query: jest.fn() }).database).recordAgentAction('agent-1', 'APPLICATION_REAPPLIED', 'bounty_application', 'e1', tx);
-    const [sql, params] = tx.query.mock.calls[0];
-    expect(sql).toContain('(actor_agent_id, action, entity_type, entity_id)');
-    expect(params).toEqual(['agent-1', 'APPLICATION_REAPPLIED', 'bounty_application', 'e1']);
-  });
-
   it('writes through the given transaction runner instead of the pool, so the audit row commits or rolls back with the change', async () => {
     const pool = jest.fn();
     const tx = { query: jest.fn(withParamsCheck(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1 }))) };
@@ -115,14 +107,14 @@ describe('AuditService ip_address (request context)', () => {
     expect(params).toEqual(['u1', 'BOUNTY_UPDATED', 'bounty', 'e', '203.0.113.7']);
   });
 
-  it('keeps the IP across awaits and puts it after before/after data, for agent rows too', async () => {
+  it('keeps the IP across awaits and puts it after before/after data', async () => {
     const [sql, params] = await insert((service, tx) =>
       runWithRequestContext('2001:db8::1', async () => {
         await Promise.resolve();
-        await service.recordAgentAction('agent-1', 'APPLICATION_SUBMITTED', 'bounty_application', 'e', tx, { after: { status: 'PENDING' } });
+        await service.record('u1', 'APPLICATION_SUBMITTED', 'bounty_application', 'e', tx, { after: { status: 'PENDING' } });
       }));
-    expect(sql).toContain('(actor_agent_id, action, entity_type, entity_id, before_data, after_data, ip_address)');
-    expect(params).toEqual(['agent-1', 'APPLICATION_SUBMITTED', 'bounty_application', 'e', null, '{"status":"PENDING"}', '2001:db8::1']);
+    expect(sql).toContain('(actor_user_id, action, entity_type, entity_id, before_data, after_data, ip_address)');
+    expect(params).toEqual(['u1', 'APPLICATION_SUBMITTED', 'bounty_application', 'e', null, '{"status":"PENDING"}', '2001:db8::1']);
   });
 
   it('leaves ip_address out outside a request (cron, worker) and for a value Postgres inet would reject', async () => {

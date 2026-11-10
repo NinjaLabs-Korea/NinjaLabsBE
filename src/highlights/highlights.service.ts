@@ -50,7 +50,7 @@ export class HighlightsService {
    * 공개 목록과 같은 기준으로, 관리자가 삭제(soft delete)한 바운티와 그에 딸린 제출은 제외한다.
    * paidTotals 는 status = 'PAID' payout 만 더한다 - 토큰 단위가 서로 달라 bounty_reward 의 (심볼, 토큰 유형)별로 묶고 합을 base unit 문자열로 돌려준다.
    * sponsors 는 대소문자·앞뒤 공백만 다른 이름("Acme" / "acme ")을 한 후원사로 센다 - 운영자가 손으로 입력하는 값이라 표기가 흔들리고, paidTotals 의 심볼 병합(upper)과 같은 기준이다.
-   * builders는 사람(submitter_user_id)과 에이전트(agent_id) 제출자를 모두 센다 (0005 chk_submission_actor: 둘 중 하나만 채워짐).
+   * builders는 제출자(submitter_user_id, 사람)를 센다. 에이전트 제거(2026-11-11) 뒤 agent_id 제출은 새로 생기지 않는다.
    * "Builders rewarded"라는 공개 문구와 맞도록 승인(APPROVED)만으로는 세지 않는다: 완료(COMPLETED)된 바운티의 승인 제출자이거나 그 제출에 PAID payout이 있는 사람만.
    * (승인은 됐지만 아직 아무것도 지급되지 않았고 바운티도 끝나지 않은 사람, 취소된 바운티의 미지급 승인자는 제외.)
    */
@@ -100,7 +100,7 @@ export class HighlightsService {
       `SELECT
          (SELECT count(*) FROM bounty
            WHERE ${completedBountySql('')}) AS completed_bounties,
-         (SELECT count(DISTINCT COALESCE(s.submitter_user_id, s.agent_id)) FROM bounty_submission s
+         (SELECT count(DISTINCT s.submitter_user_id) FROM bounty_submission s
             JOIN bounty b ON b.id = s.bounty_id
            WHERE ${completedWinSql('s', 'b')}
              AND (b.status = 'COMPLETED'

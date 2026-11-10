@@ -50,10 +50,10 @@ describeDb('account withdrawal on a real database', () => {
 
   const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
 
-  async function openBounty(submissionMode = 'DIRECT') {
+  async function openBounty() {
     const { id: bountyId } = await bounties.create(adminId, {
       title: unique('bounty-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
-      category: 'DEV', applicationRequired: true, submissionMode, maxWinners: 1,
+      category: 'DEV', applicationRequired: true, maxWinners: 1,
       submissionDeadline: inDays(7),
       reward: { tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount: '1000' },
     });
@@ -64,6 +64,7 @@ describeDb('account withdrawal on a real database', () => {
     return { bountyId, rewardId };
   }
 
+  /** 에이전트 제거(BE PR4) 전에 만들어진 레거시 에이전트: 탈퇴가 더는 건드리지 않는다 */
   async function activeAgentWithKey(ownerId: string) {
     const agent = await db.query<{ id: string }>(
       `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at)
@@ -78,8 +79,8 @@ describeDb('account withdrawal on a real database', () => {
     return agent.rows[0].id;
   }
 
-  it('blocks while a payout is open, then withdraws: identity freed for re-signup, sessions/agents/keys revoked, pending applications withdrawn, history kept', async () => {
-    // a builder who signed up with Google, onboarded and owns an agent
+  it('blocks while a payout is open, then withdraws: identity freed for re-signup, sessions revoked, legacy agent rows untouched, pending applications withdrawn, history kept', async () => {
+    // a builder who signed up with Google, onboarded and still owns a legacy agent row
     const googleId = unique('google-');
     const email = `${unique()}@example.test`;
     const builder = await auth.upsertGoogleUser(googleId, email);
@@ -120,15 +121,15 @@ describeDb('account withdrawal on a real database', () => {
     expect((await db.query(`SELECT 1 FROM auth_session WHERE user_id = $1 AND revoked_at IS NULL`, [builder.id])).rowCount).toBe(0);
     await expect(auth.refresh(session.refreshToken)).rejects.toMatchObject({ status: 401 });
     await expect(auth.assertActiveUser(builder.id)).rejects.toMatchObject({ message: 'INVALID_ACCESS_TOKEN' }); // cache forgotten
-    expect((await db.query<{ status: string }>(`SELECT status FROM agent WHERE id = $1`, [agentId])).rows[0].status).toBe('REVOKED');
-    expect((await db.query<{ status: string }>(`SELECT status FROM agent_api_key WHERE agent_id = $1`, [agentId])).rows.map((r) => r.status)).toEqual(['REVOKED']);
+    expect((await db.query<{ status: string }>(`SELECT status FROM agent WHERE id = $1`, [agentId])).rows[0].status).toBe('ACTIVE'); // 에이전트 정리는 없다
+    expect((await db.query<{ status: string }>(`SELECT status FROM agent_api_key WHERE agent_id = $1`, [agentId])).rows.map((r) => r.status)).toEqual(['ACTIVE']);
     expect((await db.query<{ status: string }>(`SELECT status FROM bounty_application WHERE id = $1`, [pending.id])).rows[0].status).toBe('WITHDRAWN');
     expect((await db.query<{ status: string }>(`SELECT status FROM bounty_application WHERE id = $1`, [application.id])).rows[0].status).toBe('APPROVED');
     // history stays
     expect((await db.query<{ status: string }>(`SELECT status FROM payout WHERE id = $1`, [payout.id])).rows[0].status).toBe('PAID');
     expect((await db.query<{ status: string }>(`SELECT status FROM bounty_submission WHERE id = $1`, [submission.id])).rows[0].status).toBe('APPROVED');
     expect(await auditActions(db, 'user', builder.id)).toEqual(['USER_WITHDRAWN']);
-    expect(await auditActions(db, 'agent', agentId)).toEqual(['AGENT_REVOKED']);
+    expect(await auditActions(db, 'agent', agentId)).toEqual([]);
 
     // public profile is gone, the nickname is free again
     await expect(users.publicProfile(nickname)).rejects.toMatchObject({ message: 'USER_NOT_FOUND' });
@@ -163,23 +164,9 @@ describeDb('account withdrawal on a real database', () => {
     expect(wallets.rows.map((wallet) => wallet.id)).toContain(primary.id);
   });
 
-  it('a payout sent to my wallet for my agent\'s submission also blocks', async () => {
-    const owner = await createUser(db);
-    await createPrimaryWallet(db, owner);
-    const agentId = await activeAgentWithKey(owner);
-    const { bountyId, rewardId } = await openBounty('AGENT');
-    const application = await applications.applyAsAgent(bountyId, agentId, 'hi');
-    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
-    const submission = await submissions.submitAsAgent(bountyId, agentId, { submissionUrl: 'https://x.test/a', description: 'd' });
-    await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
-    await rewards.requestPayout(rewardId, submission.id, '10', adminId);
-    const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [owner])).rows[0].nickname;
-    await expect(withdrawal.withdraw(owner, nickname)).rejects.toMatchObject({ message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
-  });
-
-  async function approvedWinner(submissionMode = 'DIRECT') {
+  async function approvedWinner() {
     const builder = await createUser(db);
-    const won = await openBounty(submissionMode);
+    const won = await openBounty();
     const application = await applications.apply(won.bountyId, builder, 'hi');
     await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
     const submission = await submissions.submit(won.bountyId, builder, { submissionUrl: `https://x.test/${unique()}`, description: 'd' });
@@ -198,19 +185,6 @@ describeDb('account withdrawal on a real database', () => {
     await rewards.markApproved(payout.id, approverId);
     await rewards.markPaid(payout.id, fakeTxHash(), adminId);
     await expect(withdrawal.withdraw(builder, nickname)).resolves.toEqual({ ok: true });
-  });
-
-  it('my agent\'s approved, unrequested submission blocks too', async () => {
-    const owner = await createUser(db);
-    await createPrimaryWallet(db, owner);
-    const agentId = await activeAgentWithKey(owner);
-    const { bountyId } = await openBounty('AGENT');
-    const application = await applications.applyAsAgent(bountyId, agentId, 'hi');
-    await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
-    const submission = await submissions.submitAsAgent(bountyId, agentId, { submissionUrl: 'https://x.test/agent-pending', description: 'd' });
-    await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
-    const nickname = (await db.query<{ nickname: string }>(`SELECT nickname FROM "user" WHERE id = $1`, [owner])).rows[0].nickname;
-    await expect(withdrawal.withdraw(owner, nickname)).rejects.toMatchObject({ status: 409, message: 'WITHDRAWAL_BLOCKED_PENDING_REWARDS' });
   });
 
   it.each([
@@ -381,17 +355,15 @@ describeDb('account withdrawal on a real database', () => {
     expect((await db.query<{ status: string }>(`SELECT status FROM "user" WHERE id = $1`, [builder])).rows[0].status).toBe('ACTIVE');
   });
 
-  it('approving an agent submission whose owner is gone is refused too (the owner row is the one locked)', async () => {
+  it('approving a legacy agent-only submission (no submitter user) is refused: there is no recipient row to lock', async () => {
     const owner = await createUser(db);
-    await createPrimaryWallet(db, owner);
     const agentId = await activeAgentWithKey(owner);
-    const open = await openBounty('AGENT');
+    const open = await openBounty();
     const sid = (await db.query<{ id: string }>(
       `INSERT INTO bounty_submission (bounty_id, agent_id, submission_url, description, status) VALUES ($1, $2, 'https://x.test/a', 'd', 'SUBMITTED') RETURNING id`,
       [open.bountyId, agentId])).rows[0].id;
     await db.query(`INSERT INTO submission_revision (submission_id, revision_no, submission_url, description, created_by_agent_id) VALUES ($1, 1, 'https://x.test/a', 'd', $2)`, [sid, agentId]);
 
-    await db.query(`UPDATE "user" SET status = 'WITHDRAWN', deleted_at = now() WHERE id = $1`, [owner]);
     await expect(submissionReview.review(sid, 'APPROVE', undefined, adminId)).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
     // rejecting it stays possible
     await expect(submissionReview.review(sid, 'REJECT', undefined, adminId)).resolves.toMatchObject({ status: 'REJECTED' });

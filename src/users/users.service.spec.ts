@@ -14,7 +14,7 @@ describe('UsersService publicProfile', () => {
     return { query, service: new UsersService(createMockDb({ query }).database, {} as AuditService) };
   }
 
-  it('lists only what the user (or their agents) actually received: PAID payouts, excluding deleted bounties', async () => {
+  it('lists only what the user actually received: PAID payouts, excluding deleted bounties', async () => {
     const { query, service } = setup();
     const profile = await service.publicProfile('ryan');
     expect(profile).toMatchObject({ id: userId, completedBounties: [], agents: [], nfts: [] });
@@ -30,11 +30,9 @@ describe('UsersService publicProfile', () => {
     expect(sql).toContain('FILTER (WHERE p.id IS NOT NULL)');
     expect(sql).not.toContain('LEFT JOIN bounty_reward r ON r.bounty_id = b.id');
     expect(sql).toContain("s.status = 'APPROVED' AND b.deleted_at IS NULL");
-    // owner-or-agent as `= ANY(ARRAY(subquery))` (BitmapOr over idx_submission_submitter + idx_submission_agent_status, 0015) - no agent join needed for the predicate
-    expect(sql).toContain('AND (s.submitter_user_id = $1');
-    expect(sql).toContain('OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)))');
-    expect(sql).not.toContain('ag.owner_user_id');
-    expect(sql).not.toContain('LEFT JOIN agent ag');
+    // own submissions only (agents are gone)
+    expect(sql).toContain('AND s.submitter_user_id = $1');
+    expect(sql).not.toContain('agent');
   });
 
   it('also reports what the bounty posted and whether this submission has been paid (postedRewards + payoutStatus)', async () => {

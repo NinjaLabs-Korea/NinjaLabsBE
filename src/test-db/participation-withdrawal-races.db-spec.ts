@@ -1,6 +1,4 @@
 import { JwtService } from '@nestjs/jwt';
-import { Wallet } from 'ethers';
-import { AgentsService } from '../agents/agents.service';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
@@ -11,23 +9,20 @@ import { BountyActor } from '../bounties/bounty-actor';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { CohortAdminService } from '../cohorts/cohort-admin.service';
 import { CohortApplicationsService } from '../cohorts/cohort-applications.service';
-import { DatabaseService, QueryRunner } from '../common/database/database.service';
+import { DatabaseService } from '../common/database/database.service';
 import { AccountWithdrawalService } from '../users/account-withdrawal.service';
 import { describeDb } from './describe-db';
 import { createDb, createUser, deferred, TEST_JWT_SECRET, testConfig, unique, waitFor } from './harness';
 
-jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
-jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
-
-type Scenario = { name: string; kind: 'COHORT' | 'APPLICATION' | 'SUBMISSION'; agent: boolean; existing: boolean };
+type Scenario = { name: string; kind: 'COHORT' | 'APPLICATION' | 'SUBMISSION'; existing: boolean };
 const scenarios: Scenario[] = [
-  { name: 'cohort apply', kind: 'COHORT', agent: false, existing: false },
-  { name: 'cohort reapply', kind: 'COHORT', agent: false, existing: true },
+  { name: 'cohort apply', kind: 'COHORT', existing: false },
+  { name: 'cohort reapply', kind: 'COHORT', existing: true },
   ...(['APPLICATION', 'SUBMISSION'] as const).flatMap((kind) =>
-    [false, true].flatMap((agent) => [false, true].map((existing) => ({
-      name: `${agent ? 'agent' : 'user'} ${kind.toLowerCase()} ${existing ? 'existing' : 'new'}`,
-      kind, agent, existing,
-    })))),
+    [false, true].map((existing) => ({
+      name: `user ${kind.toLowerCase()} ${existing ? 'existing' : 'new'}`,
+      kind, existing,
+    }))),
 ];
 
 describeDb('participation and account withdrawal races', () => {
@@ -62,7 +57,6 @@ describeDb('participation and account withdrawal races', () => {
   async function fixture(scenario: Scenario) {
     const nickname = unique('racer_');
     const userId = await createUser(db, { nickname });
-    let agentId: string | undefined;
     let participate: () => Promise<{ id: string }>;
     let rows: () => Promise<{ id: string; status: string }[]>;
     let revisions: (() => Promise<number>) | undefined;
@@ -80,35 +74,28 @@ describeDb('participation and account withdrawal races', () => {
         `SELECT id, status FROM cohort_application WHERE cohort_id = $1 AND user_id = $2`, [id, userId])).rows;
       if (scenario.existing) await cohorts.withdraw((await participate()).id, userId);
     } else {
-      if (scenario.agent) {
-        agentId = (await db.query<{ id: string }>(
-          `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at)
-           VALUES ($1, 'racer', $2, $3, 'ACTIVE', now()) RETURNING id`,
-          [userId, unique('pk-'), `0x${unique()}`])).rows[0].id;
-      }
       const { id } = await bounties.create(adminId, {
         title: unique('race-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
-        category: 'DEV', applicationRequired: scenario.kind === 'APPLICATION', submissionMode: scenario.agent ? 'AGENT' : 'DIRECT',
+        category: 'DEV', applicationRequired: scenario.kind === 'APPLICATION',
         maxWinners: 1, submissionDeadline: new Date(Date.now() + 86_400_000).toISOString(),
       });
       await bounties.transition(id, 'OPEN', adminId);
-      const actor = agentId ? BountyActor.agent(agentId) : BountyActor.user(userId);
       const submission = { submissionUrl: 'https://example.test/work', description: 'submission' };
       if (scenario.kind === 'APPLICATION') {
-        participate = () => agentId ? applications.applyAsAgent(id, agentId, 'apply') : applications.apply(id, userId, 'apply');
+        participate = () => applications.apply(id, userId, 'apply');
         rows = async () => (await db.query<{ id: string; status: string }>(
-          `SELECT id, status FROM bounty_application WHERE bounty_id = $1 AND ${actor.applicationColumn} = $2`, [id, actor.id])).rows;
+          `SELECT id, status FROM bounty_application WHERE bounty_id = $1 AND applicant_user_id = $2`, [id, userId])).rows;
         if (scenario.existing) await applications.withdraw((await participate()).id, userId);
       } else {
-        participate = () => agentId ? submissions.submitAsAgent(id, agentId, submission) : submissions.submit(id, userId, submission);
+        participate = () => submissions.submit(id, userId, submission);
         rows = async () => (await db.query<{ id: string; status: string }>(
-          `SELECT id, status FROM bounty_submission WHERE bounty_id = $1 AND ${actor.submissionColumn} = $2`, [id, actor.id])).rows;
+          `SELECT id, status FROM bounty_submission WHERE bounty_id = $1 AND submitter_user_id = $2`, [id, userId])).rows;
         revisions = async () => (await db.query<{ n: number }>(
           `SELECT count(*)::int AS n FROM submission_revision r JOIN bounty_submission s ON s.id = r.submission_id WHERE s.bounty_id = $1`, [id])).rows[0].n;
         if (scenario.existing) await participate();
       }
     }
-    return { userId, nickname, agentId, participate, rows, revisions };
+    return { userId, nickname, participate, rows, revisions };
   }
 
   // Observe an actual PostgreSQL lock wait, or detect an operation that incorrectly finishes without waiting.
@@ -179,7 +166,6 @@ describeDb('participation and account withdrawal races', () => {
       await expect(participating).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
       expect(await f.rows()).toEqual(before.map((row) => ({ ...row, status: 'WITHDRAWN' })));
       if (f.revisions) expect(await f.revisions()).toBe(scenario.existing ? 1 : 0);
-      if (f.agentId) expect((await db.query(`SELECT status FROM agent WHERE id = $1`, [f.agentId])).rows[0].status).toBe('REVOKED');
     } finally {
       release.resolve();
       await Promise.allSettled([withdrawing, ...(participating ? [participating] : [])]);
@@ -187,49 +173,10 @@ describeDb('participation and account withdrawal races', () => {
     }
   });
 
-  it.each(['SUSPENDED', 'WITHDRAWN'])('rejects %s users and agent owners even when deleted_at is still null', async (status) => {
-    for (const agent of [false, true]) {
-      const f = await fixture({ name: 'inactive', kind: 'APPLICATION', agent, existing: false });
-      await db.query(`UPDATE "user" SET status = $2 WHERE id = $1`, [f.userId, status]);
-      await expect(f.participate()).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
-      expect(await f.rows()).toEqual([]);
-    }
-  });
-
-  it('agent re-registration locks the owner before occupied agent rows, avoiding a deadlock with withdrawal', async () => {
-    const nickname = unique('register_');
-    const owner = await createUser(db, { nickname });
-    const agents = new AgentsService(db, audit);
-    const signer = Wallet.createRandom();
-    await agents.register(owner, 'pending', undefined, undefined, signer.address);
-    const locked = deferred();
-    const release = deferred();
-    type Retirer = { retireReusableAgents: (tx: QueryRunner, userId: string, key: string | null, address: string) => Promise<void> };
-    const internal = agents as unknown as Retirer;
-    const original = internal.retireReusableAgents.bind(agents);
-    const spy = jest.spyOn(internal, 'retireReusableAgents').mockImplementation(async (...args) => {
-      await original(...args); // Real FOR UPDATE on the existing PENDING agent, before the duplicate INSERT.
-      locked.resolve();
-      await release.promise;
-    });
-    const registering = agents.register(owner, 'updated', undefined, undefined, signer.address);
-    void registering.catch(() => undefined);
-    let withdrawing: Promise<unknown> | undefined;
-    try {
-      await Promise.race([locked.promise, registering.then(() => { throw new Error('registration passed the pause'); })]);
-      withdrawing = withdrawal.withdraw(owner, nickname);
-      await expectBlocked(withdrawing, 'SELECT nickname FROM "user"'); // Not blocked on agent rows after already locking the owner.
-      release.resolve();
-      const [registration] = await Promise.allSettled([registering, withdrawing]);
-      // A duplicate INSERT rolls back the first transaction. Withdrawal may win the race with the name-only fallback;
-      // either the existing pending registration is returned, or the fallback refuses it. Neither side may deadlock.
-      if (registration.status === 'rejected') expect(registration.reason).toMatchObject({ status: 409, message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
-      await expect(withdrawing).resolves.toEqual({ ok: true });
-      expect((await db.query(`SELECT status FROM agent WHERE owner_user_id = $1`, [owner])).rows).toEqual([{ status: 'REVOKED' }]);
-    } finally {
-      release.resolve();
-      await Promise.allSettled([registering, ...(withdrawing ? [withdrawing] : [])]);
-      spy.mockRestore();
-    }
+  it.each(['SUSPENDED', 'WITHDRAWN'])('rejects %s users even when deleted_at is still null', async (status) => {
+    const f = await fixture({ name: 'inactive', kind: 'APPLICATION', existing: false });
+    await db.query(`UPDATE "user" SET status = $2 WHERE id = $1`, [f.userId, status]);
+    await expect(f.participate()).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    expect(await f.rows()).toEqual([]);
   });
 });

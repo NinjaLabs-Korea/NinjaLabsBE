@@ -24,22 +24,7 @@ export class AuditService {
     runner: QueryRunner = this.db,
     change?: AuditChange,
   ): Promise<void> {
-    await this.insert(runner, 'actor_user_id', actorId ?? null, action, entityType, entityId, change);
-  }
-
-  /**
-   * Agent API 키로 한 행위 - 유저 id가 없으므로 `actor_agent_id`를 채운다. 둘 다 비면 운영 스크립트가 남긴 행으로 읽히기 때문에
-   * (api-contract.md "운영 스크립트" action 표시 규칙) 에이전트 행위는 이 메서드로 남긴다.
-   */
-  async recordAgentAction<A extends AuditAction>(
-    agentId: string,
-    action: A,
-    entityType: (typeof AUDIT_ACTIONS)[A],
-    entityId: string,
-    runner: QueryRunner = this.db,
-    change?: AuditChange,
-  ): Promise<void> {
-    await this.insert(runner, 'actor_agent_id', agentId, action, entityType, entityId, change);
+    await this.insert(runner, actorId ?? null, action, entityType, entityId, change);
   }
 
   /**
@@ -48,14 +33,13 @@ export class AuditService {
    */
   private async insert(
     runner: QueryRunner,
-    actorColumn: 'actor_user_id' | 'actor_agent_id',
     actorId: string | null,
     action: string,
     entityType: string,
     entityId: string,
     change?: AuditChange,
   ): Promise<void> {
-    const columns = [actorColumn, 'action', 'entity_type', 'entity_id'];
+    const columns = ['actor_user_id', 'action', 'entity_type', 'entity_id'];
     const values = ['$1', '$2', '$3', '$4'];
     const params: unknown[] = [actorId, action, entityType, entityId];
     const add = (column: string, cast: string, value: unknown) => {

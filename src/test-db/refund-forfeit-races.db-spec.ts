@@ -6,10 +6,9 @@ import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
 import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.service';
 import { RewardTokenResolver } from '../bounties/admin/reward-token.resolver';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
-import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_DB_URL_ENV, testConfig, unique, waitForLockWaiter } from './harness';
+import { createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_DB_URL_ENV, testConfig, unique, waitForLockWaiter, withPayoutAddresses } from './harness';
 
 jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
 
@@ -22,7 +21,7 @@ describeDb('refund / delete / forfeit across rules and races', () => {
   const config = testConfig();
   const audit = new AuditService(db);
   const bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-  const rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+  const rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
   const subs = new SubmissionsService(db, new AuditService(db));
   let pool: Pool;
   beforeAll(() => { pool = new Pool({ connectionString: process.env[TEST_DB_URL_ENV], max: 4 }); });
@@ -149,7 +148,7 @@ describeDb('refund / delete / forfeit across rules and races', () => {
       const payoutRes = order ? results[1] : results[0];
       const payouts = (await db.query<{ n: number }>(`SELECT count(*)::int n FROM payout WHERE submission_id = $1`, [w.sid])).rows[0].n;
       const st = (await db.query<{ status: string }>(`SELECT status FROM bounty_submission WHERE id = $1`, [w.sid])).rows[0].status;
-      if (forfeitRes.code === 0) { expect(payouts).toBe(0); expect(st).toBe('REJECTED'); expect(payoutRes).toBe('APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND'); }
+      if (forfeitRes.code === 0) { expect(payouts).toBe(0); expect(st).toBe('REJECTED'); expect(payoutRes).toBe('APPROVED_SUBMISSION_NOT_FOUND'); }
       else { expect(payouts).toBe(1); expect(st).toBe('APPROVED'); expect(payoutRes).toBe('payout'); expect(forfeitRes.out).toContain('payout row'); }
     });
   }

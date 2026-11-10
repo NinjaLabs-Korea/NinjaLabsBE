@@ -57,8 +57,8 @@ npm run start:dev           # http://localhost:4000
 | `cohorts/` | 기수 모집: 공개 현재 기수와 지원서 질문 (`cohort-questions.ts`), 지원서 제출·수정·철회, 운영자 기수 관리·질문 편집·심사·CSV |
 | `highlights/` | 명예의 전당 큐레이션 + 자동 집계 지표 + 운영자 관리 |
 | `media/` | 이미지 저장 (운영자 업로드, 프로필 사진) + 공개 immutable 조회 `/media/<id>` |
-| `bounties/` | 바운티 목록·상세, 지원(applications), 제출(submissions, 리비전), `admin/`에 운영자 관리와 전이 차단 사유 |
-| `rewards/` | 선입금 확인 → payout 멱등 지급 (운영자 API 포함) |
+| `bounties/` | 바운티 목록·상세, 지원(applications), 제출(submissions, 리비전, 수상자 지급 주소), `admin/`에 운영자 관리와 전이 차단 사유 |
+| `rewards/` | 선입금 확인 → payout 멱등 지급(요청 시점 지급 주소 스냅샷) (운영자 API 포함) |
 | `nfts/` | 부모·자식 NFT + `nft_job` 비동기 워커 (1분 폴링) + 운영자 잡 콘솔 (목록, 재시도) |
 | `agents/` | AI 에이전트 등록·검증·API 키 + Agent API 인증 ([docs/agent-api.md](docs/agent-api.md)) |
 | `audit/` | 감사 로그 기록 (`AuditService`) + 조회 |
@@ -81,7 +81,7 @@ FE가 알아야 하는 상수(상태 집합, 전이표, 카테고리·역할 등
 |---|---|
 | `common/database/` | `pg` Pool 기반 `DatabaseService` (query + tx, 연결·문장 타임아웃) + `SchemaGuard` (미적용 마이그레이션이 있으면 기동 거부) |
 | `common/http/` | 요청 ID, 쿠키, 전역 예외 필터, 요청 로깅, 에러 코드 카탈로그 (`error-codes.ts`) |
-| `common/validation/` | DTO 공용 검증기 (trim, URL, tx hash, 토큰 금액, 글자 수) |
+| `common/validation/` | DTO 공용 검증기 (trim, URL, tx hash, 토큰 금액, 글자 수, Injective 지급 주소 `injective-address.ts`) |
 | `common/throttler/` | rate limit (memory 또는 postgres 저장소, 공개 읽기 한도) |
 | `common/alerts/` | 운영 알림 `AlertService` (웹훅, 없으면 로그만) + 기동 실패 알림 + 5xx 버스트 감지 |
 | `common/maintenance/` | 만료 데이터 정리 크론 |

@@ -6,10 +6,9 @@ import { RewardTokenResolver } from '../bounties/admin/reward-token.resolver';
 import { SubmissionReviewService } from '../bounties/submissions/submission-review.service';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { DatabaseService } from '../common/database/database.service';
-import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique } from './harness';
+import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, setPayoutAddress, testConfig, unique, withPayoutAddresses } from './harness';
 
 /**
  * RewardsService 규칙을 실 Postgres로 고정한다 (예전에는 rewards.service.spec.ts가 SQL 문장을 해석하는 mock으로 흉내 냈다).
@@ -20,6 +19,8 @@ describeDb('reward and payout rules on a real database', () => {
   let db: DatabaseService;
   let bounties: BountyAdminService;
   let rewards: RewardsService;
+  /** withPayoutAddresses 없는 서비스 - 주소가 없을 때의 동작을 볼 때만 쓴다 */
+  let plainRewards: RewardsService;
   let submissions: SubmissionsService;
   let submissionReview: SubmissionReviewService;
   let adminId: string;
@@ -30,7 +31,8 @@ describeDb('reward and payout rules on a real database', () => {
     const audit = new AuditService(db);
     const config = testConfig();
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-    rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
+    plainRewards = new RewardsService(db, audit, config);
     submissions = new SubmissionsService(db, new AuditService(db));
     submissionReview = new SubmissionReviewService(db, audit);
     adminId = await createUser(db, { isAdmin: true });
@@ -84,12 +86,15 @@ describeDb('reward and payout rules on a real database', () => {
     (await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM nft_job WHERE idempotency_key = $1`, [`mint-child:${submissionId}`])).rows[0].n;
 
   describe('markPaid', () => {
-    it('stores the hash as lowercase 0x, enqueues one child NFT job and audits PAYOUT_PAID in the same transaction', async () => {
+    it('stores the hash as lowercase 0x, audits PAYOUT_PAID in the same transaction and no longer queues a completion NFT (2026-11-10)', async () => {
       const { payoutId, submissionId } = await readyPayout();
+      const snapshot = (await db.query<{ recipient_address: string }>(`SELECT recipient_address FROM payout WHERE id = $1`, [payoutId])).rows[0].recipient_address;
       const hash = fakeTxHash();
-      await expect(rewards.markPaid(payoutId, hash.slice(2), adminId)).resolves.toMatchObject({ status: 'PAID', payout_tx_hash: normalized(hash) });
+      await expect(rewards.markPaid(payoutId, hash.slice(2), adminId))
+        .resolves.toMatchObject({ status: 'PAID', payout_tx_hash: normalized(hash), recipient_address: snapshot });
       expect(await payoutRow(payoutId)).toEqual({ status: 'PAID', payout_tx_hash: normalized(hash) });
-      expect(await childJobs(submissionId)).toBe(1);
+      expect(await childJobs(submissionId)).toBe(0);
+      expect((await db.query(`SELECT 1 FROM nft WHERE submission_id = $1`, [submissionId])).rowCount).toBe(0);
       expect(await auditActions(db, 'payout', payoutId)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED', 'PAYOUT_PAID']);
     });
 
@@ -172,13 +177,12 @@ describeDb('reward and payout rules on a real database', () => {
       expect(await childJobs(submissionId)).toBe(0);
     });
 
-    it('a submission that is no longer APPROVED is 404 APPROVED_SUBMISSION_NOT_FOUND and the whole payment rolls back (no hash, NFT job or audit)', async () => {
+    it('records the payment from the payout row alone: the submission is not read any more (no NFT step), so a hand-edited submission does not block recording a sent transfer', async () => {
       const { payoutId, submissionId } = await readyPayout();
       await db.query(`UPDATE bounty_submission SET status = 'REJECTED' WHERE id = $1`, [submissionId]);
-      await expect(rewards.markPaid(payoutId, fakeTxHash(), adminId)).rejects.toMatchObject({ status: 404, message: 'APPROVED_SUBMISSION_NOT_FOUND' });
-      expect(await payoutRow(payoutId)).toEqual({ status: 'APPROVED', payout_tx_hash: null });
+      await expect(rewards.markPaid(payoutId, fakeTxHash(), adminId)).resolves.toMatchObject({ status: 'PAID' });
       expect(await childJobs(submissionId)).toBe(0);
-      expect(await auditActions(db, 'payout', payoutId)).not.toContain('PAYOUT_PAID');
+      expect(await auditActions(db, 'payout', payoutId)).toContain('PAYOUT_PAID');
     });
 
     it('recomputes bounty_reward.status in the same transaction: PARTIALLY_PAID until the pool or the winner count is exhausted, then PAID', async () => {
@@ -324,19 +328,19 @@ describeDb('reward and payout rules on a real database', () => {
       expect((await db.query(`SELECT 1 FROM payout WHERE submission_id = $1`, [winner.submissionId])).rowCount).toBe(0);
     });
 
-    it('pays the primary, connected wallet of the submitter and stores a per-(submission, reward) idempotency key', async () => {
+    it('pays the payout address the winner entered (snapshot in recipient_address, no wallet) and stores a per-(submission, reward) idempotency key', async () => {
       const { bountyId, rewardId } = await openFunded();
       const winner = await approvedWinner(bountyId);
-      // a secondary wallet and a disconnected old primary (the unique primary index only covers connected rows) must not be picked
-      await db.query(`INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, false, now())`, [winner.userId, `inj1${unique()}`]);
-      await db.query(`INSERT INTO wallet (user_id, chain, address, is_primary, verified_at, disconnected_at) VALUES ($1, 'INJECTIVE', $2, true, now(), now())`, [winner.userId, `inj1${unique()}`]);
-      const payout = await rewards.requestPayout(rewardId, winner.submissionId, '100', adminId);
-      const row = await db.query<{ recipient_wallet_id: string; idempotency_key: string; amount: string }>(
-        `SELECT recipient_wallet_id, idempotency_key, amount::text FROM payout WHERE id = $1`, [payout.id]);
-      expect(row.rows[0]).toEqual({ recipient_wallet_id: winner.walletId, idempotency_key: `submission:${winner.submissionId}:reward:${rewardId}`, amount: '100' });
+      const address = await setPayoutAddress(db, winner.submissionId);
+      const payout = await plainRewards.requestPayout(rewardId, winner.submissionId, '100', adminId);
+      const row = await db.query<{ recipient_wallet_id: string | null; recipient_address: string; idempotency_key: string; amount: string }>(
+        `SELECT recipient_wallet_id, recipient_address, idempotency_key, amount::text FROM payout WHERE id = $1`, [payout.id]);
+      expect(row.rows[0]).toEqual({
+        recipient_wallet_id: null, recipient_address: address, idempotency_key: `submission:${winner.submissionId}:reward:${rewardId}`, amount: '100',
+      });
     });
 
-    it('an agent submission pays the primary, connected wallet of the agent owner', async () => {
+    it('an agent submission is paid only to an address set on the submission: the owner wallet is not a fallback (409 PAYOUT_ADDRESS_NOT_SET without one)', async () => {
       const { bountyId, rewardId } = await openFunded({ submissionMode: 'AGENT' });
       const ownerId = await createUser(db);
       const wallet = await createPrimaryWallet(db, ownerId);
@@ -346,9 +350,12 @@ describeDb('reward and payout rules on a real database', () => {
         [ownerId, unique('pk-'), `0x${unique()}`])).rows[0].id;
       const submission = await submissions.submitAsAgent(bountyId, agentId, { submissionUrl: `https://x.test/${unique()}`, description: 'd' });
       await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
-      const payout = await rewards.requestPayout(rewardId, submission.id, '100', adminId);
-      const row = await db.query<{ recipient_wallet_id: string }>(`SELECT recipient_wallet_id FROM payout WHERE id = $1`, [payout.id]);
-      expect(row.rows[0].recipient_wallet_id).toBe(wallet.id);
+      await expect(plainRewards.requestPayout(rewardId, submission.id, '100', adminId)).rejects.toMatchObject({ status: 409, message: 'PAYOUT_ADDRESS_NOT_SET' });
+      const address = await setPayoutAddress(db, submission.id);
+      const payout = await plainRewards.requestPayout(rewardId, submission.id, '100', adminId);
+      const row = await db.query<{ recipient_wallet_id: string | null; recipient_address: string }>(`SELECT recipient_wallet_id, recipient_address FROM payout WHERE id = $1`, [payout.id]);
+      expect(row.rows[0]).toEqual({ recipient_wallet_id: null, recipient_address: address });
+      expect(wallet.id).toBeDefined(); // the owner's connected primary wallet exists but is not used
     });
 
     it('a reward of a soft-deleted bounty takes no payout request: 404 REWARD_NOT_FOUND and no payout row', async () => {
@@ -359,11 +366,11 @@ describeDb('reward and payout rules on a real database', () => {
       expect((await db.query(`SELECT 1 FROM payout WHERE submission_id = $1`, [winner.submissionId])).rowCount).toBe(0);
     });
 
-    it('a submitter whose primary wallet is disconnected has no recipient: 404 APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND', async () => {
+    it('wallets no longer matter: a disconnected primary wallet does not block a payout to the entered address', async () => {
       const { bountyId, rewardId } = await openFunded();
       const winner = await approvedWinner(bountyId);
       await db.query(`UPDATE wallet SET disconnected_at = now() WHERE id = $1`, [winner.walletId]);
-      await expect(rewards.requestPayout(rewardId, winner.submissionId, '100', adminId)).rejects.toMatchObject({ status: 404, message: 'APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND' });
+      await expect(rewards.requestPayout(rewardId, winner.submissionId, '100', adminId)).resolves.toMatchObject({ status: 'REQUESTED' });
     });
 
     it('the allocation check is exact at the cap with 78-digit amounts (no float rounding)', async () => {

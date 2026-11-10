@@ -4,7 +4,7 @@ import { Request } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { SessionUser } from '../auth/auth.service';
 import {
-  maskWalletAddress,
+  maskAddress,
   onboardingError,
   onboardingLog,
   requestTraceId,
@@ -47,7 +47,7 @@ export class WalletsController {
   async challenge(@Req() req: Request & { user: SessionUser }, @Body() dto: ChallengeDto) {
     const traceId = requestTraceId(req.headers);
     const rid = requestIdOf(req);
-    const wallet = maskWalletAddress(dto.address);
+    const wallet = maskAddress(dto.address);
     onboardingLog(this.logger, 'wallet.challenge.requested', {
       rid,
       traceId,
@@ -80,7 +80,7 @@ export class WalletsController {
   async verify(@Req() req: Request & { user: SessionUser }, @Body() dto: VerifyDto) {
     const traceId = requestTraceId(req.headers);
     const rid = requestIdOf(req);
-    const wallet = maskWalletAddress(dto.address);
+    const wallet = maskAddress(dto.address);
     onboardingLog(this.logger, 'wallet.verify.requested', {
       rid,
       traceId,

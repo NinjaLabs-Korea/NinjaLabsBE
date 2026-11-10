@@ -7,7 +7,6 @@ import { SubmissionReviewService } from '../bounties/submissions/submission-revi
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { DatabaseService } from '../common/database/database.service';
 import { HighlightsService } from '../highlights/highlights.service';
-import { NftsService } from '../nfts/nfts.service';
 import { MINTED_OR_LATER, sqlIn } from '../nfts/nft-status';
 import { PAYABLE_REWARD_STATUSES, payoutRequestableSql, payoutStatusSql } from '../rewards/payout-status';
 import { RewardsService } from '../rewards/rewards.service';
@@ -15,7 +14,7 @@ import { PENDING_REWARD_SQL } from '../users/account-withdrawal.service';
 import { UsersService } from '../users/users.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique } from './harness';
+import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique, withPayoutAddresses } from './harness';
 
 // AgentsService가 끌어오는 ESM 전용 SDK는 e2e 스텁으로 바꾼다 (agents.db-spec.ts와 같다). 여기서는 myAgents 조회만 쓴다.
 jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
@@ -43,7 +42,7 @@ describeDb('completed wins and payout requestability single sources on a real da
     const audit = new AuditService(db);
     const config = testConfig();
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-    rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     submissions = new SubmissionsService(db, new AuditService(db));
     submissionReview = new SubmissionReviewService(db, audit);
     adminId = await createUser(db, { isAdmin: true });

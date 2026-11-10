@@ -5,6 +5,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -41,6 +42,18 @@ export class SubmitDto {
   commitSha?: string;
 }
 
+/**
+ * PUT /submissions/:id/payout-address 본문. 형식 검증(0x/inj1, 체크섬, 20바이트, 0 주소)은 서비스가 하고 400 INVALID_INJECTIVE_ADDRESS로 답한다
+ * (DTO 메시지가 아니라 코드로 - FE가 코드로 문구를 고른다). 여기서는 문자열·길이만 본다.
+ */
+export class SetPayoutAddressDto {
+  @Trim()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  address!: string;
+}
+
 @Controller()
 @UseGuards(AuthGuard)
 export class SubmissionsController {
@@ -59,6 +72,16 @@ export class SubmissionsController {
       repositoryUrl: dto.repositoryUrl,
       commitSha: dto.commitSha,
     });
+  }
+
+  /** PUT /submissions/:id/payout-address - 승인된 내 제출의 지급 주소 입력/수정 (payout 요청 전까지만) */
+  @Put('submissions/:id/payout-address')
+  setPayoutAddress(
+    @Param('id', ParseUUIDPipe) submissionId: string,
+    @Req() req: Request & { user: SessionUser },
+    @Body() dto: SetPayoutAddressDto,
+  ) {
+    return this.submissions.setPayoutAddress(submissionId, req.user.userId, dto.address);
   }
 
   /** GET /submissions/me - 내 제출 내역 */

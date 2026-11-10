@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/c
 import { ConfigService } from '@nestjs/config';
 import { isAddress } from 'ethers';
 import { isProduction } from '../../common/bootstrap-checks';
+import { bech32ChecksumValid } from '../../common/validation/injective-address';
 
 export type RewardInput = {
   tokenType: string;
@@ -32,26 +33,9 @@ export const PENDING_MULTISIG_SETUP = 'PENDING_MULTISIG_SETUP';
 /**
  * 멀티시그 주소 모양 - scripts/mainnet-preflight.sql의 custody 검사와 같은 집합:
  * bech32 `inj1` + 38자(계정, 20바이트) 또는 + 58자(컨트랙트 - cw3 멀티시그, 32바이트), 또는 EVM `0x` + 40 hex(Safe 등 - runbook §9).
- * bech32는 체크섬까지 확인한다 (한 글자 오타 = 스폰서가 엉뚱한 주소로 입금).
+ * bech32는 체크섬까지 확인한다 (한 글자 오타 = 스폰서가 엉뚱한 주소로 입금). 체크섬 함수는 지급 주소 검증과 공유한다(common/validation/injective-address.ts).
  */
 const INJ_BECH32 = /^inj1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{38}([qpzry9x8gf2tvdw0s3jn54khce6mua7l]{20})?$/;
-const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-
-/** BIP-173 bech32 체크섬 (소문자 주소만 - INJ_BECH32가 이미 소문자를 강제한다) */
-function bech32ChecksumValid(address: string): boolean {
-  const sep = address.lastIndexOf('1');
-  const hrp = address.slice(0, sep);
-  const data = [...address.slice(sep + 1)].map((c) => BECH32_CHARSET.indexOf(c));
-  const values = [...[...hrp].map((c) => c.charCodeAt(0) >> 5), 0, ...[...hrp].map((c) => c.charCodeAt(0) & 31), ...data];
-  const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-  let chk = 1;
-  for (const v of values) {
-    const top = chk >>> 25;
-    chk = ((chk & 0x1ffffff) << 5) ^ v;
-    for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= GEN[i];
-  }
-  return chk === 1;
-}
 
 /** 멀티시그 주소로 쓸 수 없는 이유, 쓸 수 있으면 null (기동 로그용 - 값을 바꾸지는 않는다) */
 export function rewardMultisigAddressProblem(value: string | undefined): string | null {

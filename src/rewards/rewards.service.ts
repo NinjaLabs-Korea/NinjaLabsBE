@@ -6,14 +6,13 @@ import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { DatabaseService, QueryRunner } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { TOKEN_AMOUNT } from '../common/validation/token-amount';
+import { maskAddress } from '../common/validation/injective-address';
 import { normalizeTxHash } from '../common/validation/tx-hash';
-import { NftsService } from '../nfts/nfts.service';
 import { allowsPayoutSelfApproval, PAYOUT_ALLOW_SELF_APPROVAL_ENV } from './payout-approval';
 import {
   allocatedPayoutSumSql, AWAITING_APPROVAL_PAYOUT_STATUSES, PAYABLE_REWARD_STATUSES, rewardCapSql, SENDABLE_PAYOUT_STATUSES, sqlStatusList,
   UNSETTLED_PAYOUT_STATUSES,
 } from './payout-status';
-import { primaryWalletSql } from '../wallets/primary-wallet';
 
 /** bounty_reward.deposit_tx_hash의 부분 유니크 인덱스(0014). confirmDeposit의 23505는 이 이름일 때만 TX_HASH_ALREADY_USED다 */
 export const DEPOSIT_TX_UNIQUE_INDEX = 'uq_bounty_reward_deposit_tx';
@@ -33,7 +32,6 @@ export class RewardsService {
 
   constructor(
     private readonly db: DatabaseService,
-    private readonly nfts: NftsService,
     private readonly audit: AuditService,
     config: ConfigService,
   ) {
@@ -109,8 +107,7 @@ export class RewardsService {
       }
       // 수령자 유저 행을 FOR SHARE로 잠근다 - 회원 탈퇴(AccountWithdrawalService)는 같은 행을 FOR UPDATE로 먼저 잠그고 열린 payout을
       // 검사하므로, 둘이 겹치면 한쪽이 기다린다: 탈퇴가 먼저면 이 조회가 재평가돼 탈퇴 유저(deleted_at) → 404, 이쪽이 먼저면 탈퇴가 이 payout을 보고 409.
-      // Acquire the owner lock BEFORE selecting the primary wallet. A replacement can change wallet rows while
-      // a joined SELECT waits for this lock; its original READ COMMITTED snapshot would otherwise select the old wallet.
+      // 유저 → 제출 순서로 잠근다 (setPayoutAddress·탈퇴와 같은 순서 - 한 문장으로 둘을 잠그면 탈퇴와 교착할 수 있다).
       const owner = await tx.query(
         `SELECT u.id FROM bounty_submission s
            LEFT JOIN agent a ON a.id = s.agent_id
@@ -118,22 +115,21 @@ export class RewardsService {
           WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u`,
         [submissionId, reward.rows[0].bounty_id],
       );
-      if (!owner.rowCount) throw new NotFoundException('APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND');
-      const wallet = await tx.query<{ wallet_id: string }>(
-        `SELECT w.id AS wallet_id
-           FROM bounty_submission s
-           LEFT JOIN agent a ON a.id = s.agent_id
-           JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id)
-                AND u.deleted_at IS NULL
-           JOIN wallet w ON w.user_id = u.id
-                AND ${primaryWalletSql('w')}
+      if (!owner.rowCount) throw new NotFoundException('APPROVED_SUBMISSION_NOT_FOUND');
+      // 제출 행을 FOR UPDATE로 잠근 뒤 지급 주소를 읽는다 - 수상자의 PUT /submissions/:id/payout-address(setPayoutAddress)가 같은 행을
+      // FOR UPDATE로 잠그므로 둘은 직렬화된다: 주소 변경이 먼저 커밋되면 재평가된 새 주소를 스냅샷하고, 이쪽이 먼저면 변경은 payout 행을 보고 409 PAYOUT_ADDRESS_LOCKED.
+      const submission = await tx.query<{ payout_address: string | null }>(
+        `SELECT s.payout_address FROM bounty_submission s
           WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2
-          FOR UPDATE OF s FOR SHARE OF u`,
+          FOR UPDATE OF s`,
         [submissionId, reward.rows[0].bounty_id],
       );
-      if (!wallet.rowCount) throw new NotFoundException('APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND');
+      if (!submission.rowCount) throw new NotFoundException('APPROVED_SUBMISSION_NOT_FOUND');
+      // 중복 검사가 주소 검사보다 먼저다: 0029 이전 지갑 기반 payout이 있는 제출은 주소가 비어 있어도 "이미 요청됨"이다
       const duplicate = await tx.query(`SELECT id FROM payout WHERE bounty_reward_id = $1 AND submission_id = $2`, [rewardId, submissionId]);
       if (duplicate.rowCount) throw new ConflictException('PAYOUT_ALREADY_REQUESTED');
+      const recipientAddress = submission.rows[0].payout_address;
+      if (!recipientAddress) throw new ConflictException('PAYOUT_ADDRESS_NOT_SET');
       const allocated = await tx.query<{ amount: string }>(
         // 배정 합계 = 취소 아닌 payout 합계 (payout-status.ts ALLOCATED_PAYOUT_STATUSES)
         `SELECT ${allocatedPayoutSumSql('rw')}::text AS amount FROM bounty_reward rw WHERE rw.id = $1`, [rewardId],
@@ -143,17 +139,17 @@ export class RewardsService {
       }
       const r = await tx.query(
         `INSERT INTO payout
-           (bounty_reward_id, submission_id, recipient_wallet_id, amount, idempotency_key, requested_by)
+           (bounty_reward_id, submission_id, recipient_address, amount, idempotency_key, requested_by)
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id, status, requested_at`,
-        [rewardId, submissionId, wallet.rows[0].wallet_id, amount,
+        [rewardId, submissionId, recipientAddress, amount,
          `submission:${submissionId}:reward:${rewardId}`, adminId],
       );
       // 새 payout이 아직 지급 전이므로 PAID였던 보상은 PARTIALLY_PAID로 돌아간다 (FUNDED는 그대로 - 지급된 것이 없다)
       await this.advanceRewardStatus(tx, rewardId);
-      // 수령 지갑은 주소가 아니라 wallet id만 남긴다 (주소는 payout 행 -> wallet에서 운영자 화면이 보여 준다)
+      // 수령 주소는 마스킹해서만 남긴다 (원문은 payout.recipient_address 스냅샷 - 운영자 화면이 보여 준다)
       await this.audit.record(adminId, 'PAYOUT_REQUESTED', 'payout', r.rows[0].id, tx, {
-        after: { status: r.rows[0].status, amount, rewardId, submissionId, recipientWalletId: wallet.rows[0].wallet_id },
+        after: { status: r.rows[0].status, amount, rewardId, submissionId, recipientAddress: maskAddress(recipientAddress) },
       });
       return r.rows[0];
     });
@@ -224,41 +220,23 @@ export class RewardsService {
       if (reuse.rows[0].same_bounty > 0) {
         this.logger.log(`payout ${payoutId}: tx ${hash} is already recorded on ${reuse.rows[0].same_bounty} PAID payout(s) of the same bounty - multi-recipient send`);
       }
+      // 완료 NFT 발급(자식 민팅 큐)은 2026-11-10 결정으로 하지 않는다 - 송금 기록과 보상 상태 재계산만 한다
       const payout = await tx.query<{
         id: string;
         status: string;
         payout_tx_hash: string;
         submission_id: string;
-        recipient_wallet_id: string;
+        recipient_address: string | null;
         bounty_reward_id: string;
         amount: string;
       }>(
         `UPDATE payout SET status = 'PAID', payout_tx_hash = $2, paid_at = now()
           WHERE id = $1 AND status IN (${sqlStatusList(SENDABLE_PAYOUT_STATUSES)})
-          RETURNING id, status, payout_tx_hash, submission_id, recipient_wallet_id, bounty_reward_id, amount::text AS amount`,
+          RETURNING id, status, payout_tx_hash, submission_id, recipient_address, bounty_reward_id, amount::text AS amount`,
         [payoutId, hash],
       );
       if (!payout.rowCount) throw new NotFoundException('PAYOUT_NOT_FOUND_OR_WRONG_STATUS');
 
-      const submission = await tx.query<{ owner_user_id: string; bounty_id: string }>(
-        `SELECT COALESCE(s.submitter_user_id, a.owner_user_id) AS owner_user_id,
-                s.bounty_id
-           FROM bounty_submission s
-           LEFT JOIN agent a ON a.id = s.agent_id
-          WHERE s.id = $1 AND s.status = 'APPROVED'`,
-        [payout.rows[0].submission_id],
-      );
-      if (!submission.rowCount || !submission.rows[0].owner_user_id) {
-        throw new NotFoundException('APPROVED_SUBMISSION_NOT_FOUND');
-      }
-
-      await this.nfts.enqueueChildMintInTransaction(
-        tx,
-        submission.rows[0].owner_user_id,
-        payout.rows[0].recipient_wallet_id,
-        submission.rows[0].bounty_id,
-        payout.rows[0].submission_id,
-      );
       await this.advanceRewardStatus(tx, payout.rows[0].bounty_reward_id);
       // after_data.txHash는 isRecordedRefund(action = 'REWARD_REFUNDED'만 본다)의 대상이 아니다 - 지급 해시 재사용 판정은 payout 행으로 한다
       const { amount, ...paid } = payout.rows[0];

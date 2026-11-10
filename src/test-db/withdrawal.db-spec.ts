@@ -9,12 +9,11 @@ import { ApplicationsService } from '../bounties/applications/applications.servi
 import { SubmissionReviewService } from '../bounties/submissions/submission-review.service';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { DatabaseService } from '../common/database/database.service';
-import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { AccountWithdrawalService } from '../users/account-withdrawal.service';
 import { UsersService } from '../users/users.service';
 import { describeDb } from './describe-db';
-import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, waitForLockWaiter } from './harness';
+import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, waitForLockWaiter, withPayoutAddresses } from './harness';
 
 describeDb('account withdrawal on a real database', () => {
   let db: DatabaseService;
@@ -38,7 +37,7 @@ describeDb('account withdrawal on a real database', () => {
     withdrawal = new AccountWithdrawalService(db, audit, auth);
     users = new UsersService(db, new AuditService(db));
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-    rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
     submissions = new SubmissionsService(db, new AuditService(db));
@@ -307,7 +306,7 @@ describeDb('account withdrawal on a real database', () => {
     expect(settled).toBe(false); // blocked on the user row
     release();
     await withdrawing;
-    await expect(request).rejects.toMatchObject({ status: 404, message: 'APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND' });
+    await expect(request).rejects.toMatchObject({ status: 404, message: 'APPROVED_SUBMISSION_NOT_FOUND' });
     expect((await db.query(`SELECT 1 FROM payout WHERE submission_id = $1`, [submission.id])).rowCount).toBe(0);
   });
   it('an approval racing a withdrawal waits for it and then refuses (no approved winner who can never be paid)', async () => {

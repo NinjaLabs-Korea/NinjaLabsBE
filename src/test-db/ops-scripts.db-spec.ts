@@ -17,11 +17,10 @@ import { AlertService } from '../common/alerts/alert.service';
 import { InjectiveNftClient } from '../nfts/injective-nft.client';
 import { STATIC_FILE_EXTENSIONS } from '../users/nickname';
 import { NftJobWorker } from '../nfts/nft-job.worker';
-import { NftsService } from '../nfts/nfts.service';
 import { payoutStatusSql } from '../rewards/payout-status';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { createDb, testConfig, testSslEnv, unique, waitFor } from './harness';
+import { createDb, randomPayoutAddress, testConfig, testSslEnv, unique, waitFor } from './harness';
 
 // 실제 클라이언트는 @injectivelabs/sdk-ts(ESM)를 끌어오므로 DI 메타데이터용 껍데기로 대체한다 (nft-worker 스펙과 동일)
 jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
@@ -521,6 +520,52 @@ describeDb('ops scripts on a real database', () => {
       expect((await pool.query(`SELECT amount::text FROM payout WHERE id = $1`, [payoutId])).rows[0].amount).toBe('400');
     });
 
+    /** 수령 주소 정정 블록 (2026-11-10, recipient_address 기준) - 주소 자리표시값은 CHECK를 통과하는 진짜 주소로 먼저 바꾼다 */
+    async function runAddressCorrection(payoutId: string, from: string, to: string) {
+      const block = sqlBlock('<새 inj1 주소>').replace(/<새 inj1 주소>/g, to).replace(/<기존 inj1 주소>/g, from);
+      const client = await pool.connect();
+      const results: { rowCount: number | null }[] = [];
+      try {
+        for (const sql of statements(block, payoutId)) results.push(await client.query(sql));
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
+      return results;
+    }
+    /** seedPayouts의 지갑 기반 payout을 주소 기반(0029 이후 모양)으로 바꾼다 */
+    async function asAddressPayout(payoutId: string) {
+      const address = randomPayoutAddress();
+      await pool.query(`UPDATE payout SET recipient_address = $2, recipient_wallet_id = NULL WHERE id = $1`, [payoutId, address]);
+      await pool.query(`UPDATE bounty_submission SET payout_address = $2, payout_address_updated_at = now()
+        WHERE id = (SELECT submission_id FROM payout WHERE id = $1)`, [payoutId, address]);
+      return address;
+    }
+
+    it('recipient address correction (PAYOUT_CORRECTED_MANUAL by recipient_address) moves the unsent payout and the submission to the new address, resets approval, audits masked values', async () => {
+      const { payouts: [payoutId] } = await seedPayouts(2, ['APPROVED']);
+      const old = await asAddressPayout(payoutId);
+      const next = randomPayoutAddress();
+      const results = await runAddressCorrection(payoutId, old, next);
+      expect(results[1].rowCount).toBe(1); // BEGIN, UPDATE payout, UPDATE submission, INSERT, COMMIT
+      expect((await pool.query(`SELECT recipient_address, status, approved_by FROM payout WHERE id = $1`, [payoutId])).rows[0])
+        .toEqual({ recipient_address: next, status: 'REQUESTED', approved_by: null });
+      expect((await pool.query(`SELECT s.payout_address FROM bounty_submission s JOIN payout p ON p.submission_id = s.id WHERE p.id = $1`, [payoutId])).rows[0].payout_address)
+        .toBe(next);
+      expect((await auditRows('payout', payoutId)).map((r) => [r.action, r.actor_user_id])).toEqual([['PAYOUT_CORRECTED_MANUAL', null]]);
+    });
+
+    it('recipient address correction does not touch a PAID payout or a payout whose current address differs', async () => {
+      const { payouts: [paid, other] } = await seedPayouts(3, ['PAID', 'REQUESTED']);
+      const paidAddress = await asAddressPayout(paid);
+      expect((await runAddressCorrection(paid, paidAddress, randomPayoutAddress()))[1].rowCount).toBe(0); // UPDATE 0 → ROLLBACK per the runbook
+      const otherAddress = await asAddressPayout(other);
+      expect((await runAddressCorrection(other, randomPayoutAddress(), randomPayoutAddress()))[1].rowCount).toBe(0);
+      expect((await pool.query(`SELECT recipient_address FROM payout WHERE id = $1`, [other])).rows[0].recipient_address).toBe(otherAddress);
+    });
+
     it('PAYOUT_CANCELLED_MANUAL cancels, audits and recomputes the reward to PAID when the remaining winners are paid', async () => {
       const { rewardId, payouts: [open] } = await seedPayouts(2, ['REQUESTED', 'PAID', 'PAID']);
       await runTemplate('PAYOUT_CANCELLED_MANUAL', open);
@@ -952,7 +997,7 @@ describeDb('ops scripts on a real database', () => {
   });
 
   /**
-   * scripts/forfeit-award.js - 지갑 없는 수상자(requestPayout 404)는 "받을 몫이 남은" 것으로 세져(다시 연결할 수 있으므로) COMPLETED·CANCELLED가
+   * scripts/forfeit-award.js - 지급 주소를 넣지 않은 수상자(requestPayout 409 PAYOUT_ADDRESS_NOT_SET)는 "받을 몫이 남은" 것으로 세져(나중에 넣을 수 있으므로) COMPLETED·CANCELLED가
    * 둘 다 막힌다. 연락이 끊긴 경우 운영자가 이 스크립트로 보상 미지급 처리를 하면 바운티를 닫고, 취소 → 환불 → 삭제까지 갈 수 있다 (runbook §7.4).
    */
   describe('scripts/forfeit-award.js', () => {
@@ -965,7 +1010,7 @@ describeDb('ops scripts on a real database', () => {
       const config = testConfig({ DATABASE_URL: url });
       fDb = new DatabaseService(config);
       fBounties = new BountyAdminService(fDb, new AuditService(fDb), new BountyLifecycleService(), new RewardTokenResolver(config));
-      fRewards = new RewardsService(fDb, new NftsService(fDb, config), new AuditService(fDb), config);
+      fRewards = new RewardsService(fDb, new AuditService(fDb), config); // 주소를 채우지 않는다: 이 블록은 "주소 없는 수상자" 상태를 본다
     });
     afterAll(async () => fDb.onApplicationShutdown());
     const freshTx = () => `0x${(++counter).toString(16).padStart(64, 'b')}`;
@@ -1006,10 +1051,10 @@ describeDb('ops scripts on a real database', () => {
     const forfeit = (submissionId: string, adminId: string, extra: string[] = ['--yes'], prompt?: (q: string) => Promise<boolean>) =>
       invoke(forfeitAward, [submissionId, '--reason', ' no wallet connected after 30 days ', '--admin', adminId, ...extra], prompt);
 
-    it('no-wallet stuck state: COMPLETED and CANCELLED both blocked → forfeit → CANCELLED → record-refund → delete; payoutStatus NONE', async () => {
+    it('no-address stuck state: COMPLETED and CANCELLED both blocked → forfeit → CANCELLED → record-refund → delete; payoutStatus NONE', async () => {
       const { bountyId, rewardId, adminId, submissionId, revisionId } = await seedStuck();
-      // the stuck state: no payout can be requested, yet the winner counts as owed (they could reconnect)
-      await expect(fRewards.requestPayout(rewardId, submissionId, '1000', adminId)).rejects.toMatchObject({ message: 'APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND' });
+      // the stuck state: no payout can be requested (no payout address), yet the winner counts as owed (they could still enter one)
+      await expect(fRewards.requestPayout(rewardId, submissionId, '1000', adminId)).rejects.toMatchObject({ status: 409, message: 'PAYOUT_ADDRESS_NOT_SET' });
       expect(await payoutStatusOf(submissionId)).toBe('PENDING');
       await expect(fBounties.transition(bountyId, 'COMPLETED', adminId)).rejects.toMatchObject({ status: 400, response: { message: [OWED] } });
       await expect(fBounties.transition(bountyId, 'OPEN', adminId)).resolves.toMatchObject({ status: 'OPEN' });

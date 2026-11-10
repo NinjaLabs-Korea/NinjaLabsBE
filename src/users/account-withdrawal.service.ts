@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.service';
 import { revokeAllSessionsOfUser } from '../auth/auth-sessions';
 import { AuthService } from '../auth/auth.service';
 import { BountyStatusPolicy } from '../bounties/bounty-status';
-import { withdrawOpenParticipationOfUser } from '../bounties/participation-withdrawal';
+import { clearPayoutAddressesOfUser, withdrawOpenParticipationOfUser } from '../bounties/participation-withdrawal';
 import { withdrawOpenCohortApplicationsOfUser } from '../cohorts/cohort-withdrawal';
 import { DatabaseService } from '../common/database/database.service';
 import { PAYABLE_REWARD_STATUSES, payoutRequestableSql, TERMINAL_PAYOUT_STATUSES } from '../rewards/payout-status';
@@ -59,6 +59,7 @@ export function nicknameConfirmed(current: string, typed: string): boolean {
  *   5. 소유 에이전트 전부 REVOKED + 키 REVOKED (각각 감사 AGENT_REVOKED - agents/agent-revocation.ts)
  *   6. 본인/내 에이전트의 심사 전 제출(SUBMITTED/RESUBMITTED/IN_REVIEW/REVISION_REQUESTED)과 PENDING 지원 → WITHDRAWN
  *      (bounties/participation-withdrawal.ts)
+ *   6a. 본인 제출의 지급 주소(payout_address) 삭제 - payout.recipient_address 스냅샷은 원장이라 유지 (bounties/participation-withdrawal.ts)
  *   6b. 심사 전 기수 지원서(SUBMITTED) → WITHDRAWN, 행은 이력으로 남김 (cohorts/cohort-withdrawal.ts)
  *   7. 감사 USER_WITHDRAWN
  * 이 파일은 잠금·차단 검사·user 행(+ user_link/user_tag)만 직접 쓰고, 4~6의 다른 모듈 테이블은 각 소유 모듈의 함수가 같은 tx 안에서 쓴다.
@@ -125,6 +126,7 @@ export class AccountWithdrawalService {
       await disconnectAllWalletsOfUser(tx, userId);
       await revokeAllAgentsOfOwner(tx, this.audit, userId, userId);
       await withdrawOpenParticipationOfUser(tx, userId);
+      await clearPayoutAddressesOfUser(tx, userId);
       await withdrawOpenCohortApplicationsOfUser(tx, userId);
 
       await this.audit.record(userId, 'USER_WITHDRAWN', 'user', userId, tx);

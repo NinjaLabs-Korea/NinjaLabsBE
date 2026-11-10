@@ -16,7 +16,7 @@ const config = (values: Record<string, string> = {}) => ({ get: (key: string) =>
 function build(values: Record<string, string> = {}) {
   const { database, db, txQuery: query } = createMockDb();
   const audit = { record: jest.fn().mockResolvedValue(undefined) };
-  const service = new RewardsService(database, {} as never, audit as unknown as AuditService, config(values));
+  const service = new RewardsService(database, audit as unknown as AuditService, config(values));
   return { service, db, query, audit };
 }
 

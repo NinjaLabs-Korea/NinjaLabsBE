@@ -8,10 +8,10 @@ import { SubmissionReviewService } from '../bounties/submissions/submission-revi
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { DatabaseService } from '../common/database/database.service';
 import { runWithRequestContext } from '../common/http/request-context';
-import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
+import { maskAddress } from '../common/validation/injective-address';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique } from './harness';
+import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique, setPayoutAddress, withPayoutAddresses } from './harness';
 
 /**
  * 2026-11-02 감사 공백 보강을 실 Postgres 행으로 고정한다:
@@ -51,7 +51,7 @@ describeDb('audit trail rows on a real database', () => {
     audit = new AuditService(db);
     const config = testConfig();
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-    rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
     submissions = new SubmissionsService(db, audit);
@@ -188,11 +188,12 @@ describeDb('audit trail rows on a real database', () => {
       const wallet = await createPrimaryWallet(db, winner);
       const submission = await submissions.submit(bountyId, winner, work(1));
       await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
-      return { bountyId, rewardId, depositHash, walletId: wallet.id, submissionId: submission.id };
+      const entered = await setPayoutAddress(db, submission.id);
+      return { bountyId, rewardId, depositHash, walletId: wallet.id, submissionId: submission.id, entered };
     }
 
-    it('deposit, request, approval and paid rows record status, amounts, normalized hashes and ids, never a wallet address', async () => {
-      const { bountyId, rewardId, depositHash, walletId, submissionId } = await fundedWithWinner();
+    it('deposit, request, approval and paid rows record status, amounts, normalized hashes and ids, never a raw wallet or payout address', async () => {
+      const { bountyId, rewardId, depositHash, walletId, submissionId, entered } = await fundedWithWinner();
       expect(await auditRows('bounty_reward', rewardId)).toEqual([expect.objectContaining({
         action: 'REWARD_DEPOSIT_CONFIRMED', actor_user_id: adminId,
         before_data: { status: 'DEPOSIT_PENDING' }, after_data: { status: 'FUNDED', txHash: normalized(depositHash), depositedAmount: '1200', bountyId },
@@ -207,7 +208,7 @@ describeDb('audit trail rows on a real database', () => {
       const rows = await auditRows('payout', payout.id);
       expect(rows).toEqual([
         { action: 'PAYOUT_REQUESTED', actor_user_id: adminId, actor_agent_id: null, before_data: null,
-          after_data: { status: 'REQUESTED', amount: '1000', rewardId, submissionId, recipientWalletId: walletId }, ip: '198.51.100.20' },
+          after_data: { status: 'REQUESTED', amount: '1000', rewardId, submissionId, recipientAddress: maskAddress(entered) }, ip: '198.51.100.20' },
         { action: 'PAYOUT_APPROVED', actor_user_id: approverId, actor_agent_id: null, before_data: { status: 'REQUESTED' },
           after_data: { status: 'APPROVED', amount: '1000', requestedBy: adminId }, ip: null },
         { action: 'PAYOUT_PAID', actor_user_id: approverId, actor_agent_id: null, before_data: { status: 'APPROVED' },
@@ -215,6 +216,7 @@ describeDb('audit trail rows on a real database', () => {
       ]);
       const address = (await db.query<{ address: string }>(`SELECT address FROM wallet WHERE id = $1`, [walletId])).rows[0].address;
       expect(JSON.stringify(rows)).not.toContain(address);
+      expect(JSON.stringify(rows)).not.toContain(entered); // only the masked form (first 6 + last 4)
     });
 
     it('a PAYOUT_PAID txHash in after_data is not mistaken for a refund hash (only REWARD_REFUNDED rows count)', async () => {
@@ -239,7 +241,7 @@ describeDb('audit trail rows on a real database', () => {
       const { rewardId, submissionId } = await fundedWithWinner();
       const payout = await rewards.requestPayout(rewardId, submissionId, '1000', adminId);
       await rewards.markApproved(payout.id, approverId);
-      const failing = new RewardsService(db, new NftsService(db, testConfig()), new FailAfterInsertAudit(db), testConfig());
+      const failing = withPayoutAddresses(db, new RewardsService(db, new FailAfterInsertAudit(db), testConfig()));
       await expect(failing.markPaid(payout.id, fakeTxHash(), adminId)).rejects.toThrow('fail after audit insert');
       expect((await db.query(`SELECT status, payout_tx_hash FROM payout WHERE id = $1`, [payout.id])).rows[0]).toEqual({ status: 'APPROVED', payout_tx_hash: null });
       expect((await auditRows('payout', payout.id)).map((row) => row.action)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED']);
@@ -248,7 +250,7 @@ describeDb('audit trail rows on a real database', () => {
     it('a failure after the REWARD_DEPOSIT_CONFIRMED insert leaves the reward DEPOSIT_PENDING with no hash', async () => {
       const bountyId = await bounty({ reward: '1000' });
       const rewardId = (await db.query<{ id: string }>(`SELECT id FROM bounty_reward WHERE bounty_id = $1`, [bountyId])).rows[0].id;
-      const failing = new RewardsService(db, new NftsService(db, testConfig()), new FailAfterInsertAudit(db), testConfig());
+      const failing = withPayoutAddresses(db, new RewardsService(db, new FailAfterInsertAudit(db), testConfig()));
       await expect(failing.confirmDeposit(rewardId, fakeTxHash(), '1000', adminId)).rejects.toThrow('fail after audit insert');
       expect((await db.query(`SELECT status, deposit_tx_hash FROM bounty_reward WHERE id = $1`, [rewardId])).rows[0]).toEqual({ status: 'DEPOSIT_PENDING', deposit_tx_hash: null });
       expect(await auditRows('bounty_reward', rewardId)).toEqual([]);

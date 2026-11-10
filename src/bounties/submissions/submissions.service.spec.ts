@@ -72,10 +72,11 @@ describe('SubmissionsService check order', () => {
 });
 
 describe('SubmissionsService.mySubmissions', () => {
-  it('runs one pooled read bound to the user id and returns its rows unchanged', async () => {
+  it('runs one pooled read bound to the user id and returns its rows plus the computed 0x payout address', async () => {
     const rows = [{ id: 's1', status: 'SUBMITTED' }];
     const mock = createMockDb({ strict: true, handlers: [{ match: /^SELECT s\.id, s\.status/, reply: () => ({ rowCount: 1, rows }) }] });
-    await expect(new SubmissionsService(mock.database, new AuditService(mock.database)).mySubmissions('user')).resolves.toBe(rows);
+    await expect(new SubmissionsService(mock.database, new AuditService(mock.database)).mySubmissions('user'))
+      .resolves.toEqual([{ id: 's1', status: 'SUBMITTED', payout_address_evm: null }]);
     expect(mock.statements(/./)).toHaveLength(1);
     expect(mock.statements(/./)[0].params).toEqual(['user']);
     expect(mock.db.tx).not.toHaveBeenCalled();

@@ -47,6 +47,7 @@ describe('AccountWithdrawalService', () => {
       { match: /^UPDATE agent_api_key SET/, reply: ok },
       { match: /^UPDATE bounty_submission SET status = 'WITHDRAWN'/, reply: ok },
       { match: /^UPDATE bounty_application SET status = 'WITHDRAWN'/, reply: ok },
+      { match: /^UPDATE bounty_submission SET payout_address = NULL/, reply: ok },
       { match: /^UPDATE cohort_application/, reply: ok },
     ];
   }
@@ -75,6 +76,7 @@ describe('AccountWithdrawalService', () => {
     expect(mock.txStatements(/^UPDATE "user" SET status = 'WITHDRAWN'/)[0].params).toEqual([userId, 'deleted:1700000000000:', 'withdrawn_']);
     expect(mock.txStatements(/^UPDATE bounty_submission SET status = 'WITHDRAWN'/)[0].params)
       .toEqual([userId, ['SUBMITTED', 'RESUBMITTED', 'IN_REVIEW', 'REVISION_REQUESTED']]);
+    expect(mock.txStatements(/^UPDATE bounty_submission SET payout_address = NULL/)[0].params).toEqual([userId]); // 지급 주소는 지우고 payout 스냅샷은 건드리지 않는다
     expect(mock.txStatements(/^UPDATE cohort_application/)[0].params).toEqual([userId, 'WITHDRAWN', 'SUBMITTED']); // 행은 지우지 않고 SUBMITTED만 철회
     expect(record.mock.calls).toEqual([
       [userId, 'AGENT_REVOKED', 'agent', 'a1', mock.txClient],

@@ -149,7 +149,7 @@
     },
     {
       "code": "INVALID_INJECTIVE_ADDRESS",
-      "ko": "Injective 주소(inj1… 또는 0x…) 형식이 올바르지 않다",
+      "ko": "Injective 주소(inj1… 또는 0x…) 형식이 올바르지 않다 (지갑 연결, 지급 주소 입력: 체크섬, hrp, 20바이트 계정 아님, 0 주소)",
       "statuses": [
         400
       ]
@@ -486,9 +486,23 @@
     },
     {
       "code": "SUBMISSION_NOT_FOUND",
-      "ko": "제출물이 없다",
+      "ko": "제출물이 없다 (지급 주소 입력: 내 제출이 아니거나 바운티가 삭제됨도 같은 404)",
       "statuses": [
         404
+      ]
+    },
+    {
+      "code": "SUBMISSION_NOT_APPROVED",
+      "ko": "승인(APPROVED)된 제출이 아니라 지급 주소를 입력할 수 없다",
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "PAYOUT_ADDRESS_LOCKED",
+      "ko": "이 제출의 지급이 이미 요청돼 지급 주소를 바꿀 수 없다 (정정은 운영자 수동 경로)",
+      "statuses": [
+        409
       ]
     },
     {
@@ -576,17 +590,17 @@
       ]
     },
     {
-      "code": "APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND",
-      "ko": "승인된 제출이 없거나 수령자의 지갑이 연결돼 있지 않다",
+      "code": "APPROVED_SUBMISSION_NOT_FOUND",
+      "ko": "지급을 요청할 승인된 제출이 없다 (APPROVED 아님, 다른 바운티의 제출, 제출자 탈퇴)",
       "statuses": [
         404
       ]
     },
     {
-      "code": "APPROVED_SUBMISSION_NOT_FOUND",
-      "ko": "해당 지급의 승인된 제출이 없다",
+      "code": "PAYOUT_ADDRESS_NOT_SET",
+      "ko": "수상자가 아직 지급 주소를 입력하지 않아 지급을 요청할 수 없다",
       "statuses": [
-        404
+        409
       ]
     },
     {

@@ -4,10 +4,9 @@ import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.servi
 import { RewardTokenResolver } from '../bounties/admin/reward-token.resolver';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { DatabaseService } from '../common/database/database.service';
-import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique } from './harness';
+import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique, withPayoutAddresses } from './harness';
 
 describeDb('GET /submissions/me current-revision fields on a real database', () => {
   let db: DatabaseService;
@@ -21,7 +20,7 @@ describeDb('GET /submissions/me current-revision fields on a real database', () 
     const audit = new AuditService(db);
     const config = testConfig();
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-    rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     submissions = new SubmissionsService(db, new AuditService(db));
     adminId = await createUser(db, { isAdmin: true });
   });

@@ -47,7 +47,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `CONFIRM_NICKNAME_MISMATCH` | 400 | 탈퇴 확인용 닉네임 입력이 현재 닉네임과 다르다 |
 | `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS` | 409 | 진행 중인 지급(payout)이 있어 탈퇴할 수 없다 |
 | `WITHDRAWAL_BLOCKED_PENDING_REWARDS` | 409 | 입금 대기 중인 보상이 걸려 있어 탈퇴할 수 없다 |
-| `INVALID_INJECTIVE_ADDRESS` | 400 | Injective 주소(inj1… 또는 0x…) 형식이 올바르지 않다 |
+| `INVALID_INJECTIVE_ADDRESS` | 400 | Injective 주소(inj1… 또는 0x…) 형식이 올바르지 않다 (지갑 연결, 지급 주소 입력: 체크섬, hrp, 20바이트 계정 아님, 0 주소) |
 | `CHALLENGE_NOT_FOUND` | 400 | 발급된 지갑 challenge가 없다 (먼저 challenge 요청) |
 | `CHALLENGE_EXPIRED` | 400 | challenge가 만료됐거나 이미 사용됐다 |
 | `INVALID_SIGNATURE` | 401 | 서명 검증에 실패했다 (지갑 연결·에이전트 등록 공통) |
@@ -95,7 +95,9 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `APPLICATION_NOT_APPROVED` | 403 | 승인된 지원자만 제출할 수 있다 |
 | `DEADLINE_PASSED` | 400 | 제출 마감이 지났다 (수정 요청 상태의 재제출은 예외) |
 | `SUBMISSION_FINALIZED` | 409 | 이미 확정(승인/반려)된 제출이라 수정할 수 없다 |
-| `SUBMISSION_NOT_FOUND` | 404 | 제출물이 없다 |
+| `SUBMISSION_NOT_FOUND` | 404 | 제출물이 없다 (지급 주소 입력: 내 제출이 아니거나 바운티가 삭제됨도 같은 404) |
+| `SUBMISSION_NOT_APPROVED` | 409 | 승인(APPROVED)된 제출이 아니라 지급 주소를 입력할 수 없다 |
+| `PAYOUT_ADDRESS_LOCKED` | 409 | 이 제출의 지급이 이미 요청돼 지급 주소를 바꿀 수 없다 (정정은 운영자 수동 경로) |
 | `SUBMISSION_NOT_REVIEWABLE` | 400 | 심사 가능한 상태의 제출이 아니다 |
 | `SUBMISSION_REVISION_CHANGED` | 400 | 심사 중에 제출이 재제출돼 리비전이 바뀌었다 (새로고침 후 다시 심사) |
 | `REVISION_COMMENT_REQUIRED` | 400 | 수정 요청에는 코멘트가 필요하다 |
@@ -108,8 +110,8 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `DEPOSIT_BELOW_REWARD_AMOUNT` | 400 | 입금액이 보상 게시 금액(amount)보다 적어 입금 확인을 할 수 없다 |
 | `REWARD_NOT_FOUND_OR_NOT_PENDING` | 404 | 보상이 없거나 입금 대기(DEPOSIT_PENDING) 상태가 아니다 |
 | `REWARD_NOT_FUNDED` | 400 | 보상이 없거나 입금 확인(FUNDED 이상)이 안 돼 지급을 요청할 수 없다 |
-| `APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND` | 404 | 승인된 제출이 없거나 수령자의 지갑이 연결돼 있지 않다 |
-| `APPROVED_SUBMISSION_NOT_FOUND` | 404 | 해당 지급의 승인된 제출이 없다 |
+| `APPROVED_SUBMISSION_NOT_FOUND` | 404 | 지급을 요청할 승인된 제출이 없다 (APPROVED 아님, 다른 바운티의 제출, 제출자 탈퇴) |
+| `PAYOUT_ADDRESS_NOT_SET` | 409 | 수상자가 아직 지급 주소를 입력하지 않아 지급을 요청할 수 없다 |
 | `PAYOUT_ALREADY_REQUESTED` | 409 | 같은 제출에 이미 지급 요청이 있다 (멱등) |
 | `PAYOUT_EXCEEDS_AVAILABLE_REWARD` | 400 | 지급액이 남은 보상 잔액을 넘는다 |
 | `PAYOUT_NOT_FOUND_OR_WRONG_STATUS` | 404 | 지급이 없거나 현재 상태에서 허용되지 않는 처리다 |
@@ -321,9 +323,23 @@ FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 �
 | GET | `/applications/me` | ✅ | 내 지원 내역 (FE `/applications` 페이지) - 본인 건 + **내 에이전트가 낸 건** 포함. 행마다 바운티 현황 `bounty_status`(`DRAFT\|FUNDING_PENDING\|OPEN\|SUBMISSION_CLOSED\|IN_REVIEW\|COMPLETED\|CANCELLED`), `submission_deadline`(ISO 타임스탬프), `application_deadline`(ISO 타임스탬프 또는 `null`)를 함께 준다. `status: REJECTED`이면서 `bounty_status: CANCELLED`면 운영자 반려가 아니라 취소에 따른 자동 정리다 |
 | POST | `/applications/:id/withdraw` | ✅ | 지원 철회 (PENDING만) - 본인 지원 또는 내 에이전트의 지원 |
 | POST | `/bounties/:id/submissions` | ✅ | 제출/재제출 `{submissionUrl, description, repositoryUrl?, commitSha?}` (URL은 공개 http(s)만: localhost·사설/루프백 IP·`.local`/`.internal` 호스트는 400). 온보딩을 마치지 않은 사람(에이전트면 그 소유자)은 409 `PROFILE_REQUIRED` |
+| PUT | `/submissions/:id/payout-address` | ✅ | 지급 주소 입력/수정 `{address}` (2026-11-10, 지갑 연결 대체). 아래 "지급 주소" 참조 |
 | GET | `/submissions/me` | ✅ | 내 제출 내역: 본인 건 + **내 에이전트가 낸 건** 포함. 행마다 `payment_status: 'PAID' \| 'PARTIALLY_PAID' \| 'PENDING' \| 'NONE'`: 공개 프로필 `payoutStatus`와 같은 규칙(위 "공개 프로필"). 그 규칙은 승인 제출 기준이라 `APPROVED`가 아닌 행(심사 중·반려·보상 미지급 처리된 수상)은 항상 `NONE`. 바운티 현황 `bounty_status`(`/applications/me`와 같은 값), `submission_deadline`(ISO 타임스탬프), 사람이 남긴 심사 기록 유무 `has_review`(boolean)를 함께 준다. 현재 리비전의 `submission_url`(string), `repository_url`(string \| null), `commit_sha`(string \| null)도 준다(재제출 폼 미리 채우기용: 재제출은 전체 교체라 폼이 비워 보내면 저장소 URL·커밋 SHA가 지워진다). 추가 필드라 FE는 선택값으로 다루면 되고 배포 순서는 무관하다. `status: REJECTED` + `has_review: false` + `bounty_status: CANCELLED`면 운영자 반려가 아니라 바운티 취소에 따른 자동 정리다. 취소 전이가 미결 제출마다 코멘트 없는 `REJECT` 심사 행을 남기지만 `has_review`는 취소된 바운티의 코멘트 없는 `REJECT` 행을 세지 않는다(`review_comment`는 `null`). 취소 전에 운영자가 코멘트 없이 반려한 건도 같이 `false`가 된다 |
 
 `/applications/me`, `/submissions/me`의 모든 행에 `agent: { id, name } | null`이 들어간다 (사용자가 직접 낸 건은 `null`).
+`/submissions/me`의 모든 행에 지급 주소 필드 4개가 들어간다(2026-11-10, 추가 필드): `payout_address`(소문자 `inj1`, 없으면 `null`), `payout_address_evm`(같은 20바이트의 EIP-55 `0x`, 없으면 `null`), `payout_address_updated_at`(ISO 또는 `null`), `payout_address_editable`(boolean: 내가 직접 낸 `APPROVED` 제출이고 그 제출에 payout 행이 아직 없으면 `true` - 아래 PUT이 지금 받아 주는 조건).
+
+### 지급 주소 (2026-11-10, migration 0029)
+
+`PUT /submissions/:id/payout-address` (AuthGuard, 전역 IP 스로틀) 본문 `{ "address": "0x... | inj1..." }` (trim, 최대 100자).
+
+- 받는 형식: `0x` + 40 hex(대소문자가 섞였으면 EIP-55 체크섬이 맞아야 한다) 또는 `inj1` bech32 20바이트 계정 주소(전부 소문자, 또는 전부 대문자는 소문자로 접는다). 거부: 대소문자 혼합 `inj1`, 체크섬 불일치, 다른 hrp(`cosmos1` 등), 32바이트 컨트랙트 주소(`inj1` + 58자), 0 주소 → 400 `INVALID_INJECTIVE_ADDRESS`. 저장은 소문자 `inj1` 하나.
+- 200 `{ submissionId, payoutAddress (inj1), payoutAddressEvm (0x, EIP-55), updatedAt }`.
+- 404 `SUBMISSION_NOT_FOUND`: 제출이 없음, 내가 직접 낸 제출이 아님(에이전트 제출 포함), 바운티 삭제됨. 409 `SUBMISSION_NOT_APPROVED`: `APPROVED`가 아님. 409 `PAYOUT_ADDRESS_LOCKED`: 그 제출에 payout 행이 이미 있다(상태 무관). 이미 요청된 지급의 주소 정정은 운영자 수동 경로([runbook.md](runbook.md) §7.4).
+- 같은 주소를 다시 보내면 멱등(값·`updatedAt` 그대로, 감사 없음). 처음 설정·변경은 감사 `PAYOUT_ADDRESS_SET`(entity `bounty_submission`, `before_data` `{address: 마스킹 | null}`, `after_data` `{address: 마스킹}` - 원문 주소는 남기지 않는다).
+- `POST /admin/payouts`는 요청 시점의 주소를 `payout.recipient_address`로 스냅샷한다. 이후 PUT은 409라 스냅샷과 주소가 어긋나지 않는다. 주소가 없으면 409 `PAYOUT_ADDRESS_NOT_SET`.
+- 회원 탈퇴 시 본인 제출의 `payout_address`는 지워진다. payout 스냅샷은 지급 원장이라 남는다.
+- 공개 프로필 등 공개 응답에는 지급 주소를 내지 않는다.
 기존 필드와 정렬(최신순)은 그대로다.
 
 제출 검증 규칙 (서버가 강제, FE는 안내만):
@@ -440,7 +456,7 @@ FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 �
 
 `audit_log.action`의 전체 목록이다. 서버 코드의 값은 `src/audit/audit-actions.ts`(`AUDIT_ACTIONS`, `AuditService.record()`가 이 키만 받는다), 운영 스크립트·수동 SQL의 값은 같은 파일의 `SCRIPT_AUDIT_ACTIONS`가 단일 출처이고, `src/audit/audit-actions.spec.ts`가 이 표와 양방향으로 대조한다. 값은 운영 DB에 이미 쌓인 문자열이라 이름을 바꾸지 않는다.
 
-돈 감사 행(`REWARD_DEPOSIT_CONFIRMED`, `PAYOUT_*`, 스크립트 `REWARD_REFUNDED`)의 금액은 토큰 최소 단위 정수 문자열(보상·payout 행과 같은 값), `txHash`는 정규화된 `0x` + 소문자 64자다. 수령 지갑은 주소가 아니라 `recipientWalletId`만 남긴다. `before_data`/`after_data`에는 비밀·이메일·사용자 입력 본문(지원 메시지, 제출 URL·설명)을 넣지 않는다. 금액·해시를 붙인 것은 2026-11-02부터이고 그 전 행은 비어 있다(소급하지 않는다).
+돈 감사 행(`REWARD_DEPOSIT_CONFIRMED`, `PAYOUT_*`, 스크립트 `REWARD_REFUNDED`)의 금액은 토큰 최소 단위 정수 문자열(보상·payout 행과 같은 값), `txHash`는 정규화된 `0x` + 소문자 64자다. 수령 주소는 마스킹(`앞 6자…뒤 4자`)해서만 남긴다(`recipientAddress`, 2026-11-10 이전 행은 wallet id `recipientWalletId`). `before_data`/`after_data`에는 비밀·이메일·사용자 입력 본문(지원 메시지, 제출 URL·설명)을 넣지 않는다. 금액·해시를 붙인 것은 2026-11-02부터이고 그 전 행은 비어 있다(소급하지 않는다).
 
 `audit_log.ip_address`는 HTTP 요청에서 생긴 행에만 채운다: Express `req.ip`(`TRUST_PROXY` 홉 기준으로 계산한 클라이언트 IP, `common/http/request-context.ts`). 크론·워커·운영 스크립트·runbook 수동 SQL 행과 2026-11-02 이전 행은 `NULL`이다. 조회 API(`GET /admin/audit-logs`) 응답에는 넣지 않는다(DB에서만 본다).
 
@@ -462,12 +478,13 @@ FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 �
 | `APPLICATION_WITHDRAWN` | `bounty_application` | `POST /applications/:id/withdraw` (철회한 유저; `before_data` `{status}`, `after_data` `{status, bountyId}`) |
 | `SUBMISSION_SUBMITTED` | `bounty_submission` | 첫 제출 `POST /bounties/:id/submissions`, Agent API `POST /agent-api/v1/bounties/:id/submissions` (에이전트 키면 `actor_agent_id`; `after_data` `{status, revisionNo, bountyId}`) |
 | `SUBMISSION_RESUBMITTED` | `bounty_submission` | 같은 경로의 재제출 (`before_data` `{status, revisionNo}`, `after_data` `{status, revisionNo, bountyId}`) |
+| `PAYOUT_ADDRESS_SET` | `bounty_submission` | `PUT /submissions/:id/payout-address` 처음 설정·변경 (actor = 제출자; `before_data` `{address: 마스킹 \| null}`, `after_data` `{address: 마스킹}`) |
 | `SUBMISSION_START_REVIEW` | `bounty_submission` | `POST /admin/submissions/:id/review` (`SUBMISSION_<decision>`) |
 | `SUBMISSION_REQUEST_REVISION` | `bounty_submission` | 상동 |
 | `SUBMISSION_APPROVE` | `bounty_submission` | 상동 |
 | `SUBMISSION_REJECT` | `bounty_submission` | 상동 |
 | `REWARD_DEPOSIT_CONFIRMED` | `bounty_reward` | `POST /admin/rewards/:id/confirm-deposit` (`before_data` `{status}`, `after_data` `{status, txHash, depositedAmount, bountyId}`) |
-| `PAYOUT_REQUESTED` | `payout` | `POST /admin/payouts` (`after_data` `{status, amount, rewardId, submissionId, recipientWalletId}`) |
+| `PAYOUT_REQUESTED` | `payout` | `POST /admin/payouts` (`after_data` `{status, amount, rewardId, submissionId, recipientAddress}` - `recipientAddress`는 마스킹된 지급 주소. 2026-11-10 이전 행은 `recipientWalletId`) |
 | `PAYOUT_APPROVED` | `payout` | `POST /admin/payouts/:id/approve` (다른 운영자 승인; `before_data` `{status}`, `after_data` `{status, amount, requestedBy}`) |
 | `PAYOUT_SELF_APPROVED` | `payout` | 상동, `PAYOUT_ALLOW_SELF_APPROVAL=true`에서 요청자 본인 승인 |
 | `PAYOUT_PAID` | `payout` | `POST /admin/payouts/:id/paid` (`before_data` `{status}`, `after_data` `{status, txHash, amount}`) |
@@ -535,7 +552,7 @@ USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심
 - 컨트랙트: `inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w` (`.env NFT_CONTRACT_ADDRESS`)
 - minter/admin: 마스터 지갑 `inj1fku0cc2tgmsf9uflhvx0e340urktq7vtlcg9hq` (민팅 전용)
 - token_id = `nft.id` (UUID) / metadata_uri는 추후 메타데이터 서비스 연결 시 채움
-- payout을 PAID로 기록하는 트랜잭션에서 완료 자식 NFT와 mint job도 멱등 생성한다. 자식은 부모 NFT가 `MINTED`/`ATTACHED`일 때만 attach 잡이 걸리고, 부모가 아직 민팅 전이면 `MINTED`로 대기하다가 부모 민팅 완료 시 일괄로 attach 잡이 들어간다 (`nft-job.worker.ts`).
+- ~~payout을 PAID로 기록하는 트랜잭션에서 완료 자식 NFT와 mint job도 멱등 생성한다.~~ **[변경 2026-11-10]** payout PAID 기록은 완료 NFT(자식 NFT, mint job)를 더 만들지 않는다(구글 로그인 전용 전환, NFT 제거 1단계). 이미 있는 nft/nft_job 행과 부모 민팅 뒤의 attach 처리(`nft-job.worker.ts`)는 NFT 모듈 제거 전까지 그대로다.
 - mainnet은 CosmWasm 업로드가 거버넌스 승인제 - 런칭 일정에 반영 필요
 
 ## Admin bounty operations
@@ -544,13 +561,13 @@ USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심
   - `bounty`: `id, title, status, submission_deadline, application_deadline, max_winners, application_required, submission_mode`.
   - `lifecycle`: `blockers` (English sentences keyed by target status - the same strings the transition's 400 body carries), `blockerDetails` (same lists as `{ code, count? }`; codes `DEADLINE_PASSED`, `REWARDS_UNFUNDED`, `PENDING_APPLICATIONS`, `UNSUBMITTED_PARTICIPANTS`, `UNRESOLVED_SUBMISSIONS`, `UNPAID_WINNERS` - the FE localizes these; keys `OPEN`/`SUBMISSION_CLOSED`/`IN_REVIEW`/`COMPLETED`/`CANCELLED` - 2026-10-25: `CANCELLED` carries `UNPAID_WINNERS` while an approved winner is still owed, same sentence as `COMPLETED`), `allowedTransitions` (operator transitions from the current status per `bounty-status.ts`).
   - `applications[]`: `id, status, message, portfolio_url, review_note, applied_at, reviewed_at, actor_name, actor_kind (USER|AGENT), user_id (applicant, or the agent's owner), nickname, agent_id, agent_name`.
-  - `submissions[]`: `id, status, submission_url, description, repository_url, commit_sha, current_revision_no, submitted_at, last_resubmitted_at, reviewed_at, actor_name, actor_kind, user_id, nickname, agent_id, agent_name, recipient_wallet_address` (the owner's active primary wallet - `null` means `POST /admin/payouts` will answer 404 `APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND`), `review_comment`, `revisions[]` (newest first; `revisions[0]` is the latest revision, send `current_revision_no` as `revisionNo` when reviewing), `reviews[]`.
+  - `submissions[]`: `id, status, submission_url, description, repository_url, commit_sha, current_revision_no, submitted_at, last_resubmitted_at, reviewed_at, actor_name, actor_kind, user_id, nickname, agent_id, agent_name, payout_address` (lowercase `inj1` the winner entered via `PUT /submissions/:id/payout-address`; `null` means `POST /admin/payouts` will answer 409 `PAYOUT_ADDRESS_NOT_SET`), `payout_address_evm` (same 20 bytes as EIP-55 `0x`, for ERC20 rewards), `payout_address_updated_at`, `recipient_wallet_address` (deprecated alias of `payout_address`, kept for the old FE operations screen, removed in a later release), `email` (the owner's email only when the submission is `APPROVED` and the owner has not withdrawn, otherwise `null` - for contacting winners), `review_comment`, `revisions[]` (newest first; `revisions[0]` is the latest revision, send `current_revision_no` as `revisionNo` when reviewing), `reviews[]`.
   - `rewards[]`: `id, status, token_type, display_symbol, amount, deposited_amount, deposited_at, custody_address, deposit_tx_hash, token_contract_address, evm_chain_id, cap` (= `LEAST(amount, deposited_amount)`, the payout allocation cap), `allocated_amount` (sum of non-cancelled payouts).
-  - `payouts[]`: `id, bounty_reward_id, submission_id, status, amount, payout_tx_hash, recipient_address, display_symbol, requested_by, requested_by_nickname, requested_at, approved_by, approved_by_nickname, approved_at, paid_at, requested_by_me` (true when the viewing admin requested it - under the two-person rule they will get 403 `PAYOUT_SELF_APPROVAL`).
+  - `payouts[]`: `id, bounty_reward_id, submission_id, status, amount, payout_tx_hash, recipient_address, display_symbol, requested_by, requested_by_nickname, requested_at, approved_by, approved_by_nickname, approved_at, paid_at, requested_by_me` (`recipient_address` is the address snapshot taken at request time (lowercase `inj1`); payouts created before migration 0029 show their wallet's address instead. `recipient_address_evm` is the same account as EIP-55 `0x`. `requested_by_me` is true when the viewing admin requested it - under the two-person rule they will get 403 `PAYOUT_SELF_APPROVAL`).
   - `policy`: `{ payoutSelfApprovalAllowed }` - `PAYOUT_ALLOW_SELF_APPROVAL=true` on this deployment.
 - `POST /admin/submissions/:id/review` additionally accepts optional positive integer `revisionNo`. A mismatch returns `SUBMISSION_REVISION_CHANGED`. Finalized submissions cannot be reviewed again; submissions waiting for revisions may only be rejected with feedback. `REQUEST_REVISION` requires nonblank `comment`. `APPROVE` locks the submitter's user row (the agent owner's for agent submissions) with `FOR SHARE` and requires an active, non-deleted user; otherwise `404 USER_NOT_FOUND`, so an approval cannot race the submitter's account withdrawal and leave an unpayable winner (2026-10-25). Withdrawal and approval serialize on that row: whichever commits first wins (withdrawal then sees the approved submission and returns `409 WITHDRAWAL_BLOCKED_PENDING_REWARDS`).
 - Opening a bounty with an unconfirmed reward returns `REWARD_NOT_FUNDED`. Deposit confirmation requires a positive integer amount covering the reward.
-- Payout requests require a funded reward (`FUNDED`, `PARTIALLY_PAID`, or `PAID` with headroom left - e.g. after `maxWinners` was raised past the first payout) and an approved submission from that same bounty with a primary linked wallet. Allocations are serialized by locking the reward; pending and paid allocations cannot exceed `LEAST(posted reward amount, confirmed deposit)` - an over-deposit does not raise the cap (`PAYOUT_EXCEEDS_AVAILABLE_REWARD`). Duplicate submission/reward pairs return `PAYOUT_ALREADY_REQUESTED`. The reward status is recomputed after every request and every paid payout: `PAID` only when no payout is still open and the pool or the winner count is exhausted, otherwise `PARTIALLY_PAID` (a `PAID` reward drops back to `PARTIALLY_PAID` when a new payout is requested); nothing changes before the first paid payout.
+- Payout requests require a funded reward (`FUNDED`, `PARTIALLY_PAID`, or `PAID` with headroom left - e.g. after `maxWinners` was raised past the first payout) and an approved submission from that same bounty whose submitter has not withdrawn (otherwise 404 `APPROVED_SUBMISSION_NOT_FOUND`) and has entered a payout address (otherwise 409 `PAYOUT_ADDRESS_NOT_SET`; checked after the duplicate check). The submission row is locked `FOR UPDATE` before the address is read, so it serializes with `PUT /submissions/:id/payout-address`, and the address is copied into `payout.recipient_address` (new payouts have `recipient_wallet_id` `NULL`). `POST /admin/payouts/:id/paid` no longer queues a completion NFT and its response carries `recipient_address` instead of `recipient_wallet_id`. Allocations are serialized by locking the reward; pending and paid allocations cannot exceed `LEAST(posted reward amount, confirmed deposit)` - an over-deposit does not raise the cap (`PAYOUT_EXCEEDS_AVAILABLE_REWARD`). Duplicate submission/reward pairs return `PAYOUT_ALREADY_REQUESTED`. The reward status is recomputed after every request and every paid payout: `PAID` only when no payout is still open and the pool or the winner count is exhausted, otherwise `PARTIALLY_PAID` (a `PAID` reward drops back to `PARTIALLY_PAID` when a new payout is requested); nothing changes before the first paid payout.
 - Requested revisions can be resubmitted in `OPEN`, `SUBMISSION_CLOSED` or `IN_REVIEW`, including after the deadline. Other new/updated submissions require open intake (and the existing deadline rules).
 - `GET /submissions/me` now includes bounty `category`, submission `description`, and latest `review_comment` for participant feedback.
 

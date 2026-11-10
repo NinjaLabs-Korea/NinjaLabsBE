@@ -14,6 +14,9 @@ import { ownedAgentIdsSql } from '../agents/owned-agents';
  * (수령 지갑이 없어 requestPayout 404), 미결 제출로 남아 바운티 완료(COMPLETED)를 막는다. 승인/반려된 제출은 기록으로 남는다.
  *
  * "내 에이전트"는 owner_user_id로 찾으므로 에이전트를 REVOKED로 바꾼 뒤에 불러도 같은 행을 본다.
+ *
+ * 그리고 본인 제출의 지급 주소(payout_address)를 지운다 (clearPayoutAddressesOfUser - 탈퇴한 사람의 주소를 남기지 않는다).
+ * payout.recipient_address 스냅샷은 지급 원장이라 그대로 둔다.
  */
 export async function withdrawOpenParticipationOfUser(tx: QueryRunner, userId: string): Promise<void> {
   await tx.query(
@@ -28,6 +31,18 @@ export async function withdrawOpenParticipationOfUser(tx: QueryRunner, userId: s
       WHERE status = 'PENDING'
         AND (applicant_user_id = $1
              OR agent_id = ANY(${ownedAgentIdsSql('$1', 'including-deleted')}))`,
+    [userId],
+  );
+}
+
+/**
+ * 회원 탈퇴: 본인이 낸 제출의 지급 주소를 지운다 (호출자의 트랜잭션 안에서, withdrawOpenParticipationOfUser 뒤에).
+ * 이미 만들어진 payout의 recipient_address 스냅샷은 원장이라 지우지 않는다. 탈퇴 유저의 제출에는 requestPayout이 404라 주소가 다시 쓰일 일이 없다.
+ */
+export async function clearPayoutAddressesOfUser(tx: QueryRunner, userId: string): Promise<void> {
+  await tx.query(
+    `UPDATE bounty_submission SET payout_address = NULL, payout_address_updated_at = NULL
+      WHERE submitter_user_id = $1 AND payout_address IS NOT NULL`,
     [userId],
   );
 }

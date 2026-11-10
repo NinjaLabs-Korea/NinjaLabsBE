@@ -124,7 +124,7 @@ export function payoutRequestableSql(rw = 'rw', submission = 's', p = 'p'): stri
 
 /**
  * 제출 `<s>`의 수령자(제출자, 에이전트 제출이면 그 소유자)가 탈퇴하지 않았나 - requestPayout의 수령자 조건(u.deleted_at IS NULL)과 같다.
- * 지갑 조건은 넣지 않는다: 지갑은 다시 연결할 수 있지만 탈퇴는 되돌릴 수 없다.
+ * 지급 주소 조건은 넣지 않는다: 주소는 수상자가 나중에 입력할 수 있지만 탈퇴는 되돌릴 수 없다.
  */
 export function recipientActiveSql(submission = 's'): string {
   const s = alias(submission, 'recipientActiveSql');
@@ -139,7 +139,7 @@ export function recipientActiveSql(submission = 's'): string {
  *            (b) 이 제출의 payout 행이 **하나도** 없고 보상에 여유분이 남았고 수령자(제출자 또는 에이전트 소유자)가 탈퇴하지 않았다
  *                - requestPayout이 아직 받아 줄 수 있다. 탈퇴한 수령자는 requestPayout이 404라 영영 받을 수 없다
  *                (풀이 가득 찼을 때 탈퇴한 뒤 다른 수상이 취소돼 여유분이 생기는 경우 - 이걸 빼면 COMPLETED가 영영 막힌다).
- *                지갑만 없는 수령자는 다시 연결하면 받을 수 있으므로 계속 owed다.
+ *                주소 미입력 수령자는 주소를 입력하면 받을 수 있으므로 계속 owed다.
  *          취소된 payout만 있는 제출은 (a)도 (b)도 아니다: 취소는 지급 취소(CANCELLED payout)이고, requestPayout은 (보상, 제출)에 행이 있으면
  *          상태와 무관하게 409 PAYOUT_ALREADY_REQUESTED라 다시 받을 수 없다 → NONE.
  *   paid = owed 중 이 제출의 PAID payout이 있는 것

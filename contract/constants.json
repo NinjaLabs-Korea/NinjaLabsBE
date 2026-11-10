@@ -51,6 +51,7 @@
       "NOTICE_DELETED": "notice",
       "NOTICE_PUBLISHED": "notice",
       "NOTICE_UPDATED": "notice",
+      "PAYOUT_ADDRESS_SET": "bounty_submission",
       "PAYOUT_APPROVED": "payout",
       "PAYOUT_PAID": "payout",
       "PAYOUT_REQUESTED": "payout",

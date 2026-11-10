@@ -1,7 +1,7 @@
 import { HDNodeWallet, Wallet } from 'ethers';
 import { describeDb } from '../test-db/describe-db';
-import { AdminBountyForm, applyBody, saveAdminBountyBody, submitBody } from './support/fe-payloads';
-import { DAY, E2eApp, isoIn, Session, startApp, txHash, UUID } from './support/harness';
+import { AdminBountyForm, applyBody, payoutAddressBody, saveAdminBountyBody, submitBody } from './support/fe-payloads';
+import { DAY, E2eApp, isoIn, payoutEvmAddress, Session, startApp, txHash, UUID } from './support/harness';
 
 const badRequest = (message: string | string[]) => ({ statusCode: 400, error: 'Bad Request', message });
 
@@ -41,9 +41,9 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
   }
   const transition = (id: string, to: string) => e2e.post(`/admin/bounties/${id}/transition`, { to }, asAdmin);
 
-  it('reward bounty: create (FUNDING_PENDING) → confirm deposit → OPEN → apply → approve → submit → APPROVE → payout requested/approved/paid (child mint job) → COMPLETED', async () => {
+  it('reward bounty: create (FUNDING_PENDING) → confirm deposit → OPEN → apply → approve → submit → APPROVE → payout address → payout requested/approved/paid → COMPLETED', async () => {
     const builder = await e2e.loginOnboarded();
-    const { nickname, walletAddress } = await e2e.onboard(builder);
+    const { nickname } = await e2e.onboard(builder);
     const form = bountyForm();
     const bountyId = await createBounty(form);
 
@@ -122,12 +122,35 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     const mySubs = await e2e.get('/submissions/me', { token: builder.accessToken });
     expect(mySubs.body).toEqual([expect.objectContaining({ id: submissionId, status: 'APPROVED', bounty_id: bountyId, agent: null, payment_status: 'PENDING', review_comment: 'great', current_revision_no: 2 })]);
 
+    // payout address (2026-11-10): no address yet → the payout request is 409; the winner enters one (0x accepted, stored as inj1)
+    expect((await e2e.post('/admin/payouts', { rewardId, submissionId, amount: '100000000000000000000' }, asAdmin)).body)
+      .toEqual({ statusCode: 409, error: 'Conflict', message: 'PAYOUT_ADDRESS_NOT_SET' });
+    const payoutEvm = payoutEvmAddress();
+    expect((await e2e.put(`/submissions/${submissionId}/payout-address`, payoutAddressBody('0xnot'), { token: builder.accessToken })).body)
+      .toEqual(badRequest('INVALID_INJECTIVE_ADDRESS'));
+    expect((await e2e.put(`/submissions/${submissionId}/payout-address`, { address: payoutEvm, extra: 1 }, { token: builder.accessToken })).status).toBe(400);
+    const stranger = await e2e.loginOnboarded();
+    expect((await e2e.put(`/submissions/${submissionId}/payout-address`, payoutAddressBody(payoutEvm), { token: stranger.accessToken })).body)
+      .toEqual({ statusCode: 404, error: 'Not Found', message: 'SUBMISSION_NOT_FOUND' });
+    expect((await e2e.put(`/submissions/${submissionId}/payout-address`, payoutAddressBody(payoutEvm))).status).toBe(401);
+    const setAddress = await e2e.put(`/submissions/${submissionId}/payout-address`, payoutAddressBody(` ${payoutEvm.toLowerCase()} `), { token: builder.accessToken });
+    expect(setAddress.status).toBe(200);
+    expect(setAddress.body).toEqual({ submissionId, payoutAddress: expect.stringMatching(/^inj1[02-9ac-hj-np-z]{38}$/), payoutAddressEvm: payoutEvm, updatedAt: expect.any(String) });
+    const payoutAddress: string = setAddress.body.payoutAddress;
+    expect((await e2e.get('/submissions/me', { token: builder.accessToken })).body).toEqual([expect.objectContaining({
+      id: submissionId, payout_address: payoutAddress, payout_address_evm: payoutEvm, payout_address_updated_at: setAddress.body.updatedAt, payout_address_editable: true,
+    })]);
+
     // payout
     const requested = await e2e.post('/admin/payouts', { rewardId, submissionId, amount: '100000000000000000000' }, asAdmin);
     expect(requested.status).toBe(201);
     expect(requested.body).toEqual({ id: expect.stringMatching(UUID), status: 'REQUESTED', requested_at: expect.any(String) });
     const payoutId: string = requested.body.id;
-    // operations: applicant identity, recipient wallet, latest revision and the viewer-relative two-person flag
+    // the address is locked once the payout exists
+    expect((await e2e.put(`/submissions/${submissionId}/payout-address`, payoutAddressBody(payoutEvm), { token: builder.accessToken })).body)
+      .toEqual({ statusCode: 409, error: 'Conflict', message: 'PAYOUT_ADDRESS_LOCKED' });
+    expect((await e2e.get('/submissions/me', { token: builder.accessToken })).body[0].payout_address_editable).toBe(false);
+    // operations: applicant identity, winner email + payout address, latest revision and the viewer-relative two-person flag
     const opsReview = await e2e.get(`/admin/bounties/${bountyId}/operations`, asAdmin);
     expect(opsReview.body.applications).toEqual([expect.objectContaining({
       id: applied.body.id, status: 'APPROVED', review_note: 'welcome', reviewed_at: expect.any(String),
@@ -135,13 +158,14 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     })]);
     expect(opsReview.body.submissions).toEqual([expect.objectContaining({
       id: submissionId, status: 'APPROVED', current_revision_no: 2, actor_kind: 'USER', user_id: builder.userId, nickname,
-      recipient_wallet_address: walletAddress, review_comment: 'great',
+      payout_address: payoutAddress, payout_address_evm: payoutEvm, recipient_wallet_address: payoutAddress, email: builder.email, review_comment: 'great',
       revisions: [expect.objectContaining({ revision_no: 2, submission_url: 'https://demo.example/v2' }), expect.objectContaining({ revision_no: 1 })],
       reviews: [expect.objectContaining({ revision_no: 2, decision: 'APPROVE', comment: 'great' })],
     })]);
     expect(opsReview.body.rewards[0]).toMatchObject({ cap: '100000000000000000000', allocated_amount: '100000000000000000000', token_type: 'NATIVE' });
     expect(opsReview.body.payouts).toEqual([expect.objectContaining({
       id: payoutId, status: 'REQUESTED', requested_by: admin.userId, requested_by_me: true, approved_by: null, approved_at: null, requested_at: expect.any(String),
+      recipient_address: payoutAddress, recipient_address_evm: payoutEvm,
     })]);
     expect((await e2e.get(`/admin/bounties/${bountyId}/operations`, asApprover)).body.payouts[0].requested_by_me).toBe(false);
     expect((await e2e.post('/admin/payouts', { rewardId, submissionId, amount: '1' }, asAdmin)).body)
@@ -165,14 +189,12 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect(paid.status).toBe(201);
     expect(paid.body).toMatchObject({ id: payoutId, status: 'PAID', payout_tx_hash: payoutHash.toLowerCase() });
     const opsAfter = await e2e.get(`/admin/bounties/${bountyId}/operations`, asAdmin);
-    expect(opsAfter.body.payouts).toEqual([expect.objectContaining({ id: payoutId, status: 'PAID', payout_tx_hash: payoutHash.toLowerCase(), recipient_address: walletAddress, display_symbol: 'INJ', approved_by: approver.userId, paid_at: expect.any(String) })]);
+    expect(opsAfter.body.payouts).toEqual([expect.objectContaining({ id: payoutId, status: 'PAID', payout_tx_hash: payoutHash.toLowerCase(), recipient_address: payoutAddress, display_symbol: 'INJ', approved_by: approver.userId, paid_at: expect.any(String) })]);
     expect(opsAfter.body.rewards[0].status).toBe('PAID');
 
-    const child = await e2e.db.query<{ job_type: string; idempotency_key: string; status: string; parent: boolean }>(
-      `SELECT j.job_type, j.idempotency_key, j.status, n.parent_nft_id IS NOT NULL AS parent
-         FROM nft n JOIN nft_job j ON j.nft_id = n.id
-        WHERE n.submission_id = $1 AND n.nft_type = 'BOUNTY_COMPLETION_CHILD'`, [submissionId]);
-    expect(child.rows).toEqual([{ job_type: 'MINT_CHILD', idempotency_key: `mint-child:${submissionId}`, status: 'PENDING', parent: true }]);
+    // paying no longer creates a completion NFT (2026-11-10)
+    const child = await e2e.db.query(`SELECT 1 FROM nft WHERE submission_id = $1 AND nft_type = 'BOUNTY_COMPLETION_CHILD'`, [submissionId]);
+    expect(child.rowCount).toBe(0);
 
     expect((await transition(bountyId, 'COMPLETED')).body).toEqual({ id: bountyId, status: 'COMPLETED' });
     expect((await e2e.get('/submissions/me', { token: builder.accessToken })).body[0].payment_status).toBe('PAID');
@@ -184,7 +206,8 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
       rewards: [{ amount: '100000000000000000000', symbol: 'INJ' }],
       postedRewards: [{ amount: '100000000000000000000', symbol: 'INJ' }], payoutStatus: 'PAID',
     }]);
-    expect(profile.body.nfts.map((n: { nft_type: string }) => n.nft_type).sort()).toEqual(['BOUNTY_COMPLETION_CHILD', 'NINJA_PARENT']);
+    expect(profile.body.nfts.map((n: { nft_type: string }) => n.nft_type).sort()).toEqual(['NINJA_PARENT']);
+    expect(JSON.stringify(profile.body)).not.toContain(payoutAddress); // the payout address is never public
 
     const audit = await e2e.get(`/admin/audit-logs?entityType=bounty&entityId=${bountyId}`, asAdmin);
     expect(audit.body.items.map((i: { action: string }) => i.action).sort())
@@ -223,6 +246,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect(ops.body.lifecycle.blockerDetails.CANCELLED).toEqual([{ code: 'UNPAID_WINNERS' }]);
 
     // an open payout keeps it blocked
+    expect((await e2e.put(`/submissions/${sub.body.id}/payout-address`, payoutAddressBody(payoutEvmAddress()), { token: builder.accessToken })).status).toBe(200);
     expect((await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000000' }, asAdmin)).status).toBe(201);
     expect((await transition(id, 'CANCELLED')).body).toEqual(owed);
     const audit = await e2e.get(`/admin/audit-logs?entityType=bounty&entityId=${id}`, asAdmin);
@@ -240,6 +264,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
     const sub = await e2e.post(`/bounties/${id}/submissions`, submitBody({ submissionUrl: 'https://demo.example/h', description: 'h' }), { token: builder.accessToken });
     await e2e.post(`/admin/submissions/${sub.body.id}/review`, { decision: 'APPROVE' }, asAdmin);
+    expect((await e2e.put(`/submissions/${sub.body.id}/payout-address`, payoutAddressBody(payoutEvmAddress()), { token: builder.accessToken })).status).toBe(200);
     const payout = await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000000' }, asAdmin);
     await e2e.post(`/admin/payouts/${payout.body.id}/approve`, undefined, asApprover);
 
@@ -289,6 +314,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
     const sub = await e2e.post(`/bounties/${id}/submissions`, submitBody({ submissionUrl: 'https://demo.example/o', description: 'o' }), { token: builder.accessToken });
     await e2e.post(`/admin/submissions/${sub.body.id}/review`, { decision: 'APPROVE' }, asAdmin);
+    expect((await e2e.put(`/submissions/${sub.body.id}/payout-address`, payoutAddressBody(payoutEvmAddress()), { token: builder.accessToken })).status).toBe(200);
     const over = await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000001' }, asAdmin);
     expect(over.body).toEqual(badRequest('PAYOUT_EXCEEDS_AVAILABLE_REWARD'));
     expect((await e2e.post('/admin/payouts', { rewardId, submissionId: sub.body.id, amount: '1000000000000000000' }, asAdmin)).status).toBe(201);

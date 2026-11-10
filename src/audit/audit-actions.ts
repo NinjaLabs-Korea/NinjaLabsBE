@@ -29,6 +29,8 @@ export const AUDIT_ACTIONS = {
   // 제출 (submissions.service.ts; 사람·에이전트 키 둘 다 - BountyActor.recordAudit)
   SUBMISSION_SUBMITTED: 'bounty_submission',
   SUBMISSION_RESUBMITTED: 'bounty_submission',
+  // 지급 주소 (submissions.service.ts setPayoutAddress; 마스킹된 주소만)
+  PAYOUT_ADDRESS_SET: 'bounty_submission',
   // 제출 심사 (submission-review.service.ts, SubmissionDecision 전부)
   SUBMISSION_START_REVIEW: 'bounty_submission',
   SUBMISSION_REQUEST_REVISION: 'bounty_submission',

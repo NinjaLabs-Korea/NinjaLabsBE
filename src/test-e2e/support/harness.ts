@@ -2,7 +2,7 @@ import { LoggerService } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { createHash, randomBytes } from 'crypto';
-import { HDNodeWallet, Wallet } from 'ethers';
+import { getAddress, HDNodeWallet, Wallet } from 'ethers';
 import { request as httpRequest, IncomingHttpHeaders } from 'http';
 import { AddressInfo } from 'net';
 import { AppModule } from '../../app.module';
@@ -227,6 +227,7 @@ export class E2eApp {
   get<T = any>(path: string, options?: RequestOptions) { return this.request<T>('GET', path, options); }
   post<T = any>(path: string, json?: unknown, options: RequestOptions = {}) { return this.request<T>('POST', path, { ...options, json }); }
   patch<T = any>(path: string, json?: unknown, options: RequestOptions = {}) { return this.request<T>('PATCH', path, { ...options, json }); }
+  put<T = any>(path: string, json?: unknown, options: RequestOptions = {}) { return this.request<T>('PUT', path, { ...options, json }); }
   delete<T = any>(path: string, options?: RequestOptions) { return this.request<T>('DELETE', path, options); }
 
   // ── 로그인 (FE auth-adapter + oauth.ts와 같은 순서) ─────────────────────────
@@ -343,3 +344,5 @@ export const isoIn = (ms: number) => new Date(Date.now() + ms).toISOString();
 export const DAY = 86_400_000;
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const txHash = () => `0x${randomBytes(32).toString('hex')}`;
+/** 무작위 20바이트 계정의 EIP-55 0x 주소 (수상자가 지급 주소로 입력하는 값) */
+export const payoutEvmAddress = () => getAddress(`0x${randomBytes(20).toString('hex')}`);

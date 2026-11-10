@@ -79,6 +79,10 @@ export function setAdminMemberBody(input: { isMember: boolean; role?: 'Core' | '
 export function applyBody(message: string, portfolioUrl = '') {
   return { message, ...(portfolioUrl ? { portfolioUrl } : {}) };
 }
+/** 지급 주소 입력 (FE-1 PayoutAddressForm - 2026-11-10 계약, 입력값을 trim해 그대로 보낸다) */
+export function payoutAddressBody(address: string) {
+  return { address: address.trim() };
+}
 export function submitBody(input: { submissionUrl: string; description: string; repositoryUrl?: string; commitSha?: string }) {
   return {
     submissionUrl: input.submissionUrl, description: input.description,

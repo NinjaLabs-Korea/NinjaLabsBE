@@ -16,7 +16,7 @@ import { AccountWithdrawalService } from '../users/account-withdrawal.service';
 import { WalletReplacementService } from '../wallets/wallet-replacement.service';
 import { WalletsService } from '../wallets/wallets.service';
 import { describeDb } from './describe-db';
-import { auditActions, createDb, createUser, deferred, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, waitForLockWaiter } from './harness';
+import { auditActions, createDb, createUser, deferred, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, waitForLockWaiter, withPayoutAddresses } from './harness';
 
 jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
 jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
@@ -35,7 +35,7 @@ describeDb('primary receiving wallet replacement', () => {
     const config = testConfig({ WALLET_REPLACEMENT_ENABLED: 'true' });
     audit = new AuditService(db);
     service = new WalletReplacementService(db, audit, config);
-    rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
     submissions = new SubmissionsService(db, audit);
     const auth = new AuthService(db, new JwtService({ secret: TEST_JWT_SECRET }), config, TEST_JWT_SECRET);
@@ -85,12 +85,20 @@ describeDb('primary receiving wallet replacement', () => {
     return { rewardId, submissionId: submission.id, bountyId };
   }
 
+  /** 0029 이전 바이너리(지갑 기반 requestPayout)가 쓰던 INSERT 그대로 - 새 서비스는 recipient_wallet_id를 쓰지 않는다 */
+  async function legacyWalletPayout(p: { rewardId: string; submissionId: string }, walletId: string) {
+    return (await db.query<{ id: string; recipient_wallet_id: string }>(
+      `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, idempotency_key, requested_by)
+       VALUES ($1, $2, $3, 10, $4, $5) RETURNING id, recipient_wallet_id`,
+      [p.rewardId, p.submissionId, walletId, `submission:${p.submissionId}:reward:${p.rewardId}`, admin])).rows[0];
+  }
+
   it('preserves historical wallet/NFT/payout rows, switches atomically, and creates neither a parent NFT nor a second audit on retries', async () => {
     const f = await fixture();
     const nft = (await db.query(`INSERT INTO nft (owner_user_id, owner_wallet_id, nft_type, contract_address, status, token_id)
       VALUES ($1, $2, 'NINJA_PARENT', 'contract', 'MINTED', 'existing') RETURNING id`, [f.userId, f.walletId])).rows[0];
     const p = await payable(f);
-    const paid = await rewards.requestPayout(p.rewardId, p.submissionId, '10', admin);
+    const paid = await legacyWalletPayout(p, f.walletId); // a historical (pre-0029) wallet-based payout
     await db.query(`UPDATE payout SET status = 'PAID', payout_tx_hash = $2 WHERE id = $1`, [paid.id, fakeTxHash()]);
     const { challenge, proof } = await prepare(f);
     expect(challenge.currentMessage).toContain(f.walletId);
@@ -184,7 +192,7 @@ describeDb('primary receiving wallet replacement', () => {
     await expect(service.verify(f.userId, proof)).resolves.toMatchObject({ address: getInjectiveAddress(f.next.address) });
   });
 
-  it('pays new rewards to the replacement wallet but mints completion NFTs to the existing parent wallet', async () => {
+  it('after a replacement: new payouts go to the entered address with no wallet (0029 trigger passes them), a legacy wallet INSERT is still redirected to the replacement wallet, and paying mints nothing', async () => {
     const f = await fixture();
     await db.query(`INSERT INTO nft (owner_user_id, owner_wallet_id, nft_type, contract_address, status, token_id)
       VALUES ($1, $2, 'NINJA_PARENT', 'c', 'MINTED', 'parent')`, [f.userId, f.walletId]);
@@ -194,10 +202,14 @@ describeDb('primary receiving wallet replacement', () => {
     const approver = await createUser(db, { isAdmin: true });
     await rewards.markApproved(payout.id, approver);
     await rewards.markPaid(payout.id, fakeTxHash(), admin);
-    expect((await db.query(`SELECT w.address FROM payout p JOIN wallet w ON w.id = p.recipient_wallet_id WHERE p.id = $1`, [payout.id])).rows[0].address)
-      .toBe(getInjectiveAddress(f.next.address));
-    expect((await db.query(`SELECT c.owner_wallet_id, p.owner_wallet_id AS parent_wallet_id FROM nft c JOIN nft p ON p.id = c.parent_nft_id WHERE c.submission_id = $1`, [p.submissionId])).rows)
-      .toEqual([{ owner_wallet_id: f.walletId, parent_wallet_id: f.walletId }]);
+    const row = (await db.query(`SELECT p.recipient_wallet_id, p.recipient_address, s.payout_address FROM payout p
+      JOIN bounty_submission s ON s.id = p.submission_id WHERE p.id = $1`, [payout.id])).rows[0];
+    expect(row).toEqual({ recipient_wallet_id: null, recipient_address: row.payout_address, payout_address: expect.stringMatching(/^inj1/) });
+    expect((await db.query(`SELECT 1 FROM nft WHERE submission_id = $1`, [p.submissionId])).rowCount).toBe(0);
+
+    const legacy = await payable(f);
+    const old = await legacyWalletPayout(legacy, f.walletId); // an old binary still naming the replaced wallet
+    expect((await db.query(`SELECT address FROM wallet WHERE id = $1`, [old.recipient_wallet_id])).rows[0].address).toBe(getInjectiveAddress(f.next.address));
   });
 
   it('blocks legacy recipient-wallet payouts and payouts of revoked/deleted agents', async () => {
@@ -393,8 +405,9 @@ describeDb('primary receiving wallet replacement', () => {
       await first;
       if (order === 'replacement-first') {
         await second;
-        const row = (await db.query(`SELECT w.address FROM payout p JOIN wallet w ON w.id = p.recipient_wallet_id WHERE p.submission_id = $1`, [p.submissionId])).rows[0];
-        expect(row.address).toBe(getInjectiveAddress(f.next.address));
+        // the payout waited for the replacement and then snapshotted the entered address; it is not tied to either wallet
+        const row = (await db.query(`SELECT recipient_wallet_id, recipient_address FROM payout WHERE submission_id = $1`, [p.submissionId])).rows[0];
+        expect(row).toEqual({ recipient_wallet_id: null, recipient_address: expect.stringMatching(/^inj1/) });
       } else {
         await expect(second).rejects.toMatchObject({ message: 'WALLET_CHANGE_BLOCKED_PAYOUTS' });
         await unchanged(f);

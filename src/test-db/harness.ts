@@ -1,6 +1,8 @@
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import { DatabaseService } from '../common/database/database.service';
+import { parsePayoutAddress } from '../common/validation/injective-address';
+import type { RewardsService } from '../rewards/rewards.service';
 import { ONBOARDING_STEP } from '../users/onboarding-step';
 
 /**
@@ -94,6 +96,45 @@ export async function createPrimaryWallet(db: DatabaseService, userId: string): 
     [userId, address],
   );
   return { id: r.rows[0].id, address };
+}
+
+/** 무작위 20바이트 계정의 지급 주소 (소문자 inj1, 0029 CHECK를 통과하는 진짜 bech32) */
+export function randomPayoutAddress(): string {
+  return parsePayoutAddress(`0x${randomBytes(20).toString('hex')}`).injective;
+}
+
+/**
+ * 제출에 지급 주소를 SQL로 넣는다 (PUT /submissions/:id/payout-address의 규칙 자체는 payout-address.db-spec이 본다). 넣은 주소를 돌려준다.
+ */
+export async function setPayoutAddress(db: DatabaseService, submissionId: string, address = randomPayoutAddress()): Promise<string> {
+  await db.query(
+    `UPDATE bounty_submission SET payout_address = $2, payout_address_updated_at = now() WHERE id = $1`,
+    [submissionId, address],
+  );
+  return address;
+}
+
+/**
+ * requestPayout을 부르기 전에 그 제출에 지급 주소가 없으면 무작위 주소를 넣어 주는 RewardsService (같은 인스턴스를 돌려준다).
+ * 0029 이전 스펙이 "수상자 지갑을 시드한 뒤 requestPayout"으로 쓰던 전제를 "수상자가 주소를 입력한 뒤"로 옮긴 것이다:
+ * 지급 규칙(상한·중복·경합·상태 재계산)을 보는 스펙이 주소 입력 단계를 매번 적지 않게 한다. 주소가 없을 때의 409와 스냅샷은
+ * payout-address.db-spec이 이 래퍼 없이 본다. 읽기로 먼저 확인하고 비었을 때만 UPDATE하므로 다른 트랜잭션이 잡은 제출 행 잠금을 기다리지 않는다
+ * (이미 주소가 있으면 아무것도 쓰지 않는다). id가 uuid가 아닌 입력도 그대로 서비스에 넘긴다.
+ */
+export function withPayoutAddresses<T extends RewardsService>(db: DatabaseService, rewards: T): T {
+  const requestPayout = rewards.requestPayout.bind(rewards);
+  rewards.requestPayout = async (rewardId: string, submissionId: string, amount: string, adminId: string) => {
+    const current = await db.query<{ missing: boolean }>(
+      `SELECT payout_address IS NULL AS missing FROM bounty_submission WHERE id::text = $1`, [submissionId]);
+    if (current.rows[0]?.missing) {
+      await db.query(
+        `UPDATE bounty_submission SET payout_address = $2, payout_address_updated_at = now() WHERE id::text = $1 AND payout_address IS NULL`,
+        [submissionId, randomPayoutAddress()],
+      );
+    }
+    return requestPayout(rewardId, submissionId, amount, adminId);
+  };
+  return rewards;
 }
 
 /** 32바이트 hex tx 해시 (대문자 hex로 만들어 서비스의 소문자 정규화를 함께 확인한다) */

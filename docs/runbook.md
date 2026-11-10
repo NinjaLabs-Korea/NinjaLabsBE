@@ -255,9 +255,9 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 ### 7.4 지급(payout) 분쟁 - "보상을 못 받았다 / 금액이 틀리다"
 1. 사실 수집 (읽기만):
-   - `GET /admin/bounties/:id/operations` - 제출·보상·payout 행(상태, 금액은 최소 단위 정수 문자열, 수령 지갑 주소).
+   - `GET /admin/bounties/:id/operations` - 제출·보상·payout 행(상태, 금액은 최소 단위 정수 문자열). 제출의 `payout_address`(수상자가 입력한 지급 주소, `payout_address_evm`은 같은 계정의 0x 표기)와 `email`(승인된 미탈퇴 수상자만, 연락용), payout의 `recipient_address`(요청 시점 주소 스냅샷, 2026-11-10 migration 0029 이전 payout은 수령 wallet 주소)와 `recipient_address_evm`.
    - `GET /admin/audit-logs?entityType=payout&entityId=<payout id>` - `PAYOUT_REQUESTED`/`PAYOUT_APPROVED`(또는 `PAYOUT_SELF_APPROVED`)/`PAYOUT_PAID`와 각 actor.
-   - 체인 익스플로러에서 `payout_tx_hash`: 받는 주소 = payout 행의 수령 지갑, 금액 = `amount`(USDC는 10^6, INJ는 10^18 단위) 인지.
+   - 체인 익스플로러에서 `payout_tx_hash`: 받는 주소 = payout 행의 `recipient_address`(ERC20 USDC는 `recipient_address_evm`, 같은 20바이트 계정), 금액 = `amount`(USDC는 10^6, INJ는 10^18 단위) 인지.
 2. 판정:
    - tx가 맞는 주소·금액으로 성공 → 지급 완료. 증거(tx 링크)를 회신한다.
    - payout이 `REQUESTED`/`AWAITING_MULTISIG_APPROVAL`에 머묾 → 멀티시그 서명 대기(§9 서명자에게 요청). 48시간 넘으면 `PayoutWorker`가 warn을 남긴다.
@@ -307,7 +307,7 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
      - `FAILED` payout은 위 취소 SQL의 `WHERE status IN (...)`에 걸리지 않는다(UPDATE 0). `FAILED`는 받을 몫이 남은 것으로 보므로 COMPLETED와 CANCELLED(그래서 §7.7 환불도)를 계속 막는다 - 닫으려면 **온체인에서 송금되지 않았음을 먼저 확인**하고(멀티시그 tx 이력), 같은 트랜잭션을 `WHERE id = '<payout id>' AND status = 'FAILED'`로 바꿔 돌린다(감사 `before_data`는 `{"status": "FAILED"}`). 실제로 송금됐다면 취소하지 말고 tx 해시를 확인해 사후 기록으로 남긴다.
      - 승인됐지만 payout이 없던 수상자가 그 사이 탈퇴했다면, 취소로 생긴 여유분이 있어도 그 수상자는 받을 몫으로 세지 않는다(requestPayout이 404라 받을 수 없다).
      - 풀린 금액이 아무에게도 배정되지 않으면 바운티 삭제는 계속 409 `BOUNTY_HAS_OPEN_FUNDS`(남은 돈)다. COMPLETED 바운티의 잔액 환불 경로(§7.7 스크립트는 CANCELLED 바운티만 받는다)와 payout 취소 API는 아직 없다 - 제품 결정 대기.
-   - **지급할 수 없는 수상**(승인됐지만 payout을 만들 수 없음 - 대표적으로 수상자가 지갑을 연결하지 않고 연락이 끊김) → `POST /admin/payouts`는 404 `APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND`인데, 지갑만 없는 수상자는 다시 연결할 수 있으므로 "받을 몫이 남은" 것으로 세져 COMPLETED와 CANCELLED가 **둘 다** 400 `UNPAID_WINNERS`로 막힌다. 먼저 연락·지갑 연결 안내를 하고(기한을 정해 기록), 그래도 안 되면 두 운영자 합의 후 보상 미지급 처리를 한다. `--reason`은 제출자가 `/submissions/me`에서 그대로 읽으므로 사용자에게 보이는 한국어 문장으로 쓴다(예: `지갑 미연결`):
+   - **지급할 수 없는 수상**(승인됐지만 payout을 만들 수 없음 - 대표적으로 수상자가 지급 주소를 입력하지 않고 연락이 끊김) → `POST /admin/payouts`는 409 `PAYOUT_ADDRESS_NOT_SET`인데, 주소만 없는 수상자는 나중에 입력할 수 있으므로 "받을 몫이 남은" 것으로 세져 COMPLETED와 CANCELLED가 **둘 다** 400 `UNPAID_WINNERS`로 막힌다. 먼저 운영 화면의 `email`로 연락해 `/applications`에서 주소를 입력하도록 안내하고(기한을 정해 기록), 그래도 안 되면 두 운영자 합의 후 보상 미지급 처리를 한다. `--reason`은 제출자가 `/submissions/me`에서 그대로 읽으므로 사용자에게 보이는 한국어 문장으로 쓴다(예: `지급 주소 미입력`):
      ```bash
      railway run node scripts/forfeit-award.js <submission-id> --reason "<사유>" --admin <결정 운영자 user id> --dry-run
      railway run node scripts/forfeit-award.js <submission-id> --reason "<사유>" --admin <결정 운영자 user id>   # 확인 프롬프트에 yes
@@ -315,11 +315,25 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
      한 트랜잭션(바운티 → 제출 잠금)에서 제출을 `APPROVED` → `REJECTED`로 바꾸고, `submission_review`(reviewer = `--admin`, decision `REJECT`, comment `forfeited: <사유>`)와 감사 `SUBMISSION_AWARD_FORFEITED`(actor = `--admin`, before/after + 사유)를 남긴다. 거부 조건(아무것도 쓰지 않고 exit 1): 바운티가 삭제됨 또는 `OPEN`/`SUBMISSION_CLOSED`/`IN_REVIEW`가 아님, 제출이 `APPROVED`가 아님, 그 제출의 payout 행이 **하나라도** 있음(상태 무관 - 위의 정정/취소로 다룬다), 완료 NFT 행이 있음, `--admin`이 활성 is_admin 유저가 아님. 이미 COMPLETED/CANCELLED로 닫힌 바운티의 수상은 이 스크립트 대상이 아니다.
      보상 미지급 처리가 남기는 것 - **사례별 운영자 결정**이다(되돌리는 스크립트는 없다. 되돌리려면 같은 형식의 SQL + 감사 행):
      - `max_winners` 자리가 하나 빈다 - 다른 제출을 승인할 수 있다.
-     - 이 수상이 공개 프로필 `completedBounties`와 명예의전당 집계(둘 다 `APPROVED` 기준)에서 빠진다. 제출자의 `/submissions/me`에는 `REJECTED`, `payment_status` `NONE`(APPROVED가 아닌 행은 항상 `NONE` - 나중에 지갑을 연결해도 payout을 요청할 수 없다), `review_comment` `forfeited: <사유>`가 보인다 - 사유는 제출자가 읽는다고 보고 쓴다.
+     - 이 수상이 공개 프로필 `completedBounties`와 명예의전당 집계(둘 다 `APPROVED` 기준)에서 빠진다. 제출자의 `/submissions/me`에는 `REJECTED`, `payment_status` `NONE`(APPROVED가 아닌 행은 항상 `NONE` - 나중에 지급 주소를 입력해도 payout을 요청할 수 없다), `review_comment` `forfeited: <사유>`가 보인다 - 사유는 제출자가 읽는다고 보고 쓴다.
      - 받을 몫이 남은 수상자로 세지 않으므로 COMPLETED·CANCELLED 차단이 풀린다. 취소한다면 §7.7로 입금액 − `PAID` 전액을 환불·기록한 뒤 삭제할 수 있다.
-   - 수령 지갑이 틀림 → SQL로 `recipient_wallet_id`를 바꾸지 않는다. 수령 지갑은 요청 시점의 대표 지갑이므로 먼저 3번으로 지갑 이력을 확인한다.
+   - **수령 주소가 틀림**(아직 송금 전: `REQUESTED`/`AWAITING_MULTISIG_APPROVAL`/`APPROVED`) → payout이 생기면 수상자는 주소를 바꿀 수 없다(`PUT /submissions/:id/payout-address`가 409 `PAYOUT_ADDRESS_LOCKED`). 수상자에게 바른 주소를 **본인 확인이 되는 경로**(가입 이메일 회신 등)로 받아, 두 운영자 합의 후 같은 payout 행의 `recipient_address`와 제출의 `payout_address`를 같은 트랜잭션에서 바꾼다. 주소는 소문자 `inj1` 계정 주소(38자)로 넣는다(0x면 같은 계정의 inj1로 바꿔서 - CHECK가 다른 모양을 거부한다). 승인은 초기화되어 2인 승인을 다시 받는다. 감사 행에는 원문 주소가 아니라 마스킹(앞 6자…뒤 4자)만 남긴다:
+     ```sql
+     BEGIN;
+     -- 결과가 UPDATE 1이어야 한다. 0이면 이미 송금 중/완료: ROLLBACK
+     UPDATE payout SET recipient_address = '<새 inj1 주소>', status = 'REQUESTED', approved_by = NULL, approved_at = NULL, last_error = '<사유>'
+      WHERE id = '<payout id>' AND recipient_address = '<기존 inj1 주소>'
+        AND status IN ('REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED');
+     UPDATE bounty_submission SET payout_address = '<새 inj1 주소>', payout_address_updated_at = now()
+      WHERE id = (SELECT submission_id FROM payout WHERE id = '<payout id>');
+     INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, before_data, after_data)
+     VALUES (NULL, 'PAYOUT_CORRECTED_MANUAL', 'payout', '<payout id>',
+             '{"recipientAddress": "<기존 주소 마스킹>"}', '{"recipientAddress": "<새 주소 마스킹>", "by": "<운영자 2인>", "reason": "<사유>"}');
+     COMMIT;
+     ```
+     0029 이전 지갑 기반 payout(`recipient_address`가 `NULL`, `recipient_wallet_id`만 있음)은 SQL로 `recipient_wallet_id`를 바꾸지 않는다. 그 수령 지갑은 요청 시점의 대표 지갑이므로 먼저 3번으로 지갑 이력을 확인한다.
    - 잘못된 주소로 **실제 송금됨** → 온체인 회수는 불가. 수령자 연락/추가 지급 여부를 결정하고, 결정과 tx를 사후 기록에 남긴다.
-3. 수령 지갑은 payout 요청 시점의 대표 지갑이다. 교체 이력은 `audit_log`의 `WALLET_REPLACED`(before/after `walletId`)와 옛/새 `wallet`의 `verified_at`, `disconnected_at`으로 확인한다. 과거 payout의 `recipient_wallet_id`는 교체로 바뀌지 않는다.
+3. (0029 이전 지갑 기반 payout만) 수령 지갑은 payout 요청 시점의 대표 지갑이다. 교체 이력은 `audit_log`의 `WALLET_REPLACED`(before/after `walletId`)와 옛/새 `wallet`의 `verified_at`, `disconnected_at`으로 확인한다. 과거 payout의 `recipient_wallet_id`는 교체로 바뀌지 않는다.
 
 ### 7.4.1 대표 수령 지갑 교체
 

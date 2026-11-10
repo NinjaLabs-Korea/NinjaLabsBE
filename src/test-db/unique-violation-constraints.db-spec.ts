@@ -8,11 +8,10 @@ import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.servi
 import { RewardTokenResolver } from '../bounties/admin/reward-token.resolver';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
-import { NftsService } from '../nfts/nfts.service';
 import { DEPOSIT_TX_UNIQUE_INDEX, RewardsService } from '../rewards/rewards.service';
 import { WALLET_ADDRESS_UNIQUE_INDEX, WALLET_PRIMARY_UNIQUE_INDEX } from '../wallets/wallets.service';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique } from './harness';
+import { createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, withPayoutAddresses } from './harness';
 
 // AgentsService.register의 inj1 <-> 0x 변환만 쓴다 (agents.db-spec.ts와 같은 스텁)
 jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
@@ -35,7 +34,7 @@ describeDb('unique violation constraint names used by the services', () => {
     const config = testConfig();
     const audit = new AuditService(db);
     auth = new AuthService(db, new JwtService({ secret: TEST_JWT_SECRET, signOptions: { expiresIn: '15m' } }), config, TEST_JWT_SECRET);
-    rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     agents = new AgentsService(db, audit);
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
     adminId = await createUser(db, { isAdmin: true });

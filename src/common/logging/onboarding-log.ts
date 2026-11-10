@@ -52,10 +52,8 @@ export function onboardingError(
   else logger.error(line);
 }
 
-export function maskWalletAddress(address: string): string {
-  const value = address.trim();
-  return value.length > 12 ? `${value.slice(0, 6)}…${value.slice(-4)}` : 'invalid';
-}
+/** 주소 마스킹(앞 6자 + `…` + 뒤 4자) - 감사 행의 지급 주소와 같은 함수 (common/validation/injective-address.ts) */
+export { maskAddress } from '../validation/injective-address';
 
 export function requestTraceId(headers: Record<string, unknown>): string | undefined {
   const value = headers['x-onboarding-trace-id'];

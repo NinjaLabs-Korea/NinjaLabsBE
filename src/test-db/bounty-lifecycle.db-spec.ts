@@ -7,9 +7,8 @@ import { ApplicationsService } from '../bounties/applications/applications.servi
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { SubmissionReviewService } from '../bounties/submissions/submission-review.service';
 import { DatabaseService } from '../common/database/database.service';
-import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
-import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique } from './harness';
+import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique, withPayoutAddresses } from './harness';
 import { describeDb } from './describe-db';
 
 /**
@@ -36,7 +35,7 @@ describeDb('bounty lifecycle on a real database', () => {
     const config = testConfig();
     lifecycle = new BountyLifecycleService();
     bounties = new BountyAdminService(db, audit, lifecycle, new RewardTokenResolver(config));
-    rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
     submissions = new SubmissionsService(db, new AuditService(db));

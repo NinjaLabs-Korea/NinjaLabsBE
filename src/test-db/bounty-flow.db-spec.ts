@@ -13,9 +13,9 @@ import { RewardsService } from '../rewards/rewards.service';
 import { UsersService } from '../users/users.service';
 import { inspectReward } from '../../scripts/record-refund';
 import { describeDb } from './describe-db';
-import { auditActions, createDb, createPrimaryWallet, createUser, deferred, fakeTxHash, testConfig, unique, waitForLockWaiter } from './harness';
+import { auditActions, createDb, createPrimaryWallet, createUser, deferred, fakeTxHash, testConfig, unique, waitForLockWaiter, withPayoutAddresses } from './harness';
 
-describeDb('bounty → reward → payout → child NFT on a real database', () => {
+describeDb('bounty → reward → payout on a real database', () => {
   let db: DatabaseService;
   let bounties: BountyAdminService;
   let rewards: RewardsService;
@@ -34,7 +34,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     const config = testConfig();
     nfts = new NftsService(db, config);
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-    rewards = new RewardsService(db, nfts, audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
     submissions = new SubmissionsService(db, new AuditService(db));
@@ -71,7 +71,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     return r.rows[0];
   }
 
-  it('runs the full admin flow and ends with reward PAID plus a MINT_CHILD job linked to the parent NFT', async () => {
+  it('runs the full admin flow and ends with reward PAID to the entered payout address (no completion NFT since 2026-11-10)', async () => {
     const { bountyId, rewardId } = await createFundedBounty();
     expect((await bountyStatus(bountyId)).status).toBe('FUNDING_PENDING');
 
@@ -132,18 +132,16 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
 
     const payoutHash = fakeTxHash();
     const paid = await rewards.markPaid(payout.id, payoutHash, adminId);
-    expect(paid).toMatchObject({ id: payout.id, status: 'PAID', payout_tx_hash: `0x${payoutHash.slice(2).toLowerCase()}`, submission_id: submitted.id, recipient_wallet_id: builderWallet.id });
+    const entered = (await db.query<{ payout_address: string }>(`SELECT payout_address FROM bounty_submission WHERE id = $1`, [submitted.id])).rows[0].payout_address;
+    expect(paid).toMatchObject({ id: payout.id, status: 'PAID', payout_tx_hash: `0x${payoutHash.slice(2).toLowerCase()}`, submission_id: submitted.id, recipient_address: entered });
 
     // advanceRewardStatus: one winner paid out of max_winners 1 → PAID
     expect((await rewardRow(rewardId)).status).toBe('PAID');
 
-    // child NFT + MINT_CHILD job, linked to the parent NFT
-    const child = await db.query<{ id: string; parent_nft_id: string; bounty_id: string; status: string }>(
-      `SELECT id, parent_nft_id, bounty_id, status FROM nft WHERE submission_id = $1 AND nft_type = 'BOUNTY_COMPLETION_CHILD'`, [submitted.id]);
-    expect(child.rows).toEqual([{ id: expect.any(String), parent_nft_id: parent!.nftId, bounty_id: bountyId, status: 'PENDING' }]);
-    const job = await db.query<{ job_type: string; idempotency_key: string; status: string }>(
-      `SELECT job_type, idempotency_key, status FROM nft_job WHERE nft_id = $1`, [child.rows[0].id]);
-    expect(job.rows).toEqual([{ job_type: 'MINT_CHILD', idempotency_key: `mint-child:${submitted.id}`, status: 'PENDING' }]);
+    // 2026-11-10: paying no longer creates a completion (child) NFT or a MINT_CHILD job, even when the winner has a parent NFT
+    const child = await db.query(`SELECT 1 FROM nft WHERE submission_id = $1 AND nft_type = 'BOUNTY_COMPLETION_CHILD'`, [submitted.id]);
+    expect(child.rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM nft_job WHERE idempotency_key = $1`, [`mint-child:${submitted.id}`])).rowCount).toBe(0);
 
     // the same payout hash cannot be recorded on a payout of a *different* bounty (same-bounty reuse is the multi-send case below)
     const second = await createFundedBounty();
@@ -214,7 +212,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
 
     const childJobs = await db.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM nft_job j JOIN nft n ON n.id = j.nft_id WHERE n.bounty_id = $1 AND j.job_type = 'MINT_CHILD'`, [bountyId]);
-    expect(childJobs.rows[0].n).toBe(2);
+    expect(childJobs.rows[0].n).toBe(0); // no completion NFT since 2026-11-10
   });
 
   it('re-applying after withdrawal reopens the same row (PENDING, new message, review fields cleared, APPLICATION_REAPPLIED) only while the bounty accepts applications', async () => {
@@ -320,7 +318,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
     });
 
     it('PAYOUT_ALLOW_SELF_APPROVAL=true lets a solo operator approve their own payout, audited as PAYOUT_SELF_APPROVED', async () => {
-      const solo = new RewardsService(db, nfts, new AuditService(db), testConfig({ PAYOUT_ALLOW_SELF_APPROVAL: 'true' }));
+      const solo = withPayoutAddresses(db, new RewardsService(db, new AuditService(db), testConfig({ PAYOUT_ALLOW_SELF_APPROVAL: 'true' })));
       const { rewardId, submissionId } = await openWithWinner();
       const payout = await solo.requestPayout(rewardId, submissionId, '1000', adminId);
       await expect(solo.markApproved(payout.id, adminId)).resolves.toEqual({ id: payout.id, status: 'APPROVED' });
@@ -595,7 +593,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
         await db.query(`UPDATE wallet SET disconnected_at = now(), is_primary = false WHERE user_id = $1`, [gone.userId]);
         await runbookCancel(bPayout.id);
         // nobody can pay the withdrawn winner (requestPayout → 404), so they must not hold the bounty open forever
-        await expect(rewards.requestPayout(rewardId, gone.submissionId, '500', adminId)).rejects.toMatchObject({ message: 'APPROVED_SUBMISSION_OR_WALLET_NOT_FOUND' });
+        await expect(rewards.requestPayout(rewardId, gone.submissionId, '500', adminId)).rejects.toMatchObject({ message: 'APPROVED_SUBMISSION_NOT_FOUND' });
         await toInReview(bountyId);
         await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).resolves.toEqual({ id: bountyId, status: 'COMPLETED' });
       });
@@ -708,7 +706,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       expect(await auditActions(db, 'payout', fulfilled[0].id)).toEqual(['PAYOUT_REQUESTED']);
     });
 
-    it('markPaid twice for the same payout (two different tx hashes): one PAID with the winning hash, one child NFT job, the loser gets 404 PAYOUT_NOT_FOUND_OR_WRONG_STATUS', async () => {
+    it('markPaid twice for the same payout (two different tx hashes): one PAID with the winning hash, no child NFT job, the loser gets 404 PAYOUT_NOT_FOUND_OR_WRONG_STATUS', async () => {
       const { rewardId, winners: [submissionId] } = await openBountyWithWinners(1, '1000');
       const payoutId = await approvedPayout(rewardId, submissionId, '1000');
       const hashes = [fakeTxHash(), fakeTxHash()];
@@ -724,7 +722,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
       expect(row.rows[0]).toEqual({ status: 'PAID', payout_tx_hash: fulfilled[0].payout_tx_hash });
       expect(hashes.map((h) => `0x${h.slice(2).toLowerCase()}`)).toContain(fulfilled[0].payout_tx_hash);
       const jobs = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM nft_job WHERE idempotency_key = $1`, [`mint-child:${submissionId}`]);
-      expect(jobs.rows[0].n).toBe(1);
+      expect(jobs.rows[0].n).toBe(0);
       expect(await auditActions(db, 'payout', payoutId)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED', 'PAYOUT_PAID']);
       expect((await rewardRow(rewardId)).status).toBe('PAID');
     });
@@ -742,7 +740,7 @@ describeDb('bounty → reward → payout → child NFT on a real database', () =
           return new AuditService(db).record(actor, action as never, type as never, id, runner as never);
         },
       } as unknown as AuditService;
-      return { service: new RewardsService(db, nfts, parkingAudit, testConfig()), parked: parked.promise, release: () => release.resolve() };
+      return { service: withPayoutAddresses(db, new RewardsService(db, parkingAudit, testConfig())), parked: parked.promise, release: () => release.resolve() };
     }
 
     it('markPaid with the SAME hash on payouts of two different bounties while the first is still uncommitted: the advisory lock makes the second wait and then see the PAID row → 409 TX_HASH_ALREADY_USED', async () => {

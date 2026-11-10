@@ -1,7 +1,7 @@
 /**
  * 돈 경로 SQL 표적 변형 목록 - mutation/run-sql-mutants.mjs가 하나씩 적용한다.
  *   id    고정 식별자 (P: payout-status.ts, R: rewards.service.ts, L: bounty-lifecycle.service.ts, D: 삭제 가드, W: 탈퇴 가드,
- *         C: completed-wins.ts, F: record-refund.js, A: forfeit-award.js, K: 지갑 연결(wallets), V: 제출 심사)
+ *         C: completed-wins.ts, F: record-refund.js, A: forfeit-award.js, K: 지갑 연결(wallets), V: 제출 심사, M: 지급 주소(0029))
  *   from  원문 (파일에 정확히 한 번 나와야 한다. 코드가 바뀌어 STALE이 되면 여기를 고친다)
  *   to    바꿀 값
  *   why   어떤 버그를 흉내 내나
@@ -21,6 +21,9 @@ const WD = 'src/wallets/wallet-disconnection.ts';
 const SR = 'src/bounties/submissions/submission-review.service.ts';
 const SY = 'src/bounties/submissions/system-review.ts';
 const SP = 'src/bounties/submission-status.ts';
+const SS = 'src/bounties/submissions/submissions.service.ts';
+const OQ = 'src/bounties/admin/bounty-operations.query.ts';
+const PWD = 'src/bounties/participation-withdrawal.ts';
 
 export const MUTANTS = [
   // ── payout-status.ts: 상태 집합 (원소 하나 빠짐 / 더함) ──
@@ -66,9 +69,13 @@ export const MUTANTS = [
   { id: 'R7', file: RS, from: "`SELECT 1 FROM audit_log WHERE action = 'REWARD_REFUNDED' AND after_data->>'txHash' = $1 LIMIT 1`", to: "`SELECT 1 FROM audit_log WHERE action = 'REWARD_REFUNDED' AND after_data->>'txHash' = $1 AND false LIMIT 1`", why: '입금/지급: 환불 해시 재사용 검사 누락' },
   { id: 'R8', file: RS, from: "`SELECT 1 FROM audit_log WHERE action = 'REWARD_REFUNDED' AND after_data->>'txHash' = $1 LIMIT 1`", to: "`SELECT 1 FROM audit_log WHERE after_data->>'txHash' = $1 LIMIT 1`", why: '환불 해시 검사가 action을 안 봄 (다른 감사 행의 txHash로 오탐)' },
   { id: 'R9', file: RS, from: "WHERE rw.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [rewardId]);\n      if (!parent.rowCount) throw new NotFoundException('REWARD_NOT_FOUND');", to: "WHERE rw.id = $1 FOR UPDATE OF b`, [rewardId]);\n      if (!parent.rowCount) throw new NotFoundException('REWARD_NOT_FOUND');", why: '지급 요청: 삭제된 바운티 허용' },
-  { id: 'R10', file: RS, from: "                AND u.deleted_at IS NULL\n           JOIN wallet w", to: "           JOIN wallet w", why: '지급 요청: 탈퇴한 수령자에게 payout 생성' },
-  { id: 'R11', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2", to: "WHERE s.id = $1 AND s.bounty_id = $2", why: '지급 요청: 승인 안 된 제출에 payout 생성' },
-  { id: 'R12', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2", to: "WHERE s.id = $1 AND s.status = 'APPROVED'", why: '지급 요청: 다른 바운티의 제출에 이 보상으로 payout 생성' },
+  { id: 'R10', file: RS, from: `JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id) AND u.deleted_at IS NULL\n          WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u\``, to: `JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id)\n          WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u\``, why: '지급 요청: 탈퇴한 수령자에게 payout 생성' },
+  { id: 'R11', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u`", to: "WHERE s.id = $1 AND s.bounty_id = $2 FOR SHARE OF u`", why: '지급 요청(수령자 확인): 승인 안 된 제출에 payout 생성', equivalent: '뒤의 제출 조회(R11b가 겨누는 FOR UPDATE OF s 문장)가 같은 APPROVED 조건으로 404를 내므로 이 문장의 조건은 방어적 중복이다' },
+  { id: 'R11b', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2\n          FOR UPDATE OF s`", to: "WHERE s.id = $1 AND s.bounty_id = $2\n          FOR UPDATE OF s`", why: '지급 요청(제출 잠금): 승인 안 된 제출에 payout 생성', equivalent: '앞의 수령자 확인 문장(R11)이 같은 APPROVED 조건으로 이미 404를 낸다. 둘 사이 승인 상태는 바뀌지 않는다(APPROVED는 확정 상태, forfeit-award는 payout과 제출 잠금으로 직렬화)' },
+  { id: 'R12', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u`", to: "WHERE s.id = $1 AND s.status = 'APPROVED' FOR SHARE OF u`", why: '지급 요청(수령자 확인): 다른 바운티의 제출에 이 보상으로 payout 생성 ($2 미사용이라 42P18로도 죽는다)' },
+  { id: 'R12b', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2\n          FOR UPDATE OF s`", to: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id::text <> $2::text\n          FOR UPDATE OF s`", why: '지급 요청(제출 잠금): 바운티 조건 반전' },
+  { id: 'R31', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2\n          FOR UPDATE OF s`", to: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2`", why: '지급 요청: 제출 행을 잠그지 않고 주소를 읽음 (주소 변경과 경합하면 옛 주소를 스냅샷)' },
+  { id: 'R32', file: RS, from: "`SELECT s.payout_address FROM bounty_submission s", to: "`SELECT COALESCE(s.payout_address, (SELECT w.address FROM wallet w WHERE w.user_id = s.submitter_user_id LIMIT 1)) AS payout_address FROM bounty_submission s", why: '지급 요청: 주소가 없으면 지갑 주소로 대체 (PAYOUT_ADDRESS_NOT_SET 우회)' },
   { id: 'R13', file: RS, from: "`SELECT id FROM payout WHERE bounty_reward_id = $1 AND submission_id = $2`", to: "`SELECT id FROM payout WHERE bounty_reward_id = $1 AND submission_id = $2 AND status <> 'CANCELLED'`", why: '중복 검사가 취소된 payout을 무시 (멱등 키 위반 500)' },
   { id: 'R14', file: RS, from: "`SELECT id FROM payout WHERE bounty_reward_id = $1 AND submission_id = $2`", to: "`SELECT id FROM payout WHERE bounty_reward_id = $1`", why: '중복 검사가 제출을 안 봄 (두 번째 수상자 요청을 409)' },
   { id: 'R15', file: RS, from: "WHERE p.payout_tx_hash = $2 AND p.status = 'PAID' AND p.id <> $1`", to: "WHERE p.payout_tx_hash = $2 AND p.id <> $1`", why: 'markPaid 재사용 검사가 미지급 payout의 해시도 셈' },
@@ -78,7 +85,6 @@ export const MUTANTS = [
   { id: 'R19', file: RS, from: "`SELECT requested_by FROM payout\n          WHERE id = $1 AND status IN (${sqlStatusList(AWAITING_APPROVAL_PAYOUT_STATUSES)}) FOR UPDATE`", to: "`SELECT requested_by FROM payout\n          WHERE id = $1 FOR UPDATE`", why: '승인: 상태 검사보다 2인 규칙이 먼저 (이미 승인된 payout에 403)' },
   { id: 'R20', file: RS, from: "`UPDATE payout SET status = 'APPROVED', approved_by = $2, approved_at = now()\n          WHERE id = $1 AND status IN (${sqlStatusList(AWAITING_APPROVAL_PAYOUT_STATUSES)})", to: "`UPDATE payout SET status = 'APPROVED', approved_by = $2, approved_at = now()\n          WHERE id = $1", why: '승인 UPDATE의 상태 조건 누락', equivalent: '같은 tx에서 바로 앞 SELECT ... FOR UPDATE가 같은 상태 조건으로 행을 잠갔으므로 UPDATE 시점의 상태는 바뀔 수 없다(방어적 중복 조건)' },
   { id: 'R21', file: RS, from: "WHERE id = $1 AND status IN (${sqlStatusList(SENDABLE_PAYOUT_STATUSES)})\n          RETURNING id, status, payout_tx_hash", to: "WHERE id = $1\n          RETURNING id, status, payout_tx_hash", why: 'markPaid: 승인 안 된(REQUESTED) payout을 PAID로' },
-  { id: 'R22', file: RS, from: "           LEFT JOIN agent a ON a.id = s.agent_id\n          WHERE s.id = $1 AND s.status = 'APPROVED'`,", to: "           LEFT JOIN agent a ON a.id = s.agent_id\n          WHERE s.id = $1`,", why: 'markPaid: 승인 취소된 제출에 지급 기록' },
   { id: 'R23', file: RS, from: "WHEN p.unsettled_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= ${rewardCapSql('rw')}) THEN 'PAID'", to: "WHEN (p.paid_count >= b.max_winners OR p.paid_amount >= ${rewardCapSql('rw')}) THEN 'PAID'", why: '보상 PAID 판정: 미정산 payout 무시' },
   { id: 'R24', file: RS, from: "WHEN p.unsettled_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= ${rewardCapSql('rw')}) THEN 'PAID'", to: "WHEN p.unsettled_count = 0 AND (p.paid_count > b.max_winners OR p.paid_amount >= ${rewardCapSql('rw')}) THEN 'PAID'", why: '보상 PAID 판정: 수상자 수 경계 >= -> >' },
   { id: 'R25', file: RS, from: "WHEN p.unsettled_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount >= ${rewardCapSql('rw')}) THEN 'PAID'", to: "WHEN p.unsettled_count = 0 AND (p.paid_count >= b.max_winners OR p.paid_amount > ${rewardCapSql('rw')}) THEN 'PAID'", why: '보상 PAID 판정: 금액 경계 >= -> >' },
@@ -162,6 +168,20 @@ export const MUTANTS = [
   { id: 'K32', file: WS, from: "const injectiveAddress = isEvmAddress(normalizedAddress)\n      ? getInjectiveAddress(normalizedAddress)\n      : normalizedAddress;", to: "const injectiveAddress = normalizedAddress;", why: '0x 서명 지갑을 inj1로 변환하지 않고 저장' },
   { id: 'K33', file: WS, from: "[userId, injectiveAddress, verified.publicKey],", to: "[userId, injectiveAddress, pubKey ?? verified.publicKey],", why: '클라이언트가 보낸 publicKey를 그대로 저장' },
   { id: 'K34', file: WS, from: "WHERE user_id = $1 AND ${primaryWalletSql('')}`,", to: "WHERE ${primaryWalletSql('')} AND $1::uuid IS NOT NULL`,", why: '내 지갑 조회: 유저 조건 누락 (남의 대표 지갑)' },
+
+  // ── 지급 주소 (submissions.service.ts setPayoutAddress / mySubmissions, bounty-operations.query.ts, participation-withdrawal.ts) ──
+  { id: 'M1', file: SS, from: "`SELECT s.status, s.payout_address, s.payout_address_updated_at", to: "`SELECT 'APPROVED' AS status, s.payout_address, s.payout_address_updated_at", why: '지급 주소: APPROVED 검사 누락 (심사 중·반려 제출에도 주소 저장)' },
+  { id: 'M2', file: SS, from: "WHERE s.id = $1 AND s.submitter_user_id = $2\n          FOR UPDATE OF s`", to: "WHERE s.id = $1 AND (s.submitter_user_id = $2 OR true)\n          FOR UPDATE OF s`", why: '지급 주소: 소유권 검사 누락 (남의 제출 주소를 바꿈)' },
+  { id: 'M3', file: SS, from: "           JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL\n          WHERE s.id = $1 AND s.submitter_user_id = $2", to: "           JOIN bounty b ON b.id = s.bounty_id\n          WHERE s.id = $1 AND s.submitter_user_id = $2", why: '지급 주소: 삭제된 바운티의 제출에도 주소 저장' },
+  { id: 'M4', file: SS, from: "WHERE s.id = $1 AND s.submitter_user_id = $2\n          FOR UPDATE OF s`", to: "WHERE s.id = $1 AND s.submitter_user_id = $2`", why: '지급 주소: 제출 행을 잠그지 않음 (requestPayout과 경합하면 요청 뒤에 주소가 바뀜)' },
+  { id: 'M5', file: SS, from: "`SELECT 1 FROM payout WHERE submission_id = $1 LIMIT 1`", to: "`SELECT 1 FROM payout WHERE submission_id = $1 AND false LIMIT 1`", why: '지급 주소: 잠금 검사 누락 (요청 뒤에도 주소 변경)' },
+  { id: 'M6', file: SS, from: "`SELECT 1 FROM payout WHERE submission_id = $1 LIMIT 1`", to: "`SELECT 1 FROM payout WHERE submission_id = $1 AND status <> 'CANCELLED' LIMIT 1`", why: '지급 주소: 취소된 payout만 있으면 잠금 해제 (requestPayout은 그 제출에 다시 요청하지 않는다)' },
+  { id: 'M7', file: SS, from: "                AND NOT EXISTS (SELECT 1 FROM payout px WHERE px.submission_id = s.id)) AS payout_address_editable,", to: "                ) AS payout_address_editable,", why: '/submissions/me: 요청 뒤에도 주소 수정 가능으로 표시' },
+  { id: 'M8', file: SS, from: "(s.submitter_user_id = $1 AND s.status = 'APPROVED'\n", to: "(s.submitter_user_id = $1\n", why: '/submissions/me: 승인 안 된 제출을 주소 수정 가능으로 표시' },
+  { id: 'M9', file: OQ, from: "CASE WHEN s.status = 'APPROVED' AND owner.deleted_at IS NULL THEN owner.email END AS email", to: "CASE WHEN s.status = 'APPROVED' THEN owner.email END AS email", why: '운영 화면: 탈퇴한 수상자의 (익명화된) 이메일 노출' },
+  { id: 'M10', file: OQ, from: "CASE WHEN s.status = 'APPROVED' AND owner.deleted_at IS NULL THEN owner.email END AS email", to: "CASE WHEN owner.deleted_at IS NULL THEN owner.email END AS email", why: '운영 화면: 승인 안 된 제출자의 이메일 노출' },
+  { id: 'M11', file: OQ, from: "COALESCE(p.recipient_address, w.address) AS recipient_address", to: "p.recipient_address AS recipient_address", why: '운영 화면: 0029 이전 지갑 기반 payout의 수령 주소가 사라짐' },
+  { id: 'M12', file: PWD, from: "WHERE submitter_user_id = $1 AND payout_address IS NOT NULL`", to: "WHERE submitter_user_id = $1 AND payout_address IS NOT NULL AND false`", why: '탈퇴: 지급 주소를 지우지 않음' },
 
   // ── submission-review.service.ts / system-review.ts / submission-status.ts (제출 심사) ──
   { id: 'V1', file: SR, from: 'WHERE s.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`', to: 'WHERE s.id = $1 FOR UPDATE OF b`', why: '심사: 삭제된 바운티의 제출도 심사' },

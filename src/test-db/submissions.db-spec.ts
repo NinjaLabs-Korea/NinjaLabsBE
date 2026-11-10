@@ -7,10 +7,9 @@ import { ApplicationsService } from '../bounties/applications/applications.servi
 import { SubmissionReviewService } from '../bounties/submissions/submission-review.service';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { DatabaseService } from '../common/database/database.service';
-import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique } from './harness';
+import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique, withPayoutAddresses } from './harness';
 
 /**
  * 제출 규칙을 실 Postgres 행으로 단언한다 (submissions.service.spec.ts의 옛 SQL 해석 mock 대체):
@@ -32,7 +31,7 @@ describeDb('submission rules on a real database', () => {
     audit = new AuditService(db);
     const config = testConfig();
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-    rewards = new RewardsService(db, new NftsService(db, config), audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
     submissions = new SubmissionsService(db, new AuditService(db));

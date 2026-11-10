@@ -12,10 +12,9 @@ import { ApplicationsService } from '../bounties/applications/applications.servi
 import { SubmissionReviewService } from '../bounties/submissions/submission-review.service';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { DatabaseService } from '../common/database/database.service';
-import { NftsService } from '../nfts/nfts.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { auditActions, createDb, createPrimaryWallet, createUser, deferred, fakeTxHash, TEST_DB_URL_ENV, testConfig, testSslEnv, unique, waitForLockWaiter } from './harness';
+import { auditActions, createDb, createPrimaryWallet, createUser, deferred, fakeTxHash, TEST_DB_URL_ENV, testConfig, testSslEnv, unique, waitForLockWaiter, withPayoutAddresses } from './harness';
 
 /**
  * Bounty status walk, lifecycle blockers from real rows, the revision flow across the deadline, and the races the row locks /
@@ -26,7 +25,6 @@ describeDb('bounty rules on a real database', () => {
   let audit: AuditService;
   let bounties: BountyAdminService;
   let rewards: RewardsService;
-  let nfts: NftsService;
   let applications: ApplicationsService;
   let applicationReview: ApplicationReviewService;
   let submissions: SubmissionsService;
@@ -38,9 +36,8 @@ describeDb('bounty rules on a real database', () => {
     db = createDb();
     audit = new AuditService(db);
     const config = testConfig();
-    nfts = new NftsService(db, config);
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
-    rewards = new RewardsService(db, nfts, audit, config);
+    rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
     applications = new ApplicationsService(db, audit);
     applicationReview = new ApplicationReviewService(db, audit);
     submissions = new SubmissionsService(db, new AuditService(db));
@@ -483,7 +480,7 @@ describeDb('bounty rules on a real database', () => {
       const bountyId = await createBounty({ amount: '10' });
       const rewardId = await rewardOf(bountyId);
       const parking = parkingAudit('REWARD_DEPOSIT_CONFIRMED', rewardId);
-      const parkedRewards = new RewardsService(db, nfts, parking.service, testConfig());
+      const parkedRewards = withPayoutAddresses(db, new RewardsService(db, parking.service, testConfig()));
       const t1 = parkedRewards.confirmDeposit(rewardId, fakeTxHash(), '10', adminId);
       await parking.parked;
       const t2 = bounties.remove(bountyId, adminId).then(() => 'deleted' as const, (err: Error) => err);
@@ -526,7 +523,7 @@ describeDb('bounty rules on a real database', () => {
           return audit.record(actor, act as never, type as never, id, runner as never);
         },
       } as unknown as AuditService;
-      const t1 = new RewardsService(db, nfts, parkingAuditService, testConfig()).requestPayout(rewardId, winners[0], '600', adminId);
+      const t1 = withPayoutAddresses(db, new RewardsService(db, parkingAuditService, testConfig())).requestPayout(rewardId, winners[0], '600', adminId);
       await parked.promise;
       const t2 = rewards.requestPayout(rewardId, winners[1], '600', adminId).then((r) => r, (err: Error) => err);
       await Promise.race([waitForLockWaiter(db, 'the second payout request to wait on the bounty/reward rows'), t2]);
@@ -547,7 +544,7 @@ describeDb('bounty rules on a real database', () => {
       const hash = fakeTxHash();
 
       const parking = parkingAudit('REWARD_DEPOSIT_CONFIRMED', otherReward);
-      const t1 = new RewardsService(db, nfts, parking.service, testConfig()).confirmDeposit(otherReward, hash, '10', adminId);
+      const t1 = new RewardsService(db, parking.service, testConfig()).confirmDeposit(otherReward, hash, '10', adminId);
       await parking.parked;
       // T1 holds pg_advisory_xact_lock(hashtext(hash)) with deposit_tx_hash written but invisible; without the shared key T2 would see no deposit
       const t2 = rewards.markPaid(payout.id, hash.toLowerCase(), adminId).then((r) => r, (err: Error) => err);
@@ -589,7 +586,7 @@ describeDb('bounty rules on a real database', () => {
     });
 
     it('solo-operator mode (PAYOUT_ALLOW_SELF_APPROVAL=true): a self-approved payout cannot be approved a second time by another admin (404)', async () => {
-      const solo = new RewardsService(db, nfts, audit, testConfig({ PAYOUT_ALLOW_SELF_APPROVAL: 'true' }));
+      const solo = withPayoutAddresses(db, new RewardsService(db, audit, testConfig({ PAYOUT_ALLOW_SELF_APPROVAL: 'true' })));
       const { bountyId, rewardId } = await openFunded();
       const payout = await solo.requestPayout(rewardId, await approvedSubmission(bountyId), '1000', adminId);
       await expect(solo.markApproved(payout.id, adminId)).resolves.toEqual({ id: payout.id, status: 'APPROVED' });

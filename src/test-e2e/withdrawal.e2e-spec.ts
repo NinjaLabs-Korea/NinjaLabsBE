@@ -1,6 +1,6 @@
 import { describeDb } from '../test-db/describe-db';
-import { AdminBountyForm, applyBody, saveAdminBountyBody, submitBody } from './support/fe-payloads';
-import { DAY, E2eApp, isoIn, startApp, txHash } from './support/harness';
+import { AdminBountyForm, applyBody, payoutAddressBody, saveAdminBountyBody, submitBody } from './support/fe-payloads';
+import { DAY, E2eApp, isoIn, payoutEvmAddress, startApp, txHash } from './support/harness';
 
 // DELETE /users/me - FE /account danger zone: confirm nickname → withdraw → POST /auth/logout → home
 describeDb('account withdrawal over HTTP (e2e)', () => {
@@ -67,6 +67,7 @@ describeDb('account withdrawal over HTTP (e2e)', () => {
     expect(blocked.body).toEqual({ statusCode: 409, error: 'Conflict', message: 'WITHDRAWAL_BLOCKED_PENDING_REWARDS' });
     expect((await e2e.get('/auth/me', { token: builder.accessToken })).status).toBe(200); // nothing changed
 
+    expect((await e2e.put(`/submissions/${submissionId}/payout-address`, payoutAddressBody(payoutEvmAddress()), { token: builder.accessToken })).status).toBe(200);
     const payoutId: string = (await e2e.post('/admin/payouts', { rewardId, submissionId, amount: '100000000000000000000' }, asAdmin)).body.id;
     expect((await withdraw()).body.message).toBe('WITHDRAWAL_BLOCKED_OPEN_PAYOUTS');
     expect((await e2e.post(`/admin/payouts/${payoutId}/approve`, undefined, { token: approver.accessToken })).body).toEqual({ id: payoutId, status: 'APPROVED' });

@@ -889,6 +889,19 @@
         ],
         "type": "object"
       },
+      "SetPayoutAddressDto": {
+        "properties": {
+          "address": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "type": "object"
+      },
       "SubmitDto": {
         "properties": {
           "commitSha": {
@@ -3305,6 +3318,39 @@
       "get": {
         "operationId": "SubmissionsController_mine",
         "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Submissions"
+        ]
+      }
+    },
+    "/submissions/{id}/payout-address": {
+      "put": {
+        "operationId": "SubmissionsController_setPayoutAddress",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPayoutAddressDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": ""

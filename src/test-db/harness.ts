@@ -57,7 +57,6 @@ export function testConfig(overrides: Record<string, string | undefined> = {}): 
     JWT_ACCESS_TTL: '15m',
     JWT_REFRESH_TTL: '14d',
     REWARD_MULTISIG_ADDRESS: 'inj1testmultisig',
-    NFT_CONTRACT_ADDRESS: 'inj1testcontract',
     ...overrides,
   };
   return { get: <T = string>(key: string): T | undefined => values[key] as T | undefined } as unknown as ConfigService;

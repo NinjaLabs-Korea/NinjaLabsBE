@@ -9,9 +9,8 @@ import { AppModule } from '../../app.module';
 import { configureApp } from '../../app-setup';
 import { GoogleIdTokenVerifier } from '../../auth/google-id-token.verifier';
 import { DatabaseService } from '../../common/database/database.service';
-import { InjectiveNftClient } from '../../nfts/injective-nft.client';
 import { TEST_DB_URL_ENV } from '../../test-db/harness';
-import { FakeGoogle, FakeInjectiveNftClient, FakeTurnstile, GOOGLE_CLIENT_ID_E2E, TURNSTILE_SITEVERIFY_URL_E2E } from './fakes';
+import { FakeGoogle, FakeTurnstile, GOOGLE_CLIENT_ID_E2E, TURNSTILE_SITEVERIFY_URL_E2E } from './fakes';
 
 /**
  * HTTP e2e 하네스 - `npm run test:e2e` (jest.e2e.config.js).
@@ -59,8 +58,6 @@ export function e2eEnv(): Record<string, string> {
     LEGACY_ACCESS_TOKEN_CUTOFF: '', // 기본값(프로세스 시작 시각) - auth.e2e-spec이 그 경계를 검사한다
     INJECTIVE_NETWORK: 'testnet',
     INJECTIVE_GRPC_ENDPOINT: '',
-    NFT_CONTRACT_ADDRESS: 'inj1e2econtract',
-    NFT_MINTING_ENABLED: '', // legacy/no-setting behavior: automatic issuance remains ON (fake chain only)
     MASTER_WALLET_MNEMONIC: E2E_SECRETS.MASTER_WALLET_MNEMONIC,
     REWARD_MULTISIG_ADDRESS: 'inj1e2emultisig',
     INJECTIVE_EVM_CHAIN_ID: '1439',
@@ -113,7 +110,6 @@ export type Session = { accessToken: string; refreshToken: string; userId: strin
 export class E2eApp {
   readonly logs: LogLine[] = [];
   readonly google = new FakeGoogle();
-  readonly chain = new FakeInjectiveNftClient();
   readonly turnstile = new FakeTurnstile();
   /** close()에서 로그에 나타나지 않아야 하는 값 - 발급된 토큰·키·코드가 자동으로 쌓인다 */
   readonly secrets = new Set<string>(Object.values(E2E_SECRETS));
@@ -145,7 +141,6 @@ export class E2eApp {
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(GoogleIdTokenVerifier).useValue(this.google.verifier)
-      .overrideProvider(InjectiveNftClient).useValue(this.chain)
       .setLogger(new CapturingLogger(this.logs))
       .compile();
     this.app = moduleRef.createNestApplication<NestExpressApplication>();

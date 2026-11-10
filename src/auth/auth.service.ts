@@ -135,7 +135,7 @@ export class AuthService {
     return this.oauth.exchangeGoogleCode(code);
   }
 
-  /** GET /auth/me: 프로필 + 온보딩/NFT 상태(`wallet`은 항상 null인 호환 shim) (api-contract.md 응답 형태). 쿠키 모드 refresh/exchange의 `user`도 이것 (sessionUserOf) */
+  /** GET /auth/me: 프로필 + 온보딩 상태(`wallet`, `nft`는 항상 null인 호환 shim) (api-contract.md 응답 형태). 쿠키 모드 refresh/exchange의 `user`도 이것 (sessionUserOf) */
   async getMe(userId: string): Promise<MeResponse> {
     const user = await this.db.query(
       `SELECT u.id, u.nickname, u.email, u.bio, u.onboarding_step,
@@ -151,12 +151,6 @@ export class AuthService {
     if (!user.rowCount) throw new NotFoundException('USER_NOT_FOUND');
     const u = user.rows[0];
 
-    const nft = await this.db.query(
-      `SELECT status, token_id FROM nft
-        WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`,
-      [userId],
-    );
-
     return {
       id: u.id,
       nickname: u.nickname,
@@ -169,9 +163,7 @@ export class AuthService {
       isMember: u.is_member,
       avatarUrl: u.avatar_url ?? null,
       wallet: null,
-      nft: nft.rowCount
-        ? { status: nft.rows[0].status, tokenId: nft.rows[0].token_id }
-        : null,
+      nft: null,
     };
   }
 

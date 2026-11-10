@@ -203,28 +203,19 @@ describeDb('users on a real database', () => {
     expect(agents[0].completed_bounties.map((b) => b.title)).toEqual(['newer', 'older']);
   });
 
-  it('publicProfile nfts keep a completion NFT of a soft-deleted bounty but drop the bounty title (no bounty id is exposed)', async () => {
+  it('publicProfile keeps the nfts: [] shim and never reads nft rows, even when legacy NFT rows exist for the user', async () => {
     const admin = await createUser(db, { isAdmin: true });
     const nickname = `Nft${unique().slice(0, 8)}`;
     const owner = await createUser(db, { nickname });
     const wallet = await createPrimaryWallet(db, owner);
-    const nft = async (nftType: string, bountyId: string | null, submissionId: string | null) => (await db.query<{ id: string }>(
-      `INSERT INTO nft (owner_user_id, owner_wallet_id, bounty_id, submission_id, nft_type, contract_address, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'inj1contract', clock_timestamp()) RETURNING id`,
-      [owner, wallet.id, bountyId, submissionId, nftType])).rows[0].id;
-
-    const parent = await nft('NINJA_PARENT', null, null);
     const liveBounty = await bounty(admin, 'live-nft-bounty');
-    const live = await nft('BOUNTY_COMPLETION_CHILD', liveBounty, await submission(liveBounty, { userId: owner }));
-    const goneBounty = await bounty(admin, 'deleted-nft-bounty', { deleted: true });
-    const gone = await nft('BOUNTY_COMPLETION_CHILD', goneBounty, await submission(goneBounty, { userId: owner }));
+    await db.query(
+      `INSERT INTO nft (owner_user_id, owner_wallet_id, bounty_id, submission_id, nft_type, contract_address)
+       VALUES ($1, $2, NULL, NULL, 'NINJA_PARENT', 'inj1contract'), ($1, $2, $3, $4, 'BOUNTY_COMPLETION_CHILD', 'inj1contract')`,
+      [owner, wallet.id, liveBounty, await submission(liveBounty, { userId: owner })]);
 
     const profile = await users.publicProfile(nickname);
-    const nfts = profile.nfts as Array<Record<string, unknown>>;
-    expect(nfts.map((n) => [n.id, n.bounty_title])).toEqual([[parent, null], [live, 'live-nft-bounty'], [gone, null]]);
-    for (const n of nfts) expect(n).not.toHaveProperty('bounty_id');
-    expect(JSON.stringify(profile)).not.toContain('deleted-nft-bounty');
-    expect(JSON.stringify(profile)).not.toContain(goneBounty);
+    expect(profile.nfts).toEqual([]);
   });
 
   it('nickname availability and save use the active-user unique index: a deleted user frees the name, a live one is NICKNAME_TAKEN', async () => {

@@ -327,10 +327,9 @@ describe('AuthService.issueSession / revoke', () => {
 });
 
 describe('AuthService.getMe', () => {
-  function meQuery(user: Record<string, unknown> | null, nft: Record<string, unknown> | null) {
+  function meQuery(user: Record<string, unknown> | null) {
     return jest.fn(async (sql: string) => {
       if (sql.includes('FROM "user" u')) return user ? { rowCount: 1, rows: [user] } : { rowCount: 0, rows: [] };
-      if (sql.includes('FROM nft')) return nft ? { rowCount: 1, rows: [nft] } : { rowCount: 0, rows: [] };
       throw new Error(`unexpected ${sql}`);
     });
   }
@@ -340,29 +339,28 @@ describe('AuthService.getMe', () => {
     avatar_url: '/media/22222222-2222-4222-8222-222222222222',
   };
 
-  it('maps the user row to the FE MeResponse with the parent NFT and the wallet: null shim (no wallet query)', async () => {
-    const query = meQuery(row, { status: 'MINTED', token_id: '7' });
+  it('maps the user row to the FE MeResponse with the wallet: null and nft: null shims (no wallet or nft query)', async () => {
+    const query = meQuery(row);
     const { service } = createService({ query });
     await expect(service.getMe(userId)).resolves.toEqual({
       id: userId, nickname: 'ninja', email: 'n@example.com', bio: 'hi', tags: ['DEV'], onboardingStep: 4,
       onboardingCompleted: true, isAdmin: true, isMember: false,
       avatarUrl: '/media/22222222-2222-4222-8222-222222222222',
-      wallet: null, nft: { status: 'MINTED', tokenId: '7' },
+      wallet: null, nft: null,
     });
     for (const [, params] of query.mock.calls as unknown as Array<[string, unknown[]]>) expect(params).toEqual([userId]);
     const sqls = (query.mock.calls as unknown as Array<[string]>).map(([sql]) => sql);
-    expect(sqls).toHaveLength(2);
-    expect(sqls.some((sql) => /\bwallet\b/.test(sql))).toBe(false);
-    expect(sqls[1]).toContain("nft_type = 'NINJA_PARENT'");
+    expect(sqls).toHaveLength(1);
+    expect(sqls.some((sql) => /\bwallet\b/.test(sql) || /\bnft\b/.test(sql))).toBe(false);
   });
 
   it('reports onboardingCompleted=false, wallet=null and nft=null for a fresh user', async () => {
-    const { service } = createService({ query: meQuery({ ...row, onboarding_completed_at: null, is_admin: false }, null) });
+    const { service } = createService({ query: meQuery({ ...row, onboarding_completed_at: null, is_admin: false }) });
     await expect(service.getMe(userId)).resolves.toMatchObject({ onboardingCompleted: false, isAdmin: false, wallet: null, nft: null });
   });
 
-  it('404 USER_NOT_FOUND for a deleted or unknown user, without reading nft', async () => {
-    const query = meQuery(null, null);
+  it('404 USER_NOT_FOUND for a deleted or unknown user, ', async () => {
+    const query = meQuery(null);
     const { service } = createService({ query });
     const error = await service.getMe(userId).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NotFoundException);

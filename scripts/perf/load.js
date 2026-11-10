@@ -54,7 +54,6 @@ const DUR = Number(process.argv[3] || 8);
     ['ADMIN GET /admin/cohorts/:id/applications.csv', () => `/admin/cohorts/${cohort}/applications.csv`, A],
     ['ADMIN GET /admin/audit-logs', () => '/admin/audit-logs', A],
     ['ADMIN GET /admin/audit-logs?page=500', () => '/admin/audit-logs?page=500', A],
-    ['ADMIN GET /admin/nft-jobs', () => '/admin/nft-jobs', A],
   ];
   const results = [];
   for (const [name, pathFn, hdr] of eps) {

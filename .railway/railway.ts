@@ -12,8 +12,8 @@ export default defineRailway(() => {
     healthcheck: "/health",
     healthcheckTimeout: 120,
     deploy: {
-      // SIGTERM → SIGKILL 유예. 종료 훅이 크론/NFT 워커를 드레인(최대 20초, common/lifecycle/single-flight-task.ts)하고 진행 중 HTTP 요청을 끝낸 뒤
-      // 풀을 닫는다 - 플랫폼 기본값(0에 가깝다)이면 그 전에 SIGKILL로 잘려 잡이 PROCESSING에 남는다 (docs/runbook.md "배포 중 종료 순서")
+      // SIGTERM → SIGKILL 유예. 종료 훅이 크론/payout 워커를 드레인(최대 20초, common/lifecycle/single-flight-task.ts)하고 진행 중 HTTP 요청을 끝낸 뒤
+      // 풀을 닫는다 - 플랫폼 기본값(0에 가깝다)이면 그 전에 SIGKILL로 잘려 작업이 도중에 끊긴다 (docs/runbook.md "배포 중 종료 순서")
       drainingSeconds: 30,
     },
     env: {
@@ -25,9 +25,11 @@ export default defineRailway(() => {
       THROTTLER_STORAGE: "postgres",
       JWT_ACCESS_TTL: "15m",
       JWT_REFRESH_TTL: "14d",
+      // 리더 없음(2026-11-11 BE PR3에서 NFT 모듈 제거, 코드 어디에도 이 값을 읽는 곳이 없다). 운영자가 대시보드에서 먼저 지운 뒤 PR5에서 이 줄을 지운다(그 전에 지우면 apply가 값을 삭제 대상으로 본다).
       INJECTIVE_NETWORK: "testnet",
       INJECTIVE_EVM_CHAIN_ID: "1439",
       USDC_EVM_CONTRACT_ADDRESS: "0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d",
+      // 리더 없음(BE PR3). 위 INJECTIVE_NETWORK와 같은 이유로 PR5에서 지운다.
       NFT_CONTRACT_ADDRESS: "inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w",
       // production 허용 목록에 localhost를 두지 않는다 - 로컬 FE는 로컬 BE(.env의 CORS_ORIGINS/AUTH_ALLOWED_REDIRECT_ORIGINS)로 붙는다 (docs/deployment.md "로컬 오리진")
       // FE는 n1-nj-4 팀의 ninjalabs-korea-platform으로 옮겼다 (2026-10-25). 옛 ninjalabsfe.vercel.app은 Vercel에서 새 주소로 308 리다이렉트한다
@@ -43,6 +45,7 @@ export default defineRailway(() => {
       DATABASE_CA_CERT: preserve(),
       GOOGLE_CLIENT_SECRET: preserve(),
       JWT_SECRET: preserve(),
+      // 리더 없음(BE PR3, NFT 민팅 전용 키였다). 운영자가 대시보드 값을 먼저 지운 뒤 PR5에서 이 줄을 지운다.
       MASTER_WALLET_MNEMONIC: preserve(),
       // 운영 알림 Discord/Slack incoming webhook (https, URL 자체가 토큰) - 비어 있으면 알림은 로그로만 (docs/deployment.md env 표, docs/security.md "운영 알림")
       OPS_ALERT_WEBHOOK_URL: preserve(),
@@ -51,6 +54,7 @@ export default defineRailway(() => {
       // 멀티시그 보상 지갑 주소 - 비어 있으면 새 보상의 custody_address가 PENDING_MULTISIG_SETUP (스폰서가 입금할 곳이 없다). production 필수 (docs/runbook.md §1, §8, §9)
       REWARD_MULTISIG_ADDRESS: preserve(),
       // 선택 - 전용 gRPC 노드/프록시 URL (자격 증명이 섞일 수 있어 git에 두지 않는다). 비우면 INJECTIVE_NETWORK 프리셋 (docs/runbook.md §8)
+      // 리더 없음(BE PR3, NFT 민팅/조회 전용이었다). 위와 같이 PR5에서 지운다.
       INJECTIVE_GRPC_ENDPOINT: preserve(),
       // 선택 - 로그인 returnTo/Turnstile hostname에 더 허용할 FE 오리진 (정확한 항목, 예: preview 별칭). 기본 허용 오리진은 AUTH_SUCCESS_REDIRECT의 것 하나.
       // 비워 두되 자리는 잡는다: 대시보드에서 넣은 값이 `railway config apply` 때 삭제 대상이 되지 않게 (src/auth/fe-origins.ts)
@@ -58,7 +62,7 @@ export default defineRailway(() => {
       // ── 선택 운영 스위치 (기본값이면 비워 둔다) - 대시보드에서 넣은 값이 `railway config apply` 때 삭제 대상이 되지 않게 자리만 잡는다 ──
       // 리더 없음(2026-11-10 BE PR2에서 지갑 교체 코드 제거). 운영자가 대시보드에서 먼저 지운 뒤 PR5에서 이 줄을 지운다(그 전에 지우면 apply가 값을 삭제 대상으로 본다).
       WALLET_REPLACEMENT_ENABLED: preserve(),
-      // NFT는 미설정/빈 값이면 기존 자동 발급 유지. 명시적 false로 중지한 운영자 선택은 apply로 풀지 않는다.
+      // 리더 없음(BE PR3에서 NFT 모듈 제거). 운영자가 대시보드 값을 먼저 지운 뒤 PR5에서 이 줄을 지운다.
       NFT_MINTING_ENABLED: preserve(),
       // payout 2인 규칙 탈출구 (기본 false - 운영자 1인일 때만 true, docs/deployment.md env 표)
       PAYOUT_ALLOW_SELF_APPROVAL: preserve(),

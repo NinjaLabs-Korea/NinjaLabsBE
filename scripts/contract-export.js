@@ -375,7 +375,6 @@ function buildConstants() {
   const lifecycle = load('bounties/admin/bounty-lifecycle.service.js');
   const payout = load('rewards/payout-status.js');
   const decimals = load('rewards/reward-token-decimals.js');
-  const nft = load('nfts/nft-status.js');
   const cohort = load('cohorts/cohort-status.js');
   const questions = load('cohorts/cohort-questions.js');
   const audit = load('audit/audit-actions.js');
@@ -417,13 +416,6 @@ function buildConstants() {
     reward: {
       payableStatuses: [...payout.PAYABLE_REWARD_STATUSES],
       tokenDecimals: { ...decimals.REWARD_TOKEN_DECIMALS },
-    },
-    nft: {
-      statuses: [...nft.NFT_STATUSES],
-      parentReady: [...nft.PARENT_READY],
-      mintAlreadyDone: [...nft.MINT_ALREADY_DONE],
-      attachable: [...nft.ATTACHABLE],
-      mintedOrLater: [...nft.MINTED_OR_LATER],
     },
     cohort: {
       statuses: cohortStatuses,

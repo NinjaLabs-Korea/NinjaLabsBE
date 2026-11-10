@@ -73,6 +73,7 @@ async function inspectSubmission(runner, submissionId, adminId, lock = false) {
       `SELECT s.id, s.bounty_id, s.status AS submission_status, s.current_revision_no,
               b.status AS bounty_status, b.deleted_at IS NOT NULL AS bounty_deleted,
               (SELECT count(*)::int FROM payout p WHERE p.submission_id = s.id) AS payouts,
+              -- legacy completion NFT rows: this guard intentionally still covers them (nft table is kept as history)
               (SELECT count(*)::int FROM nft n WHERE n.submission_id = s.id) AS nfts
          FROM bounty_submission s JOIN bounty b ON b.id = s.bounty_id
         WHERE s.id = $1 ${lock ? 'FOR UPDATE OF s' : ''}`,
@@ -99,6 +100,7 @@ function refusalReason(submission, admin) {
   if (submission.payouts > 0) {
     return `${submission.payouts} payout row(s) exist for this submission - correct or cancel the payout per ${RUNBOOK} instead`;
   }
+  // intentional: a legacy completion NFT row means the award was actually completed, so refuse the forfeit
   if (submission.nfts > 0) return `a completion NFT exists for this submission - not an unpayable award (${RUNBOOK})`;
   return null;
 }

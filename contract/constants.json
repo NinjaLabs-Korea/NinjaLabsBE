@@ -46,7 +46,6 @@
       "HIGHLIGHT_CREATED": "platform_highlight",
       "HIGHLIGHT_DELETED": "platform_highlight",
       "HIGHLIGHT_UPDATED": "platform_highlight",
-      "NFT_JOB_RETRIED": "nft_job",
       "NOTICE_CREATED": "notice",
       "NOTICE_DELETED": "notice",
       "NOTICE_PUBLISHED": "notice",
@@ -71,12 +70,13 @@
       "USER_WITHDRAWN": "user"
     },
     "legacyActions": {
+      "NFT_JOB_REQUEUED": "nft_job",
+      "NFT_JOB_RETRIED": "nft_job",
       "WALLET_REPLACED": "user"
     },
     "scriptActions": {
       "ADMIN_GRANTED": "user",
       "ADMIN_REVOKED": "user",
-      "NFT_JOB_REQUEUED": "nft_job",
       "PAYOUT_CANCELLED_MANUAL": "payout",
       "PAYOUT_CORRECTED_MANUAL": "payout",
       "REWARD_REFUNDED": "bounty_reward",
@@ -228,33 +228,6 @@
       "DEV",
       "DESIGN",
       "OPS"
-    ]
-  },
-  "nft": {
-    "attachable": [
-      "MINTED",
-      "ATTACHING"
-    ],
-    "mintAlreadyDone": [
-      "MINTED",
-      "ATTACHED"
-    ],
-    "mintedOrLater": [
-      "MINTED",
-      "ATTACHING",
-      "ATTACHED"
-    ],
-    "parentReady": [
-      "MINTED",
-      "ATTACHED"
-    ],
-    "statuses": [
-      "PENDING",
-      "MINTING",
-      "MINTED",
-      "ATTACHING",
-      "ATTACHED",
-      "FAILED"
     ]
   },
   "nickname": {

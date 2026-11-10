@@ -7,7 +7,6 @@ import { SubmissionReviewService } from '../bounties/submissions/submission-revi
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { DatabaseService } from '../common/database/database.service';
 import { HighlightsService } from '../highlights/highlights.service';
-import { MINTED_OR_LATER, sqlIn } from '../nfts/nft-status';
 import { PAYABLE_REWARD_STATUSES, payoutRequestableSql, payoutStatusSql } from '../rewards/payout-status';
 import { RewardsService } from '../rewards/rewards.service';
 import { PENDING_REWARD_SQL } from '../users/account-withdrawal.service';
@@ -88,11 +87,6 @@ describeDb('completed wins and payout requestability single sources on a real da
            WHERE s.status = 'APPROVED' AND b.deleted_at IS NULL
              AND (b.status = 'COMPLETED'
                   OR EXISTS (SELECT 1 FROM payout p WHERE p.submission_id = s.id AND p.status = 'PAID'))) AS builders,
-         (SELECT count(*) FROM nft n
-            JOIN bounty b ON b.id = n.bounty_id
-           WHERE n.nft_type = 'BOUNTY_COMPLETION_CHILD'
-             AND n.status ${sqlIn(MINTED_OR_LATER)}
-             AND b.deleted_at IS NULL) AS completion_nfts,
          (SELECT count(DISTINCT lower(btrim(sponsor_name))) FROM bounty
            WHERE status = 'COMPLETED' AND deleted_at IS NULL) AS sponsors`;
 
@@ -154,7 +148,7 @@ describeDb('completed wins and payout requestability single sources on a real da
       const old = (await db.query<Record<string, string>>(OLD_HOF_COUNTS)).rows[0];
       expect(counts).toEqual({
         completedBounties: Number(old.completed_bounties), builders: Number(old.builders),
-        completionNfts: Number(old.completion_nfts), sponsors: Number(old.sponsors),
+        completionNfts: 0, sponsors: Number(old.sponsors),
       });
     });
   });

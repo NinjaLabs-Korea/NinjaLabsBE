@@ -2093,67 +2093,6 @@
         ]
       }
     },
-    "/admin/nft-jobs": {
-      "get": {
-        "operationId": "NftJobsAdminController_list",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "enum": [
-                "FAILED",
-                "PENDING",
-                "PROCESSING"
-              ],
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page",
-            "required": false,
-            "schema": {
-              "maximum": 100000,
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "NftJobsAdmin"
-        ]
-      }
-    },
-    "/admin/nft-jobs/{id}/retry": {
-      "post": {
-        "operationId": "NftJobsAdminController_retry",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "NftJobsAdmin"
-        ]
-      }
-    },
     "/admin/notices": {
       "get": {
         "operationId": "NoticeAdminController_list",

@@ -6,7 +6,6 @@ import {
   SENDABLE_PAYOUT_STATUSES, sqlStatusList, TERMINAL_PAYOUT_STATUSES, UNSETTLED_PAYOUT_STATUSES,
 } from './payout-status';
 
-jest.mock('../nfts/nfts.service', () => ({ NftsService: class {} })); // rewards.service → nfts → ESM SDK
 
 /** 동작 자체는 실 DB에서: src/test-db/users.db-spec.ts "payout status", src/test-db/bounty-flow.db-spec.ts "cancelled payout" */
 describe('payoutStatusSql', () => {

@@ -45,10 +45,10 @@ describe('HighlightsService.list (GET /hall-of-fame)', () => {
     // two reads: the counts row and the per-token PAID totals (FROM payout)
     const query = jest.fn(async (sql: string, _params?: unknown[]) => (sql.includes('sum(p.amount)')
       ? { rowCount: 1, rows: [{ symbol: 'INJ', token_type: 'NATIVE', amount: '5' }] }
-      : { rowCount: 1, rows: [{ completed_bounties: '3', builders: '2', completion_nfts: '1', sponsors: '4' }] }));
+      : { rowCount: 1, rows: [{ completed_bounties: '3', builders: '2', sponsors: '4' }] }));
     const db = createMockDb({ query }).database;
     await expect(new HighlightsController(new HighlightsService(db)).stats()).resolves.toEqual({
-      completedBounties: 3, builders: 2, completionNfts: 1, sponsors: 4,
+      completedBounties: 3, builders: 2, completionNfts: 0, sponsors: 4,
       paidTotals: [{ symbol: 'INJ', tokenType: 'NATIVE', decimals: 18, amount: '5' }],
     });
   });

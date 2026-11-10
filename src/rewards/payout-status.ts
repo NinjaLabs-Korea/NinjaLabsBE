@@ -16,7 +16,7 @@
  * 정적 가드(test-support/status-literals.spec.ts)가 src에서 payout 상태 집합 리터럴과 상한식 LEAST(…, deposited_amount)를
  * 이 파일 밖에서 쓰지 못하게 막는다.
  *
- * 의존성 없는 모듈이다 (users/submissions 경로가 rewards.service → nfts → ESM SDK를 끌어오지 않게). 같은 성격의 SQL 조각 파일(agents/owned-agents.ts)만 import한다.
+ * 의존성 없는 모듈이다 (users/submissions 경로가 rewards.service를 끌어오지 않게). 같은 성격의 SQL 조각 파일(agents/owned-agents.ts)만 import한다.
  */
 import { participantUserIdSql } from '../agents/owned-agents';
 

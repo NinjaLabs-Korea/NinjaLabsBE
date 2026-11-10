@@ -1,4 +1,3 @@
-import { Injectable } from '@nestjs/common';
 import { GoogleIdTokenClaims } from '../../auth/google-id-token.verifier';
 
 /**
@@ -8,7 +7,6 @@ import { GoogleIdTokenClaims } from '../../auth/google-id-token.verifier';
  *                        GoogleIdTokenVerifier(JWKS 서명 검증) 자리를 대신한다. 콜백의 `code`마다 미리 등록한 클레임을 돌려준다.
  *   FakeTurnstile        Cloudflare Turnstile siteverify(https://challenges.cloudflare.com/turnstile/v0/siteverify)를 fetch 수준에서 가로챈다.
  *                        `issueToken()`으로 만든 토큰만 1회 통과(그 뒤 timeout-or-duplicate), `outage`가 켜지면 네트워크 오류.
- *   FakeInjectiveNftClient  체인 민팅 클라이언트 - 미설정(isConfigured=false)으로 답해 nft_job 워커가 잡을 PENDING으로 미루게 한다.
  */
 export const GOOGLE_CLIENT_ID_E2E = 'e2e-client.apps.googleusercontent.com';
 
@@ -82,17 +80,5 @@ export class FakeTurnstile {
     return new Response(JSON.stringify(body), {
       status: 200, headers: { 'content-type': 'application/json' },
     });
-  }
-}
-
-@Injectable()
-export class FakeInjectiveNftClient {
-  mints: Array<{ tokenId: string; owner: string }> = [];
-  isConfigured(): boolean { return false; }
-  contractAddress(): string { return 'inj1e2econtract'; }
-  async tokenExists(): Promise<boolean> { return false; }
-  async mint(tokenId: string, owner: string): Promise<string> {
-    this.mints.push({ tokenId, owner });
-    return `0x${'ab'.repeat(32)}`;
   }
 }

@@ -143,22 +143,20 @@ describe('AuthController.refresh / me', () => {
     expect(res.append).not.toHaveBeenCalled();
   });
 
-  it('GET /auth/me returns the service payload and logs the nft flag (no wallet field since PR2); a failure is logged with its code and rethrown', async () => {
+  it('GET /auth/me returns the service payload and logs no wallet or nft field (shims are not logged); a failure is logged with its code and rethrown', async () => {
     const { logged, errored, warned } = logs();
-    const me = { onboardingStep: 3, onboardingCompleted: false, wallet: null, nft: { status: 'PENDING' } };
+    const me = { onboardingStep: 3, onboardingCompleted: false, wallet: null, nft: null };
     const auth = { getMe: jest.fn(async () => me) };
     const controller = new AuthController(auth as never, { get: () => undefined } as never, { enabled: false } as never);
     const req = { headers: { 'x-onboarding-trace-id': 'trace-9' }, requestId: 'req-id-1234', user: { userId, isAdmin: false } } as never;
     await expect(controller.me(req)).resolves.toBe(me);
     expect(auth.getMe).toHaveBeenCalledWith(userId);
     expect(logged().find((line) => line.event === 'session.me.succeeded')).toEqual({
-      event: 'session.me.succeeded', rid: 'req-id-1234', traceId: 'trace-9', userId, onboardingStep: 3, onboardingCompleted: false, nftStatus: 'PENDING',
+      event: 'session.me.succeeded', rid: 'req-id-1234', traceId: 'trace-9', userId, onboardingStep: 3, onboardingCompleted: false,
     });
 
-    auth.getMe.mockResolvedValueOnce({ ...me, nft: null } as never);
-    await controller.me(req);
     const last = logged().filter((line) => line.event === 'session.me.succeeded').at(-1);
-    expect(last).toMatchObject({ nftStatus: null });
+    expect(last).not.toHaveProperty('nftStatus');
     expect(last).not.toHaveProperty('walletLinked');
 
     const gone = new NotFoundException('USER_NOT_FOUND');

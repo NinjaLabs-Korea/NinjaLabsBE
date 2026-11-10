@@ -14,7 +14,7 @@ export const SHUTDOWN_DRAIN_TIMEOUT_MS = 20_000;
  *
  * 쓰는 쪽은 `beforeApplicationShutdown()`에서 stop()을 await한다. Nest는 그 훅이 모두 끝난 뒤 HTTP 서버를 닫고, 그다음
  * `onApplicationShutdown()`에서 DB 풀을 닫는다(DatabaseService). 그래서 드레인 중인 작업은 아직 살아 있는 풀을 쓴다.
- * 긴 작업은 단계 사이에서 `isStopping`을 확인해 일찍 멈춘다 (예: NftJobWorker가 배치의 다음 잡으로 넘어가기 전).
+ * 긴 작업은 단계 사이에서 `isStopping`을 확인해 일찍 멈춘다 (예: 배치 워커가 다음 잡으로 넘어가기 전).
  */
 export class SingleFlightTask {
   private current: Promise<void> | null = null;

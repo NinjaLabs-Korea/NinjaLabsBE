@@ -37,6 +37,16 @@ describeDb('onboarding over HTTP (e2e)', () => {
     }
   });
 
+  it('the removed NFT job console routes are 404 (BE PR3), signed in or not', async () => {
+    const session = await e2e.login();
+    const jobId = '00000000-0000-4000-8000-000000000000';
+    for (const token of [session.accessToken, undefined]) {
+      const list = await e2e.get('/admin/nft-jobs', { token });
+      const retry = await e2e.post(`/admin/nft-jobs/${jobId}/retry`, undefined, { token });
+      expect([list.status, retry.status]).toEqual([404, 404]);
+    }
+  });
+
   describe('profile', () => {
     it('saves the FE payload {nickname, bio, tags} → {ok:true}, trims the nickname, advances to step 4; complete-onboarding flips the flag', async () => {
       const session = await e2e.login();

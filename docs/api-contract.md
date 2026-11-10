@@ -121,7 +121,6 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `COHORT_ALREADY_OPEN` | 409 | 다른 기수가 이미 OPEN이다 (동시에 열린 기수는 하나) |
 | `COHORT_HAS_APPLICATIONS` | 409 | 지원서가 있는 기수는 삭제할 수 없다 (철회 포함) |
 | `HIGHLIGHT_NOT_FOUND` | 404 | 하이라이트가 없다 |
-| `NFT_JOB_NOT_FOUND_OR_NOT_FAILED` | 404 | NFT 작업이 없거나 FAILED가 아니라 재시도할 수 없다 |
 | `MEDIA_FILE_REQUIRED` | 400 | 업로드 파일이 없다 |
 | `MEDIA_FILE_TOO_LARGE` | 400 | 업로드 파일이 크기 상한을 넘는다 |
 | `MEDIA_FILE_TYPE_UNSUPPORTED` | 400 | 허용되지 않는 이미지 형식이다 (시그니처 검사) |
@@ -206,7 +205,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
   "isMember": false,
   "avatarUrl": "/media/uuid",
   "wallet": null,
-  "nft": { "status": "MINTED", "tokenId": "..." }
+  "nft": null
 }
 ```
 
@@ -226,7 +225,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | DELETE | `/users/me` | ✅ | **회원 탈퇴** `{confirmNickname}`(지금 닉네임, 앞뒤 공백·대소문자 무시) → 200 `{ok: true}`. 400 `CONFIRM_NICKNAME_MISMATCH`, 409 `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS`(본인/내 에이전트 제출에 걸린 payout 중 `PAID`/`CANCELLED`/`FAILED`가 아닌 것이 있음. 레거시 지갑 기반 payout도 제출로 판단한다), 409 `WITHDRAWAL_BLOCKED_PENDING_REWARDS`(본인/내 에이전트의 `APPROVED` 제출에 아직 payout이 요청되지 않았고 그 바운티가 진행 중(`OPEN`/`SUBMISSION_CLOSED`/`IN_REVIEW`)·보상이 입금 확인(`FUNDED`/`PARTIALLY_PAID`/`PAID`)·배정 여유분 있음 - 탈퇴하면 받을 보상이 사라지므로 막는다. 운영자가 지급을 마친 뒤 다시 시도; FE는 "받을 보상이 남아 있어 지금은 탈퇴할 수 없다"로 안내. 두 409가 겹치면 `OPEN_PAYOUTS`가 먼저), 404 `USER_NOT_FOUND`(이미 탈퇴·정지). 한 트랜잭션: user `WITHDRAWN`+`deleted_at`, `google_id`/`email`에 `deleted:<ms>:` 프리픽스(같은 구글 계정 재가입 = 새 계정), 닉네임 `withdrawn_<8hex>`로 익명화·bio/링크/태그/멤버 플래그 제거, 프로필 사진 제거(media 행 삭제), refresh 세션 전부 폐기(레거시 wallet 행은 건드리지 않는다, 2026-11-10 BE PR2), 소유 에이전트·키 `REVOKED`, PENDING 지원과 심사 전 제출(`SUBMITTED`/`RESUBMITTED`/`IN_REVIEW`/`REVISION_REQUESTED`) `WITHDRAWN`, 감사 `USER_WITHDRAWN`(+에이전트마다 `AGENT_REVOKED`). 승인/반려된 제출·payout·NFT 기록은 남는다. 동시에 들어온 `requestPayout`과는 수령자 유저 행 잠금으로 직렬화된다(탈퇴가 먼저면 404, 지급 요청이 먼저면 409). 쿠키 모드 FE는 이어서 `POST /auth/logout`(204, 멱등)으로 쿠키를 지운다. 5회/분 (2026-10-24) |
 | POST | `/users/me/avatar` | ✅ | **본인 프로필 사진 등록·교체** (2026-11-01, 0022). `multipart/form-data` 파일 파트 `file` 하나, JPEG/PNG/WebP(선언된 MIME의 매직바이트 검사, `POST /admin/media`와 같은 규칙), **최대 2 MiB** → 201 `{avatarUrl: "/media/<uuid>"}`. 400 `MEDIA_FILE_REQUIRED`/`MEDIA_FILE_TOO_LARGE`/`MEDIA_FILE_TYPE_UNSUPPORTED`, 404 `USER_NOT_FOUND`(동시 탈퇴). 온보딩 단계와 무관(프로필 저장과 같은 규칙). 한 트랜잭션: 유저 행 잠금 → 새 이미지 저장 → `avatar_media_id` 교체 → **옛 사진의 media 행 삭제**(옛 `/media/<uuid>`는 404) → 감사 `USER_AVATAR_UPDATED`. 10회/분 |
 | DELETE | `/users/me/avatar` | ✅ | 본인 프로필 사진 삭제 → 200 `{avatarUrl: null}`. 사진이 없어도 200(멱등, 감사 행 없음). 옛 사진의 media 행도 지운다. 감사 `USER_AVATAR_REMOVED`. 404 `USER_NOT_FOUND`(동시 탈퇴). 10회/분. 회원 탈퇴도 같은 정리를 한다 |
-| GET | `/users/:nickname` | - | 공개 프로필(온보딩을 마친 유저만, 아니면 404 `USER_NOT_FOUND`): `avatar_url`(`/media/<uuid>` 또는 `null`, 2026-11-01) + 기본정보 + 완료 바운티 + 에이전트 + 실제 부모/완료 NFT 상태·token ID·mint tx. soft delete된 바운티는 완료 바운티·에이전트 `completed_bounties`에서 빠지고, 그 바운티의 완료 NFT는 남되 `bounty_title`이 `null` |
+| GET | `/users/:nickname` | - | 공개 프로필(온보딩을 마친 유저만, 아니면 404 `USER_NOT_FOUND`): `avatar_url`(`/media/<uuid>` 또는 `null`, 2026-11-01) + 기본정보 + 완료 바운티 + 에이전트 + `nfts: []`(NFT 제거 2026-11-11 뒤 옛 FE 호환 shim, BE PR5에서 키 제거). soft delete된 바운티는 완료 바운티·에이전트 `completed_bounties`에서 빠진다 |
 
 - `completedBounties[]`는 이 유저 **또는 유저 소유 에이전트**의 APPROVED 제출이 있는 바운티(soft delete 제외, Hall of Fame `builders`보다 넓다: builders는 PAID 또는 COMPLETED 바운티의 승인 제출자만).
   `rewards[]`는 바운티에 걸린 보상이 아니라 **그 제출에 실제 PAID된 payout** 목록이며 원소 모양은 `{ amount: "<최소 단위 정수 문자열>", symbol }`로 유지된다 (지급 전이면 `[]`).
@@ -294,7 +293,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | GET | `/cohorts/current` | - | 지금 열린(OPEN) 기수 `{id, name, description, opensAt, closesAt, acceptingApplications, questions}`(`questions`: 지원서 질문 `CohortQuestion[]`, 아래 "지원서 질문") 또는 본문이 JSON `null`(200). `acceptingApplications` = OPEN이고 지금이 `[opensAt, closesAt]` 안(비어 있는 쪽은 제한 없음). 공개 GET 600/min |
 | GET | `/members` | - | 공식 멤버 리스트 (역할·링크 포함, display_order 정렬). 항목에 `avatar_url`(`/media/<uuid>` 또는 `null`, 2026-11-01) |
 | GET | `/hall-of-fame` | - | 큐레이션 하이라이트 |
-| GET | `/hall-of-fame/stats` | - | 자동 집계 지표 `{completedBounties, builders, completionNfts, sponsors, paidTotals}` (완료 바운티/빌더(= COMPLETED 바운티의 승인 제출자 또는 PAID payout을 받은 제출자)/NFT/스폰서 수 + 지급 완료 보상 총액). `paidTotals: [{symbol, tokenType, decimals, amount}]` - status `PAID` payout만 `(upper(display_symbol), token_type)`별로 합산, 삭제된 바운티 제외, `amount`는 base unit 정수 **문자열**, `decimals`는 서버가 아는 토큰만(INJ 18, USDC 6; 그 밖은 `null`), 심볼 순 정렬, 지급 이력이 없으면 `[]`. 서버 인스턴스별 인메모리 캐시 **60초** - 완료 전이/민팅 직후 최대 1분 늦게 반영된다 (`highlights.service.ts`) |
+| GET | `/hall-of-fame/stats` | - | 자동 집계 지표 `{completedBounties, builders, completionNfts, sponsors, paidTotals}` (완료 바운티/빌더(= COMPLETED 바운티의 승인 제출자 또는 PAID payout을 받은 제출자)/NFT(항상 0, 옛 FE 호환 shim)/스폰서 수 + 지급 완료 보상 총액). `paidTotals: [{symbol, tokenType, decimals, amount}]` - status `PAID` payout만 `(upper(display_symbol), token_type)`별로 합산, 삭제된 바운티 제외, `amount`는 base unit 정수 **문자열**, `decimals`는 서버가 아는 토큰만(INJ 18, USDC 6; 그 밖은 `null`), 심볼 순 정렬, 지급 이력이 없으면 `[]`. 서버 인스턴스별 인메모리 캐시 **60초** - 완료 전이 직후 최대 1분 늦게 반영된다 (`highlights.service.ts`) |
 
 ## 기수 모집 (cohorts, 2026-10-26)
 
@@ -381,11 +380,9 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | PATCH | `/admin/highlights/:id` | 하이라이트 수정/발행 상태 변경 |
 | DELETE | `/admin/highlights/:id` | 하이라이트 삭제 |
 | GET | `/admin/bounties/:id/operations` | 운영 화면 한 번에 필요한 데이터 - 아래 "Admin bounty operations" 참조 (2026-10-24: 신원·수령자·요청자/승인자·`requested_by_me`·`policy`·`lifecycle.blockerDetails`/`allowedTransitions` 추가) |
-| GET | `/admin/nft-jobs?status=FAILED\|PENDING\|PROCESSING&page=` | NFT 잡 콘솔 → `{ items, page, pageSize: 30, total }` (기본 `status=FAILED`, `updated_at` 최신순). 항목: `id, nft_id, job_type, status, retry_count, last_error, scheduled_at, started_at, processed_at, created_at, updated_at, nft_type, nft_status, bounty_id, bounty_title, submission_id, owner_user_id, owner_nickname, owner_wallet_address`. 그 밖의 `status`(SUCCEEDED/CANCELLED/소문자)나 `page`<1 → `400` |
-| POST | `/admin/nft-jobs/:id/retry` | 운영자 수동 재시도: `FAILED` 잡만 → `PENDING`, `retry_count = 0`, `scheduled_at = now()`, `started_at`/`processed_at` NULL(`last_error`는 원인 확인용으로 유지). nft는 `FAILED`에서 `minted_at`이 있으면 `MINTED`(attach 실패 - 재민팅하지 않음), 없으면 `PENDING`. 감사 `NFT_JOB_RETRIED`(entity `nft_job`)를 같은 트랜잭션에 → `{ id, nft_id, status: 'PENDING', retry_count: 0 }`. FAILED가 아니거나 없으면 **404 `NFT_JOB_NOT_FOUND_OR_NOT_FAILED`** |
 | GET | `/admin/audit-logs?entityType=&entityId=&page=` | 감사 로그 → `{ items, page, pageSize: 30, total }` (최신순). 항목: `id, actor_user_id, actor_agent_id, actor_nickname, actor_agent_name, action, entity_type, entity_id, created_at, before_data, after_data` (행위자 이름은 사용자/에이전트가 지워지지 않았을 때, 스크립트 행은 null). `page`≥1 정수, `entityType`≤64자, `entityId` UUID - 그 외 `400`. (이전엔 배열을 반환했으나 FE 호출처가 없어 공통 페이지네이션 봉투로 변경) |
 
-운영자 지정(`is_admin`)은 API가 없다 - `scripts/grant-admin.js`로만 바꾼다([runbook.md](runbook.md) §3). 그 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/requeue-nft-jobs.js`는 `NFT_JOB_REQUEUED`(entity `nft_job`)를, `scripts/record-refund.js`는 `REWARD_REFUNDED`(entity `bounty_reward`, `after_data` `{txHash, refundedAmount}`)를, runbook §7.4의 수동 SQL은 `PAYOUT_CORRECTED_MANUAL`/`PAYOUT_CANCELLED_MANUAL`(entity `payout`)을 남긴다 - 감사 로그 화면은 actor가 비어 있고 action이 위 여섯 가지 중 하나인 행을 "운영 스크립트"로 표시하면 된다. 일곱 번째 운영 스크립트 action `SUBMISSION_AWARD_FORFEITED`(entity `bounty_submission`, `scripts/forfeit-award.js`, runbook §7.4 "지급할 수 없는 수상")는 **actor가 채워진다**(`--admin`으로 받은 결정 운영자 id) - action 이름만으로 "운영 스크립트"로 표시한다. `before_data` `{status: "APPROVED"}`, `after_data` `{status: "REJECTED", reason, bountyId, source}`. 같은 트랜잭션에 `submission_review`(decision `REJECT`, comment `forfeited: <사유>`) 행이 남으므로 제출자의 `GET /submissions/me` `review_comment`에 그 코멘트가 보인다. `POST /admin/submissions/:id/review`의 `comment`는 `forfeited:`(대소문자·앞 공백 무관)로 시작할 수 없다(400) - 이 접두사는 이 스크립트가 남긴 보상 미지급 표식이라 일반 반려 코멘트가 쓰면 제출자 화면이 "승인됐지만 보상 미지급"으로 오해한다. 보이는 글자가 없는 `comment`/`note`는 `null`로 취급되어 수정 요청에서는 400 `REVISION_COMMENT_REQUIRED`다. 에이전트 키로 한 행위는 `actor_user_id`가 비는 대신 `actor_agent_id`가 채워진다(`AuditService.recordAgentAction` - 지원 `APPLICATION_SUBMITTED`/`APPLICATION_REAPPLIED`, 제출 `SUBMISSION_SUBMITTED`/`SUBMISSION_RESUBMITTED`). 다만 이 수정 이전에 쌓인 에이전트 `APPLICATION_REAPPLIED` 행은 actor가 둘 다 비어 있으므로, 표시는 action 이름으로 판단하고 "actor가 비었다"만으로 운영 스크립트로 단정하지 말 것.
+운영자 지정(`is_admin`)은 API가 없다 - `scripts/grant-admin.js`로만 바꾼다([runbook.md](runbook.md) §3). 그 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/record-refund.js`는 `REWARD_REFUNDED`(entity `bounty_reward`, `after_data` `{txHash, refundedAmount}`)를, runbook §7.4의 수동 SQL은 `PAYOUT_CORRECTED_MANUAL`/`PAYOUT_CANCELLED_MANUAL`(entity `payout`)을 남긴다 - 감사 로그 화면은 actor가 비어 있고 action이 위 다섯 가지 중 하나인 행을 "운영 스크립트"로 표시하면 된다. 여섯 번째 운영 스크립트 action `SUBMISSION_AWARD_FORFEITED`(entity `bounty_submission`, `scripts/forfeit-award.js`, runbook §7.4 "지급할 수 없는 수상")는 **actor가 채워진다**(`--admin`으로 받은 결정 운영자 id) - action 이름만으로 "운영 스크립트"로 표시한다. `before_data` `{status: "APPROVED"}`, `after_data` `{status: "REJECTED", reason, bountyId, source}`. 같은 트랜잭션에 `submission_review`(decision `REJECT`, comment `forfeited: <사유>`) 행이 남으므로 제출자의 `GET /submissions/me` `review_comment`에 그 코멘트가 보인다. `POST /admin/submissions/:id/review`의 `comment`는 `forfeited:`(대소문자·앞 공백 무관)로 시작할 수 없다(400) - 이 접두사는 이 스크립트가 남긴 보상 미지급 표식이라 일반 반려 코멘트가 쓰면 제출자 화면이 "승인됐지만 보상 미지급"으로 오해한다. 보이는 글자가 없는 `comment`/`note`는 `null`로 취급되어 수정 요청에서는 400 `REVISION_COMMENT_REQUIRED`다. 에이전트 키로 한 행위는 `actor_user_id`가 비는 대신 `actor_agent_id`가 채워진다(`AuditService.recordAgentAction` - 지원 `APPLICATION_SUBMITTED`/`APPLICATION_REAPPLIED`, 제출 `SUBMISSION_SUBMITTED`/`SUBMISSION_RESUBMITTED`). 다만 이 수정 이전에 쌓인 에이전트 `APPLICATION_REAPPLIED` 행은 actor가 둘 다 비어 있으므로, 표시는 action 이름으로 판단하고 "actor가 비었다"만으로 운영 스크립트로 단정하지 말 것.
 
 ### 감사 action 카탈로그
 
@@ -452,15 +449,15 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | `USER_MEMBER_REVOKED` | `user` | 상동 (`isMember: false`) |
 | `USER_AVATAR_UPDATED` | `user` | `POST /users/me/avatar` 프로필 사진 등록·교체 (before/after `avatarMediaId`) |
 | `USER_AVATAR_REMOVED` | `user` | `DELETE /users/me/avatar` 프로필 사진 삭제 (before `avatarMediaId`; 사진이 없던 멱등 호출은 기록 없음) |
-| `NFT_JOB_RETRIED` | `nft_job` | `POST /admin/nft-jobs/:id/retry` |
 | `ADMIN_GRANTED` | `user` | 운영 스크립트 `scripts/grant-admin.js` (actor NULL) |
 | `ADMIN_REVOKED` | `user` | 상동 |
-| `NFT_JOB_REQUEUED` | `nft_job` | 운영 스크립트 `scripts/requeue-nft-jobs.js` (actor NULL) |
 | `REWARD_REFUNDED` | `bounty_reward` | 운영 스크립트 `scripts/record-refund.js` (actor NULL) |
 | `SUBMISSION_AWARD_FORFEITED` | `bounty_submission` | 운영 스크립트 `scripts/forfeit-award.js` (actor = `--admin`) |
 | `PAYOUT_CORRECTED_MANUAL` | `payout` | runbook §7.4 수동 SQL (actor NULL) |
 | `PAYOUT_CANCELLED_MANUAL` | `payout` | 상동 |
 | `WALLET_REPLACED` | `user` | **레거시**(`LEGACY_AUDIT_ACTIONS`): 대표 수령 지갑 교체(2026-11-02~11-10). before/after `walletId`. 지갑 API 제거(BE PR2)로 더 생기지 않으며 과거 행의 라벨용으로만 남는다 |
+| `NFT_JOB_RETRIED` | `nft_job` | **레거시**(`LEGACY_AUDIT_ACTIONS`): 운영자 NFT 잡 재시도(`POST /admin/nft-jobs/:id/retry`). NFT 제거(BE PR3, 2026-11-11)로 더 생기지 않으며 과거 행의 라벨용으로만 남는다 |
+| `NFT_JOB_REQUEUED` | `nft_job` | **레거시**(`LEGACY_AUDIT_ACTIONS`): 운영 스크립트 `requeue-nft-jobs.js`의 재큐(actor NULL, 스크립트는 삭제됨). 과거 행의 라벨용. 감사 화면은 이 action을 계속 "운영 스크립트"로 표시한다 |
 
 `AdminGuard`는 JWT의 `isAdmin` 클레임 외에 요청마다 `"user"` 행(`is_admin`, `status='ACTIVE'`, 미삭제)을 다시 확인한다 - 어드민 해제/정지가 토큰 만료 전에 즉시 반영된다 (403 `ADMIN_ONLY`).
 
@@ -478,17 +475,9 @@ USDC 보상은 Injective EVM native USDC(MTS)로 저장한다. API 요청의 심
 
 없음 - 전 엔드포인트 구현 완료.
 
-## NFT 컨트랙트 (경로 A - 표준 cw721-base)
+## NFT 컨트랙트 (제거됨)
 
-부모-자식 관계는 DB(`nft.parent_nft_id`)가 소스 오브 트루스, 온체인은 표준 CW-721 mint만 수행.
-2팀 Nestable 컨트랙트 전환 시 `src/nfts/injective-nft.client.ts`와 워커의 ATTACH 분기만 교체하면 된다.
-
-- Injective **testnet** code_id `39785` (cw721-base v0.18.0)
-- 컨트랙트: `inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w` (`.env NFT_CONTRACT_ADDRESS`)
-- minter/admin: 마스터 지갑 `inj1fku0cc2tgmsf9uflhvx0e340urktq7vtlcg9hq` (민팅 전용)
-- token_id = `nft.id` (UUID) / metadata_uri는 추후 메타데이터 서비스 연결 시 채움
-- ~~payout을 PAID로 기록하는 트랜잭션에서 완료 자식 NFT와 mint job도 멱등 생성한다.~~ **[변경 2026-11-10]** payout PAID 기록은 완료 NFT(자식 NFT, mint job)를 더 만들지 않는다(구글 로그인 전용 전환, NFT 제거 1단계). 이미 있는 nft/nft_job 행과 부모 민팅 뒤의 attach 처리(`nft-job.worker.ts`)는 NFT 모듈 제거 전까지 그대로다.
-- mainnet은 CosmWasm 업로드가 거버넌스 승인제 - 런칭 일정에 반영 필요
+NFT 기능(부모·완료 NFT 민팅, `nft_job` 워커, 운영자 잡 콘솔 `/admin/nft-jobs`, CW-721 컨트랙트 연동)은 2026-11-11 구글 로그인 전용 전환(BE PR3)에서 제거했다. `nft`, `nft_job` 테이블과 행은 이력으로 남고 코드는 읽거나 쓰지 않는다. 옛 FE 호환 shim은 응답 키로만 남는다: `/auth/me`의 `nft: null`, `/users/:nickname`의 `nfts: []`, `/hall-of-fame/stats`의 `completionNfts: 0`(BE PR5에서 제거). 에러 코드 `NFT_JOB_NOT_FOUND_OR_NOT_FAILED`는 폐기됐다. 과거 감사 행의 `NFT_JOB_RETRIED`, `NFT_JOB_REQUEUED`는 `LEGACY_AUDIT_ACTIONS`로 라벨만 유지한다.
 
 ## Admin bounty operations
 

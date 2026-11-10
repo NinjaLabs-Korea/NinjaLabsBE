@@ -3,8 +3,8 @@ import { join, relative } from 'path';
 import { listSourceFiles } from './source-files';
 
 /**
- * 정적 가드 - 서버 코드는 `platform_setting` 테이블을 읽지 않는다. 그래서 scripts/mainnet-preflight.sql 점검 8과 docs/runbook.md §8.1은
- * 그 값(`onboarding.nft_mint_enabled` 등)을 "민팅 스위치가 아니다"라고 안내한다 (운영자가 끄면 멈춘다고 믿고 전환하지 않게).
+ * 정적 가드 - 서버 코드는 `platform_setting` 테이블을 읽지 않는다. 그래서 scripts/mainnet-preflight.sql 점검 6과 docs/runbook.md §8.1은
+ * 그 값(`onboarding.nft_mint_enabled` 등)을 "동작을 바꾸지 않는 표시용 값이다"라고 안내한다 (운영자가 바꾸면 달라진다고 믿지 않게).
  * 코드가 이 테이블을 읽기 시작하면 이 테스트가 실패한다 - 그때 위 두 안내를 실제 동작에 맞게 고치고 여기서 해당 파일을 허용한다.
  */
 describe('platform_setting is not read by the server', () => {

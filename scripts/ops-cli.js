@@ -1,5 +1,5 @@
 /**
- * 운영 스크립트(scripts/grant-admin.js, scripts/requeue-nft-jobs.js, scripts/record-refund.js, scripts/forfeit-award.js) 공용 - 접속, 인자, 확인 프롬프트.
+ * 운영 스크립트(scripts/grant-admin.js, scripts/record-refund.js, scripts/forfeit-award.js) 공용 - 접속, 인자, 확인 프롬프트.
  *
  * 접속은 scripts/migrate.js와 같은 규칙이다: DATABASE_URL + sslOptions()(DATABASE_CA_CERT가 있으면 인증서 검증, PGSSLMODE=disable이면 TLS 끔).
  * 운영 DB에 붙을 때는 Railway 변수와 같은 DATABASE_URL / DATABASE_CA_CERT를 셸에 넣고 실행한다 (docs/runbook.md "운영 스크립트").

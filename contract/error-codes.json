@@ -667,13 +667,6 @@
       ]
     },
     {
-      "code": "NFT_JOB_NOT_FOUND_OR_NOT_FAILED",
-      "ko": "NFT 작업이 없거나 FAILED가 아니라 재시도할 수 없다",
-      "statuses": [
-        404
-      ]
-    },
-    {
       "code": "MEDIA_FILE_REQUIRED",
       "ko": "업로드 파일이 없다",
       "statuses": [

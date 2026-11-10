@@ -224,7 +224,7 @@ describeDb('submission rules on a real database', () => {
       return id;
     }
 
-    it('lists only my own submissions (agent is a null shim), newest first, with bounty fields; hides deleted bounties, legacy agent rows of my agents and other people\'s rows', async () => {
+    it('lists only my own submissions (agent is a null shim), newest first, with bounty fields; hides deleted bounties, legacy agent rows (no submitter) of an agent I own and other people\'s rows', async () => {
       const me = await createUser(db);
       const stranger = await createUser(db);
       const agentId = await agentOf(me, 'my-bot');

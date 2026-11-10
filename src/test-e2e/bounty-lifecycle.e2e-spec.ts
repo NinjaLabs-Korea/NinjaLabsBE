@@ -382,6 +382,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     });
 
     it('the agent management routes are gone (404), not retired stubs', async () => {
+      // 의도된 동작: 410 shim은 외부 계약인 /agent-api/v1에만 둔다. FE 내부 호출 /agents/*는 FE-3이 먼저 나가므로 404로 둔다
       const owner = await e2e.loginOnboarded();
       expect((await e2e.get('/agents/me', { token: owner.accessToken })).status).toBe(404);
       expect((await e2e.post('/agents', { name: 'bot', walletAddress: '0x0000000000000000000000000000000000000001' }, { token: owner.accessToken })).status).toBe(404);

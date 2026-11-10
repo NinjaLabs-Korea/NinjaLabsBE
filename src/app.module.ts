@@ -6,7 +6,6 @@ import { DatabaseModule } from './common/database/database.module';
 import { HealthModule } from './health/health.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
-import { WalletsModule } from './wallets/wallets.module';
 import { MembersModule } from './members/members.module';
 import { NoticesModule } from './notices/notices.module';
 import { CohortsModule } from './cohorts/cohorts.module';
@@ -35,7 +34,6 @@ import { IpThrottlerGuard } from './common/throttler/ip-throttler.guard';
     HealthModule,
     AuthModule,
     UsersModule,
-    WalletsModule,
     MembersModule,
     NoticesModule,
     CohortsModule,

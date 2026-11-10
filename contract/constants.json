@@ -68,7 +68,9 @@
       "USER_MEMBER_GRANTED": "user",
       "USER_MEMBER_REVOKED": "user",
       "USER_NICKNAME_CHANGED": "user",
-      "USER_WITHDRAWN": "user",
+      "USER_WITHDRAWN": "user"
+    },
+    "legacyActions": {
       "WALLET_REPLACED": "user"
     },
     "scriptActions": {

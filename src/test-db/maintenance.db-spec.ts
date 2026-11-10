@@ -8,7 +8,7 @@ describeDb('maintenance sweep on a real database', () => {
   beforeAll(() => { db = createDb(); });
   afterAll(async () => db.onApplicationShutdown());
 
-  it('deletes stale challenges, old sessions and expired login codes hourly, and clears grace tokens past the 30s window in the 5-minute cron', async () => {
+  it('deletes old sessions and expired login codes hourly, clears grace tokens past the 30s window in the 5-minute cron, and no longer touches the legacy wallet challenge table', async () => {
     const userId = await createUser(db);
     const address = `inj1${unique()}`;
     const challenge = (expires: string) => db.query<{ id: string }>(
@@ -16,9 +16,8 @@ describeDb('maintenance sweep on a real database', () => {
        VALUES ($1, $2, $3, 'm', now() + $4::interval) RETURNING id`,
       [userId, address, unique(), expires],
     );
+    // BE PR2: the wallet API is gone, so the table gets no new rows and the sweep leaves old ones alone (the table stays)
     const staleChallenge = (await challenge('-2 days')).rows[0].id;
-    const recentlyExpiredChallenge = (await challenge('-1 hour')).rows[0].id; // inside the 1-day grace for CHALLENGE_EXPIRED
-    const openChallenge = (await challenge('5 minutes')).rows[0].id;
 
     const session = (columns: string, values: string) => db.query<{ id: string }>(
       `INSERT INTO auth_session (user_id, refresh_token_hash, expires_at${columns})
@@ -42,15 +41,13 @@ describeDb('maintenance sweep on a real database', () => {
     const service = new MaintenanceService(db);
     const log = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     await service.sweep();
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^maintenance sweep: challenges=\d+ sessions=\d+ login_codes=\d+ throttles=\d+ wallet_replacements=\d+$/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^maintenance sweep: sessions=\d+ login_codes=\d+ throttles=\d+$/));
     // the hourly sweep leaves grace copies to the 5-minute cron
     expect((await db.query(`SELECT grace_refresh_token FROM auth_session WHERE id = $1`, [staleGrace])).rows[0].grace_refresh_token).toBe('enc');
     await service.clearGraceCopies();
 
     const ids = async (sql: string, params: unknown[]) => (await db.query<{ id: string }>(sql, params)).rows.map((row) => row.id).sort();
-    expect(await ids(`SELECT id FROM wallet_verification_challenge WHERE user_id = $1`, [userId]))
-      .toEqual([recentlyExpiredChallenge, openChallenge].sort());
-    expect(staleChallenge).toBeDefined();
+    expect(await ids(`SELECT id FROM wallet_verification_challenge WHERE user_id = $1`, [userId])).toEqual([staleChallenge]);
 
     expect(await ids(`SELECT id FROM auth_session WHERE user_id = $1`, [userId]))
       .toEqual([revokedRecently, active, staleGrace, freshGrace].sort());

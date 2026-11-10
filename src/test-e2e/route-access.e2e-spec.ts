@@ -34,6 +34,17 @@ describeDb('route access inventory (e2e)', () => {
     expect(routes.filter((r) => PUBLIC_ROUTES.has(`${r.method} ${r.path}`)).length).toBe(PUBLIC_ROUTES.size); // 허용 목록에 죽은 항목이 없다
   });
 
+  it('removed routes stay unregistered (wallet connect/replacement, BE PR2) and answer 404', async () => {
+    const removed = ['POST /wallets/challenge', 'POST /wallets/verify', 'GET /wallets/me', 'POST /wallets/replacement/challenge', 'POST /wallets/replacement/verify'];
+    const table = new Set(registeredRoutes(e2e).map((r) => `${r.method} ${r.path}`));
+    expect(removed.filter((route) => table.has(route))).toEqual([]);
+    expect([...table].filter((route) => route.includes('/wallets'))).toEqual([]);
+    for (const route of removed) {
+      const [method, path] = route.split(' ');
+      expect([route, (await e2e.request(method, path)).status]).toEqual([route, 404]);
+    }
+  });
+
   it('every route outside the public allowlist answers an anonymous request with 401', async () => {
     const open: string[] = [];
     for (const { method, path } of registeredRoutes(e2e)) {

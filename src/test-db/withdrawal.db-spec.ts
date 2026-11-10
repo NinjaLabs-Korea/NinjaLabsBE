@@ -11,6 +11,7 @@ import { SubmissionsService } from '../bounties/submissions/submissions.service'
 import { DatabaseService } from '../common/database/database.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { AccountWithdrawalService } from '../users/account-withdrawal.service';
+import { ONBOARDING_STEP } from '../users/onboarding-step';
 import { UsersService } from '../users/users.service';
 import { describeDb } from './describe-db';
 import { auditActions, createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, waitForLockWaiter, withPayoutAddresses } from './harness';
@@ -78,7 +79,7 @@ describeDb('account withdrawal on a real database', () => {
   }
 
   it('blocks while a payout is open, then withdraws: identity freed for re-signup, sessions/agents/keys revoked, pending applications withdrawn, history kept', async () => {
-    // a builder who signed up with Google, onboarded, linked a wallet and owns an agent
+    // a builder who signed up with Google, onboarded and owns an agent
     const googleId = unique('google-');
     const email = `${unique()}@example.test`;
     const builder = await auth.upsertGoogleUser(googleId, email);
@@ -86,7 +87,6 @@ describeDb('account withdrawal on a real database', () => {
     await users.completeProfile(builder.id, nickname, 'bio', ['DEV']);
     await users.completeOnboarding(builder.id); // applying needs a finished onboarding
     await db.query(`INSERT INTO user_link (user_id, link_type, url) VALUES ($1, 'GITHUB', 'https://github.com/x')`, [builder.id]);
-    const wallet = await createPrimaryWallet(db, builder.id);
     const session = await auth.issueSession(builder.id, false);
     const agentId = await activeAgentWithKey(builder.id);
 
@@ -130,7 +130,7 @@ describeDb('account withdrawal on a real database', () => {
     expect(await auditActions(db, 'user', builder.id)).toEqual(['USER_WITHDRAWN']);
     expect(await auditActions(db, 'agent', agentId)).toEqual(['AGENT_REVOKED']);
 
-    // public profile is gone, the nickname and the wallet address are free again
+    // public profile is gone, the nickname is free again
     await expect(users.publicProfile(nickname)).rejects.toMatchObject({ message: 'USER_NOT_FOUND' });
     await expect(users.publicProfile(user.nickname)).rejects.toMatchObject({ message: 'USER_NOT_FOUND' });
     expect(await users.nicknameAvailable(nickname)).toBe(true);
@@ -138,15 +138,14 @@ describeDb('account withdrawal on a real database', () => {
     // the same Google account signs up again as a new, unconnected user
     const again = await auth.upsertGoogleUser(googleId, email);
     expect(again.id).not.toBe(builder.id);
-    expect(again.onboarding_step).toBe(2);
+    expect(again.onboarding_step).toBe(ONBOARDING_STEP.PROFILE); // wallet step is gone (BE PR2)
     await users.completeProfile(again.id, nickname, 'new bio', ['DESIGN']);
-    await db.query(`INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now())`, [again.id, wallet.address]);
 
     // a second withdrawal of the same (already withdrawn) account is 404
     await expect(withdrawal.withdraw(builder.id, user.nickname)).rejects.toMatchObject({ status: 404, message: 'USER_NOT_FOUND' });
   });
 
-  it('withdrawal strips member and admin standing and disconnects every wallet while keeping the wallet rows for payout history', async () => {
+  it('withdrawal strips member and admin standing and leaves legacy wallet rows untouched (wallet API is gone, payout history keeps its FK)', async () => {
     const userId = await createUser(db, { isAdmin: true });
     await db.query(`UPDATE "user" SET is_member = true, member_role = 'CORE', member_display_order = 3 WHERE id = $1`, [userId]);
     const primary = await createPrimaryWallet(db, userId);
@@ -160,7 +159,7 @@ describeDb('account withdrawal on a real database', () => {
     expect(row).toEqual({ is_member: false, member_role: null, member_display_order: null, is_admin: false });
     const wallets = await db.query<{ id: string; disconnected_at: Date | null }>(`SELECT id, disconnected_at FROM wallet WHERE user_id = $1`, [userId]);
     expect(wallets.rowCount).toBe(2); // rows stay
-    expect(wallets.rows.every((wallet) => wallet.disconnected_at !== null)).toBe(true);
+    expect(wallets.rows.every((wallet) => wallet.disconnected_at === null)).toBe(true); // no wallet writes from withdrawal any more
     expect(wallets.rows.map((wallet) => wallet.id)).toContain(primary.id);
   });
 
@@ -180,7 +179,6 @@ describeDb('account withdrawal on a real database', () => {
 
   async function approvedWinner(submissionMode = 'DIRECT') {
     const builder = await createUser(db);
-    await createPrimaryWallet(db, builder);
     const won = await openBounty(submissionMode);
     const application = await applications.apply(won.bountyId, builder, 'hi');
     await applicationReview.review(application.id, 'APPROVED', undefined, adminId);
@@ -224,6 +222,16 @@ describeDb('account withdrawal on a real database', () => {
     const { builder, nickname, bountyId } = await approvedWinner();
     await db.query(sql, [bountyId]);
     await expect(withdrawal.withdraw(builder, nickname)).resolves.toEqual({ ok: true });
+  });
+
+  it('a legacy wallet-based open payout (recipient_wallet_id, no recipient_address) on my submission still blocks: the recipient is found via the submission, not the wallet table', async () => {
+    const { builder, nickname, submissionId, rewardId } = await approvedWinner();
+    const legacyWallet = await createPrimaryWallet(db, builder);
+    await db.query(
+      `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, idempotency_key, requested_by) VALUES ($1, $2, $3, 1000, $4, $5)`,
+      [rewardId, submissionId, legacyWallet.id, unique('legacy-'), adminId],
+    );
+    await expect(withdrawal.withdraw(builder, nickname)).rejects.toMatchObject({ status: 409, message: 'WITHDRAWAL_BLOCKED_OPEN_PAYOUTS' });
   });
 
   it('does not block on a submission whose payout was cancelled (requestPayout cannot re-request it)', async () => {
@@ -296,7 +304,6 @@ describeDb('account withdrawal on a real database', () => {
       locked();
       await released;
       await tx.query(`UPDATE "user" SET status = 'WITHDRAWN', deleted_at = now() WHERE id = $1`, [builder]);
-      await tx.query(`UPDATE wallet SET disconnected_at = now() WHERE user_id = $1`, [builder]);
     });
     await isLocked;
     let settled = false;

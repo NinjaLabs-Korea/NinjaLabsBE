@@ -74,7 +74,7 @@ export function unique(prefix = ''): string {
 
 /**
  * 테스트 유저. 기본은 온보딩을 마친 상태(onboarding_step 4 + onboarding_completed_at) - 지원·제출은 온보딩을 마친 사람만 할 수 있다(409 PROFILE_REQUIRED).
- * `onboarded: false`는 구글 로그인 직후 상태(onboarding_step 2, 임시 닉네임)다.
+ * `onboarded: false`는 구글 로그인 직후 상태(onboarding_step 3 = ONBOARDING_STEP.PROFILE, 임시 닉네임)다.
  */
 export async function createUser(db: DatabaseService, options: { isAdmin?: boolean; nickname?: string; onboarded?: boolean } = {}): Promise<string> {
   const id = unique();
@@ -82,12 +82,12 @@ export async function createUser(db: DatabaseService, options: { isAdmin?: boole
   const r = await db.query<{ id: string }>(
     `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step, onboarding_completed_at, is_admin)
      VALUES ($1, $2, $3, '', $5::int, CASE WHEN $5::int >= ${ONBOARDING_STEP.PROFILE_SAVED} THEN now() END, $4) RETURNING id`,
-    [`google-${id}`, `${id}@example.test`, options.nickname ?? `user_${id.slice(0, 8)}`, options.isAdmin ?? false, onboarded ? ONBOARDING_STEP.PROFILE_SAVED : ONBOARDING_STEP.WALLET],
+    [`google-${id}`, `${id}@example.test`, options.nickname ?? `user_${id.slice(0, 8)}`, options.isAdmin ?? false, onboarded ? ONBOARDING_STEP.PROFILE_SAVED : ONBOARDING_STEP.PROFILE],
   );
   return r.rows[0].id;
 }
 
-/** 검증된 대표 지갑 (payout 수령·NFT 소유용) */
+/** 레거시 검증된 대표 지갑 행 (0029 이전 지갑 기반 payout·NFT 소유 재현용. 지갑 연결 API는 PR2에서 제거, 테이블은 남는다) */
 export async function createPrimaryWallet(db: DatabaseService, userId: string): Promise<{ id: string; address: string }> {
   const address = `inj1${unique()}`;
   const r = await db.query<{ id: string }>(

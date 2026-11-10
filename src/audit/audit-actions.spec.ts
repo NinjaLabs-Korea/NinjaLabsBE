@@ -5,12 +5,12 @@ import { BountyStatus, BountyStatusPolicy } from '../bounties/bounty-status';
 import { SubmissionDecision } from '../bounties/submission-status';
 import { CohortApplicationPolicy } from '../cohorts/cohort-status';
 import { listSourceFiles } from '../test-support/source-files';
-import { AUDIT_ACTIONS, SCRIPT_AUDIT_ACTIONS } from './audit-actions';
+import { AUDIT_ACTIONS, LEGACY_AUDIT_ACTIONS, SCRIPT_AUDIT_ACTIONS } from './audit-actions';
 
 /**
  * 감사 action 카탈로그(audit-actions.ts)의 정적 가드. 호출부의 오타·새 이름은 AuditService.record()의 타입이 막고,
  * 이 스펙은 카탈로그 쪽의 드리프트를 막는다: 아무도 남기지 않는 죽은 항목, 동적 이름(`BOUNTY_${to}` 등)의 빠진 값,
- * docs/api-contract.md 표와의 불일치, 스크립트에서 사라진 스크립트 action.
+ * docs/api-contract.md 표와의 불일치, 스크립트에서 사라진 스크립트 action, 레거시 action이 다시 쓰이는 것.
  */
 const SRC_ROOT = join(__dirname, '..');
 const REPO_ROOT = join(SRC_ROOT, '..');
@@ -51,6 +51,18 @@ describe('audit action catalog', () => {
     expect(missing).toEqual([]);
   });
 
+  it('legacy actions overlap neither catalog and are no longer written by src or scripts (kept only for audit screen labels)', () => {
+    const legacy = Object.keys(LEGACY_AUDIT_ACTIONS);
+    expect(legacy.filter((action) => Object.hasOwn(AUDIT_ACTIONS, action) || Object.hasOwn(SCRIPT_AUDIT_ACTIONS, action))).toEqual([]);
+    const sources = listSourceFiles(SRC_ROOT)
+      .filter((file) => !file.endsWith(join('audit', 'audit-actions.ts')) && !/\.(?:spec|db-spec|e2e-spec)\.ts$/.test(file))
+      .map((file) => readFileSync(file, 'utf8'));
+    const scriptsDir = join(REPO_ROOT, 'scripts');
+    const scripts = readdirSync(scriptsDir).filter((name) => name.endsWith('.js')).map((name) => readFileSync(join(scriptsDir, name), 'utf8'));
+    const corpus = [...sources, ...scripts].join('\n');
+    expect(legacy.filter((action) => corpus.includes(`'${action}'`))).toEqual([]);
+  });
+
   it('docs/api-contract.md "감사 action 카탈로그" table lists exactly the catalog, with the same entity_type', () => {
     const doc = readFileSync(join(REPO_ROOT, 'docs', 'api-contract.md'), 'utf8');
     const start = doc.indexOf('### 감사 action 카탈로그');
@@ -59,6 +71,6 @@ describe('audit action catalog', () => {
     const documented = Object.fromEntries(
       [...section.matchAll(/^\| `([A-Z_]+)` \| `([a-z_]+)` \|/gm)].map((m) => [m[1], m[2]]),
     );
-    expect(documented).toEqual({ ...AUDIT_ACTIONS, ...SCRIPT_AUDIT_ACTIONS });
+    expect(documented).toEqual({ ...AUDIT_ACTIONS, ...SCRIPT_AUDIT_ACTIONS, ...LEGACY_AUDIT_ACTIONS });
   });
 });

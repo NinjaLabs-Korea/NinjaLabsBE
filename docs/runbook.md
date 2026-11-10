@@ -181,11 +181,11 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 실제 복구(운영): Supabase 대시보드 복원(같은 프로젝트를 덮어씀) 또는 새 프로젝트에 `pg_restore` 후 Railway `DATABASE_URL`/`DATABASE_CA_CERT` 교체 → 재배포. 복원 시점 이후의 온체인 사실(입금·지급 tx, 민팅)은 DB에 없으므로 §7.4의 대조 절차로 다시 맞춘다.
 
-**복원 전에** `NFT_MINTING_ENABLED=false`, `WALLET_REPLACEMENT_ENABLED=false`로 두고 모든 API/worker를 중지·드레인한다.
+**복원 전에** `NFT_MINTING_ENABLED=false`로 두고 모든 API/worker를 중지·드레인한다.
 구버전은 플래그를 모르므로 실제 종료를 확인한다. 이미 전송된 tx는 취소되지 않는다. 복원 후 체인 대조가 끝나기 전 켜지 않는다.
 0027 이후 새 NFT는 같은 user/submission UUID로 다시 만들면 같은 NFT UUID를 사용하지만,
 기존 랜덤 NFT ID와 복원 범위 밖의 user/submission에는 적용되지 않는다. 기존 ID를 바꾸지 말고 발급 이력과 대조해 복원한다.
-환경값이 true로 남은 복원을 자동 감지하지 않는다. 상세 순서/롤백 최저 조건은 [배포 체크리스트](wallet-replacement-release.md#4-롤백복원-경계).
+환경값이 true로 남은 복원을 자동 감지하지 않는다.
 
 ## 6. 업타임 모니터 (GET /health)
 
@@ -335,25 +335,9 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
    - 잘못된 주소로 **실제 송금됨** → 온체인 회수는 불가. 수령자 연락/추가 지급 여부를 결정하고, 결정과 tx를 사후 기록에 남긴다.
 3. (0029 이전 지갑 기반 payout만) 수령 지갑은 payout 요청 시점의 대표 지갑이다. 교체 이력은 `audit_log`의 `WALLET_REPLACED`(before/after `walletId`)와 옛/새 `wallet`의 `verified_at`, `disconnected_at`으로 확인한다. 과거 payout의 `recipient_wallet_id`는 교체로 바뀌지 않는다.
 
-### 7.4.1 대표 수령 지갑 교체
+### 7.4.1 대표 수령 지갑 교체 (제거됨)
 
-운영 배포 전 [wallet-replacement-release.md](wallet-replacement-release.md)의 **읽기 전용 정규 식별자 검사와 계약 응답 확인**을 먼저 수행한다.
-
-- BE를 배포하기 전에 `0024_wallet_replacement.sql`을 적용한다(일반 Railway preDeploy 마이그레이션 경로).
-  FE 연동은 별도 릴리스다. 먼저 BE의 호환 API와 0024–0028 스키마를 배포하고 구버전 writer를 드레인한다.
-  `WALLET_REPLACEMENT_ENABLED`는 기본 OFF다. 운영 점검 후 정확히 `true`로 켜기 전에는 두 교체 API가
-  503 `WALLET_CHANGE_DISABLED`를 반환한다. 기능 OFF는 이미 완료된 교체/이력을 되돌리지 않는다.
-  [롤백 경계와 배포 순서](wallet-replacement-release.md)를 따른다.
-- 구·신 지갑의 소유 증명을 받는 `/wallets/replacement/challenge`·`verify`만 사용한다.
-  SQL로 기존 `wallet.address`나 payout 수령자를 덮어쓰지 않는다. 실패 시 기존 연결은 롤백되며,
-  응답 유실은 동일 verify 재전송 또는 `/auth/me`로 확인한다(구체적 만료/재시도 계약은 api-contract.md).
-- `WALLET_CHANGE_BLOCKED_PAYOUTS`: 본인·소유 에이전트·본인 wallet 수령 건의 미정산 payout을 먼저 확인한다.
-  `FAILED`도 차단한다. 체인에서 이미 송금됐을 수 있으므로 확인 없이 취소해서 교체를 우회하면 안 된다.
-- `WALLET_CHANGE_BLOCKED_NFT_JOBS`: 본인 NFT와 관련 잡을 확인하고 §7.3의 기존 복구 절차로 해결한다.
-- 기존 부모 NFT와 이후 완료 NFT는 **기존 부모 지갑**에 남고, **이후 보상금만 새 대표 지갑**으로 받는다.
-  기존 지갑을 분실한 사용자를 위한 복구/강제 이전 절차는 없다. 관리자 수동 교체로 우회하지 않는다.
-- `wallet_replacement_challenge`에는 서명을 저장하지 않는다. 만료 시각으로부터 24시간 지난 행은 MaintenanceService가
-  정리하며, `WALLET_REPLACED` 감사 이력과 과거 wallet 행은 그대로 남는다.
+지갑 교체 API는 2026-11-10 결정으로 지갑 모듈과 함께 없어졌다(BE PR2). 과거 교체 이력은 `audit_log`의 `WALLET_REPLACED`와 `wallet` 행(`verified_at`, `disconnected_at`)에 남아 있고, `wallet_replacement_challenge`·`wallet_verification_challenge` 행은 더 정리하지 않는다(새 행이 생기지 않는다). Railway의 `WALLET_REPLACEMENT_ENABLED`는 읽는 코드가 없다: 대시보드에서 지운 뒤 정리 PR에서 `railway.ts` 줄을 지운다.
 
 - `0025_agent_canonical_identity.sql`은 기존 `0x`/`inj1` 주소·hex/base64 키를 정규 계정/키 기준으로 비교한다.
   충돌 시 `AGENT_CANONICAL_IDENTITY_CONFLICT`로 전체 롤백하며 자동 소유자 변경/이력 삭제를 하지 않는다.
@@ -438,7 +422,7 @@ railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
 1. 점검 창 공지 → 8.1 blocker 0행 확인 → 백업(§5 덤프 1회).
 2. BE: `railway.ts` 변경 PR 머지 + Railway 변수 교체 → 배포. 로그에서 네트워크/컨트랙트 확인.
 3. FE: `.env.production` 변경 PR → `develop` → `main`.
-4. 확인: 테스트 바운티에 보상 등록 → `custody_address`가 메인넷 멀티시그, ERC-20이면 `evm_chain_id = 1776`. 새 지갑 연결 사용자 1명의 부모 NFT가 메인넷 컨트랙트에 민팅되는지(`nft_job` SUCCEEDED, 익스플로러).
+4. 확인: 테스트 바운티에 보상 등록 → `custody_address`가 메인넷 멀티시그, ERC-20이면 `evm_chain_id = 1776`. (지갑 연결이 없어져(2026-11-10) 새 사용자의 부모 NFT 민팅은 더 생기지 않는다. NFT 절차는 NFT 제거 PR에서 정리한다.)
 5. 8.1을 다시 돌려 blocker가 0행인지 확인하고 결과를 사후 기록에 붙인다.
 
 ## 9. 멀티시그 서명자 문서 템플릿

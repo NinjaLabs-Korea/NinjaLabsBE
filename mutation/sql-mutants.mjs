@@ -1,7 +1,7 @@
 /**
  * 돈 경로 SQL 표적 변형 목록 - mutation/run-sql-mutants.mjs가 하나씩 적용한다.
  *   id    고정 식별자 (P: payout-status.ts, R: rewards.service.ts, L: bounty-lifecycle.service.ts, D: 삭제 가드, W: 탈퇴 가드,
- *         C: completed-wins.ts, F: record-refund.js, A: forfeit-award.js, K: 지갑 연결(wallets), V: 제출 심사, M: 지급 주소(0029))
+ *         C: completed-wins.ts, F: record-refund.js, A: forfeit-award.js, V: 제출 심사, M: 지급 주소(0029))
  *   from  원문 (파일에 정확히 한 번 나와야 한다. 코드가 바뀌어 STALE이 되면 여기를 고친다)
  *   to    바꿀 값
  *   why   어떤 버그를 흉내 내나
@@ -15,9 +15,6 @@ const AW = 'src/users/account-withdrawal.service.ts';
 const CW = 'src/bounties/completed-wins.ts';
 const RR = 'scripts/record-refund.js';
 const FA = 'scripts/forfeit-award.js';
-const WS = 'src/wallets/wallets.service.ts';
-const PW = 'src/wallets/primary-wallet.ts';
-const WD = 'src/wallets/wallet-disconnection.ts';
 const SR = 'src/bounties/submissions/submission-review.service.ts';
 const SY = 'src/bounties/submissions/system-review.ts';
 const SP = 'src/bounties/submission-status.ts';
@@ -110,7 +107,7 @@ export const MUTANTS = [
   { id: 'D1', file: BA, from: "               AND (rw.status = 'REFUND_PENDING'\n                    OR (rw.status", to: "               AND ((rw.status", why: '삭제 가드: REFUND_PENDING 보상을 놓침' },
   { id: 'D2', file: BA, from: "WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(OPEN_PAYOUT_STATUSES)})) AS open_payouts`", to: "WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(AWAITING_APPROVAL_PAYOUT_STATUSES)})) AS open_payouts`", why: '삭제 가드: 승인된 미송금 payout을 놓침' },
   { id: 'W1', file: AW, from: "          WHERE p.status <> ALL($2::text[])", to: "          WHERE p.status <> ALL($2::text[]) AND p.status <> 'APPROVED'", why: '탈퇴 가드: 승인된 미송금 payout을 놓침' },
-  { id: 'W2', file: AW, from: "                 OR p.recipient_wallet_id = ANY(ARRAY(SELECT id FROM wallet WHERE user_id = $1)))`", to: "                 )`", why: '탈퇴 가드: 수령 지갑 기준 payout을 놓침', equivalent: '수령 지갑은 requestPayout 시점 제출자(또는 에이전트 소유자)의 대표 지갑이고 wallet.user_id와 agent.owner_user_id는 바뀌지 않는다. 그래서 지갑 기준으로 잡히는 payout은 제출자/소유 에이전트(삭제 포함) 조건이 이미 잡는다(방어적 중복 조건)' },
+  { id: 'W2', file: AW, from: "            AND (s.submitter_user_id = $1\n                 OR s.agent_id", to: "            AND (false\n                 OR s.agent_id", why: '탈퇴 가드: 본인 제출의 payout(주소 기반·레거시 지갑 기반 모두)을 놓침. BE PR2부터 수령자는 지갑이 아니라 제출로 판단한다' },
 
   // ── completed-wins.ts ──
   { id: 'C1', file: CW, from: "return `${sqlColumnPrefix(s, 'completedWinSql')}status = 'APPROVED' AND", to: "return `${sqlColumnPrefix(s, 'completedWinSql')}status <> 'REJECTED' AND", why: '완료 수상: 심사 중 제출도 셈' },
@@ -133,41 +130,6 @@ export const MUTANTS = [
   { id: 'A4', file: FA, from: "await client.query(`UPDATE bounty_submission SET status = 'REJECTED', reviewed_at = now() WHERE id = $1`, [submissionId]);", to: "await client.query(`UPDATE bounty_submission SET reviewed_at = now() WHERE id = $1`, [submissionId]);", why: '보상 미지급: 제출이 APPROVED로 남음 (COMPLETED 계속 차단)' },
   { id: 'A5', file: FA, from: "`SELECT id, is_admin, status, deleted_at IS NOT NULL AS deleted FROM \"user\" WHERE id = $1`", to: "`SELECT id, is_admin, status, false AS deleted FROM \"user\" WHERE id = $1`", why: '보상 미지급: 탈퇴한 운영자 id 허용', equivalent: '회원 탈퇴(account-withdrawal.service.ts)는 status = WITHDRAWN과 deleted_at을 같은 UPDATE로 쓴다. refusalReason이 status !== ACTIVE로 이미 거부하므로 deleted 열은 방어적 중복이다(순수 함수 분기는 forfeit-award.spec.ts가 따로 덮는다)' },
 
-  // ── wallets.service.ts / primary-wallet.ts / wallet-disconnection.ts (지갑 연결: challenge 발급·verify·대표 지갑) ──
-  { id: 'K1', file: WS, from: '          WHERE user_id = $1 AND wallet_address = $2 AND used_at IS NULL`,', to: '          WHERE user_id = $1 AND wallet_address = $2`,', why: 'challenge 재발급: 사용된 challenge까지 지움' },
-  { id: 'K2', file: WS, from: '          WHERE user_id = $1 AND wallet_address = $2 AND used_at IS NULL`,', to: '          WHERE user_id = $1 AND used_at IS NULL AND $2::text IS NOT NULL`,', why: 'challenge 재발급: 같은 유저의 다른 지갑 challenge까지 지움' },
-  { id: 'K3', file: WS, from: '          WHERE user_id = $1 AND wallet_address = $2 AND used_at IS NULL`,', to: '          WHERE wallet_address = $2 AND used_at IS NULL AND $1::uuid IS NOT NULL`,', why: 'challenge 재발급: 다른 유저의 같은 주소 challenge까지 지움' },
-  { id: 'K4', file: WS, from: "`SELECT pg_advisory_xact_lock(hashtext($1::text || ':' || $2::text))`", to: "`SELECT hashtext($1::text || ':' || $2::text)`", why: 'challenge 발급 advisory lock 제거 (동시 발급이 2개 열림)' },
-  { id: 'K5', file: WS, from: "VALUES ($1, $2, $3, $4, now() + interval '5 minutes')", to: "VALUES ($1, $2, $3, $4, now() + interval '5 hours')", why: 'challenge 만료 시간 5분 -> 5시간' },
-  { id: 'K6', file: WS, from: "VALUES ($1, $2, $3, $4, now() + interval '5 minutes')", to: "VALUES ($1, $2, $3, $4, now() - interval '5 minutes')", why: 'challenge가 발급 즉시 만료' },
-  { id: 'K7', file: WS, from: '            ORDER BY valid DESC, created_at DESC', to: '            ORDER BY created_at DESC', why: 'verify: 유효 challenge보다 최신 무효 행을 먼저 고름' },
-  { id: 'K8', file: WS, from: '            ORDER BY valid DESC, created_at DESC', to: '            ORDER BY valid DESC, created_at ASC', why: 'verify: 가장 오래된 challenge를 고름 (옛 메시지 재사용)' },
-  { id: 'K9', file: WS, from: '(used_at IS NULL AND expires_at > now()) AS valid', to: '(expires_at > now()) AS valid', why: 'verify: 이미 쓴 challenge도 유효로 봄 (재사용)' },
-  { id: 'K10', file: WS, from: '(used_at IS NULL AND expires_at > now()) AS valid', to: '(used_at IS NULL) AS valid', why: 'verify: 만료된 challenge도 유효로 봄' },
-  { id: 'K11', file: WS, from: '            WHERE user_id = $1 AND wallet_address = $2\n            ORDER BY valid', to: '            WHERE wallet_address = $2 AND $1::uuid IS NOT NULL\n            ORDER BY valid', why: 'verify: 다른 유저가 발급받은 challenge로 검증' },
-  { id: 'K12', file: WS, from: '            LIMIT 1\n              FOR UPDATE`,', to: '            LIMIT 1`,', why: 'verify: challenge 행 잠금 제거 (같은 challenge 동시 verify)', equivalent: '행 잠금이 없어도 소비 UPDATE의 used_at IS NULL 조건이 같은 challenge의 동시 verify를 직렬화해 한쪽만 통과시킨다. 결과가 같다' },
-  { id: 'K13', file: WS, from: "WHERE id = $1 AND used_at IS NULL AND expires_at > now()\n            RETURNING id`", to: "WHERE id = $1 AND expires_at > now()\n            RETURNING id`", why: 'challenge 소비: 사용 여부 조건 누락', equivalent: '조회의 valid(미사용)가 이미 같은 트랜잭션에서 사용 여부를 확인하고 행을 잠갔다. 소비 UPDATE 조건은 중복 안전장치다' },
-  { id: 'K14', file: WS, from: "WHERE id = $1 AND used_at IS NULL AND expires_at > now()\n            RETURNING id`", to: "WHERE id = $1 AND used_at IS NULL\n            RETURNING id`", why: 'challenge 소비: 만료 조건 누락', equivalent: 'now()는 트랜잭션 시작 시각이라 조회의 valid 판정과 같은 시각이다. 같은 트랜잭션에서는 갈릴 수 없다' },
-  { id: 'K15', file: WS, from: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED' AND deleted_at IS NULL", to: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL", why: '에이전트 지갑 충돌: 폐기된 에이전트도 막음' },
-  { id: 'K16', file: WS, from: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED' AND deleted_at IS NULL", to: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED'", why: '에이전트 지갑 충돌: 삭제된 에이전트도 막음' },
-  { id: 'K17', file: WS, from: "SELECT wallet_address FROM agent WHERE owner_user_id = $1 AND status <> 'REVOKED' AND deleted_at IS NULL", to: "SELECT wallet_address FROM agent WHERE status <> 'REVOKED' AND deleted_at IS NULL AND $1::uuid IS NOT NULL", why: '에이전트 지갑 충돌: 남의 에이전트 지갑도 막음' },
-  { id: 'K18', file: WS, from: "VALUES ($1, 'INJECTIVE', $2, $3, true, now())", to: "VALUES ($1, 'INJECTIVE', $2, $3, false, now())", why: '연결 지갑이 대표가 아님' },
-  { id: 'K19', file: WS, from: "VALUES ($1, 'INJECTIVE', $2, $3, true, now())", to: "VALUES ($1, 'INJECTIVE', $2, $3, true, NULL)", why: '연결 지갑이 verified_at 없이 저장' },
-  { id: 'K20', file: WS, from: 'SET onboarding_step = GREATEST(onboarding_step, ${ONBOARDING_STEP.PROFILE})', to: 'SET onboarding_step = LEAST(onboarding_step, ${ONBOARDING_STEP.PROFILE})', why: '온보딩 단계가 앞으로만 가지 않음 (LEAST)' },
-  { id: 'K21', file: WS, from: 'SET onboarding_step = GREATEST(onboarding_step, ${ONBOARDING_STEP.PROFILE})', to: 'SET onboarding_step = ${ONBOARDING_STEP.PROFILE}', why: '온보딩 단계가 되돌아감' },
-  { id: 'K22', file: WS, from: '            WHERE id = $1 AND deleted_at IS NULL`,\n          [userId],\n        );\n        // 동시 탈퇴', to: '            WHERE id = $1`,\n          [userId],\n        );\n        // 동시 탈퇴', why: '단계 UPDATE가 탈퇴한 유저를 갱신 (동시 탈퇴 감지 상실)' },
-  { id: 'K23', file: PW, from: 'return `${c}is_primary = true AND ${c}disconnected_at IS NULL`;', to: 'return `${c}disconnected_at IS NULL`;', why: '대표 지갑 조건에서 is_primary 누락' },
-  { id: 'K24', file: PW, from: 'return `${c}is_primary = true AND ${c}disconnected_at IS NULL`;', to: 'return `${c}is_primary = true`;', why: '대표 지갑 조건에서 연결 해제 여부 누락 (해제된 지갑이 대표)' },
-  { id: 'K25', file: WD, from: '      WHERE user_id = $1 AND disconnected_at IS NULL`,', to: '      WHERE user_id = $1`,', why: '탈퇴 지갑 해제: 이미 해제된 지갑의 시각을 덮어씀' },
-  { id: 'K26', file: WD, from: '      WHERE user_id = $1 AND disconnected_at IS NULL`,', to: '      WHERE disconnected_at IS NULL AND $1::uuid IS NOT NULL`,', why: '탈퇴 지갑 해제: 다른 유저의 지갑까지 해제' },
-  { id: 'K27', file: WS, from: 'if (mine?.address === injectiveAddress) return mine;', to: 'if (mine) return mine;', why: '재시도 멱등: 다른 주소 연결 시도도 성공으로 돌려줌' },
-  { id: 'K28', file: WS, from: 'if (isUniqueViolation(err, WALLET_ADDRESS_UNIQUE_INDEX)) throw new ConflictException', to: 'if (isUniqueViolation(err, WALLET_PRIMARY_UNIQUE_INDEX)) throw new ConflictException', why: '충돌 코드 뒤바뀜 (WALLET_LINKED_TO_OTHER_ACCOUNT 대 ACCOUNT_ALREADY_HAS_WALLET)' },
-  { id: 'K29', file: WS, from: 'return inj.toLowerCase() === injectiveAddress.toLowerCase();', to: 'return inj === injectiveAddress;', why: '에이전트 지갑 비교가 대소문자 구분' },
-  { id: 'K30', file: WS, from: '    } catch {\n      return false;\n    }\n  }\n\n  async createChallenge', to: '    } catch {\n      return true;\n    }\n  }\n\n  async createChallenge', why: '에이전트 지갑 형식이 깨졌을 때 충돌로 봄' },
-  { id: 'K31', file: WS, from: "const inj = isEvmAddress(agentWallet) ? getInjectiveAddress(agentWallet) : agentWallet;", to: "const inj = agentWallet;", why: '0x로 저장된 에이전트 지갑을 inj1로 변환하지 않고 비교' },
-  { id: 'K32', file: WS, from: "const injectiveAddress = isEvmAddress(normalizedAddress)\n      ? getInjectiveAddress(normalizedAddress)\n      : normalizedAddress;", to: "const injectiveAddress = normalizedAddress;", why: '0x 서명 지갑을 inj1로 변환하지 않고 저장' },
-  { id: 'K33', file: WS, from: "[userId, injectiveAddress, verified.publicKey],", to: "[userId, injectiveAddress, pubKey ?? verified.publicKey],", why: '클라이언트가 보낸 publicKey를 그대로 저장' },
-  { id: 'K34', file: WS, from: "WHERE user_id = $1 AND ${primaryWalletSql('')}`,", to: "WHERE ${primaryWalletSql('')} AND $1::uuid IS NOT NULL`,", why: '내 지갑 조회: 유저 조건 누락 (남의 대표 지갑)' },
 
   // ── 지급 주소 (submissions.service.ts setPayoutAddress / mySubmissions, bounty-operations.query.ts, participation-withdrawal.ts) ──
   { id: 'M1', file: SS, from: "`SELECT s.status, s.payout_address, s.payout_address_updated_at", to: "`SELECT 'APPROVED' AS status, s.payout_address, s.payout_address_updated_at", why: '지급 주소: APPROVED 검사 누락 (심사 중·반려 제출에도 주소 저장)' },

@@ -6,8 +6,8 @@ import { ONBOARDING_STEP } from './onboarding-step';
 const SRC_ROOT = join(__dirname, '..');
 
 describe('ONBOARDING_STEP', () => {
-  it('keeps the stored values the FE and existing rows depend on (2 wallet, 3 profile, 4 profile saved)', () => {
-    expect(ONBOARDING_STEP).toEqual({ WALLET: 2, PROFILE: 3, PROFILE_SAVED: 4 });
+  it('keeps the stored values the FE and existing rows depend on (2 legacy wallet, 3 profile, 4 profile saved)', () => {
+    expect(ONBOARDING_STEP).toEqual({ LEGACY_WALLET: 2, PROFILE: 3, PROFILE_SAVED: 4 });
   });
 
   it('server code compares or assigns onboarding steps only through the constant (no bare step numbers)', () => {

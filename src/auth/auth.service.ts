@@ -22,7 +22,6 @@ import { GoogleOAuthFlow, OAuthState } from './google-oauth.flow';
 import { normalizeRefreshTtl, refreshTtlSeconds } from './refresh-ttl';
 import { UserStatusCache } from './user-status-cache';
 import { activeUserSql } from '../users/active-user';
-import { primaryWalletSql } from '../wallets/primary-wallet';
 import { avatarUrlSql } from '../media/media-path';
 
 /**
@@ -48,7 +47,10 @@ export type MeResponse = {
   isMember: boolean;
   /** 프로필 사진 `/media/<uuid>` 또는 null (0022, 2026-11-01 추가 필드) */
   avatarUrl: string | null;
-  wallet: { address: string; verifiedAt: Date | null } | null;
+  /**
+   * 호환 shim: 지갑 연결은 2026-11-10 결정으로 없어졌다(BE PR2). 옛 FE 코덱이 키를 기대하므로 항상 null을 보낸다. PR5에서 키를 지운다
+   */
+  wallet: null;
   nft: { status: string; tokenId: string | null } | null;
 };
 
@@ -133,7 +135,7 @@ export class AuthService {
     return this.oauth.exchangeGoogleCode(code);
   }
 
-  /** GET /auth/me: 프로필 + 온보딩/지갑/NFT 상태 (api-contract.md 응답 형태). 쿠키 모드 refresh/exchange의 `user`도 이것 (sessionUserOf) */
+  /** GET /auth/me: 프로필 + 온보딩/NFT 상태(`wallet`은 항상 null인 호환 shim) (api-contract.md 응답 형태). 쿠키 모드 refresh/exchange의 `user`도 이것 (sessionUserOf) */
   async getMe(userId: string): Promise<MeResponse> {
     const user = await this.db.query(
       `SELECT u.id, u.nickname, u.email, u.bio, u.onboarding_step,
@@ -149,11 +151,6 @@ export class AuthService {
     if (!user.rowCount) throw new NotFoundException('USER_NOT_FOUND');
     const u = user.rows[0];
 
-    const wallet = await this.db.query(
-      `SELECT address, verified_at FROM wallet
-        WHERE user_id = $1 AND ${primaryWalletSql('')}`,
-      [userId],
-    );
     const nft = await this.db.query(
       `SELECT status, token_id FROM nft
         WHERE owner_user_id = $1 AND nft_type = 'NINJA_PARENT'`,
@@ -171,9 +168,7 @@ export class AuthService {
       isAdmin: u.is_admin,
       isMember: u.is_member,
       avatarUrl: u.avatar_url ?? null,
-      wallet: wallet.rowCount
-        ? { address: wallet.rows[0].address, verifiedAt: wallet.rows[0].verified_at }
-        : null,
+      wallet: null,
       nft: nft.rowCount
         ? { status: nft.rows[0].status, tokenId: nft.rows[0].token_id }
         : null,
@@ -194,12 +189,12 @@ export class AuthService {
     const found = await this.findGoogleUser(googleId);
     if (found) return found;
 
-    // Google 인증(1단계)은 완료됐으므로 다음 화면인 지갑 연결(2단계)부터 시작한다.
-    // 닉네임은 온보딩 3단계에서 입력받으므로 임시값으로 생성한다.
+    // Google 인증(1단계)은 완료됐으므로 다음 화면인 프로필(ONBOARDING_STEP.PROFILE = 3)부터 시작한다.
+    // 지갑 단계(2)는 2026-11-10 결정으로 없어졌다. 옛 FE도 3을 프로필 화면으로 보낸다. 닉네임은 프로필 단계에서 받으므로 임시값으로 생성한다.
     try {
       const created = await this.db.query(
         `INSERT INTO "user" (google_id, email, nickname, bio, onboarding_step)
-         VALUES ($1, $2, $3, '', ${ONBOARDING_STEP.WALLET})
+         VALUES ($1, $2, $3, '', ${ONBOARDING_STEP.PROFILE})
          RETURNING id, is_admin, onboarding_step, onboarding_completed_at`,
         [googleId, email, `user_${randomBytes(4).toString('hex')}`],
       );

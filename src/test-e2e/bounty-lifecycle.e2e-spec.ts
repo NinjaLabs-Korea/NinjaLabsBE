@@ -1,5 +1,7 @@
 import { HDNodeWallet, Wallet } from 'ethers';
+import { NftsService } from '../nfts/nfts.service';
 import { describeDb } from '../test-db/describe-db';
+import { createPrimaryWallet } from '../test-db/harness';
 import { AdminBountyForm, applyBody, payoutAddressBody, saveAdminBountyBody, submitBody } from './support/fe-payloads';
 import { DAY, E2eApp, isoIn, payoutEvmAddress, Session, startApp, txHash, UUID } from './support/harness';
 
@@ -206,7 +208,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
       rewards: [{ amount: '100000000000000000000', symbol: 'INJ' }],
       postedRewards: [{ amount: '100000000000000000000', symbol: 'INJ' }], payoutStatus: 'PAID',
     }]);
-    expect(profile.body.nfts.map((n: { nft_type: string }) => n.nft_type).sort()).toEqual(['NINJA_PARENT']);
+    expect(profile.body.nfts).toEqual([]); // no wallet step (BE PR2) → no parent NFT; paying no longer mints a child either
     expect(JSON.stringify(profile.body)).not.toContain(payoutAddress); // the payout address is never public
 
     const audit = await e2e.get(`/admin/audit-logs?entityType=bounty&entityId=${bountyId}`, asAdmin);
@@ -535,7 +537,10 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
   it('NFT job console: GET /admin/nft-jobs lists FAILED jobs (paged); retry → PENDING with retry_count 0, nft restored, NFT_JOB_RETRIED; a second retry is 404', async () => {
     const owner = await e2e.loginOnboarded();
     await e2e.onboard(owner);
-    // the wallet verify queued the parent mint; force it into the worker's permanent-failure state
+    // the wallet verify that used to queue the parent mint is gone (BE PR2): seed a legacy wallet + parent mint directly (the NFT module goes in PR3)
+    const legacyWallet = await createPrimaryWallet(e2e.db, owner.userId);
+    expect(await e2e.app.get(NftsService).enqueueParentMint(owner.userId, legacyWallet.id)).not.toBeNull();
+    // force it into the worker's permanent-failure state
     const job = await e2e.db.query<{ id: string; nft_id: string }>(
       `UPDATE nft_job j SET status = 'FAILED', retry_count = 5, last_error = 'boom', processed_at = now()
          FROM nft n WHERE n.id = j.nft_id AND n.owner_user_id = $1 AND j.job_type = 'MINT_PARENT' RETURNING j.id, j.nft_id`, [owner.userId]);

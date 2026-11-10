@@ -9,7 +9,6 @@ import { errorText } from '../logging/log-safe';
 /**
  * 만료 데이터 정리 크론 - 테이블이 무한히 자라지 않게 하고, 쓸모없어진 비밀값(해시·암호화 사본)을 오래 두지 않는다.
  * 매시 정각 sweep():
- *   wallet_verification_challenge  만료 후 1일 지난 행 (verify의 "만료됨/없음" 구분에 잠깐 쓰이므로 하루 유예)
  *   auth_session                    폐기(revoked_at) 또는 만료(expires_at) 후 30일 지난 행 - 그 전까지는 감사/재사용 감지용으로 둔다
  *   oauth_login_code                만료된 행 전부 (60초 수명 - issueLoginCode도 발급 때마다 치우지만 로그인이 없으면 남는다)
  *   throttler_storage               창(expires_at)과 차단(blocked_until)이 모두 지난 rate limit 카운터 (THROTTLER_STORAGE=postgres일 때만 행이 생긴다,
@@ -17,6 +16,7 @@ import { errorText } from '../logging/log-safe';
  * 5분마다 clearGraceCopies():
  *   auth_session.grace_refresh_token  재사용 유예 창(REFRESH_REUSE_GRACE, 30초)이 지난 암호화 후속 토큰 사본. 평문 해시만 둔다는 원칙의 예외라 최대 ~5분만 남게 한다
  *                                     (예전엔 매시라 최대 1시간 남았다). refresh는 창 밖 사본을 어차피 쓰지 않는다
+ * wallet_verification_challenge·wallet_replacement_challenge는 지갑 API가 없어져(BE PR2) 새 행이 생기지 않으므로 더 치우지 않는다(테이블은 남는다).
  * 두 크론은 각자 한 번에 하나만 돌고, 종료 시 새 실행을 막고 진행 중인 실행을 기다린다 (SingleFlightTask).
  */
 @Injectable()
@@ -48,7 +48,6 @@ export class MaintenanceService implements BeforeApplicationShutdown {
    */
   private async sweepOnce() {
     const counts = {
-      challenges: await this.deleteRows('challenges', `DELETE FROM wallet_verification_challenge WHERE expires_at < now() - interval '1 day'`),
       sessions: await this.deleteRows(
         'sessions',
         `DELETE FROM auth_session
@@ -61,7 +60,6 @@ export class MaintenanceService implements BeforeApplicationShutdown {
         `DELETE FROM throttler_storage
           WHERE expires_at <= now() AND (blocked_until IS NULL OR blocked_until <= now())`,
       ),
-      wallet_replacements: await this.deleteRows('wallet_replacements', `DELETE FROM wallet_replacement_challenge WHERE expires_at < now() - interval '1 day'`),
     };
     this.logger.log(
       `maintenance sweep: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`,

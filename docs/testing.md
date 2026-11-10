@@ -14,7 +14,7 @@ mock DB 단위 테스트는 SQL 타입 추론(42P08 등)을 잡지 못한다. �
 
 ## 실 DB 통합 테스트 (`npm run test:db`)
 
-`npm test`는 DB를 mock한다. 세션 발급/갱신·에이전트 등록/폐기·지갑 challenge/verify·바운티→보상→지급 주소→payout·공지·정리 크론처럼
+`npm test`는 DB를 mock한다. 세션 발급/갱신·에이전트 등록/폐기·바운티→보상→지급 주소→payout·공지·정리 크론처럼
 SQL이 핵심인 흐름은 `src/test-db/*.db-spec.ts`가 **실제 Postgres**에서 진짜 `DatabaseService`와 서비스로 검증한다 (`jest.db.config.js`).
 
 ```bash

@@ -1,8 +1,6 @@
 import { createHash } from 'crypto';
-import { Wallet } from 'ethers';
 import { GoogleVerifierUnavailableError } from '../auth/google-id-token.verifier';
 import { describeDb } from '../test-db/describe-db';
-import { getInjectiveAddress } from './support/injective-sdk.stub';
 import { E2eApp, FE_ORIGIN, randomIp, startApp } from './support/harness';
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -124,67 +122,6 @@ describeDb('identity edge cases over HTTP (e2e)', () => {
         `SELECT refresh_token_hash AS hash FROM auth_session WHERE refresh_token_hash = ANY($1::varchar[]) AND revoked_at IS NULL`,
         [[sha256(legacy.refreshToken), sha256(current.refreshToken)]]);
       expect(open.rows).toEqual([]);
-    });
-  });
-
-  describe('wallets', () => {
-    it('GET /wallets/me before any wallet is linked → 200 with an empty body (null)', async () => {
-      const session = await e2e.login();
-      const res = await e2e.get('/wallets/me', { token: session.accessToken });
-      expect(res.status).toBe(200);
-      expect(res.text).toBe('');
-      expect((await e2e.get('/wallets/me')).status).toBe(401);
-    });
-
-    it('ADR-36 (inj1…): no publicKey → 401 INVALID_SIGNATURE; an undecodable publicKey → 401 INVALID_SIGNATURE (never a 500); the challenge stays open', async () => {
-      const session = await e2e.login();
-      const inj = getInjectiveAddress(Wallet.createRandom().address);
-      const challenge = await e2e.post('/wallets/challenge', { address: inj }, { token: session.accessToken });
-      expect(challenge.status).toBe(201);
-      expect(challenge.body.message).toContain(`地址: ${inj}`);
-
-      const noKey = await e2e.post('/wallets/verify', { address: inj, signature: Buffer.alloc(64).toString('base64') }, { token: session.accessToken });
-      expect(noKey.status).toBe(401);
-      expect(noKey.body).toEqual(unauthorized('INVALID_SIGNATURE'));
-      const garbageKey = await e2e.post('/wallets/verify', { address: inj, signature: 'c2ln', publicKey: 'not-a-key' }, { token: session.accessToken });
-      expect(garbageKey.status).toBe(401);
-      expect(garbageKey.body).toEqual(unauthorized('INVALID_SIGNATURE'));
-
-      const open = await e2e.db.query(`SELECT 1 FROM wallet_verification_challenge WHERE id = $1 AND used_at IS NULL`, [challenge.body.id]);
-      expect(open.rowCount).toBe(1);
-      expect((await e2e.get('/wallets/me', { token: session.accessToken })).text).toBe('');
-      expect(e2e.linesFor('WalletsController').some((line) => line.includes('wallet.verify.requested') && line.includes('"signatureType":"ADR36"'))).toBe(true);
-    });
-
-    it('an expired challenge is 400 CHALLENGE_EXPIRED; re-issuing replaces the old challenge, whose signature no longer verifies', async () => {
-      const session = await e2e.login();
-      const signer = Wallet.createRandom();
-      const first = await e2e.post('/wallets/challenge', { address: signer.address }, { token: session.accessToken });
-      await e2e.db.query(`UPDATE wallet_verification_challenge SET expires_at = now() - interval '1 second' WHERE id = $1`, [first.body.id]);
-      const late = await e2e.post('/wallets/verify', { address: signer.address, signature: await signer.signMessage(first.body.message) }, { token: session.accessToken });
-      expect(late.status).toBe(400);
-      expect(late.body).toEqual(badRequest('CHALLENGE_EXPIRED'));
-
-      const a = await e2e.post('/wallets/challenge', { address: signer.address }, { token: session.accessToken });
-      const b = await e2e.post('/wallets/challenge', { address: signer.address }, { token: session.accessToken });
-      expect(b.body.nonce).not.toBe(a.body.nonce);
-      const stale = await e2e.post('/wallets/verify', { address: signer.address, signature: await signer.signMessage(a.body.message) }, { token: session.accessToken });
-      expect(stale.body).toEqual(unauthorized('INVALID_SIGNATURE'));
-      const ok = await e2e.post('/wallets/verify', { address: signer.address, signature: await signer.signMessage(b.body.message) }, { token: session.accessToken });
-      expect(ok.status).toBe(201);
-    });
-
-    it('the stored public key is the one recovered from the EIP-191 signature, not the publicKey field of the request', async () => {
-      const session = await e2e.login();
-      const signer = Wallet.createRandom();
-      const challenge = await e2e.post('/wallets/challenge', { address: signer.address }, { token: session.accessToken });
-      const res = await e2e.post('/wallets/verify', {
-        address: signer.address, signature: await signer.signMessage(challenge.body.message), publicKey: `0x02${'ab'.repeat(32)}`,
-      }, { token: session.accessToken });
-      expect(res.status).toBe(201);
-      expect(res.body).not.toHaveProperty('public_key'); // not exposed
-      const row = await e2e.db.query<{ public_key: string }>(`SELECT public_key FROM wallet WHERE user_id = $1`, [session.userId]);
-      expect(row.rows).toEqual([{ public_key: signer.signingKey.compressedPublicKey }]);
     });
   });
 

@@ -32,7 +32,7 @@ const operations = Object.values(openapi.paths).flatMap((item) => Object.entries
 
 describe('contract/openapi.json', () => {
   it('lists every route (non-trivial count) with a unique operationId', () => {
-    expect(operations.length).toBeGreaterThan(70);
+    expect(operations.length).toBeGreaterThan(60); // 82 -> 77 (BE PR2 지갑 5개), 계획상 PR3·PR4 뒤 67
     const ids = operations.map(({ op }) => op.operationId);
     expect(new Set(ids).size).toBe(ids.length);
   });

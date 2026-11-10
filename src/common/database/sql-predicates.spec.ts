@@ -3,7 +3,6 @@ import { join, relative } from 'path';
 import { ownedAgentIdsSql, participantUserIdSql } from '../../agents/owned-agents';
 import { listSourceFiles } from '../../test-support/source-files';
 import { activeUserSql } from '../../users/active-user';
-import { primaryWalletSql } from '../../wallets/primary-wallet';
 import { sqlColumnPrefix, sqlParam } from './sql-alias';
 
 /**
@@ -32,11 +31,6 @@ describe('SQL predicate fragments', () => {
     expect(activeUserSql('')).toBe(`status = 'ACTIVE' AND deleted_at IS NULL`);
   });
 
-  it('primaryWalletSql: aliased and bare forms', () => {
-    expect(primaryWalletSql('w')).toBe('w.is_primary = true AND w.disconnected_at IS NULL');
-    expect(primaryWalletSql('')).toBe('is_primary = true AND disconnected_at IS NULL');
-  });
-
   it('aliases and placeholders must be identifiers / $n (they are pasted into SQL)', () => {
     expect(() => sqlColumnPrefix('u; DROP', 'x')).toThrow('alias must be an identifier');
     expect(() => activeUserSql('U')).toThrow('alias must be an identifier');
@@ -48,12 +42,13 @@ describe('SQL predicate fragments', () => {
 
 describe('no new copies of the predicates outside their single source', () => {
   const SRC_ROOT = join(__dirname, '..', '..');
-  const HOMES = ['agents/owned-agents.ts', 'users/active-user.ts', 'wallets/primary-wallet.ts'];
+  const HOMES = ['agents/owned-agents.ts', 'users/active-user.ts'];
   const COPIES: Array<[string, RegExp]> = [
     ['owned agent id subquery (ownedAgentIdsSql)', /SELECT id FROM agent WHERE owner_user_id = \$\d/],
     ['participant owner COALESCE (participantUserIdSql)', /COALESCE\(\w+\.(?:submitter|applicant)_user_id, \(SELECT \w+\.owner_user_id FROM agent/],
     ['active user condition (activeUserSql)', /(?<![\w.])(?:u\.)?(?:status = 'ACTIVE' AND (?:u\.)?deleted_at IS NULL|deleted_at IS NULL AND (?:u\.)?status = 'ACTIVE')/],
-    ['primary wallet condition (primaryWalletSql)', /is_primary = true AND (?:\w+\.)?disconnected_at IS NULL/],
+    // primaryWalletSql(wallets/primary-wallet.ts)은 지갑 모듈과 함께 지웠다(BE PR2). 앱 코드가 대표 지갑을 다시 고르지 않게 남겨 둔다
+    ['primary wallet condition (removed with the wallets module)', /is_primary = true AND (?:\w+\.)?disconnected_at IS NULL/],
   ];
 
   it.each(COPIES)('%s is written only in its helper', (_name, pattern) => {

@@ -16,9 +16,8 @@
  * 정적 가드(test-support/status-literals.spec.ts)가 src에서 payout 상태 집합 리터럴과 상한식 LEAST(…, deposited_amount)를
  * 이 파일 밖에서 쓰지 못하게 막는다.
  *
- * 의존성 없는 모듈이다 (users/submissions 경로가 rewards.service를 끌어오지 않게). 같은 성격의 SQL 조각 파일(agents/owned-agents.ts)만 import한다.
+ * 의존성 없는 모듈이다 (users/submissions 경로가 rewards.service를 끌어오지 않게).
  */
-import { participantUserIdSql } from '../agents/owned-agents';
 
 /** payout 테이블 CHECK와 같은 전체 상태 (supabase/migrations/0006_rewards.sql - payout-status.spec.ts가 대조) */
 export const PAYOUT_ROW_STATUSES = ['REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'APPROVED', 'BROADCASTING', 'PAID', 'FAILED', 'CANCELLED'] as const;
@@ -123,13 +122,13 @@ export function payoutRequestableSql(rw = 'rw', submission = 's', p = 'p'): stri
 }
 
 /**
- * 제출 `<s>`의 수령자(제출자, 에이전트 제출이면 그 소유자)가 탈퇴하지 않았나 - requestPayout의 수령자 조건(u.deleted_at IS NULL)과 같다.
+ * 제출 `<s>`의 수령자(제출자)가 탈퇴하지 않았나 - requestPayout의 수령자 조건(u.deleted_at IS NULL)과 같다.
  * 지급 주소 조건은 넣지 않는다: 주소는 수상자가 나중에 입력할 수 있지만 탈퇴는 되돌릴 수 없다.
  */
 export function recipientActiveSql(submission = 's'): string {
   const s = alias(submission, 'recipientActiveSql');
   return `EXISTS (SELECT 1 FROM "user" rcp WHERE rcp.deleted_at IS NULL
-                     AND rcp.id = ${participantUserIdSql(s, 'submitter_user_id', 'ax')})`;
+                     AND rcp.id = ${s}.submitter_user_id)`;
 }
 
 /**

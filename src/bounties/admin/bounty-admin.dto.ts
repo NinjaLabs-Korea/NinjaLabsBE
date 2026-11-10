@@ -13,7 +13,8 @@ import { MaxChars } from '../../common/validation/max-chars';
 import { IsOptionalNotNull } from '../../common/validation/optional-not-null';
 
 export const CATEGORIES = ['DEV', 'DESIGN', 'CONTENT', 'OTHER'];
-export const SUBMISSION_MODES = ['DIRECT', 'AGENT'];
+/** 제출 방식. 에이전트 제거(2026-11-11) 뒤 DIRECT만 받는다('AGENT'는 400). 컬럼과 공개 응답 필드(submission_mode)는 옛 FE 호환으로 유지 */
+export const SUBMISSION_MODES = ['DIRECT'];
 /** bounty_reward.token_type CHECK (0011) */
 export const TOKEN_TYPES = ['NATIVE', 'CW20', 'ERC20'];
 /** 한 바운티의 최대 수상자 수 - 실제 운영 규모(수십 명)보다 넉넉한 상한. 그 위는 오타나 남용이다 */
@@ -40,7 +41,7 @@ export class CreateBountyDto {
   @DisplayBody(20_000) evaluationCriteria!: string;
   @IsIn(CATEGORIES) category!: string;
   @IsBoolean() applicationRequired!: boolean;
-  @IsIn(SUBMISSION_MODES) submissionMode!: string;
+  @IsOptional() @IsIn(SUBMISSION_MODES) submissionMode?: string; // 생략하면 DIRECT
   @Type(() => Number) @IsInt() @Min(1) @Max(MAX_WINNERS_LIMIT) maxWinners!: number;
   @IsTimestampString() submissionDeadline!: string;
   @IsOptional() @IsTimestampString() applicationDeadline?: string;

@@ -3,43 +3,27 @@ import { createMockDb, normalizeSql } from '../test-support/mock-db';
 import { activeUserSql } from '../users/active-user';
 
 describe('BountyActor', () => {
-  it('maps a user to user columns', () => {
-    const actor = BountyActor.user('u1');
-    expect([actor.userId, actor.agentId]).toEqual(['u1', null]);
-    expect(actor.applicationColumn).toBe('applicant_user_id');
-    expect(actor.submissionColumn).toBe('submitter_user_id');
-    expect(actor.applicationUniqueIndex).toBe('uq_application_user');
+  it('exposes the user id', () => {
+    expect(BountyActor.user('u1').id).toBe('u1');
   });
 
-  it('maps an agent to agent columns', () => {
-    const actor = BountyActor.agent('a1');
-    expect([actor.userId, actor.agentId]).toEqual([null, 'a1']);
-    expect(actor.applicationColumn).toBe('agent_id');
-    expect(actor.submissionColumn).toBe('agent_id');
-    expect(actor.applicationUniqueIndex).toBe('uq_application_agent');
+  it('records the audit row with the user as actor', async () => {
+    const audit = { record: jest.fn().mockResolvedValue(undefined) };
+    const runner = {} as never;
+    await BountyActor.user('u1').recordAudit(audit as never, 'APPLICATION_SUBMITTED', 'bounty_application', 'a1', runner, { after: { status: 'PENDING' } } as never);
+    expect(audit.record).toHaveBeenCalledWith('u1', 'APPLICATION_SUBMITTED', 'bounty_application', 'a1', runner, { after: { status: 'PENDING' } });
   });
 
-  it('enforces the bounty submission mode', () => {
-    expect(() => BountyActor.user('u').assertAllowedBy('AGENT')).toThrow('AGENT_SUBMISSION_REQUIRED');
-    expect(() => BountyActor.agent('a').assertAllowedBy('DIRECT')).toThrow('DIRECT_SUBMISSION_REQUIRED');
-    expect(() => BountyActor.user('u').assertAllowedBy('DIRECT')).not.toThrow();
-    expect(() => BountyActor.agent('a').assertAllowedBy('AGENT')).not.toThrow();
-  });
-
-  describe.each(['USER', 'AGENT'] as const)('%s eligibility', (kind) => {
-    const actor = () => kind === 'USER' ? BountyActor.user('u') : BountyActor.agent('a');
-
-    it('checks active onboarding and locks only the user or owner in the supplied transaction', async () => {
+  describe('eligibility', () => {
+    it('checks active onboarding and locks only the user in the supplied transaction', async () => {
       const mock = createMockDb();
       mock.txQuery.mockResolvedValue({ rowCount: 1, rows: [{ done: true }] });
-      await expect(actor().assertOnboarded(mock.txClient)).resolves.toBeUndefined();
+      await expect(BountyActor.user('u').assertOnboarded(mock.txClient)).resolves.toBeUndefined();
       expect(mock.query).not.toHaveBeenCalled();
       expect(mock.txQuery).toHaveBeenCalledTimes(1);
       const [sql, params] = mock.txQuery.mock.calls[0];
-      expect(normalizeSql(sql)).toContain(kind === 'USER'
-        ? `${activeUserSql('')} FOR SHARE`
-        : `${activeUserSql('u')} FOR SHARE OF u`);
-      expect(params).toEqual([actor().id]);
+      expect(normalizeSql(sql)).toContain(`${activeUserSql('')} FOR SHARE`);
+      expect(params).toEqual(['u']);
     });
 
     it.each([
@@ -48,7 +32,7 @@ describe('BountyActor', () => {
     ])('rejects $name with the existing PROFILE_REQUIRED response', async ({ rowCount, rows }) => {
       const mock = createMockDb();
       mock.txQuery.mockResolvedValue({ rowCount, rows });
-      await expect(actor().assertOnboarded(mock.txClient)).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+      await expect(BountyActor.user('u').assertOnboarded(mock.txClient)).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
     });
   });
 });

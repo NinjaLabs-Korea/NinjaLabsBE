@@ -37,9 +37,10 @@ describe('payoutStatusSql', () => {
     expect(owesUnpaidRewardSql('s', 'b')).toBe(`${payoutStatusSql('s', 'b')} IN ('PENDING', 'PARTIALLY_PAID')`);
   });
 
-  it('recipientActiveSql: submitter or agent owner not withdrawn (same as requestPayout), no wallet condition', () => {
+  it('recipientActiveSql: submitter not withdrawn (same as requestPayout), no wallet condition', () => {
     expect(recipientActiveSql('s')).toContain('rcp.deleted_at IS NULL');
-    expect(recipientActiveSql('s')).toContain('COALESCE(s.submitter_user_id, (SELECT ax.owner_user_id FROM agent ax WHERE ax.id = s.agent_id))');
+    expect(recipientActiveSql('s')).toContain('rcp.id = s.submitter_user_id')
+    expect(recipientActiveSql('s')).not.toContain('agent');
     expect(recipientActiveSql('s')).not.toContain('wallet');
     expect(() => recipientActiveSql('s.id')).toThrow('alias must be an identifier');
   });

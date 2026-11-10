@@ -3,10 +3,18 @@ import { E2eApp, startApp } from './support/harness';
 
 const ID = '00000000-0000-4000-8000-000000000000';
 
+/**
+ * 종료된 라우트(RetiredRoutesController, BE PR4): `ALL`이라 Express가 모든 HTTP 메서드(CONNECT 포함)로 펼친다. 인증 없이 410이 정답이라
+ * 아래 401 점검에서는 빼고, 410은 bounty-lifecycle.e2e-spec이 단언한다. 정리 PR5에서 컨트롤러와 함께 이 예외도 지운다.
+ */
+const RETIRED_PREFIX = '/agent-api/v1';
+
 /** 등록된 모든 Express 라우트 - `METHOD /path` (Nest 컨트롤러가 만든 것 전부, 가드 데코레이터 해석 없이 실제 앱에서 읽는다) */
 function registeredRoutes(e2e: E2eApp): Array<{ method: string; path: string }> {
   const router = (e2e.app.getHttpAdapter().getInstance() as { router: { stack: Array<{ route?: { path: string; methods: Record<string, boolean> } }> } }).router;
-  return router.stack.flatMap((layer) => (layer.route ? Object.keys(layer.route.methods).map((m) => ({ method: m.toUpperCase(), path: layer.route!.path })) : []));
+  return router.stack
+    .flatMap((layer) => (layer.route ? Object.keys(layer.route.methods).map((m) => ({ method: m.toUpperCase(), path: layer.route!.path })) : []))
+    .filter(({ path }) => !path.startsWith(RETIRED_PREFIX));
 }
 
 /**
@@ -27,6 +35,12 @@ describeDb('route access inventory (e2e)', () => {
   afterAll(async () => e2e?.close());
 
   const fill = (path: string) => path.replace(/:nickname/g, 'someone').replace(/:\w+/g, ID);
+
+  it('the retired /agent-api/v1 routes are the only place the inventory skips', () => {
+    const all = (e2e.app.getHttpAdapter().getInstance() as { router: { stack: Array<{ route?: { path: string } }> } }).router.stack;
+    const skipped = new Set(all.filter((layer) => layer.route?.path.startsWith(RETIRED_PREFIX)).map((layer) => layer.route!.path));
+    expect([...skipped].sort()).toEqual(['/agent-api/v1', '/agent-api/v1/*path']);
+  });
 
   it('finds the whole route table (sanity: a router change must not make this guard vacuous)', () => {
     const routes = registeredRoutes(e2e);

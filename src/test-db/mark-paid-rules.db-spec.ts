@@ -43,11 +43,11 @@ describeDb('reward and payout rules on a real database', () => {
   const normalized = (hash: string) => `0x${hash.slice(2).toLowerCase()}`;
 
   /** 입금 확인까지 끝나고 OPEN인 바운티 (보상 한 개) */
-  async function openFunded(options: { amount?: string; deposit?: string; maxWinners?: number; submissionMode?: 'DIRECT' | 'AGENT' } = {}) {
+  async function openFunded(options: { amount?: string; deposit?: string; maxWinners?: number } = {}) {
     const amount = options.amount ?? '1000';
     const { id: bountyId } = await bounties.create(adminId, {
       title: unique('paid-rules-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
-      category: 'DEV', applicationRequired: false, submissionMode: options.submissionMode ?? 'DIRECT', maxWinners: options.maxWinners ?? 1,
+      category: 'DEV', applicationRequired: false, maxWinners: options.maxWinners ?? 1,
       submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
       reward: { tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount },
     });
@@ -332,22 +332,69 @@ describeDb('reward and payout rules on a real database', () => {
       });
     });
 
-    it('an agent submission is paid only to an address set on the submission: the owner wallet is not a fallback (409 PAYOUT_ADDRESS_NOT_SET without one)', async () => {
-      const { bountyId, rewardId } = await openFunded({ submissionMode: 'AGENT' });
-      const ownerId = await createUser(db);
-      const wallet = await createPrimaryWallet(db, ownerId);
-      const agentId = (await db.query<{ id: string }>(
-        `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at)
-         VALUES ($1, 'payout-bot', $2, $3, 'ACTIVE', now()) RETURNING id`,
-        [ownerId, unique('pk-'), `0x${unique()}`])).rows[0].id;
-      const submission = await submissions.submitAsAgent(bountyId, agentId, { submissionUrl: `https://x.test/${unique()}`, description: 'd' });
-      await submissionReview.review(submission.id, 'APPROVE', undefined, adminId);
-      await expect(plainRewards.requestPayout(rewardId, submission.id, '100', adminId)).rejects.toMatchObject({ status: 409, message: 'PAYOUT_ADDRESS_NOT_SET' });
-      const address = await setPayoutAddress(db, submission.id);
-      const payout = await plainRewards.requestPayout(rewardId, submission.id, '100', adminId);
-      const row = await db.query<{ recipient_wallet_id: string | null; recipient_address: string }>(`SELECT recipient_wallet_id, recipient_address FROM payout WHERE id = $1`, [payout.id]);
-      expect(row.rows[0]).toEqual({ recipient_wallet_id: null, recipient_address: address });
-      expect(wallet.id).toBeDefined(); // the owner's connected primary wallet exists but is not used
+    it('a reward of a soft-deleted bounty takes no deposit: 404 REWARD_NOT_FOUND_OR_NOT_PENDING', async () => {
+      const { id: bountyId } = await bounties.create(adminId, {
+        title: unique('deposit-deleted-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
+        category: 'DEV', applicationRequired: false, submissionMode: 'DIRECT', maxWinners: 1,
+        submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+        reward: { tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount: '10' },
+      });
+      const rewardId = (await db.query<{ id: string }>(`SELECT id FROM bounty_reward WHERE bounty_id = $1`, [bountyId])).rows[0].id;
+      await db.query(`UPDATE bounty SET deleted_at = now() WHERE id = $1`, [bountyId]);
+      await expect(rewards.confirmDeposit(rewardId, fakeTxHash(), '10', adminId)).rejects.toMatchObject({ status: 404, message: 'REWARD_NOT_FOUND_OR_NOT_PENDING' });
+      expect(await auditActions(db, 'bounty_reward', rewardId)).toEqual([]);
+    });
+  });
+
+  describe('markApproved', () => {
+    it('an unknown payout, or one that already left the approvable states, is 404 PAYOUT_NOT_FOUND_OR_WRONG_STATUS and not audited', async () => {
+      const { payoutId } = await readyPayout();
+      await expect(rewards.markApproved(randomUUID(), approverId)).rejects.toMatchObject({ status: 404, message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
+      await expect(rewards.markApproved(payoutId, approverId)).rejects.toMatchObject({ status: 404, message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' }); // already APPROVED
+      expect(await auditActions(db, 'payout', payoutId)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED']);
+    });
+
+    it('the 404 comes before the self-approval check (an unknown payout never reveals a 403)', async () => {
+      await expect(rewards.markApproved(randomUUID(), adminId)).rejects.toMatchObject({ status: 404, message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
+    });
+
+    it('the requester re-approving a payout that is already APPROVED gets 404, not 403 (status check before the two-person rule)', async () => {
+      const { payoutId } = await readyPayout(); // adminId requested, approverId approved
+      await expect(rewards.markApproved(payoutId, adminId)).rejects.toMatchObject({ status: 404, message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
+      expect(await auditActions(db, 'payout', payoutId)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED']);
+    });
+  });
+
+  describe('requestPayout', () => {
+    it('an unknown reward is 404 REWARD_NOT_FOUND', async () => {
+      await expect(rewards.requestPayout(randomUUID(), randomUUID(), '1', adminId)).rejects.toMatchObject({ status: 404, message: 'REWARD_NOT_FOUND' });
+    });
+
+    it.each(['DRAFT', 'FUNDING_PENDING', 'COMPLETED', 'CANCELLED'])('on a %s bounty it is 400 BOUNTY_REVIEW_CLOSED before the reward is read', async (status) => {
+      const { bountyId, rewardId } = await openFunded();
+      const winner = await approvedWinner(bountyId);
+      await db.query(`UPDATE bounty SET status = $2 WHERE id = $1`, [bountyId, status]);
+      await expect(rewards.requestPayout(rewardId, winner.submissionId, '1', adminId)).rejects.toMatchObject({ status: 400, message: 'BOUNTY_REVIEW_CLOSED' });
+    });
+
+    it.each(['DEPOSIT_PENDING', 'REFUND_PENDING', 'REFUNDED', 'CANCELLED'])('against a %s reward it is 400 REWARD_NOT_FUNDED and no payout row is created', async (status) => {
+      const { bountyId, rewardId } = await openFunded();
+      const winner = await approvedWinner(bountyId);
+      await db.query(`UPDATE bounty_reward SET status = $2 WHERE id = $1`, [rewardId, status]);
+      await expect(rewards.requestPayout(rewardId, winner.submissionId, '1', adminId)).rejects.toMatchObject({ status: 400, message: 'REWARD_NOT_FUNDED' });
+      expect((await db.query(`SELECT 1 FROM payout WHERE submission_id = $1`, [winner.submissionId])).rowCount).toBe(0);
+    });
+
+    it('pays the payout address the winner entered (snapshot in recipient_address, no wallet) and stores a per-(submission, reward) idempotency key', async () => {
+      const { bountyId, rewardId } = await openFunded();
+      const winner = await approvedWinner(bountyId);
+      const address = await setPayoutAddress(db, winner.submissionId);
+      const payout = await plainRewards.requestPayout(rewardId, winner.submissionId, '100', adminId);
+      const row = await db.query<{ recipient_wallet_id: string | null; recipient_address: string; idempotency_key: string; amount: string }>(
+        `SELECT recipient_wallet_id, recipient_address, idempotency_key, amount::text FROM payout WHERE id = $1`, [payout.id]);
+      expect(row.rows[0]).toEqual({
+        recipient_wallet_id: null, recipient_address: address, idempotency_key: `submission:${winner.submissionId}:reward:${rewardId}`, amount: '100',
+      });
     });
 
     it('a reward of a soft-deleted bounty takes no payout request: 404 REWARD_NOT_FOUND and no payout row', async () => {

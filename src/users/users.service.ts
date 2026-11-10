@@ -6,7 +6,6 @@ import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { payoutStatusSql } from '../rewards/payout-status';
 import { isSavableNickname, normalizeNickname } from './nickname';
-import { ownedAgentIdsSql } from '../agents/owned-agents';
 import { activeUserSql } from './active-user';
 import { ONBOARDING_STEP } from './onboarding-step';
 import { avatarUrlSql } from '../media/media-path';
@@ -140,7 +139,7 @@ export class UsersService {
     if (!user.rowCount) throw new NotFoundException('USER_NOT_FOUND');
     const u = user.rows[0];
 
-    // 본인 + 소유 에이전트의 APPROVED 제출 (공개 프로필은 승인 기준 그대로다. highlights stats의 builders는 지급됐거나 완료된 바운티의 승인 제출자만 센다), soft delete 바운티 제외.
+    // 본인 APPROVED 제출 (공개 프로필은 승인 기준 그대로다. highlights stats의 builders는 지급됐거나 완료된 바운티의 승인 제출자만 센다), soft delete 바운티 제외.
     // rewards는 바운티에 걸린 보상이 아니라 이 제출에 실제 PAID된 payout 목록이다 (금액은 최소 단위 정수 문자열).
     // postedRewards는 바운티에 걸린 보상(bounty_reward) 목록(같은 원소 모양), payoutStatus는 /submissions/me의 payment_status와 같은 SQL
     // (rewards/payout-status.ts - 이 제출에 지급될 보상 기준 PAID / PARTIALLY_PAID / PENDING / NONE). FE가 "지급 대기"를 0 INJ와 구분해 보여준다.
@@ -158,33 +157,16 @@ export class UsersService {
          LEFT JOIN payout p ON p.submission_id = s.id AND p.status = 'PAID'
          LEFT JOIN bounty_reward r ON r.id = p.bounty_reward_id
         WHERE ${completedWinSql('s', 'b')}
-          AND (s.submitter_user_id = $1
-               OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'live')}))
+          AND s.submitter_user_id = $1
         GROUP BY s.id, b.id
         ORDER BY s.reviewed_at DESC, s.id`,
-      [u.id],
-    );
-
-    // 공개 프로필에는 검증을 마친 ACTIVE 에이전트만 - PENDING_VERIFICATION(서명 없이 남의 지갑 주소를 적어 둘 수 있다)·SUSPENDED·REVOKED의
-    // 이름/지갑 주소를 공개 API로 내보내지 않는다 (FE도 ACTIVE만 그린다). 폐기 전에 승인된 제출은 위 completedBounties(본인 + 소유 에이전트)에 그대로 남는다.
-    // soft delete된 바운티는 공개 프로필 어디에도 나오지 않는다 (completedBounties와 같은 completedWinSql 기준을 FILTER에 건다)
-    const agents = await this.db.query(
-      `SELECT a.id, a.name, a.description, a.status, a.wallet_address,
-              COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title) ORDER BY s.reviewed_at DESC, b.id)
-                       FILTER (WHERE ${completedWinSql('s', 'b')}), '[]') AS completed_bounties
-         FROM agent a
-         LEFT JOIN bounty_submission s ON s.agent_id = a.id
-         LEFT JOIN bounty b ON b.id = s.bounty_id
-        WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL AND a.status = 'ACTIVE'
-        GROUP BY a.id
-        ORDER BY a.created_at, a.id`,
       [u.id],
     );
 
     return {
       ...u,
       completedBounties: completedBounties.rows,
-      agents: agents.rows,
+      agents: [], // 에이전트 제거(2026-11-11) 뒤 옛 FE 호환 shim
       nfts: [], // NFT 제거(2026-11-11) 뒤 옛 FE 호환 shim
     };
   }

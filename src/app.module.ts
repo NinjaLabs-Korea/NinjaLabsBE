@@ -12,12 +12,12 @@ import { CohortsModule } from './cohorts/cohorts.module';
 import { HighlightsModule } from './highlights/highlights.module';
 import { BountiesModule } from './bounties/bounties.module';
 import { RewardsModule } from './rewards/rewards.module';
-import { AgentsModule } from './agents/agents.module';
 import { AuditModule } from './audit/audit.module';
 import { MediaModule } from './media/media.module';
 import { AlertsModule } from './common/alerts/alerts.module';
 import { MaintenanceModule } from './common/maintenance/maintenance.module';
 import { throttlerModule } from './common/throttler/throttler-options';
+import { RetiredRoutesController } from './common/http/retired-routes.controller';
 import { IpThrottlerGuard } from './common/throttler/ip-throttler.guard';
 
 @Module({
@@ -39,11 +39,11 @@ import { IpThrottlerGuard } from './common/throttler/ip-throttler.guard';
     HighlightsModule,
     BountiesModule,
     RewardsModule,
-    AgentsModule,
     AuditModule,
     MediaModule,
     MaintenanceModule, // 만료 challenge/세션/로그인 코드 정리 (매시)
   ],
+  controllers: [RetiredRoutesController], // 종료된 /agent-api/v1/* -> 410 (정리 PR5에서 제거)
   providers: [{ provide: APP_GUARD, useClass: IpThrottlerGuard }],
 })
 export class AppModule {}

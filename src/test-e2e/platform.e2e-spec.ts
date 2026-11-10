@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
 import { CORS_PREFLIGHT_MAX_AGE_SECONDS, KEEP_ALIVE_TIMEOUT_MS } from '../app-setup';
 import { describeDb } from '../test-db/describe-db';
-import { getEthereumAddress, getInjectiveAddress } from './support/injective-sdk.stub';
 import { E2eApp, FE_ORIGIN, PREVIEW_ORIGIN, startApp } from './support/harness';
 
 // a. health · d. CORS · k. observability - the whole app over HTTP
@@ -9,19 +8,6 @@ describeDb('platform: health, CORS, observability (e2e)', () => {
   let e2e: E2eApp;
   beforeAll(async () => { e2e = await startApp(); });
   afterAll(async () => e2e?.close());
-
-  it('the sdk-ts stub produces the same inj1 addresses as @injectivelabs/sdk-ts (vectors taken from the real package)', () => {
-    const vectors: Array<[string, string]> = [
-      ['0x0000000000000000000000000000000000000001', 'inj1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpyurwgh'],
-      ['0xAbCdEf0123456789abcdef0123456789ABCDEF01', 'inj140x77qfrg4ncn27dauqjx3t83x4ummcpuxkqxx'],
-      ['0xffffffffffffffffffffffffffffffffffffffff', 'inj1llllllllllllllllllllllllllllllll4mk5j0'],
-    ];
-    for (const [evm, inj] of vectors) {
-      expect(getInjectiveAddress(evm)).toBe(inj);
-      expect(getEthereumAddress(inj)).toBe(evm.toLowerCase());
-    }
-    expect(() => getEthereumAddress('inj1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpyurwgx')).toThrow(/checksum/);
-  });
 
   describe('a. GET /health', () => {
     it('200 {status:"ok", db:"up"} and no request log line (Railway polls it)', async () => {

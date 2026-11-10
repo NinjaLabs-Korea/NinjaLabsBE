@@ -13,7 +13,6 @@ import { payoutStatusSql } from '../../rewards/payout-status';
 import { BountyActor } from '../bounty-actor';
 import { BountyStatus, BountyStatusPolicy } from '../bounty-status';
 import { SubmissionStatus, SubmissionStatusPolicy } from '../submission-status';
-import { ownedAgentIdsSql } from '../../agents/owned-agents';
 
 export interface SubmitInput {
   submissionUrl: string;
@@ -37,33 +36,20 @@ export class SubmissionsService {
   ) {}
 
   async submit(bountyId: string, userId: string, input: SubmitInput) {
-    return this.submitForActor(bountyId, BountyActor.user(userId), input);
-  }
-
-  async submitAsAgent(bountyId: string, agentId: string, input: SubmitInput) {
-    return this.submitForActor(bountyId, BountyActor.agent(agentId), input);
-  }
-
-  private async submitForActor(
-    bountyId: string,
-    actor: BountyActor,
-    input: SubmitInput,
-  ) {
+    const actor = BountyActor.user(userId);
     return this.db.tx(async (tx) => {
       const bounty = await tx.query<{
         application_required: boolean;
-        submission_mode: string;
         status: string;
         submission_deadline: Date;
       }>(
-        `SELECT application_required, submission_mode, status, submission_deadline
+        `SELECT application_required, status, submission_deadline
            FROM bounty WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
         [bountyId],
       );
       if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
       const b = bounty.rows[0];
       if (!BountyStatusPolicy.isInProgress(b.status)) throw new BadRequestException('BOUNTY_NOT_OPEN');
-      actor.assertAllowedBy(b.submission_mode);
       await actor.assertOnboarded(tx);
 
       // 지원형: 승인된 지원서 필요
@@ -72,7 +58,7 @@ export class SubmissionsService {
         const app = await tx.query<{ id: string }>(
           `SELECT id FROM bounty_application
             WHERE bounty_id = $1
-              AND ${actor.applicationColumn} = $2
+              AND applicant_user_id = $2
               AND status = 'APPROVED'`,
           [bountyId, actor.id],
         );
@@ -84,7 +70,7 @@ export class SubmissionsService {
       const existing = await tx.query<{ id: string; status: string; current_revision_no: number }>(
         `SELECT id, status, current_revision_no FROM bounty_submission
           WHERE bounty_id = $1
-            AND ${actor.submissionColumn} = $2 FOR UPDATE`,
+            AND submitter_user_id = $2 FOR UPDATE`,
         [bountyId, actor.id],
       );
 
@@ -95,23 +81,23 @@ export class SubmissionsService {
         if (deadlinePassed) throw new BadRequestException('DEADLINE_PASSED');
         const created = await tx.query<{ id: string }>(
           `INSERT INTO bounty_submission
-             (bounty_id, application_id, submitter_user_id, agent_id,
+             (bounty_id, application_id, submitter_user_id,
               submission_url, description, repository_url, commit_sha)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            RETURNING id`,
-          [bountyId, applicationId, actor.userId,
-           actor.agentId, input.submissionUrl, input.description,
+          [bountyId, applicationId, actor.id,
+           input.submissionUrl, input.description,
            input.repositoryUrl ?? null, input.commitSha ?? null],
         );
         const submissionId = created.rows[0].id;
         await tx.query(
           `INSERT INTO submission_revision
              (submission_id, revision_no, submission_url, description, repository_url,
-              commit_sha, created_by_user_id, created_by_agent_id)
-           VALUES ($1, 1, $2, $3, $4, $5, $6, $7)`,
+              commit_sha, created_by_user_id)
+           VALUES ($1, 1, $2, $3, $4, $5, $6)`,
           [submissionId, input.submissionUrl, input.description,
            input.repositoryUrl ?? null, input.commitSha ?? null,
-           actor.userId, actor.agentId],
+           actor.id],
         );
         // 감사는 같은 tx (실패하면 제출도 롤백). URL·설명(사용자 입력)은 넣지 않는다 - 내용은 submission_revision에 있다
         await actor.recordAudit(this.audit, 'SUBMISSION_SUBMITTED', 'bounty_submission', submissionId, tx, {
@@ -146,11 +132,11 @@ export class SubmissionsService {
       await tx.query(
         `INSERT INTO submission_revision
            (submission_id, revision_no, submission_url, description, repository_url,
-            commit_sha, created_by_user_id, created_by_agent_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            commit_sha, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [sub.id, nextRev, input.submissionUrl, input.description,
          input.repositoryUrl ?? null, input.commitSha ?? null,
-         actor.userId, actor.agentId],
+         actor.id],
       );
       await actor.recordAudit(this.audit, 'SUBMISSION_RESUBMITTED', 'bounty_submission', sub.id, tx, {
         before: { status: sub.status, revisionNo: sub.current_revision_no },
@@ -161,7 +147,7 @@ export class SubmissionsService {
   }
 
   /**
-   * 내 제출 내역 - 본인 제출 + 내가 소유한 에이전트의 제출. 각 행에 agent {id, name} | null.
+   * 내 제출 내역(본인 제출만). 각 행의 `agent`는 항상 null(에이전트 제거 후에도 FE 계약 호환용 shim, 다음 정리 PR에서 제거).
    * payment_status는 rewards/payout-status.ts payoutStatusSql(공개 프로필 payoutStatus와 같은 SQL)인데, 그 식은 **승인된 제출** 전용이다 -
    * APPROVED가 아닌 제출(심사 중·반려·scripts/forfeit-award.js로 보상 미지급 처리된 수상)은 받을 몫이 없으므로 'NONE'으로 고정한다.
    * (식을 그대로 쓰면 여유분이 남은 입금 보상이 있는 동안 반려된 제출도 'PENDING' - "지급 대기"로 보인다.)
@@ -174,22 +160,19 @@ export class SubmissionsService {
       `SELECT s.id, s.status, s.current_revision_no, s.submitted_at, s.last_resubmitted_at,
               b.id AS bounty_id, b.title AS bounty_title, b.category,
               b.status AS bounty_status, b.submission_deadline,
-              CASE WHEN ag.id IS NULL THEN NULL
-                   ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent,
+              NULL::json AS agent,
               CASE WHEN s.status = 'APPROVED' THEN ${payoutStatusSql('s', 'b')} ELSE 'NONE' END AS payment_status, s.description,
               s.submission_url, s.repository_url, s.commit_sha, -- 현재 리비전 값: FE 재제출 폼 미리 채우기용 (재제출은 전체 교체라 비워 보내면 지워진다)
               s.payout_address, s.payout_address_updated_at,
-              -- setPayoutAddress가 지금 받아 줄 조건과 같다 (내가 직접 낸 APPROVED 제출 + payout 행 없음; 에이전트 제출은 주소를 받지 않는다)
+              -- setPayoutAddress가 지금 받아 줄 조건과 같다 (내가 낸 APPROVED 제출 + payout 행 없음)
               (s.submitter_user_id = $1 AND s.status = 'APPROVED'
                 AND NOT EXISTS (SELECT 1 FROM payout px WHERE px.submission_id = s.id)) AS payout_address_editable,
               review.comment AS review_comment, (review.id IS NOT NULL AND NOT (b.status = 'CANCELLED' AND review.decision = 'REJECT' AND review.comment IS NULL)) AS has_review
          FROM bounty_submission s
          JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL -- 삭제된 바운티는 공개 프로필·상세와 같이 없는 것으로 본다 (링크가 404가 된다)
-         LEFT JOIN agent ag ON ag.id = s.agent_id
          LEFT JOIN LATERAL (SELECT id, decision, comment FROM submission_review WHERE submission_id = s.id
                             ORDER BY created_at DESC LIMIT 1) review ON true
         WHERE s.submitter_user_id = $1
-           OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'live')})
         ORDER BY s.submitted_at DESC`,
       [userId],
     );
@@ -199,7 +182,7 @@ export class SubmissionsService {
   /**
    * PUT /submissions/:id/payout-address - 승인된 제출의 제출자가 보상을 받을 주소를 입력/수정한다 (2026-11-10 결정, 지갑 연결 대체).
    * 주소는 0x(EVM) 또는 inj1(bech32 계정)을 받고 소문자 inj1로 저장한다 (common/validation/injective-address.ts, 400 INVALID_INJECTIVE_ADDRESS).
-   *   404 SUBMISSION_NOT_FOUND     제출이 없음, 내 제출이 아님(에이전트 제출 포함 - submitter_user_id가 나인 행만), 바운티 삭제됨
+   *   404 SUBMISSION_NOT_FOUND     제출이 없음, 내 제출이 아님(submitter_user_id가 나인 행만), 바운티 삭제됨
    *   409 SUBMISSION_NOT_APPROVED  APPROVED가 아님 (심사 중·반려·철회·보상 미지급 처리)
    *   409 PAYOUT_ADDRESS_LOCKED    그 제출에 payout 행이 이미 있다(상태 무관 - requestPayout이 같은 제출에 다시 요청하지 않으므로). 정정은 runbook §7.4
    * 같은 주소를 다시 보내면 아무것도 바꾸지 않고 현재 값을 돌려준다(감사 없음). 처음 설정/변경은 감사 PAYOUT_ADDRESS_SET(마스킹된 주소만).

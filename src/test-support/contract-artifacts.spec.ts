@@ -32,7 +32,7 @@ const operations = Object.values(openapi.paths).flatMap((item) => Object.entries
 
 describe('contract/openapi.json', () => {
   it('lists every route (non-trivial count) with a unique operationId', () => {
-    expect(operations.length).toBeGreaterThan(60); // 82 -> 77 (BE PR2 지갑 5개), 계획상 PR3·PR4 뒤 67
+    expect(operations.length).toBeGreaterThan(60); // 82 -> 77 (BE PR2 지갑 5개) -> 67 (PR3 NFT, PR4 에이전트). 종료된 라우트(410)는 계약에서 뺀다
     const ids = operations.map(({ op }) => op.operationId);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -70,11 +70,6 @@ describe('contract/openapi.json', () => {
     expect(schemas.UpdateBountyDto.properties!.title.nullable).toBeUndefined();
     expect(schemas.CreateNoticeDto.required ?? []).not.toContain('summary');
     expect(schemas.CreateNoticeDto.properties!.summary.nullable).toBe(true);
-  });
-
-  it('inherited DTOs without their own decorators get the same rules as the parent', () => {
-    expect(schemas.AgentSubmitDto).toEqual(schemas.SubmitDto);
-    expect(schemas.AgentApplyDto).toEqual(schemas.ApplyDto);
   });
 });
 

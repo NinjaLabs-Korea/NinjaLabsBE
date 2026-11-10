@@ -11,11 +11,6 @@ module.exports = {
   testRegex: '\\.e2e-spec\\.ts$',
   globalSetup: '<rootDir>/src/test-db/global-setup.ts',
   globalTeardown: '<rootDir>/src/test-db/global-teardown.ts',
-  // ESM 전용 패키지(jest가 못 불러온다) - 주소 변환은 실제 bech32로 대체, 체인/ADR-36 클래스는 호출 시 실패 (support/*.stub.ts 머리 주석)
-  moduleNameMapper: {
-    '^@injectivelabs/sdk-ts$': '<rootDir>/src/test-e2e/support/injective-sdk.stub.ts',
-    '^@cosmjs/amino$': '<rootDir>/src/test-e2e/support/cosmjs-amino.stub.ts',
-  },
   // 파일마다 앱 하나 + 데이터베이스 하나를 공유하므로 직렬 실행
   maxWorkers: 1,
   testTimeout: 60_000,

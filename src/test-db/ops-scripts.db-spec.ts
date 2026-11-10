@@ -790,7 +790,7 @@ describeDb('ops scripts on a real database', () => {
         }
         return { bountyId: bounty.rows[0].id, rewardIds, adminId: admin.id };
       }
-      async function approvedWinner(bountyId: string, opts: { agent?: boolean; wallet?: boolean } = {}) {
+      async function approvedWinner(bountyId: string, opts: { wallet?: boolean } = {}) {
         const owner = await createUser();
         let walletId: string | null = null;
         if (opts.wallet !== false) {
@@ -798,17 +798,11 @@ describeDb('ops scripts on a real database', () => {
             `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`,
             [owner.id, `inj1${unique()}`])).rows[0].id;
         }
-        let agentId: string | null = null;
-        if (opts.agent) {
-          agentId = (await pool.query<{ id: string }>(
-            `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status) VALUES ($1, 'a', $2, $3, 'ACTIVE') RETURNING id`,
-            [owner.id, unique('pk-'), unique('aw-')])).rows[0].id;
-        }
         const submissionId = (await pool.query<{ id: string }>(
-          `INSERT INTO bounty_submission (bounty_id, submitter_user_id, agent_id, submission_url, description, status)
-           VALUES ($1, $2, $3, 'https://example.test/s', 'd', 'APPROVED') RETURNING id`,
-          [bountyId, agentId ? null : owner.id, agentId])).rows[0].id;
-        return { ownerId: owner.id, walletId, agentId, submissionId };
+          `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
+           VALUES ($1, $2, 'https://example.test/s', 'd', 'APPROVED') RETURNING id`,
+          [bountyId, owner.id])).rows[0].id;
+        return { ownerId: owner.id, walletId, submissionId };
       }
       async function payout(rewardId: string, w: { submissionId: string; walletId: string | null }, amount: number, status: string, adminId: string) {
         return (await pool.query<{ id: string }>(
@@ -822,13 +816,6 @@ describeDb('ops scripts on a real database', () => {
         const w = await approvedWinner(bountyId);
         await payout(r1, w, 1000, 'PAID', adminId);
         await pool.query(`UPDATE bounty_reward SET status = 'PAID' WHERE id = $1`, [r1]);
-        await expectCancelBlocked(bountyId, adminId);
-      });
-
-      it('agent-owned winner (agent REVOKED, owner active) with no payout blocks the cancel', async () => {
-        const { bountyId, adminId } = await seedBounty(1, [{ amount: 1000 }]);
-        const w = await approvedWinner(bountyId, { agent: true });
-        await pool.query(`UPDATE agent SET status = 'REVOKED' WHERE id = $1`, [w.agentId]);
         await expectCancelBlocked(bountyId, adminId);
       });
 

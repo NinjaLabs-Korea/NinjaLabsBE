@@ -66,7 +66,7 @@ export const MUTANTS = [
   { id: 'R7', file: RS, from: "`SELECT 1 FROM audit_log WHERE action = 'REWARD_REFUNDED' AND after_data->>'txHash' = $1 LIMIT 1`", to: "`SELECT 1 FROM audit_log WHERE action = 'REWARD_REFUNDED' AND after_data->>'txHash' = $1 AND false LIMIT 1`", why: '입금/지급: 환불 해시 재사용 검사 누락' },
   { id: 'R8', file: RS, from: "`SELECT 1 FROM audit_log WHERE action = 'REWARD_REFUNDED' AND after_data->>'txHash' = $1 LIMIT 1`", to: "`SELECT 1 FROM audit_log WHERE after_data->>'txHash' = $1 LIMIT 1`", why: '환불 해시 검사가 action을 안 봄 (다른 감사 행의 txHash로 오탐)' },
   { id: 'R9', file: RS, from: "WHERE rw.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`, [rewardId]);\n      if (!parent.rowCount) throw new NotFoundException('REWARD_NOT_FOUND');", to: "WHERE rw.id = $1 FOR UPDATE OF b`, [rewardId]);\n      if (!parent.rowCount) throw new NotFoundException('REWARD_NOT_FOUND');", why: '지급 요청: 삭제된 바운티 허용' },
-  { id: 'R10', file: RS, from: `JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id) AND u.deleted_at IS NULL\n          WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u\``, to: `JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id)\n          WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u\``, why: '지급 요청: 탈퇴한 수령자에게 payout 생성' },
+  { id: 'R10', file: RS, from: `JOIN "user" u ON u.id = s.submitter_user_id AND u.deleted_at IS NULL\n          WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u\``, to: `JOIN "user" u ON u.id = s.submitter_user_id\n          WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u\``, why: '지급 요청: 탈퇴한 수령자에게 payout 생성' },
   { id: 'R11', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u`", to: "WHERE s.id = $1 AND s.bounty_id = $2 FOR SHARE OF u`", why: '지급 요청(수령자 확인): 승인 안 된 제출에 payout 생성', equivalent: '뒤의 제출 조회(R11b가 겨누는 FOR UPDATE OF s 문장)가 같은 APPROVED 조건으로 404를 내므로 이 문장의 조건은 방어적 중복이다' },
   { id: 'R11b', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2\n          FOR UPDATE OF s`", to: "WHERE s.id = $1 AND s.bounty_id = $2\n          FOR UPDATE OF s`", why: '지급 요청(제출 잠금): 승인 안 된 제출에 payout 생성', equivalent: '앞의 수령자 확인 문장(R11)이 같은 APPROVED 조건으로 이미 404를 낸다. 둘 사이 승인 상태는 바뀌지 않는다(APPROVED는 확정 상태, forfeit-award는 payout과 제출 잠금으로 직렬화)' },
   { id: 'R12', file: RS, from: "WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u`", to: "WHERE s.id = $1 AND s.status = 'APPROVED' FOR SHARE OF u`", why: '지급 요청(수령자 확인): 다른 바운티의 제출에 이 보상으로 payout 생성 ($2 미사용이라 42P18로도 죽는다)' },
@@ -93,9 +93,8 @@ export const MUTANTS = [
 
   // ── bounty-lifecycle.service.ts ──
   { id: 'L1', file: LC, from: "(SELECT count(*)::int FROM bounty_application WHERE bounty_id = $1 AND status = 'PENDING') AS pending", to: "(SELECT count(*)::int FROM bounty_application WHERE bounty_id = $1 AND status <> 'REJECTED') AS pending", why: '대기 지원 집계가 승인 지원까지 셈' },
-  { id: 'L2', file: LC, from: "AND (s.submitter_user_id = a.applicant_user_id OR s.agent_id = a.agent_id))", to: "AND (s.submitter_user_id = a.applicant_user_id))", why: '미제출 참가자: 에이전트 제출을 못 봄' },
+  { id: 'L2', file: LC, from: "AND s.submitter_user_id = a.applicant_user_id)", to: "AND TRUE)", why: '미제출 참가자: 다른 사람의 제출도 본인 제출로 셈' },
   { id: 'L3', file: LC, from: "AND EXISTS (SELECT 1 FROM \"user\" ou WHERE ou.deleted_at IS NULL", to: "AND EXISTS (SELECT 1 FROM \"user\" ou WHERE TRUE", why: '미제출 참가자: 탈퇴자도 셈 (접수 마감 영구 차단)' },
-  { id: 'L4', file: LC, from: "ag.deleted_at IS NULL AND ag.status <> 'REVOKED'", to: "ag.deleted_at IS NULL", why: '미제출 참가자: 폐기 에이전트도 셈' },
   { id: 'L5', file: LC, from: "        AND status NOT IN (${sqlStatusList(PAYABLE_REWARD_STATUSES)})) AS unfunded", to: "        AND status = 'DEPOSIT_PENDING') AS unfunded", why: '미입금 보상: REFUND_PENDING/CANCELLED 보상을 입금된 것으로 봄' },
   { id: 'L6', file: LC, from: "WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(OPEN_PAYOUT_STATUSES)})) AS unpaid", to: "WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(AWAITING_APPROVAL_PAYOUT_STATUSES)})) AS unpaid", why: '진행 중 payout: 승인됐지만 미송금(APPROVED)을 안 셈' },
   { id: 'L7', file: LC, from: "WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(OPEN_PAYOUT_STATUSES)})) AS unpaid", to: "WHERE p.status IN (${sqlStatusList(OPEN_PAYOUT_STATUSES)})) AS unpaid", why: '진행 중 payout: 다른 바운티 payout까지 셈' },
@@ -107,7 +106,7 @@ export const MUTANTS = [
   { id: 'D1', file: BA, from: "               AND (rw.status = 'REFUND_PENDING'\n                    OR (rw.status", to: "               AND ((rw.status", why: '삭제 가드: REFUND_PENDING 보상을 놓침' },
   { id: 'D2', file: BA, from: "WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(OPEN_PAYOUT_STATUSES)})) AS open_payouts`", to: "WHERE rw.bounty_id = $1 AND p.status IN (${sqlStatusList(AWAITING_APPROVAL_PAYOUT_STATUSES)})) AS open_payouts`", why: '삭제 가드: 승인된 미송금 payout을 놓침' },
   { id: 'W1', file: AW, from: "          WHERE p.status <> ALL($2::text[])", to: "          WHERE p.status <> ALL($2::text[]) AND p.status <> 'APPROVED'", why: '탈퇴 가드: 승인된 미송금 payout을 놓침' },
-  { id: 'W2', file: AW, from: "            AND (s.submitter_user_id = $1\n                 OR s.agent_id", to: "            AND (false\n                 OR s.agent_id", why: '탈퇴 가드: 본인 제출의 payout(주소 기반·레거시 지갑 기반 모두)을 놓침. BE PR2부터 수령자는 지갑이 아니라 제출로 판단한다' },
+  { id: 'W2', file: AW, from: "            AND s.submitter_user_id = $1`,\n        [userId, [...TERMINAL_PAYOUT_STATUSES]],", to: "            AND false`,\n        [userId, [...TERMINAL_PAYOUT_STATUSES]],", why: '탈퇴 가드: 본인 제출의 payout(주소 기반·레거시 지갑 기반 모두)을 놓침. BE PR2부터 수령자는 지갑이 아니라 제출로 판단한다' },
 
   // ── completed-wins.ts ──
   { id: 'C1', file: CW, from: "return `${sqlColumnPrefix(s, 'completedWinSql')}status = 'APPROVED' AND", to: "return `${sqlColumnPrefix(s, 'completedWinSql')}status <> 'REJECTED' AND", why: '완료 수상: 심사 중 제출도 셈' },
@@ -150,7 +149,6 @@ export const MUTANTS = [
   { id: 'V2', file: SR, from: 'WHERE s.id = $1 AND b.deleted_at IS NULL FOR UPDATE OF b`', to: 'WHERE s.id = $1 AND b.deleted_at IS NULL`', why: '심사: 바운티 행 잠금 제거 (동시 승인이 max_winners 초과)' },
   { id: 'V3', file: SR, from: 'if (!BountyStatusPolicy.isInProgress(parent.rows[0].status))', to: 'if (false)', why: '심사: 바운티 상태 검사 제거 (종료된 바운티도 심사)' },
   { id: 'V4', file: SR, from: "\n                  AND ${activeUserSql('u')}\n            WHERE s.id = $1", to: "\n            WHERE s.id = $1", why: '승인: 제출자 활성 검사 제거 (정지/탈퇴 제출자 승인)' },
-  { id: 'V5', file: SR, from: 'JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id)', to: 'JOIN "user" u ON u.id = s.submitter_user_id', why: '승인: 에이전트 제출의 소유자를 확인하지 않음' },
   { id: 'V6', file: SR, from: '            FOR SHARE OF u`', to: '`', why: '승인: 제출자 유저 행 FOR SHARE 제거 (탈퇴와 경합)' },
   { id: 'V7', file: SR, from: 'if (decision === SubmissionDecision.APPROVE) {\n        const submitter', to: 'if (decision === SubmissionDecision.APPROVE && false) {\n        const submitter', why: '승인: 제출자 검사 블록 전체 제거' },
   { id: 'V8', file: SR, from: 'WHERE id = $1 FOR UPDATE`,\n        [submissionId],\n      );\n      if (!sub.rowCount)', to: 'WHERE id = $1`,\n        [submissionId],\n      );\n      if (!sub.rowCount)', why: '심사: 제출 행 잠금 제거 (동시 심사가 서로 덮어씀)' },

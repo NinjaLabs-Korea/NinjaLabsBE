@@ -4,9 +4,6 @@ import { validate } from 'class-validator';
 import { endsWithStaticFileExtension, isReservedNickname, isSavableNickname, NICKNAME, STATIC_FILE_EXTENSIONS } from './nickname';
 import { CompleteProfileDto } from './users.controller';
 
-// 컨트롤러가 서비스 → wallet-signature → @injectivelabs/sdk-ts(ESM)를 끌어오므로 서명 검증 모듈만 껍데기로 대체한다
-jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
-
 const failedFields = async (body: object) =>
   (await validate(plainToInstance(CompleteProfileDto, body))).map((error) => error.property).sort();
 

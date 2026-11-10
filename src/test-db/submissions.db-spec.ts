@@ -45,15 +45,17 @@ describeDb('submission rules on a real database', () => {
   const work = (n: number | string) => ({ submissionUrl: `https://x.test/work/${n}`, description: `revision ${n}` });
 
   /** 보상 없는 바운티를 만들고 상태·마감을 직접 맞춘다 (상태 표를 한 줄로 세우기 위해) */
-  async function bountyIn(options: { status?: string; deadline?: string; applicationRequired?: boolean; mode?: 'DIRECT' | 'AGENT' } = {}) {
+  async function bountyIn(options: { status?: string; deadline?: string; applicationRequired?: boolean; legacyAgentMode?: boolean } = {}) {
     const { id } = await bounties.create(adminId, {
       title: unique('sub-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
-      category: 'DEV', applicationRequired: options.applicationRequired ?? false, submissionMode: options.mode ?? 'DIRECT', maxWinners: 1,
+      category: 'DEV', applicationRequired: options.applicationRequired ?? false, maxWinners: 1,
       submissionDeadline: FUTURE(),
     });
-    await db.query(`UPDATE bounty SET status = $2, submission_deadline = $3 WHERE id = $1`, [id, options.status ?? 'OPEN', options.deadline ?? FUTURE()]);
+    await db.query(`UPDATE bounty SET status = $2, submission_deadline = $3, submission_mode = $4 WHERE id = $1`,
+      [id, options.status ?? 'OPEN', options.deadline ?? FUTURE(), options.legacyAgentMode ? 'AGENT' : 'DIRECT']);
     return id;
   }
+  /** 에이전트 제거(BE PR4) 전에 쌓인 행을 흉내 낸다: 새 코드는 에이전트 제출을 만들지 못하므로 SQL로 넣는다 */
   async function agentOf(ownerId: string, name = 'bot') {
     const r = await db.query<{ id: string }>(
       `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at)
@@ -93,37 +95,27 @@ describeDb('submission rules on a real database', () => {
     expect(await submissionRow(first.id)).toMatchObject({ status: 'REVISION_REQUESTED', current_revision_no: 1 });
   });
 
-  it('submission mode: a person on an AGENT bounty is AGENT_SUBMISSION_REQUIRED, an agent on a DIRECT bounty is DIRECT_SUBMISSION_REQUIRED; the matching actor is accepted', async () => {
+  it('a legacy AGENT submission_mode bounty accepts a person like any other bounty (the mode is no longer checked)', async () => {
     const owner = await createUser(db);
-    const agentId = await agentOf(owner);
-    const agentOnly = await bountyIn({ mode: 'AGENT' });
-    const directOnly = await bountyIn({ mode: 'DIRECT' });
-
-    await expect(submissions.submit(agentOnly, owner, work(1))).rejects.toMatchObject({ status: 400, message: 'AGENT_SUBMISSION_REQUIRED' });
-    await expect(submissions.submitAsAgent(directOnly, agentId, work(1))).rejects.toMatchObject({ status: 400, message: 'DIRECT_SUBMISSION_REQUIRED' });
-    expect(await countRows(agentOnly)).toEqual({ submissions: 0, revisions: 0 });
-    expect(await countRows(directOnly)).toEqual({ submissions: 0, revisions: 0 });
-
-    await expect(submissions.submit(directOnly, owner, work(1))).resolves.toMatchObject({ revisionNo: 1, status: 'SUBMITTED' });
-    await expect(submissions.submitAsAgent(agentOnly, agentId, work(2))).resolves.toMatchObject({ revisionNo: 1, status: 'SUBMITTED' });
+    const legacy = await bountyIn({ legacyAgentMode: true });
+    await expect(submissions.submit(legacy, owner, work(1))).resolves.toMatchObject({ revisionNo: 1, status: 'SUBMITTED' });
   });
 
-  it('an agent submission stores agent_id (no submitter) on the row and the first revision snapshot, with every optional field', async () => {
+  it('a person submission stores submitter_user_id (no agent) on the row and the first revision snapshot, with every optional field', async () => {
     const owner = await createUser(db);
-    const agentId = await agentOf(owner);
-    const bountyId = await bountyIn({ mode: 'AGENT' });
-    const input = { submissionUrl: 'https://x.test/a', description: 'by agent', repositoryUrl: 'https://github.com/x/y', commitSha: 'abc' };
-    const out = await submissions.submitAsAgent(bountyId, agentId, input);
+    const bountyId = await bountyIn();
+    const input = { submissionUrl: 'https://x.test/a', description: 'by person', repositoryUrl: 'https://github.com/x/y', commitSha: 'abc' };
+    const out = await submissions.submit(bountyId, owner, input);
     expect(out).toEqual({ id: expect.any(String), revisionNo: 1, status: 'SUBMITTED' });
 
     const row = await db.query(`SELECT submitter_user_id, agent_id, application_id, submission_url, description, repository_url, commit_sha FROM bounty_submission WHERE id = $1`, [out.id]);
-    expect(row.rows[0]).toEqual({ submitter_user_id: null, agent_id: agentId, application_id: null, submission_url: input.submissionUrl, description: input.description, repository_url: input.repositoryUrl, commit_sha: 'abc' });
+    expect(row.rows[0]).toEqual({ submitter_user_id: owner, agent_id: null, application_id: null, submission_url: input.submissionUrl, description: input.description, repository_url: input.repositoryUrl, commit_sha: 'abc' });
     const revision = await db.query(`SELECT revision_no, submission_url, description, repository_url, commit_sha, created_by_user_id, created_by_agent_id FROM submission_revision WHERE submission_id = $1`, [out.id]);
-    expect(revision.rows).toEqual([{ revision_no: 1, submission_url: input.submissionUrl, description: input.description, repository_url: input.repositoryUrl, commit_sha: 'abc', created_by_user_id: null, created_by_agent_id: agentId }]);
+    expect(revision.rows).toEqual([{ revision_no: 1, submission_url: input.submissionUrl, description: input.description, repository_url: input.repositoryUrl, commit_sha: 'abc', created_by_user_id: owner, created_by_agent_id: null }]);
   });
 
   it('an application bounty needs an APPROVED application of this very actor (none, pending, rejected, someone else\'s do not count) and links it to the submission', async () => {
-    const bountyId = await bountyIn({ applicationRequired: true, mode: 'DIRECT' });
+    const bountyId = await bountyIn({ applicationRequired: true });
     const user = await createUser(db);
     const other = await createUser(db);
 
@@ -140,24 +132,6 @@ describeDb('submission rules on a real database', () => {
     // approved: the submission row points at that application (people by applicant_user_id)
     const mine = await submissions.submit(bountyId, other, work(2));
     expect((await db.query(`SELECT application_id FROM bounty_submission WHERE id = $1`, [mine.id])).rows[0].application_id).toBe(othersApp.id);
-  });
-
-  it('an agent on an application bounty is looked up by agent_id: another agent\'s approval does not count, its own links the submission', async () => {
-    const bountyId = await bountyIn({ applicationRequired: true, mode: 'AGENT' });
-    const owner = await createUser(db);
-    const agentId = await agentOf(owner);
-    const otherAgent = await agentOf(await createUser(db));
-
-    await expect(submissions.submitAsAgent(bountyId, agentId, work(1))).rejects.toMatchObject({ status: 403, message: 'APPLICATION_NOT_APPROVED' });
-    const othersApp = await applications.applyAsAgent(bountyId, otherAgent, 'hi');
-    await applicationReview.review(othersApp.id, 'APPROVED', undefined, adminId);
-    await expect(submissions.submitAsAgent(bountyId, agentId, work(1))).rejects.toMatchObject({ message: 'APPLICATION_NOT_APPROVED' });
-    expect(await countRows(bountyId)).toEqual({ submissions: 0, revisions: 0 });
-
-    const own = await applications.applyAsAgent(bountyId, agentId, 'hi');
-    await applicationReview.review(own.id, 'APPROVED', undefined, adminId);
-    const viaAgent = await submissions.submitAsAgent(bountyId, agentId, work(3));
-    expect((await db.query(`SELECT application_id FROM bounty_submission WHERE id = $1`, [viaAgent.id])).rows[0].application_id).toBe(own.id);
   });
 
   it.each([
@@ -227,15 +201,14 @@ describeDb('submission rules on a real database', () => {
     }
   });
 
-  it('revision numbers follow the row: each delivery adds exactly one snapshot, and an agent resubmission records the agent, not its owner', async () => {
+  it('revision numbers follow the row: each delivery adds exactly one snapshot recorded for the person', async () => {
     const owner = await createUser(db);
-    const agentId = await agentOf(owner);
-    const bountyId = await bountyIn({ mode: 'AGENT' });
-    const first = await submissions.submitAsAgent(bountyId, agentId, work(1));
-    await expect(submissions.submitAsAgent(bountyId, agentId, work(2))).resolves.toEqual({ id: first.id, revisionNo: 2, status: 'RESUBMITTED' });
-    await expect(submissions.submitAsAgent(bountyId, agentId, work(3))).resolves.toEqual({ id: first.id, revisionNo: 3, status: 'RESUBMITTED' });
+    const bountyId = await bountyIn();
+    const first = await submissions.submit(bountyId, owner, work(1));
+    await expect(submissions.submit(bountyId, owner, work(2))).resolves.toEqual({ id: first.id, revisionNo: 2, status: 'RESUBMITTED' });
+    await expect(submissions.submit(bountyId, owner, work(3))).resolves.toEqual({ id: first.id, revisionNo: 3, status: 'RESUBMITTED' });
     const revisions = await db.query(`SELECT revision_no, created_by_user_id, created_by_agent_id FROM submission_revision WHERE submission_id = $1 ORDER BY revision_no`, [first.id]);
-    expect(revisions.rows).toEqual([1, 2, 3].map((n) => ({ revision_no: n, created_by_user_id: null, created_by_agent_id: agentId })));
+    expect(revisions.rows).toEqual([1, 2, 3].map((n) => ({ revision_no: n, created_by_user_id: owner, created_by_agent_id: null })));
   });
 
   describe('mySubmissions', () => {
@@ -251,48 +224,33 @@ describeDb('submission rules on a real database', () => {
       return id;
     }
 
-    it('lists my own and my live agents\' submissions (agent {id, name} or null), newest first, with bounty fields; hides deleted bounties, deleted agents and other people\'s rows', async () => {
+    it('lists only my own submissions (agent is a null shim), newest first, with bounty fields; hides deleted bounties, legacy agent rows of my agents and other people\'s rows', async () => {
       const me = await createUser(db);
       const stranger = await createUser(db);
       const agentId = await agentOf(me, 'my-bot');
-      const strangerAgent = await agentOf(stranger);
 
       const first = await bountyIn();
       const second = await bountyIn();
       const deletedBounty = await bountyIn();
       const strangerSide = await bountyIn();
-      const agentSide = await bountyIn({ mode: 'AGENT' });
-      const retiredSide = await bountyIn({ mode: 'AGENT' });
-      const strangerAgentSide = await bountyIn({ mode: 'AGENT' });
+      const legacySide = await bountyIn();
       const mineFirst = await submissions.submit(first, me, work('a'));
       const mineSecond = await submissions.submit(second, me, work('b'));
       await submissions.submit(deletedBounty, me, work('c'));
-      const viaAgent = await submissions.submitAsAgent(agentSide, agentId, work('d'));
-      await submissions.submitAsAgent(retiredSide, agentId, work('e'));
-      await submissions.submitAsAgent(strangerAgentSide, strangerAgent, work('f'));
+      await db.query(
+        `INSERT INTO bounty_submission (bounty_id, agent_id, submission_url, description, status) VALUES ($1, $2, 'https://x.test/legacy', 'legacy agent row', 'SUBMITTED')`,
+        [legacySide, agentId]); // 옛 에이전트 제출(submitter 없음)은 소유자의 내 제출 내역에도 나오지 않는다
       await submissions.submit(strangerSide, stranger, work('g'));
       // fix the order explicitly and retire/delete what must disappear
       await db.query(`UPDATE bounty_submission SET submitted_at = now() - interval '3 days' WHERE id = $1`, [mineFirst.id]);
       await db.query(`UPDATE bounty_submission SET submitted_at = now() - interval '1 day' WHERE id = $1`, [mineSecond.id]);
-      await db.query(`UPDATE bounty_submission SET submitted_at = now() - interval '2 days' WHERE id = $1`, [viaAgent.id]);
       await db.query(`UPDATE bounty SET deleted_at = now() WHERE id = $1`, [deletedBounty]);
-      await db.query(`UPDATE bounty SET deleted_at = now() WHERE id = $1`, [retiredSide]);
 
       const rows = await submissions.mySubmissions(me);
-      expect(rows.map((r) => r.id)).toEqual([mineSecond.id, viaAgent.id, mineFirst.id]);
+      expect(rows.map((r) => r.id)).toEqual([mineSecond.id, mineFirst.id]);
       expect(rows[0]).toMatchObject({ bounty_id: second, category: 'DEV', bounty_status: 'OPEN', status: 'SUBMITTED', current_revision_no: 1, agent: null, description: 'revision b', submission_url: 'https://x.test/work/b' });
       expect(rows[0].submission_deadline).toBeInstanceOf(Date);
-      expect(rows[1].agent).toEqual({ id: agentId, name: 'my-bot' });
-    });
-
-    it('does not list submissions of an agent that was soft-deleted (live ownership only)', async () => {
-      const me = await createUser(db);
-      const agentId = await agentOf(me);
-      const bountyId = await bountyIn({ mode: 'AGENT' });
-      const sub = await submissions.submitAsAgent(bountyId, agentId, work(1));
-      expect((await submissions.mySubmissions(me)).map((r) => r.id)).toContain(sub.id);
-      await db.query(`UPDATE agent SET deleted_at = now() WHERE id = $1`, [agentId]);
-      expect((await submissions.mySubmissions(me)).map((r) => r.id)).not.toContain(sub.id);
+      expect(rows[1]).toMatchObject({ agent: null });
     });
 
     it('payment_status is NONE for anything not APPROVED (even with a funded, unpaid reward), and the payout state only for approved submissions', async () => {

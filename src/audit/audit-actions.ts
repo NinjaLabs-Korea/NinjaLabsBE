@@ -76,8 +76,6 @@ export const AUDIT_ACTIONS = {
   USER_MEMBER_REVOKED: 'user',
   USER_AVATAR_UPDATED: 'user',
   USER_AVATAR_REMOVED: 'user',
-  // NFT 잡 (nft-jobs-admin.service.ts)
-  NFT_JOB_RETRIED: 'nft_job',
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
@@ -89,7 +87,6 @@ export type AuditAction = keyof typeof AUDIT_ACTIONS;
 export const SCRIPT_AUDIT_ACTIONS = {
   ADMIN_GRANTED: 'user',
   ADMIN_REVOKED: 'user',
-  NFT_JOB_REQUEUED: 'nft_job',
   REWARD_REFUNDED: 'bounty_reward',
   SUBMISSION_AWARD_FORFEITED: 'bounty_submission',
   PAYOUT_CORRECTED_MANUAL: 'payout',
@@ -100,7 +97,10 @@ export const SCRIPT_AUDIT_ACTIONS = {
  * 지금 코드는 더 남기지 않지만 운영 DB에 과거 행이 있는 action. 감사 화면 라벨을 유지하려고 계약(docs/api-contract.md 표, contract/constants.json
  * `audit.legacyActions`)에 남긴다. `AuditService.record()`의 타입(AuditAction)에는 들어가지 않으므로 새로 남길 수 없다.
  * - `WALLET_REPLACED`: 대표 수령 지갑 교체(0024~0028). 지갑 모듈 제거(BE PR2, 2026-11-10 결정)로 더 생기지 않는다
+ * - `NFT_JOB_RETRIED`, `NFT_JOB_REQUEUED`: NFT 잡 재시도(API)와 재큐(스크립트). NFT 제거(BE PR3, 2026-11-11 결정)로 더 생기지 않는다
  */
 export const LEGACY_AUDIT_ACTIONS = {
   WALLET_REPLACED: 'user',
+  NFT_JOB_RETRIED: 'nft_job',
+  NFT_JOB_REQUEUED: 'nft_job',
 } as const;

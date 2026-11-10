@@ -121,7 +121,7 @@ export const ERROR_CODES = {
   PAYOUT_NOT_FOUND_OR_WRONG_STATUS: { statuses: [404], ko: '지급이 없거나 현재 상태에서 허용되지 않는 처리다' },
   PAYOUT_SELF_APPROVAL: { statuses: [403], ko: '지급 요청자 본인이 승인할 수 없다 (PAYOUT_ALLOW_SELF_APPROVAL로만 허용)' },
 
-  // ── 콘텐츠 (notices / highlights / members / media / nfts) ──
+  // ── 콘텐츠 (notices / highlights / members / media) ──
   EVENT_DATE_ONLY_FOR_EVENT: { statuses: [400], ko: '행사 날짜(eventDate)는 EVENT 분류 공지에만 줄 수 있다 (생성만 거부, 수정은 EVENT 밖이면 조용히 비운다)' },
   NOTICE_NOT_FOUND: { statuses: [404], ko: '공지가 없다' },
   // ── 기수 모집 (cohorts) ──
@@ -139,7 +139,6 @@ export const ERROR_CODES = {
   COHORT_ALREADY_OPEN: { statuses: [409], ko: '다른 기수가 이미 OPEN이다 (동시에 열린 기수는 하나)' },
   COHORT_HAS_APPLICATIONS: { statuses: [409], ko: '지원서가 있는 기수는 삭제할 수 없다 (철회 포함)' },
   HIGHLIGHT_NOT_FOUND: { statuses: [404], ko: '하이라이트가 없다' },
-  NFT_JOB_NOT_FOUND_OR_NOT_FAILED: { statuses: [404], ko: 'NFT 작업이 없거나 FAILED가 아니라 재시도할 수 없다' },
   MEDIA_FILE_REQUIRED: { statuses: [400], ko: '업로드 파일이 없다' },
   MEDIA_FILE_TOO_LARGE: { statuses: [400], ko: '업로드 파일이 크기 상한을 넘는다' },
   MEDIA_FILE_TYPE_UNSUPPORTED: { statuses: [400], ko: '허용되지 않는 이미지 형식이다 (시그니처 검사)' },

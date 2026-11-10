@@ -1,7 +1,5 @@
 import { HDNodeWallet, Wallet } from 'ethers';
-import { NftsService } from '../nfts/nfts.service';
 import { describeDb } from '../test-db/describe-db';
-import { createPrimaryWallet } from '../test-db/harness';
 import { AdminBountyForm, applyBody, payoutAddressBody, saveAdminBountyBody, submitBody } from './support/fe-payloads';
 import { DAY, E2eApp, isoIn, payoutEvmAddress, Session, startApp, txHash, UUID } from './support/harness';
 
@@ -194,10 +192,6 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect(opsAfter.body.payouts).toEqual([expect.objectContaining({ id: payoutId, status: 'PAID', payout_tx_hash: payoutHash.toLowerCase(), recipient_address: payoutAddress, display_symbol: 'INJ', approved_by: approver.userId, paid_at: expect.any(String) })]);
     expect(opsAfter.body.rewards[0].status).toBe('PAID');
 
-    // paying no longer creates a completion NFT (2026-11-10)
-    const child = await e2e.db.query(`SELECT 1 FROM nft WHERE submission_id = $1 AND nft_type = 'BOUNTY_COMPLETION_CHILD'`, [submissionId]);
-    expect(child.rowCount).toBe(0);
-
     expect((await transition(bountyId, 'COMPLETED')).body).toEqual({ id: bountyId, status: 'COMPLETED' });
     expect((await e2e.get('/submissions/me', { token: builder.accessToken })).body[0].payment_status).toBe('PAID');
 
@@ -208,7 +202,7 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
       rewards: [{ amount: '100000000000000000000', symbol: 'INJ' }],
       postedRewards: [{ amount: '100000000000000000000', symbol: 'INJ' }], payoutStatus: 'PAID',
     }]);
-    expect(profile.body.nfts).toEqual([]); // no wallet step (BE PR2) → no parent NFT; paying no longer mints a child either
+    expect(profile.body.nfts).toEqual([]); // NFT module removed (BE PR3): the shim key stays for old FE codecs
     expect(JSON.stringify(profile.body)).not.toContain(payoutAddress); // the payout address is never public
 
     const audit = await e2e.get(`/admin/audit-logs?entityType=bounty&entityId=${bountyId}`, asAdmin);
@@ -534,47 +528,10 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await e2e.get('/applications/me', { token: builder.accessToken })).body[0].status).toBe('WITHDRAWN');
   });
 
-  it('NFT job console: GET /admin/nft-jobs lists FAILED jobs (paged); retry → PENDING with retry_count 0, nft restored, NFT_JOB_RETRIED; a second retry is 404', async () => {
-    const owner = await e2e.loginOnboarded();
-    await e2e.onboard(owner);
-    // the wallet verify that used to queue the parent mint is gone (BE PR2): seed a legacy wallet + parent mint directly (the NFT module goes in PR3)
-    const legacyWallet = await createPrimaryWallet(e2e.db, owner.userId);
-    expect(await e2e.app.get(NftsService).enqueueParentMint(owner.userId, legacyWallet.id)).not.toBeNull();
-    // force it into the worker's permanent-failure state
-    const job = await e2e.db.query<{ id: string; nft_id: string }>(
-      `UPDATE nft_job j SET status = 'FAILED', retry_count = 5, last_error = 'boom', processed_at = now()
-         FROM nft n WHERE n.id = j.nft_id AND n.owner_user_id = $1 AND j.job_type = 'MINT_PARENT' RETURNING j.id, j.nft_id`, [owner.userId]);
-    expect(job.rowCount).toBe(1);
-    const { id: jobId, nft_id: nftId } = job.rows[0];
-    await e2e.db.query(`UPDATE nft SET status = 'FAILED' WHERE id = $1`, [nftId]);
-
-    const failed = await e2e.get('/admin/nft-jobs?status=FAILED', asAdmin);
-    expect(failed.status).toBe(200);
-    expect(failed.body).toMatchObject({ page: 1, pageSize: 30, total: expect.any(Number) });
-    expect(failed.body.items).toEqual(expect.arrayContaining([expect.objectContaining({
-      id: jobId, nft_id: nftId, job_type: 'MINT_PARENT', status: 'FAILED', retry_count: 5, last_error: 'boom',
-      nft_type: 'NINJA_PARENT', nft_status: 'FAILED', owner_user_id: owner.userId, owner_wallet_address: expect.any(String), bounty_id: null,
-    })]));
-    expect((await e2e.get('/admin/nft-jobs', asAdmin)).body.items.map((i: { id: string }) => i.id)).toContain(jobId); // FAILED is the default
-    expect((await e2e.get('/admin/nft-jobs?status=SUCCEEDED', asAdmin)).status).toBe(400);
-
-    const retried = await e2e.post(`/admin/nft-jobs/${jobId}/retry`, undefined, asAdmin);
-    expect(retried.status).toBe(201);
-    expect(retried.body).toEqual({ id: jobId, nft_id: nftId, status: 'PENDING', retry_count: 0 });
-    const rows = await e2e.db.query(`SELECT j.status, j.retry_count, j.processed_at, n.status AS nft_status FROM nft_job j JOIN nft n ON n.id = j.nft_id WHERE j.id = $1`, [jobId]);
-    expect(rows.rows[0]).toEqual({ status: 'PENDING', retry_count: 0, processed_at: null, nft_status: 'PENDING' });
-    expect((await e2e.get('/admin/nft-jobs?status=PENDING', asAdmin)).body.items.map((i: { id: string }) => i.id)).toContain(jobId);
-
-    const again = await e2e.post(`/admin/nft-jobs/${jobId}/retry`, undefined, asAdmin);
-    expect(again.body).toEqual({ statusCode: 404, error: 'Not Found', message: 'NFT_JOB_NOT_FOUND_OR_NOT_FAILED' });
-    const audit = await e2e.get(`/admin/audit-logs?entityType=nft_job&entityId=${jobId}`, asAdmin);
-    expect(audit.body.items).toEqual([expect.objectContaining({ action: 'NFT_JOB_RETRIED', actor_user_id: admin.userId })]);
-  });
-
   describe('h. admin guard', () => {
     it('a non-admin gets 403 ADMIN_ONLY on every /admin route; no token is 401', async () => {
       const user = await e2e.loginOnboarded();
-      for (const [method, path] of [['GET', '/admin/bounties'], ['GET', '/admin/users'], ['GET', '/admin/notices'], ['GET', '/admin/audit-logs'], ['POST', '/admin/payouts'], ['GET', '/admin/nft-jobs'], ['POST', `/admin/nft-jobs/${'1'.repeat(8)}-1111-4111-8111-111111111111/retry`]] as const) {
+      for (const [method, path] of [['GET', '/admin/bounties'], ['GET', '/admin/users'], ['GET', '/admin/notices'], ['GET', '/admin/audit-logs'], ['POST', '/admin/payouts']] as const) {
         const res = await e2e.request(method, path, { token: user.accessToken, json: method === 'POST' ? {} : undefined });
         expect(res.status).toBe(403);
         expect(res.body).toEqual({ statusCode: 403, error: 'Forbidden', message: 'ADMIN_ONLY' });

@@ -69,10 +69,10 @@ describe('AuditService.record', () => {
   it('binds actor/action/entity in order and stores a missing actor (system job) as NULL', async () => {
     const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rowCount: 1, rows: [] }));
     const service = new AuditService(createMockDb({ query }).database);
-    await service.record(undefined, 'NFT_JOB_RETRIED', 'nft_job', 'e1');
+    await service.record(undefined, 'BOUNTY_COMPLETED', 'bounty', 'e1');
     await service.record('u1', 'BOUNTY_UPDATED', 'bounty', 'e2');
     expect(query.mock.calls.map(([sql, params]) => [sql.includes('INSERT INTO audit_log'), params])).toEqual([
-      [true, [null, 'NFT_JOB_RETRIED', 'nft_job', 'e1']],
+      [true, [null, 'BOUNTY_COMPLETED', 'bounty', 'e1']],
       [true, ['u1', 'BOUNTY_UPDATED', 'bounty', 'e2']],
     ]);
   });
@@ -126,7 +126,7 @@ describe('AuditService ip_address (request context)', () => {
   });
 
   it('leaves ip_address out outside a request (cron, worker) and for a value Postgres inet would reject', async () => {
-    const [outside] = await insert((service, tx) => service.record(undefined, 'NFT_JOB_RETRIED', 'nft_job', 'e', tx));
+    const [outside] = await insert((service, tx) => service.record(undefined, 'BOUNTY_COMPLETED', 'bounty', 'e', tx));
     const [zoned, zonedParams] = await insert((service, tx) =>
       runWithRequestContext('fe80::1%eth0', () => service.record('u1', 'BOUNTY_UPDATED', 'bounty', 'e', tx)));
     expect(outside).not.toContain('ip_address');

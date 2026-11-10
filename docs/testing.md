@@ -38,8 +38,8 @@ global-setup이 매 실행 새로 만든 데이터베이스(모든 마이그레�
 TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres npm run test:e2e   # E2E_LOG=1이면 앱 로그를 출력
 ```
 
-- **대역은 외부 I/O만** (`support/fakes.ts`): Google 토큰 엔드포인트(전역 `fetch` 가로채기 - 그 밖의 외부 URL 호출은 테스트 실패) + `GoogleIdTokenVerifier`,
-  `InjectiveNftClient`. `@injectivelabs/sdk-ts`·`@cosmjs/amino`는 ESM 전용이라 jest가 못 불러오므로 `moduleNameMapper`로 바꾼다 - 주소 변환은 실제 bech32
+- **대역은 외부 I/O만** (`support/fakes.ts`): Google 토큰 엔드포인트(전역 `fetch` 가로채기 - 그 밖의 외부 URL 호출은 테스트 실패) + `GoogleIdTokenVerifier`.
+  `@injectivelabs/sdk-ts`·`@cosmjs/amino`는 ESM 전용이라 jest가 못 불러오므로 `moduleNameMapper`로 바꾼다 - 주소 변환은 실제 bech32
   구현(sdk-ts와 같은 결과를 벡터로 검사), 체인/ADR-36 클래스는 호출 시 실패. 시간은 Postgres `now()` 기준 행을 옮겨(예: 회전 시각을 31초 전으로) 다룬다.
 - **환경 격리**: 하네스가 앱이 읽는 env 키를 전부 덮어써 개발자 `.env`의 시크릿/DB가 섞이지 않는다. `TRUST_PROXY=1`이고 요청마다 무작위
   `X-Forwarded-For`를 붙여 IP별 스로틀 버킷을 나눈다(스로틀 스펙은 IP를 지정).

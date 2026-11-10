@@ -167,8 +167,7 @@ export class UsersService {
 
     // 공개 프로필에는 검증을 마친 ACTIVE 에이전트만 - PENDING_VERIFICATION(서명 없이 남의 지갑 주소를 적어 둘 수 있다)·SUSPENDED·REVOKED의
     // 이름/지갑 주소를 공개 API로 내보내지 않는다 (FE도 ACTIVE만 그린다). 폐기 전에 승인된 제출은 위 completedBounties(본인 + 소유 에이전트)에 그대로 남는다.
-    // soft delete된 바운티는 공개 프로필 어디에도 나오지 않는다 (completedBounties와 같은 completedWinSql 기준을 FILTER에 건다),
-    // NFT는 남기되 그 바운티 제목은 NULL이 된다 (FE는 제목 없는 NFT를 "Ninja NFT"로 보여준다)
+    // soft delete된 바운티는 공개 프로필 어디에도 나오지 않는다 (completedBounties와 같은 completedWinSql 기준을 FILTER에 건다)
     const agents = await this.db.query(
       `SELECT a.id, a.name, a.description, a.status, a.wallet_address,
               COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title) ORDER BY s.reviewed_at DESC, b.id)
@@ -182,22 +181,11 @@ export class UsersService {
       [u.id],
     );
 
-    const nfts = await this.db.query(
-      `SELECT n.id, n.nft_type, n.status, n.contract_address, n.token_id,
-              n.metadata_uri, n.mint_tx_hash, n.attach_tx_hash,
-              n.minted_at, n.attached_at, b.title AS bounty_title
-         FROM nft n
-         LEFT JOIN bounty b ON b.id = n.bounty_id AND b.deleted_at IS NULL
-        WHERE n.owner_user_id = $1
-        ORDER BY n.created_at, n.id`,
-      [u.id],
-    );
-
     return {
       ...u,
       completedBounties: completedBounties.rows,
       agents: agents.rows,
-      nfts: nfts.rows,
+      nfts: [], // NFT 제거(2026-11-11) 뒤 옛 FE 호환 shim
     };
   }
 }

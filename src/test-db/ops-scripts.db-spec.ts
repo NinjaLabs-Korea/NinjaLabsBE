@@ -7,29 +7,22 @@ import { run as grantAdmin } from '../../scripts/grant-admin';
 import { applyMigrations, sslOptions } from '../../scripts/migrate';
 import { run as forfeitAward } from '../../scripts/forfeit-award';
 import { inspectReward, run as recordRefund } from '../../scripts/record-refund';
-import { run as requeueNftJobs } from '../../scripts/requeue-nft-jobs';
 import { AuditService } from '../audit/audit.service';
 import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
 import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.service';
 import { RewardTokenResolver } from '../bounties/admin/reward-token.resolver';
 import { DatabaseService } from '../common/database/database.service';
-import { AlertService } from '../common/alerts/alert.service';
-import { InjectiveNftClient } from '../nfts/injective-nft.client';
 import { STATIC_FILE_EXTENSIONS } from '../users/nickname';
-import { NftJobWorker } from '../nfts/nft-job.worker';
 import { payoutStatusSql } from '../rewards/payout-status';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { createDb, randomPayoutAddress, testConfig, testSslEnv, unique, waitFor } from './harness';
-
-// 실제 클라이언트는 @injectivelabs/sdk-ts(ESM)를 끌어오므로 DI 메타데이터용 껍데기로 대체한다 (nft-worker 스펙과 동일)
-jest.mock('../nfts/injective-nft.client', () => ({ InjectiveNftClient: class {} }));
+import { randomPayoutAddress, testConfig, testSslEnv, unique, waitFor } from './harness';
 
 const SCRIPTS = join(__dirname, '..', '..', 'scripts');
 const exec = promisify(execFile);
 
 /**
- * 운영 스크립트(scripts/grant-admin.js, scripts/requeue-nft-jobs.js, scripts/mainnet-preflight.sql) - docs/runbook.md.
+ * 운영 스크립트(scripts/grant-admin.js, scripts/mainnet-preflight.sql) - docs/runbook.md.
  * "마지막 운영자"와 `--all`은 데이터베이스 전체를 보므로 공유 테스트 DB가 아니라 이 파일 전용 데이터베이스를 새로 만든다 (migrate-lock 스펙과 같은 방식).
  */
 describeDb('ops scripts on a real database', () => {
@@ -197,108 +190,6 @@ describeDb('ops scripts on a real database', () => {
       const ok = await exec('node', [script, 'grant', user.email, '--yes'], { env });
       expect(ok.stdout).toContain(`done     ${user.email} is_admin=true`);
       expect(await isAdmin(user.id)).toBe(true);
-    });
-  });
-
-  describe('scripts/requeue-nft-jobs.js', () => {
-    /** 5회 실패해 FAILED로 고정된 잡 - mintedTokenId가 있으면 민팅은 끝나고 attach가 실패한 자식 */
-    async function failedJob(jobType = 'MINT_PARENT', mintedTokenId?: string) {
-      const user = await createUser();
-      const wallet = await pool.query<{ id: string }>(
-        `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`,
-        [user.id, `inj1${unique()}`],
-      );
-      const nft = await pool.query<{ id: string }>(
-        `INSERT INTO nft (owner_user_id, owner_wallet_id, nft_type, contract_address, status, token_id)
-         VALUES ($1, $2, 'NINJA_PARENT', 'inj1testcontract', 'FAILED', $3) RETURNING id`,
-        [user.id, wallet.rows[0].id, mintedTokenId ?? null],
-      );
-      const job = await pool.query<{ id: string }>(
-        `INSERT INTO nft_job (nft_id, job_type, idempotency_key, status, retry_count, last_error, processed_at)
-         VALUES ($1, $2, $3, 'FAILED', 5, 'rpc timeout', now()) RETURNING id`,
-        [nft.rows[0].id, jobType, unique('ops-')],
-      );
-      return { nftId: nft.rows[0].id, jobId: job.rows[0].id };
-    }
-
-    const jobRow = async (id: string) => (await pool.query<{
-      status: string; retry_count: number; last_error: string | null; processed_at: Date | null; due: boolean;
-    }>(`SELECT status, retry_count, last_error, processed_at, scheduled_at <= now() AS due FROM nft_job WHERE id = $1`, [id])).rows[0];
-    const nftStatus = async (id: string) =>
-      (await pool.query<{ status: string }>(`SELECT status FROM nft WHERE id = $1`, [id])).rows[0].status;
-
-    it('--dry-run lists the FAILED job and writes nothing', async () => {
-      const { jobId, nftId } = await failedJob();
-      const res = await invoke(requeueNftJobs, [jobId, '--dry-run']);
-      expect(res.code).toBe(0);
-      expect(res.out).toContain(`job      ${jobId}  MINT_PARENT`);
-      expect(res.out).toContain('last_error=rpc timeout');
-      expect((await jobRow(jobId)).status).toBe('FAILED');
-      expect(await nftStatus(nftId)).toBe('FAILED');
-    });
-
-    it('requeues one job by id after confirmation: PENDING, fresh retry budget, nft back to PENDING, NFT_JOB_REQUEUED audit', async () => {
-      const { jobId, nftId } = await failedJob();
-      const other = await failedJob();
-      const res = await invoke(requeueNftJobs, [jobId.toUpperCase()], async () => true);
-      expect(res.code).toBe(0);
-      expect(res.prompts).toEqual(['Requeue 1 nft_job(s)?']);
-      expect(await jobRow(jobId)).toMatchObject({ status: 'PENDING', retry_count: 0, last_error: 'rpc timeout', processed_at: null, due: true });
-      expect(await nftStatus(nftId)).toBe('PENDING');
-      expect(await auditRows('nft_job', jobId)).toEqual([{
-        action: 'NFT_JOB_REQUEUED', actor_user_id: null, before_data: null, after_data: { source: 'scripts/requeue-nft-jobs.js' },
-      }]);
-      expect((await jobRow(other.jobId)).status).toBe('FAILED'); // untouched
-    });
-
-    it('puts an already-minted NFT (failed attach) back to MINTED so the attach branch can run again', async () => {
-      const { jobId, nftId } = await failedJob('ATTACH_CHILD', 'token-1');
-      expect((await invoke(requeueNftJobs, [jobId, '--yes'])).code).toBe(0);
-      expect(await nftStatus(nftId)).toBe('MINTED');
-    });
-
-    it('--all requeues every FAILED job and skips non-FAILED ids by name', async () => {
-      const a = await failedJob();
-      const b = await failedJob();
-      const res = await invoke(requeueNftJobs, ['--all', '--yes']);
-      expect(res.code).toBe(0);
-      expect((await jobRow(a.jobId)).status).toBe('PENDING');
-      expect((await jobRow(b.jobId)).status).toBe('PENDING');
-      expect((await pool.query(`SELECT 1 FROM nft_job WHERE status = 'FAILED'`)).rowCount).toBe(0);
-
-      const again = await invoke(requeueNftJobs, [a.jobId, '--yes']);
-      expect(again.code).toBe(1);
-      expect(again.out).toContain(`skip     ${a.jobId} - not found or not FAILED`);
-      expect((await invoke(requeueNftJobs, ['--all', '--yes'])).out).toContain('nothing to requeue');
-    });
-
-    it('a requeued job is picked up and finished by the real NftJobWorker (the reset retry budget is what lets it run)', async () => {
-      await pool.query(`UPDATE nft_job SET status = 'CANCELLED' WHERE status IN ('PENDING', 'PROCESSING')`);
-      const { jobId, nftId } = await failedJob();
-      expect((await invoke(requeueNftJobs, [jobId, '--yes'])).code).toBe(0);
-
-      const db = createDb({ DATABASE_URL: url });
-      try {
-        const chain = { isConfigured: () => true, contractAddress: () => 'inj1testcontract', tokenExists: jest.fn(async () => false), mint: jest.fn(async () => '0xabc') };
-        const alerts = { notify: jest.fn(async () => true) }; // 운영 알림 대역 (nft-worker.db-spec와 같은 방식)
-        const worker = new NftJobWorker(db, chain as unknown as InjectiveNftClient, testConfig({ DATABASE_URL: url }), alerts as unknown as AlertService);
-        await worker.poll();
-        expect(chain.mint).toHaveBeenCalledWith(nftId, expect.any(String), null);
-        expect(await jobRow(jobId)).toMatchObject({ status: 'SUCCEEDED', last_error: null });
-        expect(await nftStatus(nftId)).toBe('MINTED');
-      } finally {
-        await db.onApplicationShutdown();
-      }
-    });
-
-    it('rejects bad usage: no target, ids together with --all, non-UUID ids, unknown flags', async () => {
-      const { jobId } = await failedJob();
-      expect((await invoke(requeueNftJobs, [])).code).toBe(2);
-      expect((await invoke(requeueNftJobs, ['--all', jobId])).code).toBe(2);
-      expect((await invoke(requeueNftJobs, ['not-a-uuid'])).code).toBe(2);
-      expect((await invoke(requeueNftJobs, [jobId, '--force'])).code).toBe(2);
-      expect((await invoke(requeueNftJobs, [jobId])).code).toBe(1); // prompt answered "no"
-      expect((await jobRow(jobId)).status).toBe('FAILED');
     });
   });
 

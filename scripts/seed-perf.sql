@@ -1,7 +1,7 @@
 -- 로컬 성능/부하 점검용 시드 (운영 규모를 흉내 낸 가짜 데이터). 절대 운영 DB에 실행하지 않는다.
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/seed-perf.sql      (마이그레이션을 다 적용한 **빈** DB)
 -- 빈 DB가 아니면 중단한다("user" 행이 있으면 거부). 규모: 유저 5000, 멤버 50, 바운티 500, 지원 2만, 제출 1만, 보상 약 430, 지급 수천,
--- 공지 300, 하이라이트 100, 기수 3 + 지원서 3000, 감사 로그 20만, NFT 약 4천 + 잡. 결정적(random 대신 산술)이라 재현 가능하다.
+-- 공지 300, 하이라이트 100, 기수 3 + 지원서 3000, 감사 로그 20만. 결정적(random 대신 산술)이라 재현 가능하다.
 -- 사용법과 기준 수치: docs/runbook.md "성능 기준선".
 \set ON_ERROR_STOP on
 BEGIN;
@@ -24,12 +24,6 @@ CREATE UNIQUE INDEX ON pu (n);
 
 INSERT INTO user_tag (user_id, tag) SELECT id, (ARRAY['DEV','DESIGN','CONTENT','OTHER'])[1 + n % 4] FROM pu;
 INSERT INTO user_link (user_id, link_type, url, display_order) SELECT id, 'GITHUB', 'https://github.com/perf' || n, 0 FROM pu WHERE n % 2 = 0;
-
--- 지갑: 유저 1~4500
-INSERT INTO wallet (id, user_id, address, is_primary, verified_at)
-SELECT gen_random_uuid(), id, 'inj1' || substr(md5('w' || n), 1, 38), true, now() FROM pu WHERE n <= 4500;
-CREATE TEMP TABLE pw AS SELECT pu.n, w.id AS wallet_id, w.user_id FROM wallet w JOIN pu ON pu.id = w.user_id;
-CREATE UNIQUE INDEX ON pw (n);
 
 -- 바운티 500: 상태 7종 균등(DRAFT 포함), 2%는 소프트 삭제
 INSERT INTO bounty (id, created_by, sponsor_name, title, summary, description, requirements, evaluation_criteria, category, status,
@@ -87,13 +81,13 @@ INSERT INTO submission_review (submission_id, reviewer_id, decision, comment)
 SELECT id, (SELECT id FROM pu WHERE n = 2), CASE status WHEN 'APPROVED' THEN 'APPROVE' WHEN 'REJECTED' THEN 'REJECT' ELSE 'START_REVIEW' END, 'comment ' || k
 FROM ps WHERE status IN ('APPROVED','REJECTED','IN_REVIEW','REVISION_REQUESTED');
 
--- 지급: 승인 제출 중 지갑 있는 유저, 보상 있는 바운티
-INSERT INTO payout (id, bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by, approved_by, payout_tx_hash, requested_at, paid_at)
-SELECT gen_random_uuid(), pr.id, ps.id, pw.wallet_id, 100000000000000000::numeric, st.s, 'perf-payout-' || ps.k, (SELECT id FROM pu WHERE n = 2),
+-- 지급: 승인 제출, 보상 있는 바운티 (수령자는 0029 이후 방식인 recipient_address 스냅샷, 소문자 inj1 + bech32 문자 38자)
+INSERT INTO payout (id, bounty_reward_id, submission_id, recipient_address, amount, status, idempotency_key, requested_by, approved_by, payout_tx_hash, requested_at, paid_at)
+SELECT gen_random_uuid(), pr.id, ps.id, 'inj1' || substr(translate(md5('r' || ps.k) || md5('s' || ps.k), '1b', 'qp'), 1, 38), 100000000000000000::numeric, st.s, 'perf-payout-' || ps.k, (SELECT id FROM pu WHERE n = 2),
        CASE WHEN st.s IN ('APPROVED','BROADCASTING','PAID') THEN (SELECT id FROM pu WHERE n = 3) END,
        CASE WHEN st.s = 'PAID' THEN '0x' || md5('tx' || ps.k) || md5('tx2' || ps.k) END,
        now() - (ps.k % 60 || ' days')::interval, CASE WHEN st.s = 'PAID' THEN now() - (ps.k % 30 || ' days')::interval END
-FROM ps JOIN pr ON pr.bounty_id = ps.bounty_id JOIN pw ON pw.user_id = ps.user_id
+FROM ps JOIN pr ON pr.bounty_id = ps.bounty_id
 JOIN LATERAL (SELECT (ARRAY['REQUESTED','AWAITING_MULTISIG_APPROVAL','APPROVED','PAID','PAID','FAILED','CANCELLED'])[1 + (ps.k % 7)::int] AS s) st ON true
 WHERE ps.status = 'APPROVED';
 
@@ -126,22 +120,6 @@ SELECT (SELECT id FROM cohort WHERE name = CASE WHEN i <= 2000 THEN 'Perf cohort
        now() - (i % 180 || ' days')::interval
 FROM generate_series(1, 3000) i;
 
--- NFT: 부모 NFT 2500 + 완료 자식(승인 제출 중 지갑 보유 약 1500) , 잡은 NFT마다 최대 1개
-INSERT INTO nft (id, owner_user_id, owner_wallet_id, nft_type, contract_address, token_id, status, minted_at)
-SELECT gen_random_uuid(), pw.user_id, pw.wallet_id, 'NINJA_PARENT', 'inj1contract', 'p' || pw.n,
-       (ARRAY['PENDING','MINTING','MINTED','MINTED','FAILED','ATTACHED'])[1 + pw.n % 6], now()
-FROM pw WHERE pw.n <= 2500;
-INSERT INTO nft (id, owner_user_id, owner_wallet_id, parent_nft_id, bounty_id, submission_id, nft_type, contract_address, token_id, status)
-SELECT gen_random_uuid(), pw.user_id, pw.wallet_id, par.id, ps.bounty_id, ps.id, 'BOUNTY_COMPLETION_CHILD', 'inj1contract', 'c' || ps.k,
-       (ARRAY['PENDING','MINTED','ATTACHING','ATTACHED','FAILED'])[1 + ps.k % 5]
-FROM ps JOIN pw ON pw.user_id = ps.user_id JOIN nft par ON par.owner_user_id = ps.user_id AND par.nft_type = 'NINJA_PARENT'
-WHERE ps.status = 'APPROVED';
-INSERT INTO nft_job (nft_id, job_type, idempotency_key, status, retry_count, last_error, scheduled_at, processed_at)
-SELECT n.id, CASE n.nft_type WHEN 'NINJA_PARENT' THEN 'MINT_PARENT' ELSE 'ATTACH_CHILD' END, 'perf-job-' || n.id,
-       (ARRAY['PENDING','PROCESSING','SUCCEEDED','SUCCEEDED','FAILED','CANCELLED'])[1 + (abs(hashtext(n.id::text)) % 6)],
-       abs(hashtext(n.id::text)) % 4, CASE WHEN n.status = 'FAILED' THEN 'perf error' END, now() - (abs(hashtext(n.id::text)) % 40 || ' days')::interval, now()
-FROM nft n;
-
 -- 감사 로그 20만: 1년에 걸쳐 분포
 INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, before_data, after_data, created_at)
 SELECT (SELECT id FROM pu WHERE n = 1 + i % 3), a.action, a.etype, gen_random_uuid(),
@@ -157,4 +135,4 @@ COMMIT;
 ANALYZE;
 SELECT 'user' t, count(*) FROM "user" UNION ALL SELECT 'bounty', count(*) FROM bounty UNION ALL SELECT 'application', count(*) FROM bounty_application
 UNION ALL SELECT 'submission', count(*) FROM bounty_submission UNION ALL SELECT 'payout', count(*) FROM payout UNION ALL SELECT 'audit_log', count(*) FROM audit_log
-UNION ALL SELECT 'nft', count(*) FROM nft UNION ALL SELECT 'nft_job', count(*) FROM nft_job UNION ALL SELECT 'cohort_application', count(*) FROM cohort_application;
+UNION ALL SELECT 'cohort_application', count(*) FROM cohort_application;

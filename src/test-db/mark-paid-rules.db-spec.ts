@@ -82,19 +82,15 @@ describeDb('reward and payout rules on a real database', () => {
 
   const payoutRow = async (id: string) =>
     (await db.query<{ status: string; payout_tx_hash: string | null }>(`SELECT status, payout_tx_hash FROM payout WHERE id = $1`, [id])).rows[0];
-  const childJobs = async (submissionId: string) =>
-    (await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM nft_job WHERE idempotency_key = $1`, [`mint-child:${submissionId}`])).rows[0].n;
 
   describe('markPaid', () => {
-    it('stores the hash as lowercase 0x, audits PAYOUT_PAID in the same transaction and no longer queues a completion NFT (2026-11-10)', async () => {
-      const { payoutId, submissionId } = await readyPayout();
+    it('stores the hash as lowercase 0x, audits PAYOUT_PAID in the same transaction', async () => {
+      const { payoutId } = await readyPayout();
       const snapshot = (await db.query<{ recipient_address: string }>(`SELECT recipient_address FROM payout WHERE id = $1`, [payoutId])).rows[0].recipient_address;
       const hash = fakeTxHash();
       await expect(rewards.markPaid(payoutId, hash.slice(2), adminId))
         .resolves.toMatchObject({ status: 'PAID', payout_tx_hash: normalized(hash), recipient_address: snapshot });
       expect(await payoutRow(payoutId)).toEqual({ status: 'PAID', payout_tx_hash: normalized(hash) });
-      expect(await childJobs(submissionId)).toBe(0);
-      expect((await db.query(`SELECT 1 FROM nft WHERE submission_id = $1`, [submissionId])).rowCount).toBe(0);
       expect(await auditActions(db, 'payout', payoutId)).toEqual(['PAYOUT_REQUESTED', 'PAYOUT_APPROVED', 'PAYOUT_PAID']);
     });
 
@@ -105,13 +101,12 @@ describeDb('reward and payout rules on a real database', () => {
     });
 
     it.each(['REQUESTED', 'AWAITING_MULTISIG_APPROVAL', 'PAID', 'FAILED', 'CANCELLED'])(
-      'refuses to pay a payout in status %s: 404 PAYOUT_NOT_FOUND_OR_WRONG_STATUS, nothing written (no hash, no NFT job, no PAYOUT_PAID)',
+      'refuses to pay a payout in status %s: 404 PAYOUT_NOT_FOUND_OR_WRONG_STATUS, nothing written (no hash, no PAYOUT_PAID)',
       async (status) => {
-        const { payoutId, submissionId } = await readyPayout();
+        const { payoutId } = await readyPayout();
         await db.query(`UPDATE payout SET status = $2 WHERE id = $1`, [payoutId, status]);
         await expect(rewards.markPaid(payoutId, fakeTxHash(), adminId)).rejects.toMatchObject({ status: 404, message: 'PAYOUT_NOT_FOUND_OR_WRONG_STATUS' });
         expect(await payoutRow(payoutId)).toEqual({ status, payout_tx_hash: null });
-        expect(await childJobs(submissionId)).toBe(0);
         expect(await auditActions(db, 'payout', payoutId)).not.toContain('PAYOUT_PAID');
       },
     );
@@ -130,7 +125,6 @@ describeDb('reward and payout rules on a real database', () => {
       await rewards.markPaid(first.payoutId, hash, adminId);
       await expect(rewards.markPaid(second.payoutId, hash, adminId)).rejects.toMatchObject({ status: 409, message: 'TX_HASH_ALREADY_USED' });
       expect(await payoutRow(second.payoutId)).toEqual({ status: 'APPROVED', payout_tx_hash: null });
-      expect(await childJobs(second.submissionId)).toBe(0);
       expect(await auditActions(db, 'payout', second.payoutId)).not.toContain('PAYOUT_PAID');
     });
 
@@ -169,19 +163,17 @@ describeDb('reward and payout rules on a real database', () => {
     });
 
     it('a hash recorded as a reward deposit is 409 TX_HASH_ALREADY_USED (sponsor to multisig is never the winner payout)', async () => {
-      const { payoutId, submissionId } = await readyPayout();
+      const { payoutId } = await readyPayout();
       const deposit = (await openFunded());
       const depositHash = (await db.query<{ deposit_tx_hash: string }>(`SELECT deposit_tx_hash FROM bounty_reward WHERE id = $1`, [deposit.rewardId])).rows[0].deposit_tx_hash;
       await expect(rewards.markPaid(payoutId, depositHash.toUpperCase().replace('0X', '0x'), adminId)).rejects.toMatchObject({ status: 409, message: 'TX_HASH_ALREADY_USED' });
       expect(await payoutRow(payoutId)).toEqual({ status: 'APPROVED', payout_tx_hash: null });
-      expect(await childJobs(submissionId)).toBe(0);
     });
 
-    it('records the payment from the payout row alone: the submission is not read any more (no NFT step), so a hand-edited submission does not block recording a sent transfer', async () => {
+    it('records the payment from the payout row alone: the submission is not read any more, so a hand-edited submission does not block recording a sent transfer', async () => {
       const { payoutId, submissionId } = await readyPayout();
       await db.query(`UPDATE bounty_submission SET status = 'REJECTED' WHERE id = $1`, [submissionId]);
       await expect(rewards.markPaid(payoutId, fakeTxHash(), adminId)).resolves.toMatchObject({ status: 'PAID' });
-      expect(await childJobs(submissionId)).toBe(0);
       expect(await auditActions(db, 'payout', payoutId)).toContain('PAYOUT_PAID');
     });
 

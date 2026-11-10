@@ -4,7 +4,6 @@
 --   psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
 --     -v expected_custody=inj1...        # 새 mainnet 멀티시그 주소 (REWARD_MULTISIG_ADDRESS에 넣을 값)
 --     -v expected_usdc=0x...             # mainnet USDC ERC-20 (USDC_EVM_CONTRACT_ADDRESS에 넣을 값)
---     -v expected_nft_contract=inj1...   # mainnet CW-721 (NFT_CONTRACT_ADDRESS에 넣을 값)
 --   (-v는 모두 선택 - 비우면 그 값과의 비교만 건너뛴다)
 --
 -- 전체가 READ ONLY 트랜잭션 안에서 돌고 마지막에 ROLLBACK한다 - 아무것도 쓰지 않는다 (쓰기 문이 섞이면 Postgres가 거부).
@@ -20,10 +19,6 @@
 \if :{?expected_usdc}
 \else
 \set expected_usdc ''
-\endif
-\if :{?expected_nft_contract}
-\else
-\set expected_nft_contract ''
 \endif
 \pset footer on
 
@@ -59,52 +54,38 @@ SELECT 'payout_open' AS check, p.id AS payout_id, p.bounty_reward_id, p.status, 
  WHERE p.status NOT IN ('PAID', 'FAILED', 'CANCELLED')
  ORDER BY p.requested_at;
 
--- [blocker] 4. 대기/진행/실패 nft_job - 전환 뒤 워커가 mainnet 컨트랙트로 민팅한다. 의도한 것만 남기고 나머지는 운영자가 CANCELLED로 정리한다.
-SELECT 'nft_job_unfinished' AS check, j.status, j.job_type, count(*)::int AS jobs, min(j.created_at) AS oldest
-  FROM nft_job j
- WHERE j.status IN ('PENDING', 'PROCESSING', 'FAILED')
- GROUP BY j.status, j.job_type
- ORDER BY j.status, j.job_type;
-
--- [review] 5. testnet에서 입금이 확인된(돈이 걸린) 보상 - testnet 토큰이므로 mainnet에서 다시 입금받거나 환불/취소 처리할지 결정한다.
+-- [review] 4. testnet에서 입금이 확인된(돈이 걸린) 보상 - testnet 토큰이므로 mainnet에서 다시 입금받거나 환불/취소 처리할지 결정한다.
 SELECT 'reward_funded_on_testnet' AS check, r.id AS reward_id, r.bounty_id, r.status, r.display_symbol,
        r.amount::text, r.deposited_amount::text, r.deposit_tx_hash
   FROM bounty_reward r
  WHERE r.status IN ('FUNDED', 'PARTIALLY_PAID', 'REFUND_PENDING')
  ORDER BY r.deposited_at NULLS LAST;
 
--- [review] 6. 민팅된 NFT의 컨트랙트 분포 - testnet 컨트랙트에 남은 NFT는 mainnet에서 보이지 않는다. 재민팅 여부를 결정한다.
-SELECT 'nft_contracts' AS check, n.contract_address, n.status, count(*)::int AS nfts,
-       (:'expected_nft_contract' <> '' AND n.contract_address = :'expected_nft_contract') AS is_expected
-  FROM nft n
- GROUP BY n.contract_address, n.status
- ORDER BY n.contract_address, n.status;
-
--- [review] 7. 활성 운영자 - 전환 당일 연락 가능한 사람인지 확인한다 (scripts/grant-admin.js로 정리).
+-- [review] 5. 활성 운영자 - 전환 당일 연락 가능한 사람인지 확인한다 (scripts/grant-admin.js로 정리).
 SELECT 'active_admins' AS check, u.id, u.email, u.nickname, u.status
   FROM "user" u
  WHERE u.is_admin = true AND u.deleted_at IS NULL
  ORDER BY u.created_at;
 
--- [review] 8. 플랫폼 설정 테이블 값. 주의: 서버 코드는 platform_setting을 읽지 않는다 - onboarding.nft_mint_enabled 등은 시드된 표시용 값일 뿐
---   바꿔도 민팅이 멈추거나 켜지지 않는다. 체인에 닿는 실제 스위치는 env다: MASTER_WALLET_MNEMONIC / NFT_CONTRACT_ADDRESS를 비우면 워커가 잡을 1시간씩 미룬다 (runbook §7.6).
+-- [review] 6. 플랫폼 설정 테이블 값. 주의: 서버 코드는 platform_setting을 읽지 않는다 - onboarding.nft_mint_enabled 등은 시드된 표시용 값일 뿐
+--   바꿔도 동작이 달라지지 않는다 (NFT 기능 자체가 BE PR3에서 제거됐다).
 SELECT 'platform_settings' AS check, s.key, s.value::text, s.updated_at
   FROM platform_setting s
  ORDER BY s.key;
 
--- [review] 9. 마지막으로 적용된 마이그레이션 - 배포할 코드의 supabase/migrations 마지막 파일과 같아야 한다.
+-- [review] 7. 마지막으로 적용된 마이그레이션 - 배포할 코드의 supabase/migrations 마지막 파일과 같아야 한다.
 SELECT 'last_migration' AS check, m.name, m.applied_at
   FROM _migrations m
  ORDER BY m.name DESC
  LIMIT 1;
 
--- [review] 10. 0019 이전 닉네임 유일성은 lower(nickname)이었고 lower()는 DB lc_ctype을 따랐다 (C 로케일이면 `Café`/`CAFÉ`가 둘 다 가입됨).
+-- [review] 8. 0019 이전 닉네임 유일성은 lower(nickname)이었고 lower()는 DB lc_ctype을 따랐다 (C 로케일이면 `Café`/`CAFÉ`가 둘 다 가입됨).
 --   0019부터 인덱스와 앱 조회가 lower(nickname COLLATE "und-x-icu")라 로케일과 무관하다. ICU collation이 없으면 0019가 실패한다 (0행이면 사용 가능).
 SELECT 'nickname_icu_collation_missing' AS check
   FROM (SELECT 1) AS probe
  WHERE NOT EXISTS (SELECT 1 FROM pg_collation WHERE collname = 'und-x-icu');
 
--- [review] 11. 0019 적용 전: 활성 계정 사이에 새 접힘 식으로 충돌하는 닉네임 쌍. 행이 나오면 0019의 유니크 인덱스가 만들어지지 않는다 - 해당 유저에게 연락해 이름을 바꾸게 한 뒤 배포한다. 0행이면 정상.
+-- [review] 9. 0019 적용 전: 활성 계정 사이에 새 접힘 식으로 충돌하는 닉네임 쌍. 행이 나오면 0019의 유니크 인덱스가 만들어지지 않는다 - 해당 유저에게 연락해 이름을 바꾸게 한 뒤 배포한다. 0행이면 정상.
 SELECT 'nickname_fold_collision' AS check, lower(nickname COLLATE "und-x-icu") AS folded, count(*) AS accounts, array_agg(nickname ORDER BY nickname) AS nicknames
   FROM "user"
  WHERE deleted_at IS NULL

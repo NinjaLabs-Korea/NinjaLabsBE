@@ -2,7 +2,7 @@ import { createMockDb } from '../test-support/mock-db';
 import { HighlightsService, STATS_CACHE_TTL_MS } from './highlights.service';
 
 describe('HighlightsService stats', () => {
-  const row = { completed_bounties: '2', builders: '3', completion_nfts: '4', sponsors: '1' };
+  const row = { completed_bounties: '2', builders: '3', sponsors: '1' };
   const paidRows = [
     { symbol: 'INJ', token_type: 'NATIVE', amount: '300000000000000000000' },
     { symbol: 'USDC', token_type: 'ERC20', amount: '12500000000' },
@@ -11,7 +11,7 @@ describe('HighlightsService stats', () => {
     { symbol: 'INJ', tokenType: 'NATIVE', decimals: 18, amount: '300000000000000000000' },
     { symbol: 'USDC', tokenType: 'ERC20', decimals: 6, amount: '12500000000' },
   ];
-  const expected = { completedBounties: 2, builders: 3, completionNfts: 4, sponsors: 1, paidTotals };
+  const expected = { completedBounties: 2, builders: 3, completionNfts: 0, sponsors: 1, paidTotals };
 
   const isPaidQuery = (sql: string) => sql.includes('sum(p.amount)');
 
@@ -30,8 +30,9 @@ describe('HighlightsService stats', () => {
     const { countsSql, paidSql, service } = setup();
     await expect(service.stats()).resolves.toEqual(expected);
 
-    const subqueries = countsSql()[0].split(/\(SELECT count\(/).slice(1); // the four top-level counts (the builders EXISTS has its own nested SELECT)
-    expect(subqueries).toHaveLength(4);
+    const subqueries = countsSql()[0].split(/\(SELECT count\(/).slice(1); // the three top-level counts (the builders EXISTS has its own nested SELECT)
+    expect(subqueries).toHaveLength(3);
+    expect(countsSql()[0]).not.toMatch(/\bnft\b/); // completionNfts is a constant 0 shim, no nft query
     for (const subquery of subqueries) expect(subquery).toMatch(/deleted_at IS NULL/);
     expect(paidSql()[0]).toMatch(/b\.deleted_at IS NULL/);
   });

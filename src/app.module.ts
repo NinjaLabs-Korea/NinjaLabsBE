@@ -12,7 +12,6 @@ import { CohortsModule } from './cohorts/cohorts.module';
 import { HighlightsModule } from './highlights/highlights.module';
 import { BountiesModule } from './bounties/bounties.module';
 import { RewardsModule } from './rewards/rewards.module';
-import { NftsModule } from './nfts/nfts.module';
 import { AgentsModule } from './agents/agents.module';
 import { AuditModule } from './audit/audit.module';
 import { MediaModule } from './media/media.module';
@@ -24,7 +23,7 @@ import { IpThrottlerGuard } from './common/throttler/ip-throttler.guard';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    ScheduleModule.forRoot(), // nft_job / payout 워커 폴링용
+    ScheduleModule.forRoot(), // 정리 크론 / payout 워커 폴링용
     // 전역 rate limit: IP당 분당 120회 (가입 어뷰징·무차별 대입 1차 방어)
     // 민감 엔드포인트(auth, check-nickname)는 컨트롤러에서 @Throttle로 더 조일 것
     // 저장소: THROTTLER_STORAGE=postgres(production 기본)면 레플리카 간 공유 pg 테이블, memory면 인스턴스별 (common/throttler/throttler-options.ts)
@@ -40,7 +39,6 @@ import { IpThrottlerGuard } from './common/throttler/ip-throttler.guard';
     HighlightsModule,
     BountiesModule,
     RewardsModule,
-    NftsModule,
     AgentsModule,
     AuditModule,
     MediaModule,

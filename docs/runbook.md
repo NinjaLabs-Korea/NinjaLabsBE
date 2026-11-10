@@ -24,7 +24,7 @@
 
 1. **Supabase 프로젝트** 준비 - `Project Settings → Database`에서 접속 문자열(direct 5432 또는 Supavisor session 모드)과 CA 인증서(`SSL Configuration → Download certificate`)를 받는다. Pro 플랜 이상이면 백업 설정을 바로 확인한다(§5).
 2. **Railway 서비스 설정 반영** - `.railway/railway.ts`는 적혀 있을 뿐이다. `railway config plan` → `railway config apply`로 `preDeploy: npm run migrate`, healthcheck `/health`, 공개 env를 서비스에 적용한다. 적용 전 배포는 마이그레이션이 자동으로 돌지 않아 SchemaGuard가 `MIGRATIONS_PENDING`으로 크래시 루프를 만든다.
-   **주의 - IaC는 선언형이다**: `railway.ts`에 없는 변수를 대시보드에서만 넣으면, 이후 `railway config plan`이 그 변수를 **삭제 대상**으로 보여 줄 수 있다. 코드가 읽는 키는 전부 `railway.ts`에 값 또는 `preserve()`로 선언돼 있다 - 비밀/주소(`DATABASE_URL`, `DATABASE_CA_CERT`, `GOOGLE_CLIENT_SECRET`, `JWT_SECRET`, `MASTER_WALLET_MNEMONIC`, `OPS_ALERT_WEBHOOK_URL`, `TURNSTILE_SECRET_KEY`, `REWARD_MULTISIG_ADDRESS`, §8의 `INJECTIVE_GRPC_ENDPOINT`)와 선택 스위치(`AUTH_ALLOWED_REDIRECT_ORIGINS`(추가 FE 오리진, 비워 둔다), `PAYOUT_ALLOW_SELF_APPROVAL`, `LEGACY_ACCESS_TOKEN_CUTOFF`, `DB_CONNECTION_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`)는 `preserve()`. 의도적으로 빠진 키는 `PORT`·`RAILWAY_ENVIRONMENT_NAME`(Railway 주입), `PGSSLMODE`(로컬 전용)뿐이고 `src/deploy/railway-config.spec.ts`가 이 대응을 검사한다. 그래도 매번 plan 출력에서 변수 삭제 줄을 확인하고, 보이면 apply하지 말고 그 키를 `railway.ts`에 `preserve()`로 추가하는 PR을 먼저 머지한다. 변수 삭제를 허용하는 `--confirm-destructive`는 쓰지 않는다.
+   **주의 - IaC는 선언형이다**: `railway.ts`에 없는 변수를 대시보드에서만 넣으면, 이후 `railway config plan`이 그 변수를 **삭제 대상**으로 보여 줄 수 있다. 코드가 읽는 키는 전부 `railway.ts`에 값 또는 `preserve()`로 선언돼 있다 - 비밀/주소(`DATABASE_URL`, `DATABASE_CA_CERT`, `GOOGLE_CLIENT_SECRET`, `JWT_SECRET`, `OPS_ALERT_WEBHOOK_URL`, `TURNSTILE_SECRET_KEY`, `REWARD_MULTISIG_ADDRESS`)와 선택 스위치(`AUTH_ALLOWED_REDIRECT_ORIGINS`(추가 FE 오리진, 비워 둔다), `PAYOUT_ALLOW_SELF_APPROVAL`, `LEGACY_ACCESS_TOKEN_CUTOFF`, `DB_CONNECTION_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`)는 `preserve()`. 의도적으로 빠진 키는 `PORT`·`RAILWAY_ENVIRONMENT_NAME`(Railway 주입), `PGSSLMODE`(로컬 전용)뿐이고 `src/deploy/railway-config.spec.ts`가 이 대응을 검사한다. 그래도 매번 plan 출력에서 변수 삭제 줄을 확인하고, 보이면 apply하지 말고 그 키를 `railway.ts`에 `preserve()`로 추가하는 PR을 먼저 머지한다. 변수 삭제를 허용하는 `--confirm-destructive`는 쓰지 않는다.
 3. **비밀 env 입력** (Railway 대시보드 → Variables, 첫 컨테이너가 뜨기 **전에**):
 
    | env | 확인 | 빠지면 |
@@ -33,14 +33,13 @@
    | `DATABASE_CA_CERT` | Supabase CA PEM(`\n` 이스케이프 가능) | production에서 비어 있고 `PGSSLMODE`가 `disable`이 아니면 **기동 거부** (`FATAL: DATABASE_CA_CERT is empty in production`, TLS 서버 인증서를 검증하지 않게 되므로). `npm run migrate`(preDeploy)도 같은 검사로 실패해 새 컨테이너가 뜨기 전에 배포가 멈춘다(구 버전 유지). 이 변수를 지우지 않는다 |
    | `JWT_SECRET` | `openssl rand -base64 48` | 미설정/자리표시값 → 기동 거부. 32바이트 미만 → 기동 거부 (`FATAL: JWT_SECRET is only N bytes, below the required minimum of 32 bytes`: 값을 바꿀 때 32바이트 이상인지 확인) |
    | `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth 클라이언트 | 기동 거부 |
-   | `MASTER_WALLET_MNEMONIC` | 민팅 전용 지갑 (§7.6) | 민팅 잡이 1시간씩 미뤄짐(`not configured`) |
    | `REWARD_MULTISIG_ADDRESS` | 멀티시그 주소 (§9) | 기동은 한다. **새 보상의 `custody_address`가 `PENDING_MULTISIG_SETUP`** - 스폰서가 입금할 곳이 없다. 미설정·빈 값·모양 불일치(`inj1` bech32 체크섬 / EVM `0x`)면 기동 로그에 `REWARD_MULTISIG_ADDRESS … required in production` **`error`** - 4번에서 이 줄이 보이면 바로 넣고 재배포. `railway.ts`는 `preserve()` 자리만 잡으므로 값은 대시보드/CLI로 넣는다 |
    | `PAYOUT_ALLOW_SELF_APPROVAL` | 넣지 않는다(기본 false, 2인 승인) | 운영자 1인일 때만 `true` |
    | `LEGACY_ACCESS_TOKEN_CUTOFF` | 선택 | 미설정이면 프로세스 시작 시각 |
    | `OPS_ALERT_WEBHOOK_URL` | 운영 채널 Discord/Slack incoming webhook (https, `railway.ts` `preserve()`) | 알림이 `OpsAlert` warn 로그로만 남아 아무도 못 본다 (deployment.md env 표, security.md "운영 알림") |
    | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile 시크릿 (`railway.ts` `preserve()`) - **FE `NEXT_PUBLIC_TURNSTILE_SITE_KEY` 배포 뒤** 넣는다 | 로그인 봇 방지 생략 + production 기동 시 `warn`. 순서가 바뀌면 모든 로그인이 `#error=TURNSTILE_FAILED`로 돌아온다 |
 
-   공개 값(`NODE_ENV=production`, `TRUST_PROXY=1`, `THROTTLER_STORAGE=postgres`(레플리카 간 공유 rate limit - 0016), `CORS_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT`, `INJECTIVE_*`, `NFT_CONTRACT_ADDRESS`, `USDC_EVM_CONTRACT_ADDRESS`, `JWT_ACCESS_TTL=15m`, `JWT_REFRESH_TTL=14d`)은 `railway.ts`가 넣는다. 두 TTL은 형식(`<정수><단위>`)·범위(access 60초~60분, refresh 60초~90일)가 틀리면 **기동 거부**다 - 대시보드에서 단위 없는 `900` 같은 값으로 덮어쓰지 않는다. `CORS_ORIGINS`·`GOOGLE_CLIENT_ID`·`GOOGLE_CALLBACK_URL`·`AUTH_SUCCESS_REDIRECT`는 production에서 **비어 있으면 기동 거부**(예전엔 localhost로 조용히 폴백), `GOOGLE_CALLBACK_URL`·`AUTH_SUCCESS_REDIRECT`가 localhost/`127.x`이거나 `https://` URL이 아니어도(평문 `http://` 포함) 기동 거부, `CORS_ORIGINS`의 localhost 항목은 빠지고 `error` 로그 - **2번(`railway config apply`)을 이 배포보다 먼저** 해야 하는 이유가 하나 더 생겼다. 수동 배포라면 `NODE_ENV=production`이 빠지지 않았는지 본다 - 빠지면 기동 검사가 전부 꺼진다.
+   공개 값(`NODE_ENV=production`, `TRUST_PROXY=1`, `THROTTLER_STORAGE=postgres`(레플리카 간 공유 rate limit - 0016), `CORS_ORIGINS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CALLBACK_URL`, `AUTH_SUCCESS_REDIRECT`, `INJECTIVE_EVM_CHAIN_ID`, `USDC_EVM_CONTRACT_ADDRESS`, `JWT_ACCESS_TTL=15m`, `JWT_REFRESH_TTL=14d`)은 `railway.ts`가 넣는다. 두 TTL은 형식(`<정수><단위>`)·범위(access 60초~60분, refresh 60초~90일)가 틀리면 **기동 거부**다 - 대시보드에서 단위 없는 `900` 같은 값으로 덮어쓰지 않는다. `CORS_ORIGINS`·`GOOGLE_CLIENT_ID`·`GOOGLE_CALLBACK_URL`·`AUTH_SUCCESS_REDIRECT`는 production에서 **비어 있으면 기동 거부**(예전엔 localhost로 조용히 폴백), `GOOGLE_CALLBACK_URL`·`AUTH_SUCCESS_REDIRECT`가 localhost/`127.x`이거나 `https://` URL이 아니어도(평문 `http://` 포함) 기동 거부, `CORS_ORIGINS`의 localhost 항목은 빠지고 `error` 로그 - **2번(`railway config apply`)을 이 배포보다 먼저** 해야 하는 이유가 하나 더 생겼다. 수동 배포라면 `NODE_ENV=production`이 빠지지 않았는지 본다 - 빠지면 기동 검사가 전부 꺼진다.
 4. **BE 배포**: `main` 머지 → Railway가 `npm run migrate` 후 새 컨테이너 기동. 로그에서 `apply 00xx_…`/`skip`, 그리고 `warn`/`error` 줄(특히 `TRUST_PROXY`, `REWARD_MULTISIG_ADDRESS`, `CORS_ORIGINS … IGNORED`; `DATABASE_CA_CERT`와 `JWT_SECRET`은 문제가 있으면 로그가 아니라 배포 실패/기동 거부 `FATAL`로 나타난다)을 확인한다. `curl -fsS https://<BE>/health` → `{"status":"ok","db":"up"}`.
 5. **Google OAuth** - 승인된 리디렉션 URI가 `GOOGLE_CALLBACK_URL`과 정확히 같은지, 동의 화면이 "In production"인지(§4).
 6. **FE 배포** - FE `develop` 머지(preview 확인) → 릴리스 PR `develop → main`(Vercel prod). FE `.env.production`의 `NINJA_API_BASE_URL`이 BE 주소, chain ID와 RPC URL이 같은 네트워크인지.
@@ -51,14 +50,12 @@
 
 재배포 때 Railway는 새 컨테이너가 healthy가 된 뒤 옛 컨테이너에 SIGTERM을 보내고, `drainingSeconds`(30초, `.railway/railway.ts`)가 지나면 SIGKILL한다. 옛 컨테이너는 그 사이에 다음 순서로 닫힌다 (`app.enableShutdownHooks()`, Nest `close()`):
 
-1. `beforeApplicationShutdown` - 크론 정지. `NftJobWorker`·`MaintenanceService`·`PayoutWorker`는 새 실행을 건너뛰고 진행 중인 실행을 **최대 20초** 기다린다(`common/lifecycle/single-flight-task.ts`). NFT 워커는 진행 중인 잡 하나만 끝내고 배치의 나머지를 `PENDING`으로 돌려놓는다 - 로그 `shutdown: released N unstarted nft_job(s) back to PENDING`. 이 동안 HTTP는 계속 응답한다.
+1. `beforeApplicationShutdown` - 크론 정지. `MaintenanceService`·`PayoutWorker`는 새 실행을 건너뛰고 진행 중인 실행을 **최대 20초** 기다린다(`common/lifecycle/single-flight-task.ts`). 이 동안 HTTP는 계속 응답한다.
 2. HTTP 서버 종료 - 새 연결을 받지 않고 진행 중인 요청은 끝까지 처리한다.
 3. `onApplicationShutdown` - DB 풀 종료(`DatabaseService`). 풀은 항상 마지막이다.
 
 확인할 것:
 - 로그에 `Cannot use a pool after calling end on the pool`이 보이면 종료 순서가 깨진 것이다(풀을 먼저 닫는 훅이 생겼는지 본다 - `database.service.spec.ts`가 막는다).
-- `shutdown: nft_job batch still running after 20s` warn은 체인 호출이 20초 넘게 걸린 경우다. 그 잡은 `PROCESSING`에 남았다가 15분 뒤 고아 재큐잉되고 `nft-job-stale-requeue` 알림이 한 번 울린다 - 배포 시각과 겹치면 조치 불필요(§7.3).
-- 잡 하나의 `execute()`는 3분 기한이 있다. 넘기면 `nft_job execution timed out after 180s (chain call hung?)`로 일반 실패(10분 뒤 재시도) 처리되고, 늦게 착지한 mint는 다음 시도의 `tokenExists`가 복구한다. 반복되면 gRPC 노드를 의심한다(§7.3 "RPC/gRPC 타임아웃").
 - `drainingSeconds`를 줄일 때는 20초 드레인 + HTTP 드레인보다 크게 둔다(`src/deploy/railway-config.spec.ts`가 25초 이상을 강제한다).
 
 ## 2. 운영 스크립트
@@ -69,7 +66,6 @@
 | 스크립트 | 용도 | 쓰는 것 |
 |---|---|---|
 | `node scripts/grant-admin.js grant\|revoke <email> [--dry-run] [--yes] [--force]` | `is_admin` 부여/회수 | `"user".is_admin` + `audit_log`(`ADMIN_GRANTED`/`ADMIN_REVOKED`, actor NULL, before/after `{is_admin}`) 한 트랜잭션 |
-| `node scripts/requeue-nft-jobs.js <job-id>... \| --all [--dry-run] [--yes]` | FAILED `nft_job` 수동 재시도 | 잡 → PENDING(`retry_count` 0, 즉시), nft FAILED → `MINTED`(token_id 있음)/`PENDING`, `audit_log` `NFT_JOB_REQUEUED` |
 | `node scripts/record-refund.js <reward-id> --tx <hash> [--dry-run] [--yes]` | 취소된 바운티의 환불 송금 기록 - 입금액 − PAID 잔액, `PAID` 보상 포함 (§7.7) | 보상 → `REFUNDED`, `audit_log` `REWARD_REFUNDED`(actor NULL, `{txHash, refundedAmount}`) 한 트랜잭션 |
 | `node scripts/forfeit-award.js <submission-id> --reason <text> --admin <admin-user-id> [--dry-run] [--yes]` | 지급할 수 없는 승인 수상의 보상 미지급 처리 (§7.4) | 제출 `APPROVED` → `REJECTED`, `submission_review`(REJECT, `forfeited: <사유>`), `audit_log` `SUBMISSION_AWARD_FORFEITED`(actor = `--admin`, before/after + 사유) 한 트랜잭션 |
 | `psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql [-v …]` | 메인넷 전환 전 점검 | 없음 - READ ONLY 트랜잭션 + ROLLBACK |
@@ -166,12 +162,12 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
    psql "$RESTORE_URL" -c "SELECT name FROM _migrations ORDER BY name DESC LIMIT 1"   # = supabase/migrations 마지막 파일
    DATABASE_URL=$RESTORE_URL PGSSLMODE=disable npm run migrate                    # 전부 skip이어야 한다
    psql "$RESTORE_URL" -c "SELECT (SELECT count(*) FROM \"user\") users, (SELECT count(*) FROM bounty) bounties,
-     (SELECT count(*) FROM payout) payouts, (SELECT count(*) FROM nft) nfts, (SELECT max(created_at) FROM audit_log) last_audit"
+     (SELECT count(*) FROM payout) payouts, (SELECT max(created_at) FROM audit_log) last_audit"
    ```
    건수를 운영 DB(같은 쿼리, 읽기 전용)와 비교한다 - 덤프 시각 이후 차이만 있어야 한다.
-4. 앱 스모크 - 복구본 위에 BE를 로컬로 띄운다(`NODE_ENV=development`, `JWT_SECRET`은 임의 값, `MASTER_WALLET_MNEMONIC`은 **비운다** - 복구본에서 민팅 워커가 체인에 쓰지 않게):
+4. 앱 스모크 - 복구본 위에 BE를 로컬로 띄운다(`NODE_ENV=development`, `JWT_SECRET`은 임의 값):
    ```bash
-   DATABASE_URL=$RESTORE_URL PGSSLMODE=disable MASTER_WALLET_MNEMONIC= npm run start:dev
+   DATABASE_URL=$RESTORE_URL PGSSLMODE=disable npm run start:dev
    curl -fsS localhost:4000/health          # {"status":"ok","db":"up"} - SchemaGuard 통과 = 스키마 완전
    curl -fsS 'localhost:4000/bounties' | head -c 300
    curl -fsS 'localhost:4000/notices' | head -c 300
@@ -179,13 +175,9 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
    ```
 5. 걸린 시간(다운로드 → 앱 응답)을 RTO로 기록하고 위 표를 갱신한다. 스크래치 DB를 지운다(`dropdb ninjalabs_restore`) - 개인정보 사본을 남기지 않는다.
 
-실제 복구(운영): Supabase 대시보드 복원(같은 프로젝트를 덮어씀) 또는 새 프로젝트에 `pg_restore` 후 Railway `DATABASE_URL`/`DATABASE_CA_CERT` 교체 → 재배포. 복원 시점 이후의 온체인 사실(입금·지급 tx, 민팅)은 DB에 없으므로 §7.4의 대조 절차로 다시 맞춘다.
+실제 복구(운영): Supabase 대시보드 복원(같은 프로젝트를 덮어씀) 또는 새 프로젝트에 `pg_restore` 후 Railway `DATABASE_URL`/`DATABASE_CA_CERT` 교체 → 재배포. 복원 시점 이후의 온체인 사실(입금·지급 tx)은 DB에 없으므로 §7.4의 대조 절차로 다시 맞춘다.
 
-**복원 전에** `NFT_MINTING_ENABLED=false`로 두고 모든 API/worker를 중지·드레인한다.
-구버전은 플래그를 모르므로 실제 종료를 확인한다. 이미 전송된 tx는 취소되지 않는다. 복원 후 체인 대조가 끝나기 전 켜지 않는다.
-0027 이후 새 NFT는 같은 user/submission UUID로 다시 만들면 같은 NFT UUID를 사용하지만,
-기존 랜덤 NFT ID와 복원 범위 밖의 user/submission에는 적용되지 않는다. 기존 ID를 바꾸지 말고 발급 이력과 대조해 복원한다.
-환경값이 true로 남은 복원을 자동 감지하지 않는다.
+**복원 전에** 모든 API/worker를 중지·드레인한다. 구버전이 남아 있으면 payout 워커가 복원 전 DB를 보고 알림을 보낼 수 있으니 실제 종료를 확인한다. 이미 전송된 tx는 취소되지 않는다. 복원 후 체인 대조(§7.4)가 끝나기 전에는 운영자 지급 처리를 하지 않는다.
 
 ## 6. 업타임 모니터 (GET /health)
 
@@ -197,7 +189,7 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 - URL `https://<BE>/health`, 메서드 GET, 간격 1분, 타임아웃 10초.
 - 성공 조건: 상태 코드 200 **그리고** 본문에 `"db":"up"` 포함(키워드 모니터). 503은 "DB 다운", 연결 실패/5xx(503 외)는 "앱 다운"으로 구분해 알림 제목에 남긴다.
 - 연속 2회 실패 시 알림(운영 채널 + 당번 이메일). 복구 알림도 켠다.
-- 앱 내부 알림은 별도: `OPS_ALERT_WEBHOOK_URL`이 있으면 payout 48시간 미승인, nft_job FAILED, 고아 PROCESSING 재큐잉, 5분 안에 5xx 20건 초과, 기동 실패, preDeploy 마이그레이션 실패를 같은 채널로 보낸다(같은 알림 30분 쿨다운 - 전달 성공 뒤부터, 실패는 2초 뒤 1회 재시도. 인스턴스별 - security.md "운영 알림").
+- 앱 내부 알림은 별도: `OPS_ALERT_WEBHOOK_URL`이 있으면 payout 48시간 미승인, 5분 안에 5xx 20건 초과, 기동 실패, preDeploy 마이그레이션 실패를 같은 채널로 보낸다(같은 알림 30분 쿨다운 - 전달 성공 뒤부터, 실패는 2초 뒤 1회 재시도. 인스턴스별 - security.md "운영 알림").
 - FE도 하나: `https://<FE>/` 200.
 - 참고: DB 장애 중에는 Railway healthcheck도 503이라 **새 배포가 healthy가 되지 않는다** - 장애 중 재배포로 고치려 하지 말 것(§7.1).
 
@@ -209,7 +201,7 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 1. Supabase status 페이지와 `Dashboard → Reports/Logs`로 원인 분류: 플랫폼 장애 / 프로젝트 일시정지(무료 플랜 비활성) / 접속 수 초과 / 디스크 가득 / 인증서·비밀번호 변경.
 2. Railway 로그에서 `timeout exceeded when trying to connect`(풀 고갈 - 느린 쿼리/커넥션 누수, API는 `503 DATABASE_UNAVAILABLE`), `Connection terminated unexpectedly`·`ECONNREFUSED`/`ETIMEDOUT`/`ENETUNREACH`/`EHOSTUNREACH`(듀얼스택이면 메시지가 빈 `AggregateError`로 오고 로그에는 하위 오류가 `a; b`로 찍힌다)·SQLSTATE `57P01`/`57P03`/`53300`(DB 재시작·기동 중·연결 수 초과 - 이것도 API는 `503 DATABASE_UNAVAILABLE`), `Connection terminated due to connection timeout`(DB 무응답 - 연결 수립 `DB_CONNECTION_TIMEOUT_MS` 초과), `canceling statement due to statement timeout`(`DB_STATEMENT_TIMEOUT_MS` 초과 쿼리 - 500), `self-signed certificate`(→ `DATABASE_CA_CERT` 불일치), `password authentication failed`(→ `DATABASE_URL` 회전) 중 무엇인지 본다.
 3. 원인별: 플랫폼 장애는 대기(재배포 금지 - healthcheck가 실패해 롤아웃이 멈춘다). 접속 수 초과는 Supavisor session 모드 URL로 교체 또는 인스턴스 수 축소. 자격 증명/인증서 문제는 Railway 변수 수정 → 재배포.
-4. 복구 후: `/health` 200, `nft_job`의 PROCESSING 잡은 워커가 15분 뒤 스스로 PENDING으로 되돌린다(조치 불필요). 장애 중 실패한 사용자 요청은 재시도 안내.
+4. 복구 후: `/health` 200. 장애 중 실패한 사용자 요청은 재시도 안내.
 
 ### 7.2 Google 장애 → `GOOGLE_UNAVAILABLE`
 - 증상: 사용자는 Google 동의 뒤 FE `/auth/callback#error=AUTH_FAILED`로 돌아온다 - 콜백(`GET /auth/google/callback`)은 모든 실패를 같은 리다이렉트로 감추므로(api-contract.md) **HTTP 503/401은 브라우저나 업타임 모니터에 보이지 않는다**. 원인은 Railway 로그로만 구분한다:
@@ -223,35 +215,9 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 - 조치: Google Cloud status 확인 → 대기. 우리 쪽에서 우회하지 않는다(서명 검증을 끄지 않는다). 공지 채널에 "로그인 일시 장애, 기존 세션은 정상" 안내.
 - 위 error 로그(`rejected the server request`)가 보이면: `GOOGLE_CLIENT_SECRET` 회전/만료, 리디렉션 URI 불일치(§4)를 고친다.
 
-### 7.3 NFT 민팅 정체
+### 7.3 (삭제됨) NFT 민팅 정체
 
-워커는 `0020_nft_job_claim_token.sql` 적용 후 실행별 `claim_token`으로 잡 소유권을 확인한다.
-재선점·타임아웃 후 이전 실행의 DB 기록은 거부되며, NFT 상태 쓰기도 잡 행 잠금 안에서 검증한다.
-이 버전으로 전환할 때는 기존 워커를 종료·드레인한 뒤 새 워커를 시작한다. 구 버전 워커는 토큰 검사를 하지 않는다.
-이미 전송된 온체인 트랜잭션은 취소할 수 없으며, 다음 실행의 `tokenExists` 조회로 DB 상태를 복구한다.
-
-1. 상태 보기:
-   ```sql
-   SELECT status, job_type, count(*), min(scheduled_at), max(retry_count) FROM nft_job GROUP BY 1, 2 ORDER BY 1, 2;
-   SELECT id, job_type, retry_count, last_error, scheduled_at FROM nft_job
-    WHERE status IN ('PENDING', 'FAILED') ORDER BY scheduled_at LIMIT 20;
-   ```
-2. `last_error`로 분류:
-   - 먼저 `NFT_MINTING_ENABLED`를 확인한다. 미설정/빈 값/`true`면 기존 자동 발급 유지.
-     명시적 `false`와 그 밖의 비어 있지 않은 잘못된 값은 워커를 선점/고아 정리 없이 중지하고 retry_count도 늘리지 않는다.
-   - `NFT_CONTRACT_ADDRESS / MASTER_WALLET_MNEMONIC not configured` → env 누락. 워커 활성 상태에서는 잡을 실패시키지 않고 1시간씩 미룬다. 설정·체인 대조 후 활성화한다.
-   - `parent NFT not minted yet - attach deferred` → 정상 대기(부모 민팅이 끝나면 자동으로 당겨진다). 부모 잡을 본다.
-   - 가스 부족(`insufficient funds`) → 마스터 지갑 주소에 INJ 충전.
-   - RPC/gRPC 타임아웃 → `INJECTIVE_GRPC_ENDPOINT`를 다른 노드로 바꾸고 재배포.
-   - 컨트랙트 거부(권한/중복 token_id) → 마스터 지갑이 컨트랙트 minter인지 확인. 중복은 워커가 `tokenExists`로 자동 복구한다.
-   - 15분 넘게 PROCESSING → 워커가 스스로 되돌린다. 배포 직후 한 번이면 종료 드레인 20초를 넘긴 잡이다(§1 "배포 중 종료 순서"). 계속 반복되면 인스턴스 크래시를 의심(Railway 로그).
-   - `nft_job execution timed out after 180s` → 체인 호출이 멈췄다. 일반 실패로 재시도되며, 반복되면 RPC/gRPC 타임아웃과 같이 노드를 바꾼다.
-3. 원인을 고친 **뒤** FAILED 잡을 재시도(고치기 전에 돌리면 같은 이유로 5회 더 실패). 한두 건이면 운영 콘솔 FE `/admin/nft-jobs`의 재시도(`POST /admin/nft-jobs/:id/retry`, 감사 `NFT_JOB_RETRIED`)로 충분하다. 여러 건/콘솔 접근 불가 시 스크립트:
-   ```bash
-   railway run node scripts/requeue-nft-jobs.js --all --dry-run
-   railway run node scripts/requeue-nft-jobs.js --all            # 또는 <job-id> ...
-   ```
-4. 다음 1분 폴링 뒤 1번 쿼리로 SUCCEEDED 전환을 확인한다.
+NFT 모듈(민팅 워커, 잡 콘솔, `scripts/requeue-nft-jobs.js`)은 2026-11-11 구글 로그인 전용 전환(BE PR3)에서 제거됐다. 번호는 다른 문서가 §7.4~§7.7을 가리키므로 그대로 둔다. `nft`, `nft_job` 테이블과 행은 이력으로 남아 있고 아무 코드도 읽거나 쓰지 않는다. 과거 `audit_log`의 `NFT_JOB_RETRIED`, `NFT_JOB_REQUEUED`는 감사 화면에 라벨만 남는다.
 
 ### 7.4 지급(payout) 분쟁 - "보상을 못 받았다 / 금액이 틀리다"
 1. 사실 수집 (읽기만):
@@ -344,8 +310,6 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
   운영자가 먼저 `node scripts/check-agent-identities.js`(읽기 전용)를 실행하고 충돌이 있으면 반영을 멈춘다.
 - `0028_agent_identity_reservations.sql`은 검증된 소유자 예약을 보존하고 구버전의 별칭 등록/활성화도 DB에서 거부한다.
   `AGENT_CANONICAL_RESERVATION_CONFLICT`면 자동 정리하지 말고 소유 증명·이력을 확인한다. 예약/트리거를 삭제해 우회하지 않는다.
-- 이미 연결 완료된 NFT는 민팅 잡의 마지막 기록 실패로 FAILED가 되지 않는다. 기존 FAILED 중 `attached_at`이 있는 행을
-  재시도하면 ATTACHED로 복구하고 재민팅하지 않는다. token_id만 있으면 기존처럼 MINTED로 복구한다.
 
 ### 7.5 `JWT_SECRET` 유출
 `JWT_SECRET`은 access 토큰·OAuth state 서명과 refresh 유예 사본 암호화(HKDF) 키다. 유출되면 누구나 임의 사용자 id로 access 토큰을 위조할 수 있다(어드민 라우트는 AdminGuard가 DB `is_admin`을 다시 보므로, 실제 어드민의 user id를 아는 경우에만 통과).
@@ -364,16 +328,9 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
    ```
 5. 사후: 유출 기간의 `audit_log`(특히 어드민 액션)와 `auth_session` 생성 IP를 검토한다. 유출 경로(로그, 공유 화면, `.env` 커밋)를 막는다.
 
-### 7.6 마스터 지갑 니모닉(`MASTER_WALLET_MNEMONIC`) 유출
-마스터 지갑은 **NFT 민팅 전용**이다. 보상금은 멀티시그(§9)에 있으므로 이 지갑으로 움직일 수 없어야 한다 - 마스터 지갑 주소가 멀티시그 서명자가 아님을 §9 표로 확인한다.
-1. **민팅 중지**: `NFT_MINTING_ENABLED=false` 및 `MASTER_WALLET_MNEMONIC`을 비우고 재배포한다. 모든 구버전 워커도 실제 종료·드레인한다.
-   새 워커는 잡을 선점/실행하지 않는다. 이미 전송된 tx는 취소되지 않으므로 확인해야 한다.
-2. **자금 이동**: 유출된 주소의 남은 INJ(가스)를 새 지갑으로 옮긴다(공격자보다 먼저).
-3. **새 지갑 생성**: 오프라인에서 새 니모닉 생성, 하드웨어/비밀 저장소에 보관(env는 Railway에만). 새 주소에 가스 INJ 충전.
-4. **컨트랙트 권한 이전**: CW-721 컨트랙트의 minter(소유권)를 새 주소로 넘긴다 - cw721-base 계열은 `update_ownership { transfer_ownership: { new_owner } }` 실행 후 새 지갑으로 `accept_ownership`(컨트랙트 버전에 맞는 메시지를 확인). 유출된 키로 먼저 실행해야 하므로 2번과 같이 서두른다. 권한을 이미 빼앗겼으면 새 컨트랙트 배포 + `NFT_CONTRACT_ADDRESS` 교체(§8의 NFT 항목과 같은 결정이 필요).
-5. **무단 민팅 확인**: 유출 시점 이후 마스터 주소의 tx를 익스플로러에서 보고, 컨트랙트의 토큰 중 `nft.id`(token_id = nft UUID)와 맞지 않는 것을 목록화한다.
-6. 새 니모닉·체인 이력 대조 후 `NFT_MINTING_ENABLED=true`로 재배포 → 미뤄진 잡이 돈다. FAILED가 있으면 §7.3의 재시도.
-7. 운영 전 과제: 니모닉을 env 대신 KMS/Vault로(security.md "운영 전").
+### 7.6 (삭제됨) 마스터 지갑 니모닉 유출
+
+마스터 지갑은 NFT 민팅 전용이었고 NFT 모듈 제거(2026-11-11, BE PR3)로 코드가 이 키를 더 읽지 않는다. 보상금은 멀티시그(§9)에 있어 이 키로 움직일 수 없다. 대시보드에 `MASTER_WALLET_MNEMONIC`, `NFT_MINTING_ENABLED`, `NFT_CONTRACT_ADDRESS`, `INJECTIVE_NETWORK`, `INJECTIVE_GRPC_ENDPOINT`가 아직 남아 있으면 지운다(`.railway/railway.ts`의 해당 줄은 지우지 않는다: 먼저 대시보드 값을 지워야 `railway config apply`가 값을 삭제 대상으로 보지 않는다. 줄 제거는 정리 PR5). 이미 유출됐던 니모닉이면 남은 INJ를 옮기고 버린다.
 
 ### 7.7 환불 기록 - 취소된 바운티의 입금을 스폰서에게 돌려준 뒤
 `CANCELLED` 바운티의 보상에 돈이 남아 있으면(입금액 − `PAID` payout 합계 > 0 - 보상 상태가 `FUNDED`/`PARTIALLY_PAID`/`PAID`/`REFUND_PENDING` 어느 것이든) 바운티 삭제가 409 `BOUNTY_HAS_OPEN_FUNDS`로 막힌다. 삭제 가드는 배정 상한이 아니라 **입금액 전체**와 비교하므로(2026-10-25), 초과 입금분(입금 150 / 게시 100이면 50)과 max_winners를 채워 보상이 `PAID`로 닫혔지만 상한보다 적게 지급된 잔액도 여기서 환불·기록해야 삭제할 수 있다. API에는 환불 기록 엔드포인트가 없으므로 이 스크립트가 유일한 경로다 - 손으로 쓴 SQL을 운영 DB에 직접 실행하지 않는다 (감사 행이 남지 않는다).
@@ -391,30 +348,25 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 ## 8. testnet → mainnet 전환
 
-전환은 **한 번의 점검 창**에서 BE·FE를 같이 바꾼다. 테스트넷 데이터는 그대로 남으므로(돈·NFT가 테스트넷 것) 먼저 정리한다.
+전환은 **한 번의 점검 창**에서 BE·FE를 같이 바꾼다. 테스트넷 데이터는 그대로 남으므로(돈이 테스트넷 것) 먼저 정리한다.
 
 ### 8.1 사전 점검 (읽기 전용)
 ```bash
 railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
   -v expected_custody=<mainnet 멀티시그 inj1…> \
-  -v expected_usdc=<mainnet USDC ERC-20 0x…> \
-  -v expected_nft_contract=<mainnet CW-721 inj1…>'
+  -v expected_usdc=<mainnet USDC ERC-20 0x…>'
 ```
-- **blocker**(0행이어야 진행): `custody_placeholder`(열린 보상의 custody가 `PENDING_MULTISIG_SETUP`/잘못된 모양/새 멀티시그와 다름), `erc20_testnet_chain`(열린 ERC-20 보상이 1439 또는 다른 USDC), `payout_open`(끝나지 않은 payout), `nft_job_unfinished`(대기·진행·실패 잡 - 전환 후 메인넷에 민팅된다).
-- **review**: `reward_funded_on_testnet`(테스트넷 입금 - 메인넷 재입금 또는 환불/취소 결정), `nft_contracts`(테스트넷 컨트랙트의 NFT - 재민팅 여부), `nickname_case_folding`(행이 나오면 DB `lc_ctype`이 비-ASCII 대문자를 못 접어 `Café`/`CAFÉ` 닉네임이 둘 다 가입된다 - UTF-8 로케일 DB인지 확인), `active_admins`, `platform_settings`(표시용 - 서버 코드가 이 테이블을 읽지 않으므로 민팅 스위치가 아니다. `NFT_MINTING_ENABLED=false`와 모든 구버전 워커 드레인으로 중지, §7.6), `last_migration`.
-- blocker 정리는 운영자 화면(바운티 취소, payout 완료 기록)으로 하고, 화면이 없는 것(잡 취소, 테스트 보상 정리)은 두 운영자 합의 하에 SQL + 감사 행으로 한다(§7.4의 형식).
+- **blocker**(0행이어야 진행): `custody_placeholder`(열린 보상의 custody가 `PENDING_MULTISIG_SETUP`/잘못된 모양/새 멀티시그와 다름), `erc20_testnet_chain`(열린 ERC-20 보상이 1439 또는 다른 USDC), `payout_open`(끝나지 않은 payout).
+- **review**: `reward_funded_on_testnet`(테스트넷 입금 - 메인넷 재입금 또는 환불/취소 결정), `nickname_case_folding`(행이 나오면 DB `lc_ctype`이 비-ASCII 대문자를 못 접어 `Café`/`CAFÉ` 닉네임이 둘 다 가입된다 - UTF-8 로케일 DB인지 확인), `active_admins`, `platform_settings`(표시용 - 서버 코드가 이 테이블을 읽지 않으므로 값을 바꿔도 동작은 달라지지 않는다), `last_migration`.
+- blocker 정리는 운영자 화면(바운티 취소, payout 완료 기록)으로 하고, 화면이 없는 것(테스트 보상 정리)은 두 운영자 합의 하에 SQL + 감사 행으로 한다(§7.4의 형식).
 
 ### 8.2 env 변경
 
 | 위치 | 키 | testnet (현재) | mainnet |
 |---|---|---|---|
-| BE `.railway/railway.ts` | `INJECTIVE_NETWORK` | `testnet` | `mainnet` (대소문자·공백 무시; `mainnet`/`testnet` 밖의 값은 testnet으로 읽지 않고 민팅 잡이 `INJECTIVE_NETWORK must be …`로 실패 → `@injectivelabs/networks` Mainnet 프리셋, `injective-nft.client.ts`) |
 | BE `.railway/railway.ts` | `INJECTIVE_EVM_CHAIN_ID` | `1439` | `1776` |
 | BE `.railway/railway.ts` | `USDC_EVM_CONTRACT_ADDRESS` | `0x0C382e685bbeeFE5d3d9C29e29E341fEE8E84C5d` | 메인넷 USDC ERC-20 주소 (Injective 공식 문서에서 확인 - 추측 금지) |
-| BE `.railway/railway.ts` | `NFT_CONTRACT_ADDRESS` | `inj17lcltxazkcntvv8r8dmxjjyeaxctgtz2dyu88w` | 메인넷에 배포한 CW-721 주소 |
 | BE Railway 변수 | `REWARD_MULTISIG_ADDRESS` | (테스트넷 멀티시그 또는 비어 있음) | 메인넷 멀티시그 주소 (§9) |
-| BE Railway 변수 | `MASTER_WALLET_MNEMONIC` | 테스트넷 키 | **새** 메인넷 전용 키 (재사용 금지), 가스 INJ 충전, 컨트랙트 minter |
-| BE Railway 변수 | `INJECTIVE_GRPC_ENDPOINT` | 비어 있음(프리셋) | 선택 - 전용 메인넷 노드 |
 | FE `.env.production` | `NEXT_PUBLIC_INJECTIVE_EVM_CHAIN_ID` | `1439` | `1776` |
 | FE `.env.production` | `NEXT_PUBLIC_INJECTIVE_EVM_RPC_URL` | `https://k8s.testnet.json-rpc.injective.network/` | 메인넷 JSON-RPC (예: `https://sentry.evm-rpc.injective.network/`) - chain과 **같이** 바꿔야 FE 빌드가 통과한다(`src/lib/runtime/config.ts` 짝 가드) |
 
@@ -422,7 +374,7 @@ railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
 1. 점검 창 공지 → 8.1 blocker 0행 확인 → 백업(§5 덤프 1회).
 2. BE: `railway.ts` 변경 PR 머지 + Railway 변수 교체 → 배포. 로그에서 네트워크/컨트랙트 확인.
 3. FE: `.env.production` 변경 PR → `develop` → `main`.
-4. 확인: 테스트 바운티에 보상 등록 → `custody_address`가 메인넷 멀티시그, ERC-20이면 `evm_chain_id = 1776`. (지갑 연결이 없어져(2026-11-10) 새 사용자의 부모 NFT 민팅은 더 생기지 않는다. NFT 절차는 NFT 제거 PR에서 정리한다.)
+4. 확인: 테스트 바운티에 보상 등록 → `custody_address`가 메인넷 멀티시그, ERC-20이면 `evm_chain_id = 1776`.
 5. 8.1을 다시 돌려 blocker가 0행인지 확인하고 결과를 사후 기록에 붙인다.
 
 ## 9. 멀티시그 서명자 문서 템플릿
@@ -447,7 +399,7 @@ railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
 | 3 | | | | | |
 
 규칙
-- 서명자는 마스터 민팅 지갑(MASTER_WALLET_MNEMONIC)과 다른 키를 쓴다. 한 사람이 두 서명 키를 갖지 않는다.
+- 서명자는 과거 NFT 민팅용이던 마스터 지갑(MASTER_WALLET_MNEMONIC)과 다른 키를 쓴다. 한 사람이 두 서명 키를 갖지 않는다.
 - 지급(payout) 승인: BE의 payout 2인 규칙(요청자 ≠ 승인자)과 별개로, 온체인 서명도 임계값만큼 모은다.
 - 송금 직후 BE에 `POST /admin/payouts/:id/paid {txHash}`로 기록한다 (기록 누락 = 이중 지급 위험).
 - 환불: 바운티 취소 시 스폰서 주소로 송금 후 보상 상태를 REFUNDED로 기록한다 (decisions.md).
@@ -473,13 +425,13 @@ railway run sh -c 'psql "$DATABASE_URL" -X -f scripts/mainnet-preflight.sql \
 운영에는 부하를 걸지 않는다. 로컬에서 운영 규모를 흉내 낸 DB에 건다(2026-11-02 기준선, PR 본문에 전후 표).
 
 ```sh
-# 1) 빈 DB + 마이그레이션 + 시드 (유저 5천, 멤버 50, 바운티 500, 지원 2만, 제출 1만, 지급 약 2.2천, 공지 300, 하이라이트 100, 기수 3 + 지원서 3천, 감사 로그 20만, NFT/잡 약 3.7천)
+# 1) 빈 DB + 마이그레이션 + 시드 (유저 5천, 멤버 50, 바운티 500, 지원 2만, 제출 1만, 지급 약 2.2천, 공지 300, 하이라이트 100, 기수 3 + 지원서 3천, 감사 로그 20만)
 createdb ninja_perf && export DATABASE_URL=postgresql://postgres@127.0.0.1:5432/ninja_perf PGSSLMODE=disable
 npm run migrate && psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/seed-perf.sql     # "user"가 비어 있지 않으면 거부한다. 약 4초
 # 2) 운영과 같은 모양으로 BE 기동: TRUST_PROXY=1 THROTTLER_STORAGE=postgres JWT_SECRET=... 로 npm run build && node dist/main.js
 # 3) 엔드포인트별 동시 10/50 (autocannon)
 npm i --no-save autocannon
-JWT_SECRET=... node scripts/perf/load.js all 8 --out=last.json  # 이름 정규식으로 일부만: node scripts/perf/load.js 'audit-logs|nft-jobs' 5
+JWT_SECRET=... node scripts/perf/load.js all 8 --out=last.json  # 이름 정규식으로 일부만: node scripts/perf/load.js 'audit-logs|operations' 5
 JWT_SECRET=... node scripts/perf/auth-flow.js 50 400     # exchange(PKCE) -> refresh(쿠키) -> /auth/me
 ```
 
@@ -500,7 +452,6 @@ JWT_SECRET=... node scripts/perf/auth-flow.js 50 400     # exchange(PKCE) -> ref
 | 어드민 | `/admin/users` (빈 검색어 / 검색) | 2521 / 1310 | 17 / 36 | 41 / 63 |
 | 어드민 | `/admin/bounties/:id/operations` | 1152 | 39 | 76 |
 | 어드민 | `/admin/cohorts/:id/applications` | 989 | 45 | 99 |
-| 어드민 | `/admin/nft-jobs` | 1980 | 22 | 51 |
 | 어드민(무거움) | `/admin/audit-logs` (1페이지 / 500페이지) | 755 / 75 | 63 / 653 | 103 / 712 |
 | 어드민(무거움) | `/admin/bounties` (바운티 490개, 응답 1.5MB) | 110 | 429 | 562 |
 | 어드민(무거움) | `/admin/cohorts/:id/applications.csv` (2000행, 동시 50은 비현실적) | 51 | 935 | 1058 (동시 10: 358) |

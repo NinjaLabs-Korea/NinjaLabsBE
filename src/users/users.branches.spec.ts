@@ -88,20 +88,18 @@ describe('UsersService.completeProfile / completeOnboarding', () => {
 });
 
 describe('UsersService.publicProfile result shape', () => {
-  it('spreads the user row and attaches completed bounties, agents and NFTs, each queried by the user id (not the nickname)', async () => {
+  it('spreads the user row and attaches completed bounties and agents plus the nfts: [] shim (no nft query), each queried by the user id (not the nickname)', async () => {
     const user = { id: userId, nickname: 'Ninja', bio: 'b', is_member: true, member_role: 'CORE', created_at: 'then', tags: ['DEV'] };
     const bounty = { id: 'b1', title: 'T', payoutStatus: 'PAID' };
     const agent = { id: 'a1', name: 'bot', completed_bounties: [] };
-    const nft = { id: 'n1', nft_type: 'NINJA_PARENT' };
     const query = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('FROM "user" u')) return { rowCount: 1, rows: [user] };
       if (sql.includes('FROM bounty_submission s')) return { rowCount: 1, rows: [bounty] };
       if (sql.includes('FROM agent a')) return { rowCount: 1, rows: [agent] };
-      if (sql.includes('FROM nft n')) return { rowCount: 1, rows: [nft] };
       throw new Error(`unexpected ${sql}`);
     });
     const service = new UsersService(createMockDb({ query }).database, new AuditService(createMockDb({ query }).database));
-    await expect(service.publicProfile('ninja')).resolves.toEqual({ ...user, completedBounties: [bounty], agents: [agent], nfts: [nft] });
+    await expect(service.publicProfile('ninja')).resolves.toEqual({ ...user, completedBounties: [bounty], agents: [agent], nfts: [] });
     expect(query.mock.calls[0][1]).toEqual(['ninja']);
     expect(query.mock.calls[0][0]).toContain(activeUserSql('u'));
     for (const [, params] of query.mock.calls.slice(1)) expect(params).toEqual([userId]);

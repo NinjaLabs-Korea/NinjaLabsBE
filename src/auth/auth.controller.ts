@@ -321,7 +321,7 @@ export class AuthController {
     }
   }
 
-  /** GET /auth/me - 현재 세션 유저 프로필 + 온보딩/NFT 상태 (`wallet`은 항상 null인 호환 shim) */
+  /** GET /auth/me - 현재 세션 유저 프로필 + 온보딩 상태 (`wallet`, `nft`는 항상 null인 호환 shim) */
   @Get('me')
   @Header('Cache-Control', 'no-store, private')
   @UseGuards(AuthGuard)
@@ -337,7 +337,6 @@ export class AuthController {
         userId: req.user.userId,
         onboardingStep: me.onboardingStep,
         onboardingCompleted: me.onboardingCompleted,
-        nftStatus: me.nft?.status ?? null,
       });
       return me;
     } catch (caught) {

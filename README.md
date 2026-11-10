@@ -2,19 +2,16 @@
 
 Injective 생태계 빌더 커뮤니티 & 바운티 마켓플레이스의 백엔드. 프론트엔드는 [NinjaLabsFE](https://github.com/NinjaLabs-Korea/NinjaLabsFE).
 
-빌더가 바운티를 완료하면 보상을 받고, 완료 기록은 온체인 NFT로 남는다. 이 서버는 로그인과 온보딩, 바운티 지원·제출·심사, 보상 입금과 주소 기반 지급, NFT 발행, 커뮤니티(멤버, 공지, 명예의 전당, 기수 모집), AI 에이전트 API, 운영자 콘솔 API를 맡는다.
+빌더가 바운티를 완료하면 보상을 받는다. 이 서버는 로그인과 온보딩, 바운티 지원·제출·심사, 보상 입금과 주소 기반 지급, 커뮤니티(멤버, 공지, 명예의 전당, 기수 모집), AI 에이전트 API, 운영자 콘솔 API를 맡는다.
 
 | | |
 |---|---|
-| 스택 | NestJS 11 · TypeScript 5.9 · PostgreSQL (Supabase) · raw SQL (`pg`) · CW-721 Nestable NFT (Injective) |
+| 스택 | NestJS 11 · TypeScript 5.9 · PostgreSQL (Supabase) · raw SQL (`pg`) |
 | 런타임 | Node 22 이상 · npm |
 | 배포 | `main` 머지 = Railway 운영 배포 (마이그레이션이 먼저 돈다) |
 | 스키마 | `supabase/migrations/*.sql`이 유일한 출처. 모든 테이블 RLS on |
 
 ## 빠르게 시작하기
-
-기존 NFT 자동 발급은 새 설정 없이 유지된다(기존 체인 설정/자격 증명 필요).
-중지할 때만 `NFT_MINTING_ENABLED=false`로 설정한다. 복원 전에는 반드시 명시적으로 중지·드레인하고 체인 대조 후 재개한다([runbook](docs/runbook.md)).
 
 ```bash
 npm install
@@ -56,7 +53,6 @@ npm run start:dev           # http://localhost:4000
 | `media/` | 이미지 저장 (운영자 업로드, 프로필 사진) + 공개 immutable 조회 `/media/<id>` |
 | `bounties/` | 바운티 목록·상세, 지원(applications), 제출(submissions, 리비전, 수상자 지급 주소), `admin/`에 운영자 관리와 전이 차단 사유 |
 | `rewards/` | 선입금 확인 → payout 멱등 지급(요청 시점 지급 주소 스냅샷) (운영자 API 포함) |
-| `nfts/` | 부모·자식 NFT + `nft_job` 비동기 워커 (1분 폴링) + 운영자 잡 콘솔 (목록, 재시도) |
 | `agents/` | AI 에이전트 등록·검증·API 키 + Agent API 인증 ([docs/agent-api.md](docs/agent-api.md)) |
 | `audit/` | 감사 로그 기록 (`AuditService`) + 조회 |
 | `health/` | `GET /health` (DB 연결 확인) |
@@ -91,13 +87,12 @@ FE가 알아야 하는 상수(상태 집합, 전이표, 카테고리·역할 등
 
 ### 운영 스크립트 (`scripts/`)
 
-운영 데이터를 고치는 스크립트(`grant-admin`, `requeue-nft-jobs`, `forfeit-award`, `record-refund`)는 `--dry-run`과 확인 프롬프트가 있고 감사 행을 남긴다. 사용법은 [docs/runbook.md](docs/runbook.md).
+운영 데이터를 고치는 스크립트(`grant-admin`, `forfeit-award`, `record-refund`)는 `--dry-run`과 확인 프롬프트가 있고 감사 행을 남긴다. 사용법은 [docs/runbook.md](docs/runbook.md).
 
 | 스크립트 | 하는 일 | 런북 |
 |---|---|---|
 | `migrate.js` | 마이그레이션 러너 (advisory lock으로 직렬화, 실패 시 운영 알림) | §2 |
 | `grant-admin.js` | 운영자 권한 부여·회수 | §3 |
-| `requeue-nft-jobs.js` | 실패한 `nft_job` 수동 재시도 | §7.3 |
 | `forfeit-award.js` | 지급할 수 없는 수상의 보상 미지급 처리 | §7.4 |
 | `record-refund.js` | 취소 바운티의 환불 기록 | §7.7 |
 | `mainnet-preflight.sql` | 메인넷 전환 전 읽기 전용 점검 (psql) | §8 |

@@ -13,9 +13,6 @@
   },
   "audit": {
     "actions": {
-      "AGENT_KEY_ROTATED": "agent",
-      "AGENT_REVOKED": "agent",
-      "AGENT_VERIFIED": "agent",
       "APPLICATION_APPROVED": "bounty_application",
       "APPLICATION_REAPPLIED": "bounty_application",
       "APPLICATION_REJECTED": "bounty_application",
@@ -70,6 +67,9 @@
       "USER_WITHDRAWN": "user"
     },
     "legacyActions": {
+      "AGENT_KEY_ROTATED": "agent",
+      "AGENT_REVOKED": "agent",
+      "AGENT_VERIFIED": "agent",
       "NFT_JOB_REQUEUED": "nft_job",
       "NFT_JOB_RETRIED": "nft_job",
       "WALLET_REPLACED": "user"
@@ -118,8 +118,7 @@
       "CANCELLED"
     ],
     "submissionModes": [
-      "DIRECT",
-      "AGENT"
+      "DIRECT"
     ],
     "transitions": {
       "CANCELLED": [],

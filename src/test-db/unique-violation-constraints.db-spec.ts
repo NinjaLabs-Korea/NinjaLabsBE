@@ -1,6 +1,4 @@
 import { JwtService } from '@nestjs/jwt';
-import { Wallet } from 'ethers';
-import { AGENT_REGISTRATION_UNIQUE_INDEXES, AgentsService } from '../agents/agents.service';
 import { AuditService } from '../audit/audit.service';
 import { GOOGLE_USER_UNIQUE_INDEXES, AuthService } from '../auth/auth.service';
 import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
@@ -12,19 +10,14 @@ import { DEPOSIT_TX_UNIQUE_INDEX, RewardsService } from '../rewards/rewards.serv
 import { describeDb } from './describe-db';
 import { createDb, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, withPayoutAddresses } from './harness';
 
-// AgentsService.register의 inj1 <-> 0x 변환만 쓴다 (agents.db-spec.ts와 같은 스텁)
-jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
-jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
-
 /**
- * 서비스가 23505를 도메인 코드로 바꿀 때 보는 제약 이름(auth/rewards/agents의 상수)이 실제 마이그레이션의 인덱스 이름과 맞는지
+ * 서비스가 23505를 도메인 코드로 바꿀 때 보는 제약 이름(auth/rewards의 상수)이 실제 마이그레이션의 인덱스 이름과 맞는지
  * 실 Postgres로 확인한다. 이름이 바뀌면 mock 단위 테스트는 계속 통과하지만 여기서는 깨진다.
  */
 describeDb('unique violation constraint names used by the services', () => {
   let db: DatabaseService;
   let auth: AuthService;
   let rewards: RewardsService;
-  let agents: AgentsService;
   let bounties: BountyAdminService;
   let adminId: string;
 
@@ -34,7 +27,6 @@ describeDb('unique violation constraint names used by the services', () => {
     const audit = new AuditService(db);
     auth = new AuthService(db, new JwtService({ secret: TEST_JWT_SECRET, signOptions: { expiresIn: '15m' } }), config, TEST_JWT_SECRET);
     rewards = withPayoutAddresses(db, new RewardsService(db, audit, config));
-    agents = new AgentsService(db, audit);
     bounties = new BountyAdminService(db, audit, new BountyLifecycleService(), new RewardTokenResolver(config));
     adminId = await createUser(db, { isAdmin: true });
   });
@@ -103,35 +95,6 @@ describeDb('unique violation constraint names used by the services', () => {
       await expect(rewards.confirmDeposit(second, hash, '10', adminId)).rejects.toMatchObject({ status: 409, message: 'TX_HASH_ALREADY_USED' });
       const status = await db.query<{ status: string; deposit_tx_hash: string | null }>(`SELECT status, deposit_tx_hash FROM bounty_reward WHERE id = $1`, [second]);
       expect(status.rows[0]).toEqual({ status: 'DEPOSIT_PENDING', deposit_tx_hash: null });
-    });
-  });
-
-  describe('agents: register', () => {
-    const insertAgent = (ownerId: string, publicKey: string | null, wallet: string) => failureOf(
-      `INSERT INTO agent (owner_user_id, name, public_key, wallet_address) VALUES ($1, 'uqv', $2, $3)`, [ownerId, publicKey, wallet]);
-
-    it('a duplicate wallet fails on uq_agent_wallet and a duplicate public key on uq_agent_public_key', async () => {
-      const ownerId = await createUser(db);
-      const wallet = Wallet.createRandom().address;
-      const key = unique('pk-');
-      expect(await insertAgent(ownerId, key, wallet)).toBeUndefined();
-
-      const byWallet = await insertAgent(ownerId, unique('pk-'), wallet);
-      expect(byWallet).toMatchObject({ code: '23505', constraint: 'uq_agent_wallet' });
-      const byKey = await insertAgent(ownerId, key, Wallet.createRandom().address);
-      expect(byKey).toMatchObject({ code: '23505', constraint: 'uq_agent_public_key' });
-      expect([...AGENT_REGISTRATION_UNIQUE_INDEXES].sort()).toEqual(['uq_agent_public_key', 'uq_agent_wallet']);
-      expect(isUniqueViolation(byWallet, AGENT_REGISTRATION_UNIQUE_INDEXES)).toBe(true);
-      expect(isUniqueViolation(byKey, AGENT_REGISTRATION_UNIQUE_INDEXES)).toBe(true);
-    });
-
-    it("registering a wallet held by another owner's active agent is 409 AGENT_KEY_OR_WALLET_ALREADY_REGISTERED through the service", async () => {
-      const wallet = Wallet.createRandom().address;
-      await db.query(
-        `INSERT INTO agent (owner_user_id, name, wallet_address, status, verified_at) VALUES ($1, 'taken', $2, 'ACTIVE', now())`,
-        [await createUser(db), wallet]);
-      await expect(agents.register(await createUser(db), 'bot', undefined, undefined, wallet))
-        .rejects.toMatchObject({ status: 409, message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
     });
   });
 });

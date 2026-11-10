@@ -255,7 +255,7 @@ function enrichComponentSchemas(doc, classesByName, storage, counters) {
 //    - `@Query() dto`: swagger는 DTO를 개별 query 파라미터로 펼친다 -> 그 DTO의 규칙을 파라미터에 반영한다.
 //      쿼리스트링에는 null이 없으므로 nullable은 뺀다.
 //    - `@UploadedFile()`: multer가 본문을 읽어 swagger가 requestBody를 모른다 -> multipart/form-data 파일 1개로 적는다.
-//    - `@Body() dto`: 본문 DTO 클래스를 모아 돌려준다. 검증기를 전부 상속만 하는 클래스(AgentSubmitDto 등)는 class-validator
+//    - `@Body() dto`: 본문 DTO 클래스를 모아 돌려준다. 검증기를 전부 상속만 하는 클래스는 class-validator
 //      저장소에 자기 항목이 없어서, 여기서 모아야 컴포넌트 스키마 보정 대상이 된다.
 // ---------------------------------------------------------------------------------------------------------------------------
 
@@ -498,6 +498,13 @@ async function main() {
     .setDescription(DOC_DESCRIPTION)
     .build();
   const doc = SwaggerModule.createDocument(app, config);
+  // 종료된 라우트(RetiredRoutesController, `ALL /agent-api/v1/*` -> 410)는 FE 계약이 아니다: ALL이 메서드 7개로 펼쳐져 operationId도 겹친다
+  for (const [route, item] of Object.entries(doc.paths)) {
+    for (const [method, op] of Object.entries(item)) {
+      if (op && typeof op.operationId === 'string' && op.operationId.startsWith('RetiredRoutesController_')) delete item[method];
+    }
+    if (Object.keys(item).length === 0) delete doc.paths[route];
+  }
 
   const storage = getMetadataStorage();
   assertPluginCoverage(storage);

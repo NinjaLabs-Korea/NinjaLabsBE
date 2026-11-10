@@ -95,6 +95,30 @@
 1. `railway run sh -c 'psql "$DATABASE_URL" -X -c "SELECT id, status, title, created_at FROM bounty WHERE deleted_at IS NULL AND opened_at IS NULL AND status NOT IN ('"'"'DRAFT'"'"', '"'"'FUNDING_PENDING'"'"', '"'"'CANCELLED'"'"')"'` (읽기 전용).
 2. 0행이면 끝. 행이 있으면 배포 뒤 공개 화면에서 사라진다 - 실제로 열렸던 바운티면 `opened_at`을 운영자 판단으로 채운다(예 `created_at`). CANCELLED이고 `opened_at`이 없는 행은 열리기 전에 취소된 것이므로 숨겨지는 게 맞다.
 
+### BE PR4(에이전트 제거) 배포 전 점검
+
+에이전트 제거 BE를 배포하기 **전에** 읽기 전용으로 확인한다. 새 코드는 지원·제출·지급 수령자를 사람 컬럼(`applicant_user_id`, `submitter_user_id`, `payout.recipient_address`)으로만 판단하므로, 에이전트가 만든 옛 행은 사람 기준 조회(내 지원/제출, 공개 프로필, 탈퇴 검사, 지급 요청, 접수 마감 차단 집계)에서 빠진다.
+
+```sql
+SELECT
+  (SELECT count(*) FROM bounty_submission  WHERE agent_id IS NOT NULL) AS agent_submissions,
+  (SELECT count(*) FROM bounty_submission  WHERE agent_id IS NOT NULL AND status = 'APPROVED') AS agent_approved_winners,
+  (SELECT count(*) FROM bounty_submission s WHERE s.agent_id IS NOT NULL AND s.status = 'APPROVED'
+     AND NOT EXISTS (SELECT 1 FROM payout p WHERE p.submission_id = s.id AND p.status = 'PAID')) AS agent_winners_unpaid,
+  (SELECT count(*) FROM bounty_application WHERE agent_id IS NOT NULL) AS agent_applications,
+  (SELECT count(*) FROM payout WHERE recipient_wallet_id IS NOT NULL
+     AND status NOT IN ('PAID', 'CANCELLED', 'FAILED')) AS open_wallet_payouts,
+  (SELECT count(*) FROM bounty WHERE submission_mode = 'AGENT' AND deleted_at IS NULL) AS agent_mode_bounties;
+```
+
+`railway run sh -c 'psql "$DATABASE_URL" -X -c "..."'`로 실행한다. **여섯 값이 모두 0이어야 한다(기대값 0).** 0이 아닌 채로 배포하는 것은 지원하지 않는다. 0이 아니면 행마다 배포 전에 운영자가 해결한다:
+
+- `agent_submissions`/`agent_approved_winners`/`agent_winners_unpaid`/`agent_applications` > 0: 그 행의 승인·지급 흐름은 새 코드로 끝낼 수 없고(`requestPayout` 404, 승인 `USER_NOT_FOUND`) 사람 기준 조회(수상 이력 `completedBounties`, 내 제출, 하이라이트 집계)에서 조용히 빠진다. 배포 전에 운영자가 결정한다(지급을 끝내거나, 반려로 정리하거나, 소유자의 `submitter_user_id`로 옮기거나, 사람 제출로 다시 받는다). 자동으로 소유자에게 옮기지 않는다.
+- `open_wallet_payouts` > 0: 레거시 지갑 기반 payout이 진행 중이다. 지급을 끝낸 뒤(또는 runbook 7.4대로 취소한 뒤) 배포한다. 이 값은 BE PR2/PR1 점검과 같은 항목이다.
+- `agent_mode_bounties` > 0: 새 코드는 `submission_mode`를 검사하지 않아 이 바운티가 사람에게 열리고, 공개 응답은 계속 `AGENT`를 읽으며, `UpdateBountyDto`는 `AGENT`를 다시 보내면 400이라 정상 수정으로는 `DIRECT`로 돌릴 수 없다. 배포 전에 수동 SQL로 정규화한다(7.4의 수동 SQL과 같이 `audit_log`에 사유를 남긴다): `UPDATE bounty SET submission_mode = 'DIRECT' WHERE submission_mode = 'AGENT' AND deleted_at IS NULL;`
+
+배포 순서: FE의 에이전트 화면 제거(FE-3)가 FE `main`에 나간 **뒤**에 배포하고, 그 직후 바로 한다(그 사이에는 옛 FE의 에이전트 등록/목록 호출 `/agents/*`가 404가 되고 `/agent-api/v1/*` 호출은 410이 된다). 롤백은 이전 BE 이미지로 되돌리면 라우트는 돌아오지만(마이그레이션 변경 없음), 배포 뒤에 쓰인 데이터는 사람 전용이고 옛 FE에는 FE-3 되돌리기도 필요하다.
+
 ## 3. 어드민 부트스트랩
 
 어드민 권한은 API로 줄 수 없다(권한 상승 경로를 만들지 않기 위해). 권한자는 **DB 접속 권한이 있는 사람**(Railway 프로젝트 멤버 또는 Supabase 프로젝트 owner)이며, 부여/회수는 이 스크립트로만 한다 - 직접 `UPDATE`하면 감사 행이 남지 않는다.
@@ -305,11 +329,9 @@ NFT 모듈(민팅 워커, 잡 콘솔, `scripts/requeue-nft-jobs.js`)은 2026-11-
 
 지갑 교체 API는 2026-11-10 결정으로 지갑 모듈과 함께 없어졌다(BE PR2). 과거 교체 이력은 `audit_log`의 `WALLET_REPLACED`와 `wallet` 행(`verified_at`, `disconnected_at`)에 남아 있고, `wallet_replacement_challenge`·`wallet_verification_challenge` 행은 더 정리하지 않는다(새 행이 생기지 않는다). Railway의 `WALLET_REPLACEMENT_ENABLED`는 읽는 코드가 없다: 대시보드에서 지운 뒤 정리 PR에서 `railway.ts` 줄을 지운다.
 
-- `0025_agent_canonical_identity.sql`은 기존 `0x`/`inj1` 주소·hex/base64 키를 정규 계정/키 기준으로 비교한다.
-  충돌 시 `AGENT_CANONICAL_IDENTITY_CONFLICT`로 전체 롤백하며 자동 소유자 변경/이력 삭제를 하지 않는다.
-  운영자가 먼저 `node scripts/check-agent-identities.js`(읽기 전용)를 실행하고 충돌이 있으면 반영을 멈춘다.
-- `0028_agent_identity_reservations.sql`은 검증된 소유자 예약을 보존하고 구버전의 별칭 등록/활성화도 DB에서 거부한다.
-  `AGENT_CANONICAL_RESERVATION_CONFLICT`면 자동 정리하지 말고 소유 증명·이력을 확인한다. 예약/트리거를 삭제해 우회하지 않는다.
+### 7.4.2 에이전트 정체성 마이그레이션 (제거됨)
+
+에이전트 기능은 2026-11-11 구글 로그인 전용 전환(BE PR4)에서 코드와 함께 사라졌다. `0025_agent_canonical_identity.sql`, `0028_agent_identity_reservations.sql`과 `scripts/check-agent-identities.js`는 이미 적용된 이력이라 마이그레이션 파일만 남기고 스크립트는 지웠다. 새 환경은 마이그레이션 전체를 그대로 적용하면 된다(충돌할 에이전트 행이 없다). 적용된 마이그레이션은 수정하지 않는다(체크섬 가드). 에이전트 행이 있는 pre-0025 스냅샷으로 복원한 DB에서 0025/0028이 `run node scripts/check-agent-identities.js`라는 오류를 내면, 스크립트는 git 이력에서 꺼낸다: `git show <BE PR4 머지 커밋의 부모>:scripts/check-agent-identities.js > /tmp/check-agent-identities.js`(머지 후 부모 커밋 해시를 여기에 적는다). 운영과 새 환경은 이 오류를 만나지 않는다. `agent` 계열 테이블과 행은 이력으로 남는다.
 
 ### 7.5 `JWT_SECRET` 유출
 `JWT_SECRET`은 access 토큰·OAuth state 서명과 refresh 유예 사본 암호화(HKDF) 키다. 유출되면 누구나 임의 사용자 id로 access 토큰을 위조할 수 있다(어드민 라우트는 AdminGuard가 DB `is_admin`을 다시 보므로, 실제 어드민의 user id를 아는 경우에만 통과).

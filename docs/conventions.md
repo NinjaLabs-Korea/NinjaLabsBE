@@ -8,8 +8,7 @@
 - **운영자 API는 도메인 모듈 안에 둔다.** `/admin/*` 라우트는 전용 `admin` 모듈이 아니라 해당 도메인 모듈의
   `*-admin.controller.ts` / `*-admin.service.ts`에 있다 (예: `notices/notice-admin.*`, `bounties/admin/*`).
   모든 운영자 컨트롤러는 `@UseGuards(AdminGuard)`를 붙이고 `AuthedRequest`로 `req.user`를 받는다.
-- **사람/에이전트 참여는 `BountyActor`로 표현한다** (`bounties/bounty-actor.ts`). `isAgent ? ... : ...` 분기를 새로 만들지 않는다.
-- **에이전트 지갑 서명 검증은 `signatureSchemeFor(address).verify()`** (`common/crypto/wallet-signature.ts`). 사람 계정의 지갑 연결은 2026-11-10에 없어졌다.
+- **바운티 지원·제출 자격과 감사는 `BountyActor`로 표현한다** (`bounties/bounty-actor.ts`: `assertOnboarded`, `recordAudit`). 사람만 참여한다(에이전트는 2026-11-11 제거, 지갑 연결은 2026-11-10 제거) - 주체 분기를 새로 만들지 않는다.
 - **`process.env`를 직접 읽지 않는다.** 서비스는 `ConfigService`를 주입받고, `main.ts`도 `NestFactory.create()` 뒤 `app.get(ConfigService)`로 읽는다
   (import 시점의 `process.env`는 `ConfigModule.forRoot()`가 `.env`를 읽기 전이다). 예외는 `main.ts`의 기동 실패 catch 하나 - DI가 뜨기 전에
   실패할 수 있어 `alertBootFailure(process.env, …)`가 env를 직접 읽는다(그 시점엔 `ConfigModule.forRoot()`가 `.env`를 이미 올렸다). JWT 시크릿은 `auth/jwt-secret.ts`의 `JWT_SECRET` provider 하나를 JwtModule과 AuthService가 함께 쓴다.
@@ -21,7 +20,7 @@
   SQL의 상태 집합은 helper가 주는 배열을 `= ANY($n::text[])`로 바인딩한다. `src/test-support/status-literals.spec.ts`가 상태 리터럴 집합(`['APPROVED', 'REJECTED']`, `IN ('SUBMITTED', …)`)을 막는다.
   payout 상태 집합과 배정 상한식 `LEAST(amount, deposited_amount)`도 같다 - `rewards/payout-status.ts`의 상수/헬퍼(`OPEN_PAYOUT_STATUSES`, `allocatedPayoutSumSql()`, `rewardCapSql()` 등)를 쓰고,
   다른 쿼리에 끼워 넣는 조각은 `sqlStatusList()`로 렌더링한다. `scripts/record-refund.js`·`scripts/mainnet-preflight.sql`의 사본은 `payout-status.spec.ts`가 대조한다.
-- **자주 쓰는 SQL 조건은 조각 함수로 끼운다**: 활성 유저 `activeUserSql()`(`users/active-user.ts`), 유저가 소유한 에이전트 id `ownedAgentIdsSql($n, 'live' | 'including-deleted')`와 참여 행의 사람 `participantUserIdSql()`(`agents/owned-agents.ts`). 사본을 새로 쓰면 `common/database/sql-predicates.spec.ts`가 실패한다. 공개 집계의 완료된 수상·완료된 바운티는 `completedWinSql()`/`completedBountySql()`(`bounties/completed-wins.ts`), "지급 요청 가능"은 `payoutRequestableSql()`(`rewards/payout-status.ts`, `requestPayout`의 명령형 검사와 db-spec으로 대조). 탈퇴 여부만 보는 `deleted_at IS NULL`처럼 의도적으로 다른 조건은 각 파일 주석에 적었다.
+- **자주 쓰는 SQL 조건은 조각 함수로 끼운다**: 활성 유저 `activeUserSql()`(`users/active-user.ts`). (에이전트 소유 조각 `ownedAgentIdsSql`/`participantUserIdSql`은 2026-11-11 에이전트 제거와 함께 지웠고 같은 모양의 SQL을 다시 쓰면 스펙이 막는다.) 사본을 새로 쓰면 `common/database/sql-predicates.spec.ts`가 실패한다. 공개 집계의 완료된 수상·완료된 바운티는 `completedWinSql()`/`completedBountySql()`(`bounties/completed-wins.ts`), "지급 요청 가능"은 `payoutRequestableSql()`(`rewards/payout-status.ts`, `requestPayout`의 명령형 검사와 db-spec으로 대조). 탈퇴 여부만 보는 `deleted_at IS NULL`처럼 의도적으로 다른 조건은 각 파일 주석에 적었다.
 - **SQL에서 같은 `$n`을 두 번 쓰면 캐스트도 같게 쓴다** (`$6::varchar` … `$6::varchar`). 한쪽만 bare/캐스트면 Postgres가 `42P08 inconsistent types deduced for parameter`로 거부한다 -
   mock DB 유닛 테스트는 이를 잡지 못하므로 새 SQL 흐름은 `src/test-db`에 실 DB 테스트를 추가한다.
 - **유니크 충돌 판별은 `isUniqueViolation(err)`** (`common/database/pg-errors.ts`).
@@ -33,9 +32,9 @@
 ## 에러 코드, 감사 로그, 운영 알림
 
 - **에러 코드는 `common/http/error-codes.ts` 카탈로그에 등록한다** (코드 → HTTP 상태 → 한 줄 의미). 서비스에는 `throw new XxxException('NEW_CODE')` 리터럴로 던지고, 카탈로그와 `docs/api-contract.md` "에러 코드" 표에 같은 행을 추가한다 - 빠지면 `src/test-support/error-codes.spec.ts`가 실패한다.
-- **감사 로그는 `AuditService`로만 남긴다** - 사람/시스템 행위는 `record()`, Agent API 키로 한 행위(유저 id 없음)는 `recordAgentAction()`(`actor_agent_id`). 트랜잭션 안이면 `tx`를 넘긴다.
+- **감사 로그는 `AuditService`로만 남긴다** - 사람/시스템 행위 모두 `record()`(`actor_user_id`; 에이전트용 `recordAgentAction()`은 2026-11-11 제거). 트랜잭션 안이면 `tx`를 넘긴다.
   action은 `audit/audit-actions.ts` 카탈로그(`AUDIT_ACTIONS`, entity_type까지 타입으로 묶임)의 키만 받는다. 새 action은 카탈로그와 `docs/api-contract.md` "감사 action 카탈로그" 표에 같이 추가한다(`audit/audit-actions.spec.ts`). 이미 쌓인 값은 이름을 바꾸지 않는다.
-  바운티 지원·제출처럼 사람과 에이전트가 같은 경로를 쓰면 `BountyActor.recordAudit()`로 남긴다(행위자 컬럼을 고른다). 돈 감사 행은 `change`에 상태·금액(최소 단위 문자열)·정규화된 해시·id만 넣고, 지갑 주소·이메일·사용자 입력 본문·비밀은 넣지 않는다. `ip_address`는 `AuditService`가 요청 컨텍스트(`common/http/request-context.ts`, `req.ip`)에서 자동으로 채우므로 호출자가 넘기지 않는다. 클라이언트 IP가 필요하면 `X-Forwarded-For`를 직접 읽지 말고 `req.ip`(또는 `currentRequestIp()`)를 쓴다.
+  바운티 지원·제출은 `BountyActor.recordAudit()`로 남긴다. 돈 감사 행은 `change`에 상태·금액(최소 단위 문자열)·정규화된 해시·id만 넣고, 지갑 주소·이메일·사용자 입력 본문·비밀은 넣지 않는다. `ip_address`는 `AuditService`가 요청 컨텍스트(`common/http/request-context.ts`, `req.ip`)에서 자동으로 채우므로 호출자가 넘기지 않는다. 클라이언트 IP가 필요하면 `X-Forwarded-For`를 직접 읽지 말고 `req.ip`(또는 `currentRequestIp()`)를 쓴다.
 - **운영 알림은 `AlertService.notify(key, message)`로만 보낸다** (`common/alerts/alert.service.ts`, 전역 모듈). 절대 throw하지 않으므로 try/catch 불필요.
   `key`는 고정 문자열(또는 `종류:작은 고정 집합`)이고 같은 키는 30분에 한 번만 나간다(웹훅 전달 성공 기준 - 실패는 2초 뒤 1회 재시도 후 다음 발생이 다시 시도). 메시지에 비밀·PII(이메일, 닉네임, 요청 본문, 실제 경로 값)를 넣지 않는다 - id·개수·상태·라우트 패턴만.
 

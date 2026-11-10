@@ -30,10 +30,10 @@ describeDb('submission review on a real database', () => {
   });
   afterAll(async () => db.onApplicationShutdown());
 
-  async function bountyIn(options: { status?: string; maxWinners?: number; mode?: 'DIRECT' | 'AGENT' } = {}) {
+  async function bountyIn(options: { status?: string; maxWinners?: number } = {}) {
     const { id } = await bounties.create(adminId, {
       title: unique('rev-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
-      category: 'DEV', applicationRequired: false, submissionMode: options.mode ?? 'DIRECT', maxWinners: options.maxWinners ?? 3,
+      category: 'DEV', applicationRequired: false, maxWinners: options.maxWinners ?? 3,
       submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
     });
     await db.query(`UPDATE bounty SET status = $2 WHERE id = $1`, [id, options.status ?? 'OPEN']);
@@ -188,7 +188,7 @@ describeDb('submission review on a real database', () => {
     await expect(review.review(id, 'APPROVE', undefined, adminId)).resolves.toEqual({ id, status: 'APPROVED' });
   });
 
-  it('APPROVE needs an active submitter (a person or the agent\'s owner): suspended or soft-deleted owner is 404 USER_NOT_FOUND; the other decisions still work', async () => {
+  it('APPROVE needs an active submitter: a suspended or soft-deleted submitter is 404 USER_NOT_FOUND; the other decisions still work', async () => {
     const bountyId = await bountyIn();
     for (const makeInactive of [
       `UPDATE "user" SET status = 'SUSPENDED' WHERE id = $1`,
@@ -201,15 +201,5 @@ describeDb('submission review on a real database', () => {
       expect(await reviewRows(person.id)).toEqual([]);
       await expect(review.review(person.id, 'REJECT', undefined, adminId)).resolves.toEqual({ id: person.id, status: 'REJECTED' });
     }
-
-    // an agent submission follows its owner
-    const owner = await createUser(db);
-    const agent = await db.query<{ id: string }>(
-      `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at) VALUES ($1, 'bot', $2, $3, 'ACTIVE', now()) RETURNING id`,
-      [owner, unique('pk-'), `0x${unique()}`]);
-    const agentBounty = await bountyIn({ mode: 'AGENT' });
-    const viaAgent = await submissions.submitAsAgent(agentBounty, agent.rows[0].id, { submissionUrl: 'https://x.test/a', description: 'd' });
-    await db.query(`UPDATE "user" SET status = 'SUSPENDED' WHERE id = $1`, [owner]);
-    await expect(review.review(viaAgent.id, 'APPROVE', undefined, adminId)).rejects.toMatchObject({ message: 'USER_NOT_FOUND' });
   });
 });

@@ -81,7 +81,7 @@ export class BountyAdminService {
   async create(adminId: string, input: {
     title: string; sponsorName: string; summary: string; description: string;
     requirements: string; evaluationCriteria: string; category: string;
-    applicationRequired: boolean; submissionMode: string; maxWinners: number;
+    applicationRequired: boolean; submissionMode?: string; maxWinners: number;
     submissionDeadline: string; applicationDeadline?: string;
     coverImageUrl?: string;
     reward?: RewardInput;
@@ -102,7 +102,7 @@ export class BountyAdminService {
          input.requirements, input.evaluationCriteria, input.category,
          input.applicationRequired, input.maxWinners,
          input.submissionDeadline, input.applicationDeadline ?? null,
-         input.coverImageUrl ?? null, input.submissionMode],
+         input.coverImageUrl ?? null, input.submissionMode ?? 'DIRECT'],
       );
       const bountyId = b.rows[0].id;
 

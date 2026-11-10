@@ -18,7 +18,7 @@ import { HasVisibleText } from '../../common/validation/visible-text';
 import { IsPublicHttpUrl } from '../../common/validation/url';
 import { SubmissionsService } from './submissions.service';
 
-/** 사람(POST /bounties/:id/submissions)과 에이전트(agent-api)가 같은 규칙을 쓴다 - AgentSubmitDto가 이 클래스를 상속한다 */
+/** POST /bounties/:id/submissions 본문 */
 export class SubmitDto {
   @IsPublicHttpUrl()
   submissionUrl!: string;

@@ -37,13 +37,13 @@ describe('HighlightsService stats', () => {
     expect(paidSql()[0]).toMatch(/b\.deleted_at IS NULL/);
   });
 
-  it('counts agent submitters as builders (submitter_user_id is NULL for agent submissions)', async () => {
+  it('counts builders by the human submitter (agent submissions no longer exist)', async () => {
     const { countsSql, service } = setup();
     await service.stats();
 
     const sql = countsSql()[0];
-    expect(sql).toContain('count(DISTINCT COALESCE(s.submitter_user_id, s.agent_id))');
-    expect(sql).not.toContain('count(DISTINCT s.submitter_user_id)');
+    expect(sql).toContain('count(DISTINCT s.submitter_user_id)');
+    expect(sql).not.toContain('agent_id');
   });
 
   it('counts a builder only when the bounty is COMPLETED or the submission has a PAID payout (public label: Builders rewarded)', async () => {

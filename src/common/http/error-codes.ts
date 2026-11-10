@@ -44,31 +44,18 @@ export const ERROR_CODES = {
 
   // ── 유저 / 탈퇴 ──
   USER_NOT_FOUND: { statuses: [404], ko: '대상 유저가 없다 (탈퇴 포함)' },
-  PROFILE_REQUIRED: { statuses: [409], ko: '프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람(과 그 사람이 소유한 에이전트)은 에이전트 등록·바운티 지원·제출도 같은 코드로 막힌다' },
+  PROFILE_REQUIRED: { statuses: [409], ko: '프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람은 바운티 지원·제출도 같은 코드로 막힌다' },
   NICKNAME_CHANGE_COOLDOWN: { statuses: [409], ko: '닉네임을 이미 정한 유저가 24시간 안에 또 바꾸려 했다 (변경은 감사 USER_NICKNAME_CHANGED로 남고 마지막 변경 24시간 뒤에 다시 가능)' },
   NICKNAME_TAKEN: { statuses: [409], ko: '이미 사용 중인 닉네임이다' },
   CONFIRM_NICKNAME_MISMATCH: { statuses: [400], ko: '탈퇴 확인용 닉네임 입력이 현재 닉네임과 다르다' },
   WITHDRAWAL_BLOCKED_OPEN_PAYOUTS: { statuses: [409], ko: '진행 중인 지급(payout)이 있어 탈퇴할 수 없다' },
   WITHDRAWAL_BLOCKED_PENDING_REWARDS: { statuses: [409], ko: '입금 대기 중인 보상이 걸려 있어 탈퇴할 수 없다' },
 
-  // ── 주소·서명 ──
+  // ── 주소 ──
   INVALID_INJECTIVE_ADDRESS: { statuses: [400], ko: 'Injective 주소(inj1… 또는 0x…) 형식이 올바르지 않다 (지급 주소 입력: 체크섬, hrp, 20바이트 계정 아님, 0 주소)' },
-  INVALID_SIGNATURE: { statuses: [401], ko: '서명 검증에 실패했다 (에이전트 등록)' },
 
-  // ── 에이전트 ──
-  INVALID_AGENT_WALLET_ADDRESS: { statuses: [400], ko: '에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다)' },
-  AGENT_PUBLIC_KEY_REQUIRED: { statuses: [400], ko: '에이전트 공개키가 필요하다' },
-  AGENT_PUBLIC_KEY_MISMATCH: { statuses: [400], ko: 'inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다' },
-  AGENT_WALLET_IS_OWNER_WALLET: { statuses: [400], ko: '에이전트 지갑이 소유자 본인의 연결 지갑과 같다 (전용 에이전트 지갑을 써야 한다). 등록 때 본인의 레거시 연결 지갑과 비교한다' },
-  AGENT_KEY_OR_WALLET_ALREADY_REGISTERED: { statuses: [409], ko: '같은 공개키 또는 지갑으로 이미 등록된 에이전트가 있다' },
-  AGENT_NOT_FOUND: { statuses: [404], ko: '내 에이전트가 아니거나 없다' },
-  AGENT_ALREADY_VERIFIED: { statuses: [409], ko: '이미 검증이 끝난 에이전트다 (ACTIVE이거나, 검증된 뒤 정지·폐기됐다)' },
-  AGENT_NOT_PENDING: { statuses: [409], ko: '검증 대기 상태가 아니고 검증된 적도 없는 에이전트다 (검증 전에 폐기됐다) - 새로 등록해야 한다' },
-  AGENT_NOT_ACTIVE: { statuses: [409], ko: 'ACTIVE 상태가 아니어서 키 회전 등을 할 수 없다' },
-  MISSING_AGENT_API_KEY: { statuses: [401], ko: 'Agent API 키 헤더가 없다' },
-  INVALID_AGENT_API_KEY: { statuses: [401], ko: 'Agent API 키가 없거나 만료·폐기됐다' },
-  AGENT_SUBMISSION_REQUIRED: { statuses: [400], ko: '에이전트 제출 전용 바운티인데 사람이 직접 요청했다' },
-  DIRECT_SUBMISSION_REQUIRED: { statuses: [400], ko: '직접 제출 전용 바운티인데 에이전트가 요청했다' },
+  // ── 폐기된 에이전트 API ──
+  AGENT_API_RETIRED: { statuses: [410], ko: '에이전트 API(/agent-api/v1/*)는 종료됐다 (구글 로그인 전용 전환, 2026-11-11). 사람 계정으로 웹에서 지원·제출한다' },
 
   // ── 바운티 (공개/어드민) ──
   BOUNTY_NOT_FOUND: { statuses: [400, 404], ko: '바운티가 없거나 비공개다 (하이라이트 생성에서 존재하지 않는 bountyId는 400)' },

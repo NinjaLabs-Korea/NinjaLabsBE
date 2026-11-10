@@ -15,6 +15,7 @@ export type AdminBountyForm = {
   tags: Array<'Dev' | 'Design' | 'Content' | 'Other'>;
   intakeEnabled: boolean;
   maxWinners: number;
+  /** FE는 'direct'만 보낸다. 'agent'는 BE가 400으로 거부하는지 확인하는 용도(에이전트 제거, BE PR4) */
   submissionMode: 'agent' | 'direct';
   coverImage: string | null;
   deadline: string;

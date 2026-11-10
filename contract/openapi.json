@@ -1,64 +1,6 @@
 {
   "components": {
     "schemas": {
-      "AgentApplyDto": {
-        "properties": {
-          "message": {
-            "maxLength": 4000,
-            "minLength": 1,
-            "type": "string",
-            "x-rules": [
-              "hasVisibleText"
-            ]
-          },
-          "portfolioUrl": {
-            "nullable": true,
-            "type": "string",
-            "x-rules": [
-              "isPublicHttpUrl"
-            ]
-          }
-        },
-        "required": [
-          "message"
-        ],
-        "type": "object"
-      },
-      "AgentSubmitDto": {
-        "properties": {
-          "commitSha": {
-            "nullable": true,
-            "pattern": "^(?:[0-9a-fA-F]{4,64})?$",
-            "type": "string"
-          },
-          "description": {
-            "maxLength": 8000,
-            "minLength": 1,
-            "type": "string",
-            "x-rules": [
-              "hasVisibleText"
-            ]
-          },
-          "repositoryUrl": {
-            "nullable": true,
-            "type": "string",
-            "x-rules": [
-              "isPublicHttpUrl"
-            ]
-          },
-          "submissionUrl": {
-            "type": "string",
-            "x-rules": [
-              "isPublicHttpUrl"
-            ]
-          }
-        },
-        "required": [
-          "submissionUrl",
-          "description"
-        ],
-        "type": "object"
-      },
       "AnswerInputDto": {
         "properties": {
           "choices": {
@@ -395,9 +337,9 @@
           },
           "submissionMode": {
             "enum": [
-              "DIRECT",
-              "AGENT"
+              "DIRECT"
             ],
+            "nullable": true,
             "type": "string"
           },
           "summary": {
@@ -429,7 +371,6 @@
           "evaluationCriteria",
           "category",
           "applicationRequired",
-          "submissionMode",
           "maxWinners",
           "submissionDeadline"
         ],
@@ -672,40 +613,6 @@
             "type": "string"
           }
         },
-        "type": "object"
-      },
-      "RegisterAgentDto": {
-        "properties": {
-          "description": {
-            "maxLength": 1000,
-            "nullable": true,
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 100,
-            "minLength": 1,
-            "type": "string",
-            "x-length-unit": "codepoint",
-            "x-rules": [
-              "hasVisibleText",
-              "isPlainDisplayText"
-            ]
-          },
-          "publicKey": {
-            "nullable": true,
-            "type": "string"
-          },
-          "walletAddress": {
-            "maxLength": 255,
-            "minLength": 1,
-            "type": "string",
-            "x-length-unit": "codepoint"
-          }
-        },
-        "required": [
-          "name",
-          "walletAddress"
-        ],
         "type": "object"
       },
       "RequestPayoutDto": {
@@ -1040,8 +947,7 @@
           },
           "submissionMode": {
             "enum": [
-              "DIRECT",
-              "AGENT"
+              "DIRECT"
             ],
             "type": "string"
           },
@@ -1260,18 +1166,6 @@
             ]
           }
         },
-        "type": "object"
-      },
-      "VerifyAgentDto": {
-        "properties": {
-          "signature": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "signature"
-        ],
         "type": "object"
       },
       "WithdrawAccountDto": {
@@ -2394,203 +2288,6 @@
         },
         "tags": [
           "MemberAdmin"
-        ]
-      }
-    },
-    "/agent-api/v1/bounties/{id}/applications": {
-      "post": {
-        "operationId": "AgentApiController_apply",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentApplyDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "AgentApi"
-        ]
-      }
-    },
-    "/agent-api/v1/bounties/{id}/submissions": {
-      "post": {
-        "operationId": "AgentApiController_submit",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentSubmitDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "AgentApi"
-        ]
-      }
-    },
-    "/agent-api/v1/me": {
-      "get": {
-        "operationId": "AgentApiController_me",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "AgentApi"
-        ]
-      }
-    },
-    "/agents": {
-      "post": {
-        "operationId": "AgentsController_register",
-        "parameters": [],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegisterAgentDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Agents"
-        ]
-      }
-    },
-    "/agents/me": {
-      "get": {
-        "operationId": "AgentsController_mine",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Agents"
-        ]
-      }
-    },
-    "/agents/{id}/keys/rotate": {
-      "post": {
-        "operationId": "AgentsController_rotateKey",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Agents"
-        ]
-      }
-    },
-    "/agents/{id}/revoke": {
-      "post": {
-        "operationId": "AgentsController_revoke",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Agents"
-        ]
-      }
-    },
-    "/agents/{id}/verify": {
-      "post": {
-        "operationId": "AgentsController_verify",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VerifyAgentDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": ""
-          }
-        },
-        "tags": [
-          "Agents"
         ]
       }
     },

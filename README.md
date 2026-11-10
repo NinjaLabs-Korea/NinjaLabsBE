@@ -53,7 +53,6 @@ npm run start:dev           # http://localhost:4000
 | `media/` | 이미지 저장 (운영자 업로드, 프로필 사진) + 공개 immutable 조회 `/media/<id>` |
 | `bounties/` | 바운티 목록·상세, 지원(applications), 제출(submissions, 리비전, 수상자 지급 주소), `admin/`에 운영자 관리와 전이 차단 사유 |
 | `rewards/` | 선입금 확인 → payout 멱등 지급(요청 시점 지급 주소 스냅샷) (운영자 API 포함) |
-| `agents/` | AI 에이전트 등록·검증·API 키 + Agent API 인증 ([docs/agent-api.md](docs/agent-api.md)) |
 | `audit/` | 감사 로그 기록 (`AuditService`) + 조회 |
 | `health/` | `GET /health` (DB 연결 확인) |
 
@@ -73,12 +72,11 @@ FE가 알아야 하는 상수(상태 집합, 전이표, 카테고리·역할 등
 | 위치 | 하는 일 |
 |---|---|
 | `common/database/` | `pg` Pool 기반 `DatabaseService` (query + tx, 연결·문장 타임아웃) + `SchemaGuard` (미적용 마이그레이션이 있으면 기동 거부) |
-| `common/http/` | 요청 ID, 쿠키, 전역 예외 필터, 요청 로깅, 에러 코드 카탈로그 (`error-codes.ts`) |
+| `common/http/` | 요청 ID, 쿠키, 전역 예외 필터, 요청 로깅, 에러 코드 카탈로그 (`error-codes.ts`), 종료된 `/agent-api/v1/*`의 410 응답 (`retired-routes.controller.ts`, 정리 PR5에서 제거) |
 | `common/validation/` | DTO 공용 검증기 (trim, URL, tx hash, 토큰 금액, 글자 수, Injective 지급 주소 `injective-address.ts`) |
 | `common/throttler/` | rate limit (memory 또는 postgres 저장소, 공개 읽기 한도) |
 | `common/alerts/` | 운영 알림 `AlertService` (웹훅, 없으면 로그만) + 기동 실패 알림 + 5xx 버스트 감지 |
 | `common/maintenance/` | 만료 데이터 정리 크론 |
-| `common/crypto/` | 에이전트 지갑 서명 검증 (EIP-191 / ADR-36) |
 | `common/logging/` | 로그에 비밀이 새지 않게 하는 헬퍼 |
 | `app-setup.ts` | `configureApp()`: 전역 파이프·필터·인터셉터·CORS·trust proxy. `main.ts`와 e2e가 같이 쓴다 |
 | `deploy/` | 배포 설정 가드 스펙 (`railway-config`, `audit-gate`). 런타임 코드 없음 |
@@ -128,7 +126,6 @@ FE가 알아야 하는 상수(상태 집합, 전이표, 카테고리·역할 등
 | [docs/testing.md](docs/testing.md) | 테스트 계층, 실 DB와 e2e 하네스, 뮤테이션 테스트 |
 | [docs/deployment.md](docs/deployment.md) | 배포 순서, production env 표, 로컬 오리진 |
 | [docs/api-contract.md](docs/api-contract.md) | REST API 계약, 에러 코드, 감사 action 카탈로그 (FE `docs/auth-api-contract.md`와 짝) |
-| [docs/agent-api.md](docs/agent-api.md) | AI 에이전트용 Agent API v1 |
 | [docs/security.md](docs/security.md) | 보안 체크리스트와 보안 모델 |
 | [docs/decisions.md](docs/decisions.md) | 제품 결정과 MVP 기본값 |
 | [docs/runbook.md](docs/runbook.md) | 운영 런북: 첫 배포, 어드민 부트스트랩, 백업·복구, 장애 플레이북, 메인넷 전환, 멀티시그 |

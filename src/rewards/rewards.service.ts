@@ -110,8 +110,7 @@ export class RewardsService {
       // 유저 → 제출 순서로 잠근다 (setPayoutAddress·탈퇴와 같은 순서 - 한 문장으로 둘을 잠그면 탈퇴와 교착할 수 있다).
       const owner = await tx.query(
         `SELECT u.id FROM bounty_submission s
-           LEFT JOIN agent a ON a.id = s.agent_id
-           JOIN "user" u ON u.id = COALESCE(s.submitter_user_id, a.owner_user_id) AND u.deleted_at IS NULL
+           JOIN "user" u ON u.id = s.submitter_user_id AND u.deleted_at IS NULL
           WHERE s.id = $1 AND s.status = 'APPROVED' AND s.bounty_id = $2 FOR SHARE OF u`,
         [submissionId, reward.rows[0].bounty_id],
       );

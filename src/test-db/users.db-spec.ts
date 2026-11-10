@@ -153,21 +153,15 @@ describeDb('users on a real database', () => {
     });
   });
 
-  it('publicProfile completed bounties include approved work of owned agents, exclude other statuses, deleted bounties and deleted agents', async () => {
+  it('publicProfile completed bounties are the user\'s own approved work only: other statuses, deleted bounties, other people\'s rows and legacy agent rows of the user\'s agents are excluded; agents is an empty shim', async () => {
     const admin = await createUser(db, { isAdmin: true });
     const nickname = `Agt${unique().slice(0, 8)}`;
     const owner = await createUser(db, { nickname });
-    const agent = async (deleted: boolean, status = 'ACTIVE') => (await db.query<{ id: string }>(
-      `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, deleted_at)
-       VALUES ($1, $2, $3, $4, $6, CASE WHEN $5::boolean THEN now() END) RETURNING id`,
-      [owner, unique('bot-'), unique('pk-'), `inj1${unique()}`, deleted, status])).rows[0].id;
-    const [liveAgent, deletedAgent] = [await agent(false), await agent(true)];
-    // unverified / suspended / revoked agents (name + wallet address) are not part of the public profile
-    for (const status of ['PENDING_VERIFICATION', 'SUSPENDED', 'REVOKED']) await agent(false, status);
-
-    await submission(await bounty(admin, 'by-agent'), { agentId: liveAgent });
-    await submission(await bounty(admin, 'by-agent-deleted-bounty', { deleted: true }), { agentId: liveAgent });
-    await submission(await bounty(admin, 'by-deleted-agent'), { agentId: deletedAgent });
+    // 에이전트 제거(BE PR4) 전에 만들어진 소유 에이전트와 그 제출 행: 공개 프로필 어디에도 나오지 않는다
+    const legacyAgent = (await db.query<{ id: string }>(
+      `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status) VALUES ($1, $2, $3, $4, 'ACTIVE') RETURNING id`,
+      [owner, unique('bot-'), unique('pk-'), `inj1${unique()}`])).rows[0].id;
+    await submission(await bounty(admin, 'by-legacy-agent'), { agentId: legacyAgent });
     await submission(await bounty(admin, 'rejected'), { userId: owner }, 'REJECTED');
     await submission(await bounty(admin, 'in-review'), { userId: owner }, 'IN_REVIEW');
     await submission(await bounty(admin, 'deleted-bounty', { deleted: true }), { userId: owner });
@@ -175,32 +169,21 @@ describeDb('users on a real database', () => {
     await submission(await bounty(admin, 'someone-else'), { userId: admin });
 
     const profile = await users.publicProfile(nickname);
-    expect((profile.completedBounties as Array<{ title: string }>).map((row) => row.title).sort()).toEqual(['by-agent', 'mine']);
-    const agents = profile.agents as Array<{ id: string; completed_bounties: Array<{ title: string }> }>;
-    expect(agents.map((a) => a.id)).toEqual([liveAgent]);
-    // the agent's list drops the soft-deleted bounty too (it used to leak its id and title here)
-    expect(agents[0].completed_bounties.map((b) => b.title)).toEqual(['by-agent']);
+    expect((profile.completedBounties as Array<{ title: string }>).map((row) => row.title)).toEqual(['mine']);
+    expect(profile.agents).toEqual([]);
   });
 
-  it('publicProfile lists tags, agents and an agent\'s completed bounties in a stable order (tag name, creation, newest review first)', async () => {
+  it('publicProfile lists tags in a stable order and completed bounties newest review first', async () => {
     const admin = await createUser(db, { isAdmin: true });
     const nickname = `Ord${unique().slice(0, 8)}`;
     const owner = await createUser(db, { nickname });
     for (const tag of ['OTHER', 'DEV', 'CONTENT', 'DESIGN']) await db.query(`INSERT INTO user_tag (user_id, tag) VALUES ($1, $2)`, [owner, tag]);
-    const agent = async (name: string, createdAt: string) => (await db.query<{ id: string }>(
-      `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, created_at)
-       VALUES ($1, $2, $3, $4, 'ACTIVE', $5) RETURNING id`,
-      [owner, name, unique('pk-'), `inj1${unique()}`, createdAt])).rows[0].id;
-    const second = await agent('second', '2026-02-01T00:00:00Z');
-    const first = await agent('first', '2026-01-01T00:00:00Z');
-    await submission(await bounty(admin, 'older'), { agentId: first }, 'APPROVED', `'2026-03-01T00:00:00Z'`);
-    await submission(await bounty(admin, 'newer'), { agentId: first }, 'APPROVED', `'2026-04-01T00:00:00Z'`);
+    await submission(await bounty(admin, 'older'), { userId: owner }, 'APPROVED', `'2026-03-01T00:00:00Z'`);
+    await submission(await bounty(admin, 'newer'), { userId: owner }, 'APPROVED', `'2026-04-01T00:00:00Z'`);
 
     const profile = await users.publicProfile(nickname);
     expect((profile as Record<string, unknown>).tags).toEqual(['CONTENT', 'DESIGN', 'DEV', 'OTHER']);
-    const agents = profile.agents as Array<{ id: string; completed_bounties: Array<{ title: string }> }>;
-    expect(agents.map((a) => a.id)).toEqual([first, second]);
-    expect(agents[0].completed_bounties.map((b) => b.title)).toEqual(['newer', 'older']);
+    expect((profile.completedBounties as Array<{ title: string }>).map((b) => b.title)).toEqual(['newer', 'older']);
   });
 
   it('publicProfile keeps the nfts: [] shim and never reads nft rows, even when legacy NFT rows exist for the user', async () => {

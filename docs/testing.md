@@ -39,8 +39,8 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres npm run
 ```
 
 - **대역은 외부 I/O만** (`support/fakes.ts`): Google 토큰 엔드포인트(전역 `fetch` 가로채기 - 그 밖의 외부 URL 호출은 테스트 실패) + `GoogleIdTokenVerifier`.
-  `@injectivelabs/sdk-ts`·`@cosmjs/amino`는 ESM 전용이라 jest가 못 불러오므로 `moduleNameMapper`로 바꾼다 - 주소 변환은 실제 bech32
-  구현(sdk-ts와 같은 결과를 벡터로 검사), 체인/ADR-36 클래스는 호출 시 실패. 시간은 Postgres `now()` 기준 행을 옮겨(예: 회전 시각을 31초 전으로) 다룬다.
+  체인 SDK(`@injectivelabs/sdk-ts`, `@cosmjs/amino`)는 에이전트 제거(2026-11-11)로 의존성에서 빠졌으므로 `moduleNameMapper` 스텁은 없다.
+  주소 변환·검증은 순수 TS(`common/validation/injective-address.ts`, 단위 벡터가 sdk-ts 결과와 대조). 시간은 Postgres `now()` 기준 행을 옮겨(예: 회전 시각을 31초 전으로) 다룬다.
 - **환경 격리**: 하네스가 앱이 읽는 env 키를 전부 덮어써 개발자 `.env`의 시크릿/DB가 섞이지 않는다. `TRUST_PROXY=1`이고 요청마다 무작위
   `X-Forwarded-For`를 붙여 IP별 스로틀 버킷을 나눈다(스로틀 스펙은 IP를 지정).
 - **로그**: 모든 Nest 로그를 수집하고, 파일마다 끝에서 니모닉·JWT/Google 시크릿·발급된 토큰·API 키·로그인 코드가 한 줄도 없는지 단언한다.

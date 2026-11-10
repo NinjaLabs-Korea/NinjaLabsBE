@@ -1,5 +1,3 @@
-import { Wallet } from 'ethers';
-import { AgentsService } from '../agents/agents.service';
 import { AuditService } from '../audit/audit.service';
 import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
 import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.service';
@@ -13,10 +11,6 @@ import { DatabaseService } from '../common/database/database.service';
 import { HighlightsService } from '../highlights/highlights.service';
 import { describeDb } from './describe-db';
 import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique } from './harness';
-
-// sdk-ts is ESM-only: the e2e stub gives the real inj1 <-> 0x helpers (register compares the agent wallet with the owner's)
-jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
-jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
 
 /** QA 라운드에서 나온 규칙들을 실 Postgres 행으로 고정한다: 취소 시 지원 정리, 온보딩 게이트, 공개 builders 정의 */
 describeDb('QA round fixes on a real database', () => {
@@ -185,60 +179,18 @@ describeDb('QA round fixes on a real database', () => {
     expect(await builders()).toBe(start + 2);
   });
 
-  it('an agent cannot be registered on the owner\'s own connected wallet (0x or inj1 form), but a disconnected wallet and a dedicated wallet are fine; the rejected row is not left behind', async () => {
-    const agents = new AgentsService(db, new AuditService(db));
-    const owner = await createUser(db);
-    const ownerSigner = Wallet.createRandom();
-    const { getInjectiveAddress } = jest.requireActual('../test-e2e/support/injective-sdk.stub') as { getInjectiveAddress: (address: string) => string };
-    const stored = getInjectiveAddress(ownerSigner.address);
-    expect(stored.startsWith('inj1')).toBe(true);
-    const wallet = await db.query<{ id: string }>(
-      `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now()) RETURNING id`, [owner, stored]);
-
-    await expect(agents.register(owner, 'mine', undefined, undefined, ownerSigner.address)).rejects.toMatchObject({ status: 400, message: 'AGENT_WALLET_IS_OWNER_WALLET' });
-    expect((await db.query(`SELECT 1 FROM agent WHERE owner_user_id = $1`, [owner])).rowCount).toBe(0);
-
-    // someone else may use that address for their agent (the rule is about the owner's own wallet)
-    const other = await createUser(db);
-    await expect(agents.register(other, 'theirs', undefined, undefined, ownerSigner.address)).resolves.toMatchObject({ status: 'PENDING_VERIFICATION' });
-
-    // a dedicated wallet works; so does the old wallet after the owner disconnected it
-    await expect(agents.register(owner, 'dedicated', undefined, undefined, Wallet.createRandom().address)).resolves.toMatchObject({ status: 'PENDING_VERIFICATION' });
-    await db.query(`UPDATE wallet SET disconnected_at = now() WHERE id = $1`, [wallet.rows[0].id]);
-    const freed = Wallet.createRandom();
-    await db.query(`INSERT INTO wallet (user_id, chain, address, is_primary, verified_at, disconnected_at) VALUES ($1, 'INJECTIVE', $2, false, now(), now())`, [owner, getInjectiveAddress(freed.address)]);
-    await expect(agents.register(owner, 'freed', undefined, undefined, freed.address)).resolves.toMatchObject({ status: 'PENDING_VERIFICATION' });
-  });
-
-  it('an agent follows its owner onboarding: an unfinished owner cannot register, and a legacy agent of one cannot apply or submit (409 PROFILE_REQUIRED, no rows)', async () => {
-    const agents = new AgentsService(db, new AuditService(db));
+  it('a user who has not finished onboarding cannot apply or submit (409 PROFILE_REQUIRED, no rows), and can once onboarding is completed', async () => {
     const newbie = await createUser(db, { onboarded: false });
-    await expect(agents.register(newbie, 'bot', undefined, undefined, Wallet.createRandom().address)).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
-    expect((await db.query(`SELECT 1 FROM agent WHERE owner_user_id = $1`, [newbie])).rowCount).toBe(0);
-
-    // an agent that exists already (registered before the gate) is blocked at apply / submit through its owner
-    const agentId = (await db.query<{ id: string }>(
-      `INSERT INTO agent (owner_user_id, name, wallet_address, status, verified_at) VALUES ($1, 'legacy', $2, 'ACTIVE', now()) RETURNING id`,
-      [newbie, Wallet.createRandom().address])).rows[0].id;
-    const agentBounty = async (applicationRequired: boolean) => {
-      const { id } = await bounties.create(adminId, {
-        title: unique('qa-agent-'), sponsorName: 'S', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
-        category: 'DEV', applicationRequired, submissionMode: 'AGENT', maxWinners: 1,
-        submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
-      });
-      await bounties.transition(id, 'OPEN', adminId);
-      return id;
-    };
-    const applyBounty = await agentBounty(true);
-    const directBounty = await agentBounty(false);
-    await expect(applications.applyAsAgent(applyBounty, agentId, 'hi')).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
-    await expect(submissions.submitAsAgent(directBounty, agentId, { submissionUrl: 'https://example.com/z', description: 'd' }))
+    const applyBounty = await openBounty(true);
+    const directBounty = await openBounty(false);
+    await expect(applications.apply(applyBounty, newbie, 'hi')).rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
+    await expect(submissions.submit(directBounty, newbie, { submissionUrl: 'https://example.com/z', description: 'd' }))
       .rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
-    expect((await db.query(`SELECT 1 FROM bounty_application WHERE agent_id = $1 UNION ALL SELECT 1 FROM bounty_submission WHERE agent_id = $1`, [agentId])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM bounty_application WHERE applicant_user_id = $1 UNION ALL SELECT 1 FROM bounty_submission WHERE submitter_user_id = $1`, [newbie])).rowCount).toBe(0);
 
     await db.query(`UPDATE "user" SET onboarding_step = 4, onboarding_completed_at = now() WHERE id = $1`, [newbie]);
-    await expect(applications.applyAsAgent(applyBounty, agentId, 'hi')).resolves.toMatchObject({ status: 'PENDING' });
-    await expect(submissions.submitAsAgent(directBounty, agentId, { submissionUrl: 'https://example.com/z', description: 'd' })).resolves.toMatchObject({ status: 'SUBMITTED' });
+    await expect(applications.apply(applyBounty, newbie, 'hi')).resolves.toMatchObject({ status: 'PENDING' });
+    await expect(submissions.submit(directBounty, newbie, { submissionUrl: 'https://example.com/z', description: 'd' })).resolves.toMatchObject({ status: 'SUBMITTED' });
   });
 
   it('a public profile exists only for users who finished onboarding (404 USER_NOT_FOUND otherwise)', async () => {

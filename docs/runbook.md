@@ -217,7 +217,7 @@ Google Cloud Console → (프로젝트) → **Google Auth Platform**(구 "OAuth 
 
 ### 7.3 (삭제됨) NFT 민팅 정체
 
-NFT 모듈(민팅 워커, 잡 콘솔, `scripts/requeue-nft-jobs.js`)은 2026-11-11 구글 로그인 전용 전환(BE PR3)에서 제거됐다. 번호는 다른 문서가 §7.4~§7.7을 가리키므로 그대로 둔다. `nft`, `nft_job` 테이블과 행은 이력으로 남아 있고 아무 코드도 읽거나 쓰지 않는다. 과거 `audit_log`의 `NFT_JOB_RETRIED`, `NFT_JOB_REQUEUED`는 감사 화면에 라벨만 남는다.
+NFT 모듈(민팅 워커, 잡 콘솔, `scripts/requeue-nft-jobs.js`)은 2026-11-11 구글 로그인 전용 전환(BE PR3)에서 제거됐다. 번호는 다른 문서가 §7.4~§7.7을 가리키므로 그대로 둔다. `nft`, `nft_job` 테이블과 행은 이력으로 남아 있고 어떤 애플리케이션 코드도 쓰지 않는다. 읽는 곳은 `scripts/forfeit-award.js` 하나뿐이며, 그 "완료 NFT 행 없음" 선행 조건은 과거 행에도 그대로 적용된다(과거 행 때문에 보상 미지급 처리가 거부되면 행을 지우지 말고 DB를 수동 검토해 해결한다). 과거 `audit_log`의 `NFT_JOB_RETRIED`, `NFT_JOB_REQUEUED`는 감사 화면에 라벨만 남는다.
 
 ### 7.4 지급(payout) 분쟁 - "보상을 못 받았다 / 금액이 틀리다"
 1. 사실 수집 (읽기만):

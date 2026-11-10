@@ -9,16 +9,15 @@ import { RewardTokenResolver } from '../bounties/admin/reward-token.resolver';
 import { DatabaseService } from '../common/database/database.service';
 import { isUniqueViolation } from '../common/database/pg-errors';
 import { DEPOSIT_TX_UNIQUE_INDEX, RewardsService } from '../rewards/rewards.service';
-import { WALLET_ADDRESS_UNIQUE_INDEX, WALLET_PRIMARY_UNIQUE_INDEX } from '../wallets/wallets.service';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, withPayoutAddresses } from './harness';
+import { createDb, createUser, fakeTxHash, TEST_JWT_SECRET, testConfig, unique, withPayoutAddresses } from './harness';
 
 // AgentsService.register의 inj1 <-> 0x 변환만 쓴다 (agents.db-spec.ts와 같은 스텁)
 jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
 jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
 
 /**
- * 서비스가 23505를 도메인 코드로 바꿀 때 보는 제약 이름(auth/rewards/agents/wallets의 상수)이 실제 마이그레이션의 인덱스 이름과 맞는지
+ * 서비스가 23505를 도메인 코드로 바꿀 때 보는 제약 이름(auth/rewards/agents의 상수)이 실제 마이그레이션의 인덱스 이름과 맞는지
  * 실 Postgres로 확인한다. 이름이 바뀌면 mock 단위 테스트는 계속 통과하지만 여기서는 깨진다.
  */
 describeDb('unique violation constraint names used by the services', () => {
@@ -133,23 +132,6 @@ describeDb('unique violation constraint names used by the services', () => {
         [await createUser(db), wallet]);
       await expect(agents.register(await createUser(db), 'bot', undefined, undefined, wallet))
         .rejects.toMatchObject({ status: 409, message: 'AGENT_KEY_OR_WALLET_ALREADY_REGISTERED' });
-    });
-  });
-
-  describe('wallets: verify', () => {
-    const insertWallet = (userId: string, address: string) => failureOf(
-      `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at) VALUES ($1, 'INJECTIVE', $2, true, now())`, [userId, address]);
-
-    it(`a linked address fails on ${WALLET_ADDRESS_UNIQUE_INDEX} and a second primary wallet on ${WALLET_PRIMARY_UNIQUE_INDEX}`, async () => {
-      const owner = await createUser(db);
-      const { address } = await createPrimaryWallet(db, owner);
-
-      const byAddress = await insertWallet(await createUser(db), address);
-      expect(byAddress).toMatchObject({ code: '23505', constraint: 'uq_wallet_chain_address_active' });
-      expect(isUniqueViolation(byAddress, WALLET_ADDRESS_UNIQUE_INDEX)).toBe(true);
-      const byPrimary = await insertWallet(owner, `inj1${unique()}`);
-      expect(byPrimary).toMatchObject({ code: '23505', constraint: 'uq_wallet_primary_per_user' });
-      expect(isUniqueViolation(byPrimary, WALLET_PRIMARY_UNIQUE_INDEX)).toBe(true);
     });
   });
 });

@@ -2,7 +2,7 @@
 
 Injective 생태계 빌더 커뮤니티 & 바운티 마켓플레이스의 백엔드. 프론트엔드는 [NinjaLabsFE](https://github.com/NinjaLabs-Korea/NinjaLabsFE).
 
-빌더가 바운티를 완료하면 보상을 받고, 완료 기록은 온체인 NFT로 남는다. 이 서버는 로그인과 온보딩, 지갑 연결, 바운티 지원·제출·심사, 보상 입금과 지급, NFT 발행, 커뮤니티(멤버, 공지, 명예의 전당, 기수 모집), AI 에이전트 API, 운영자 콘솔 API를 맡는다.
+빌더가 바운티를 완료하면 보상을 받고, 완료 기록은 온체인 NFT로 남는다. 이 서버는 로그인과 온보딩, 바운티 지원·제출·심사, 보상 입금과 주소 기반 지급, NFT 발행, 커뮤니티(멤버, 공지, 명예의 전당, 기수 모집), AI 에이전트 API, 운영자 콘솔 API를 맡는다.
 
 | | |
 |---|---|
@@ -13,10 +13,8 @@ Injective 생태계 빌더 커뮤니티 & 바운티 마켓플레이스의 백엔
 
 ## 빠르게 시작하기
 
-새 수령 지갑 교체만 기본 OFF다. 호환 배포·구버전 드레인 후 `WALLET_REPLACEMENT_ENABLED=true`로 켠다.
 기존 NFT 자동 발급은 새 설정 없이 유지된다(기존 체인 설정/자격 증명 필요).
-중지할 때만 `NFT_MINTING_ENABLED=false`로 설정한다. 복원 전에는 반드시 명시적으로 중지·드레인하고 체인 대조 후 재개한다.
-상세 순서는 [운영 반영 체크리스트](docs/wallet-replacement-release.md)를 따른다.
+중지할 때만 `NFT_MINTING_ENABLED=false`로 설정한다. 복원 전에는 반드시 명시적으로 중지·드레인하고 체인 대조 후 재개한다([runbook](docs/runbook.md)).
 
 ```bash
 npm install
@@ -51,7 +49,6 @@ npm run start:dev           # http://localhost:4000
 |---|---|
 | `auth/` | 구글 OAuth → JWT 세션 (refresh는 HttpOnly 쿠키), `AuthGuard` / `AdminGuard` |
 | `users/` | 온보딩 프로필, 닉네임 중복 검사, 공개 프로필, 프로필 사진 (`user-avatar.service`), 회원 탈퇴 (`account-withdrawal.service`) |
-| `wallets/` | 지갑 연결 challenge/verify (nonce 서명) |
 | `members/` | 공식 멤버 탭 (공개) + 운영자 멤버 지정 |
 | `notices/` | 공지·소식 (공개 읽기, 행사 날짜 `event_date`) + 운영자 공지 관리 |
 | `cohorts/` | 기수 모집: 공개 현재 기수와 지원서 질문 (`cohort-questions.ts`), 지원서 제출·수정·철회, 운영자 기수 관리·질문 편집·심사·CSV |
@@ -85,7 +82,7 @@ FE가 알아야 하는 상수(상태 집합, 전이표, 카테고리·역할 등
 | `common/throttler/` | rate limit (memory 또는 postgres 저장소, 공개 읽기 한도) |
 | `common/alerts/` | 운영 알림 `AlertService` (웹훅, 없으면 로그만) + 기동 실패 알림 + 5xx 버스트 감지 |
 | `common/maintenance/` | 만료 데이터 정리 크론 |
-| `common/crypto/` | 지갑 서명 검증 (EIP-191 / ADR-36) |
+| `common/crypto/` | 에이전트 지갑 서명 검증 (EIP-191 / ADR-36) |
 | `common/logging/` | 로그에 비밀이 새지 않게 하는 헬퍼 |
 | `app-setup.ts` | `configureApp()`: 전역 파이프·필터·인터셉터·CORS·trust proxy. `main.ts`와 e2e가 같이 쓴다 |
 | `deploy/` | 배포 설정 가드 스펙 (`railway-config`, `audit-gate`). 런타임 코드 없음 |
@@ -116,7 +113,7 @@ FE가 알아야 하는 상수(상태 집합, 전이표, 카테고리·역할 등
 
 - **운영자 API는 도메인 모듈 안에** `*-admin.controller.ts` / `*-admin.service.ts`로 두고 `@UseGuards(AdminGuard)`를 붙인다.
 - **상태 목록을 직접 쓰지 않는다.** 위 상태 파일의 상수와 SQL 헬퍼를 쓴다.
-- **자주 쓰는 SQL 조건은 조각 함수로** 끼운다: 활성 유저, 대표 지갑, 소유 에이전트, 완료된 수상 등.
+- **자주 쓰는 SQL 조건은 조각 함수로** 끼운다: 활성 유저, 소유 에이전트, 완료된 수상 등.
 - **SQL의 같은 `$n`은 캐스트도 같게** 쓴다. 다르면 Postgres가 `42P08`로 거부하는데 mock 테스트는 못 잡는다.
 - **에러 코드는 카탈로그에 등록**한다: `common/http/error-codes.ts`와 `docs/api-contract.md` "에러 코드" 표에 같은 행.
 - **감사 로그는 `AuditService`로만**, action은 `audit/audit-actions.ts` 카탈로그의 키만. 이미 쌓인 action 이름은 바꾸지 않는다.

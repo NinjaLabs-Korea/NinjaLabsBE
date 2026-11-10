@@ -36,7 +36,7 @@ describeDb('account withdrawal over HTTP (e2e)', () => {
     const again = await e2e.login({ sub: session.sub, email: session.email });
     expect(again.userId).not.toBe(session.userId);
     const me = await e2e.get('/auth/me', { token: again.accessToken });
-    expect(me.body).toMatchObject({ onboardingStep: 2, wallet: null });
+    expect(me.body).toMatchObject({ onboardingStep: 3, wallet: null });
   });
 
   it('an approved winner whose funded reward has not been requested yet gets 409 WITHDRAWAL_BLOCKED_PENDING_REWARDS until it is paid', async () => {

@@ -2,7 +2,7 @@ import { LoggerService } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { createHash, randomBytes } from 'crypto';
-import { getAddress, HDNodeWallet, Wallet } from 'ethers';
+import { getAddress } from 'ethers';
 import { request as httpRequest, IncomingHttpHeaders } from 'http';
 import { AddressInfo } from 'net';
 import { AppModule } from '../../app.module';
@@ -61,7 +61,6 @@ export function e2eEnv(): Record<string, string> {
     INJECTIVE_GRPC_ENDPOINT: '',
     NFT_CONTRACT_ADDRESS: 'inj1e2econtract',
     NFT_MINTING_ENABLED: '', // legacy/no-setting behavior: automatic issuance remains ON (fake chain only)
-    WALLET_REPLACEMENT_ENABLED: '', // feature suite explicitly opts in
     MASTER_WALLET_MNEMONIC: E2E_SECRETS.MASTER_WALLET_MNEMONIC,
     REWARD_MULTISIG_ADDRESS: 'inj1e2emultisig',
     INJECTIVE_EVM_CHAIN_ID: '1439',
@@ -294,25 +293,14 @@ export class E2eApp {
     return this.login({ sub, email: `${sub}@example.test` });
   }
 
-  /** 프로필 저장 + 지갑 연결(실제 EIP-191 서명) - payout을 받을 수 있는 빌더 */
-  async onboard(session: Session, nickname = `b_${randomBytes(4).toString('hex')}`): Promise<{ nickname: string; signer: HDNodeWallet; walletAddress: string }> {
+  /** 프로필 저장 + 온보딩 완료 - 지원·제출할 수 있는 빌더 (지갑 연결은 BE PR2에서 없어졌다. 지급은 승인 뒤 PUT /submissions/:id/payout-address) */
+  async onboard(session: Session, nickname = `b_${randomBytes(4).toString('hex')}`): Promise<{ nickname: string }> {
     const profile = await this.post('/users/me/profile', { nickname, bio: 'builder bio', tags: ['DEV'] }, { token: session.accessToken });
     if (profile.status !== 201) throw new Error(`profile → ${profile.status} ${profile.text}`);
-    const signer = Wallet.createRandom();
-    const walletAddress = await this.linkWallet(session, signer);
     // 온보딩 완료 플래그 - 지원·제출은 이것을 마친 사람만 할 수 있다 (409 PROFILE_REQUIRED)
     const done = await this.post('/users/me/complete-onboarding', undefined, { token: session.accessToken });
     if (done.status !== 201) throw new Error(`complete-onboarding → ${done.status} ${done.text}`);
-    return { nickname, signer, walletAddress };
-  }
-
-  async linkWallet(session: Session, signer: HDNodeWallet): Promise<string> {
-    const challenge = await this.post('/wallets/challenge', { address: signer.address }, { token: session.accessToken });
-    if (challenge.status !== 201) throw new Error(`challenge → ${challenge.status} ${challenge.text}`);
-    const signature = await signer.signMessage(challenge.body.message);
-    const verified = await this.post('/wallets/verify', { address: signer.address, signature }, { token: session.accessToken });
-    if (verified.status !== 201) throw new Error(`verify → ${verified.status} ${verified.text}`);
-    return verified.body.address;
+    return { nickname };
   }
 }
 

@@ -47,23 +47,12 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `CONFIRM_NICKNAME_MISMATCH` | 400 | 탈퇴 확인용 닉네임 입력이 현재 닉네임과 다르다 |
 | `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS` | 409 | 진행 중인 지급(payout)이 있어 탈퇴할 수 없다 |
 | `WITHDRAWAL_BLOCKED_PENDING_REWARDS` | 409 | 입금 대기 중인 보상이 걸려 있어 탈퇴할 수 없다 |
-| `INVALID_INJECTIVE_ADDRESS` | 400 | Injective 주소(inj1… 또는 0x…) 형식이 올바르지 않다 (지갑 연결, 지급 주소 입력: 체크섬, hrp, 20바이트 계정 아님, 0 주소) |
-| `CHALLENGE_NOT_FOUND` | 400 | 발급된 지갑 challenge가 없다 (먼저 challenge 요청) |
-| `CHALLENGE_EXPIRED` | 400 | challenge가 만료됐거나 이미 사용됐다 |
-| `INVALID_SIGNATURE` | 401 | 서명 검증에 실패했다 (지갑 연결·에이전트 등록 공통) |
-| `WALLET_LINKED_TO_OTHER_ACCOUNT` | 409 | 이 주소가 이미 다른 계정에 연결돼 있다 |
-| `ACCOUNT_ALREADY_HAS_WALLET` | 409 | 이 계정에 이미 다른 대표 지갑이 연결돼 있다 |
-| `WALLET_CHANGE_REQUIRES_WALLET` | 409 | 교체할 대표 지갑이 없다. 최초 연결을 먼저 완료해야 한다 |
-| `WALLET_CHANGE_DISABLED` | 503 | 수령 지갑 교체 기능이 운영 안전 확인 전 비활성화되어 있다 |
-| `WALLET_CHANGE_STALE` | 409 | 교체 요청의 기존 지갑이 현재 대표 지갑과 다르다. 현재 지갑으로 새 요청을 발급해야 한다 |
-| `WALLET_CHANGE_SAME_ADDRESS` | 400 | 같은 계정 주소로는 교체할 수 없다. 0x와 inj1 표기만 다른 경우도 같은 지갑이다 |
-| `WALLET_CHANGE_BLOCKED_PAYOUTS` | 409 | 본인 또는 소유 에이전트의 미정산 지급이 있다. FAILED 지급도 정리 후 교체해야 한다 |
-| `WALLET_CHANGE_BLOCKED_NFT_JOBS` | 409 | 미완료 NFT 또는 민팅·연결 작업이 있다. 실패 작업도 해결 후 교체해야 한다 |
-| `WALLET_CHANGE_NOT_FOUND` | 404 | 본인의 지갑 교체 요청이 없거나 새 요청으로 대체됐다 |
+| `INVALID_INJECTIVE_ADDRESS` | 400 | Injective 주소(inj1… 또는 0x…) 형식이 올바르지 않다 (지급 주소 입력: 체크섬, hrp, 20바이트 계정 아님, 0 주소) |
+| `INVALID_SIGNATURE` | 401 | 서명 검증에 실패했다 (에이전트 등록) |
 | `INVALID_AGENT_WALLET_ADDRESS` | 400 | 에이전트 지갑 주소가 0x(EVM)도 inj1(계정)도 아니거나 형식이 올바르지 않다 (전부 대문자 inj1은 소문자로 접어 받는다) |
 | `AGENT_PUBLIC_KEY_REQUIRED` | 400 | 에이전트 공개키가 필요하다 |
 | `AGENT_PUBLIC_KEY_MISMATCH` | 400 | inj1 에이전트의 공개키가 그 지갑 주소의 키가 아니다 |
-| `AGENT_WALLET_IS_OWNER_WALLET` | 400 | 에이전트 지갑이 소유자 본인의 연결 지갑과 같다 (전용 에이전트 지갑을 써야 한다). 등록 때뿐 아니라 `POST /wallets/verify`가 내 에이전트의 지갑을 대표 지갑으로 묶을 때도 |
+| `AGENT_WALLET_IS_OWNER_WALLET` | 400 | 에이전트 지갑이 소유자 본인의 연결 지갑과 같다 (전용 에이전트 지갑을 써야 한다). 등록 때 본인의 레거시 연결 지갑과 비교한다 |
 | `AGENT_KEY_OR_WALLET_ALREADY_REGISTERED` | 409 | 같은 공개키 또는 지갑으로 이미 등록된 에이전트가 있다 |
 | `AGENT_NOT_FOUND` | 404 | 내 에이전트가 아니거나 없다 |
 | `AGENT_ALREADY_VERIFIED` | 409 | 이미 검증이 끝난 에이전트다 (ACTIVE이거나, 검증된 뒤 정지·폐기됐다) |
@@ -153,7 +142,7 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | POST | `/auth/exchange` | - | `{code, codeVerifier}` → `{accessToken, refreshToken}`; `Cache-Control: no-store, private`. **쿠키 모드**(`X-Ninja-Session: cookie`): `Set-Cookie: ninja_rt=…` + 본문 `{accessToken, user}`(`user` = `GET /auth/me` 응답, 아래 "refresh 쿠키 모드") |
 | POST | `/auth/refresh` | - | **쿠키 모드**: 본문 `{}`(또는 없음) + `ninja_rt` 쿠키 → `{accessToken, user}` + 새 `Set-Cookie` (`user` = 같은 세션의 `GET /auth/me` 응답). **본문 모드(deprecated)**: `{refreshToken}` → `{accessToken, refreshToken}` (회전). `Cache-Control: no-store, private`. **재사용 유예 30초**: 방금 회전된 구 토큰이 30초 안에 다시 오면(멀티탭 레이스) 401 대신 이긴 쪽과 **같은 `refreshToken`**(+ 새로 서명한 `accessToken`)을 돌려주고 다시 회전하지 않는다, 두 탭 모두 그 토큰을 쓰면 된다. 30초가 지났거나 그 후속 토큰이 이미 회전/폐기됐으면 재사용 감지로 보고 `401 INVALID_REFRESH_TOKEN` + 그 토큰에서 파생된 세션 사슬 전체 폐기(재로그인 필요). 정지/삭제된 유저는 항상 401 |
 | POST | `/auth/logout` | - | **쿠키 모드**: 쿠키의 세션 폐기 + 쿠키 삭제(`Max-Age=0`) → 204. **본문 모드(deprecated)**: `{refreshToken}` → 204 |
-| GET | `/auth/me` | ✅ | 현재 유저 프로필 + 온보딩/지갑 상태 |
+| GET | `/auth/me` | ✅ | 현재 유저 프로필 + 온보딩 상태 (`wallet`은 항상 `null`인 호환 필드) |
 
 ### refresh 쿠키 모드 (2026-10-24 결정 - FE는 이 계약으로 구현)
 
@@ -216,10 +205,14 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
   "isAdmin": false,
   "isMember": false,
   "avatarUrl": "/media/uuid",
-  "wallet": { "address": "inj1...", "verifiedAt": "..." } ,
+  "wallet": null,
   "nft": { "status": "MINTED", "tokenId": "..." }
 }
 ```
+
+`wallet`(2026-11-10 결정, BE PR2): 지갑 연결을 없앴으므로 **항상 `null`**이다. 옛 FE 코덱이 키를 기대해 남겨 둔 호환 필드이며 이후 릴리스에서 키를 지운다. 클라이언트는 이 값을 읽지 않는다.
+
+`onboardingStep`: 1 구글 로그인 → **3 프로필**(첫 로그인 행의 값, 2026-11-10 BE PR2부터) → 4 프로필 저장. 2(옛 지갑 단계)는 그 전에 가입을 멈춘 유저의 행에만 남고(마이그레이션하지 않음), FE는 4 미만을 모두 프로필 화면으로 보낸다.
 
 `avatarUrl`(2026-11-01, 0022): 프로필 사진의 상대 경로 `/media/<uuid>` 또는 사진이 없으면 `null`. 추가 필드라 이 필드를 모르는 클라이언트는 그대로 동작하고, 클라이언트는 필드가 없을 때(옛 BE)도 `null`처럼 다뤄야 한다. 쿠키 모드 exchange/refresh의 `user`도 같은 값을 싣는다.
 
@@ -230,7 +223,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | GET | `/users/check-nickname?nickname=` | - | `{available: boolean}` - 즉시 중복 검증 |
 | POST | `/users/me/profile` | ✅ | `{nickname, bio, tags[]}` 전부 필수 (온보딩 3단계). 닉네임 2~50자, 유니코드 문자/숫자와 `_ . -`, **처음과 끝은 문자/숫자**, 예약어 `me`/`check-nickname`/`admin`/`new`/`edit`와 탈퇴 익명화 접두사 `withdrawn_`(대소문자 무관) 불가, 한글 채움 문자(U+115F, U+1160, U+3164, U+FFA0, 빈칸처럼 보이는 문자) 불가, **정적 파일 확장자로 끝나는 이름 불가** (`/\.(ico\|png\|jpg\|jpeg\|gif\|svg\|webp\|avif\|txt\|xml\|json\|js\|css\|map\|woff\|woff2\|ttf)$/i` : FE `src/proxy.ts` matcher와 같은 목록, 400 `nickname must not end with a static file extension (…)`). `check-nickname`도 예약어·정적 확장자에 `available: false`. 대소문자 유일성은 DB 로케일과 무관(ICU `lower(nickname COLLATE "und-x-icu")`, 마이그레이션 0019: `CAFÉ`=`café`). **bio**는 보이는 글자가 있어야 하고(제로폭·한글 채움·점자 빈칸·소프트 하이픈뿐이면 400) 방향 오버라이드/임베딩/격리 문자(U+202A-202E, U+2066-2069)가 있으면 400. **닉네임 변경**: 프로필을 한 번 저장한 뒤(step 4) 이름이 바뀌면 감사 `USER_NICKNAME_CHANGED`(before/after)가 남고, 마지막 변경 24시간 안에 또 바꾸면 409 `NICKNAME_CHANGE_COOLDOWN` (임시 닉네임에서 첫 이름을 정하는 것과 bio/태그만 고치는 저장은 제한 없음) |
 | POST | `/users/me/complete-onboarding` | ✅ | 온보딩 완료 플래그 - 프로필 저장(`onboardingStep` 4) 뒤에만, 전이면 409 `PROFILE_REQUIRED`. 이미 완료했으면 200/201 `{ok: true}` 멱등 |
-| DELETE | `/users/me` | ✅ | **회원 탈퇴** `{confirmNickname}`(지금 닉네임, 앞뒤 공백·대소문자 무시) → 200 `{ok: true}`. 400 `CONFIRM_NICKNAME_MISMATCH`, 409 `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS`(본인/내 에이전트 제출 또는 내 지갑으로 가는 payout 중 `PAID`/`CANCELLED`/`FAILED`가 아닌 것이 있음), 409 `WITHDRAWAL_BLOCKED_PENDING_REWARDS`(본인/내 에이전트의 `APPROVED` 제출에 아직 payout이 요청되지 않았고 그 바운티가 진행 중(`OPEN`/`SUBMISSION_CLOSED`/`IN_REVIEW`)·보상이 입금 확인(`FUNDED`/`PARTIALLY_PAID`/`PAID`)·배정 여유분 있음 - 탈퇴하면 받을 보상이 사라지므로 막는다. 운영자가 지급을 마친 뒤 다시 시도; FE는 "받을 보상이 남아 있어 지금은 탈퇴할 수 없다"로 안내. 두 409가 겹치면 `OPEN_PAYOUTS`가 먼저), 404 `USER_NOT_FOUND`(이미 탈퇴·정지). 한 트랜잭션: user `WITHDRAWN`+`deleted_at`, `google_id`/`email`에 `deleted:<ms>:` 프리픽스(같은 구글 계정 재가입 = 새 계정), 닉네임 `withdrawn_<8hex>`로 익명화·bio/링크/태그/멤버 플래그 제거, 프로필 사진 제거(media 행 삭제), refresh 세션 전부 폐기, 지갑 연결 해제, 소유 에이전트·키 `REVOKED`, PENDING 지원과 심사 전 제출(`SUBMITTED`/`RESUBMITTED`/`IN_REVIEW`/`REVISION_REQUESTED`) `WITHDRAWN`, 감사 `USER_WITHDRAWN`(+에이전트마다 `AGENT_REVOKED`). 승인/반려된 제출·payout·NFT 기록은 남는다. 동시에 들어온 `requestPayout`과는 수령자 유저 행 잠금으로 직렬화된다(탈퇴가 먼저면 404, 지급 요청이 먼저면 409). 쿠키 모드 FE는 이어서 `POST /auth/logout`(204, 멱등)으로 쿠키를 지운다. 5회/분 (2026-10-24) |
+| DELETE | `/users/me` | ✅ | **회원 탈퇴** `{confirmNickname}`(지금 닉네임, 앞뒤 공백·대소문자 무시) → 200 `{ok: true}`. 400 `CONFIRM_NICKNAME_MISMATCH`, 409 `WITHDRAWAL_BLOCKED_OPEN_PAYOUTS`(본인/내 에이전트 제출에 걸린 payout 중 `PAID`/`CANCELLED`/`FAILED`가 아닌 것이 있음. 레거시 지갑 기반 payout도 제출로 판단한다), 409 `WITHDRAWAL_BLOCKED_PENDING_REWARDS`(본인/내 에이전트의 `APPROVED` 제출에 아직 payout이 요청되지 않았고 그 바운티가 진행 중(`OPEN`/`SUBMISSION_CLOSED`/`IN_REVIEW`)·보상이 입금 확인(`FUNDED`/`PARTIALLY_PAID`/`PAID`)·배정 여유분 있음 - 탈퇴하면 받을 보상이 사라지므로 막는다. 운영자가 지급을 마친 뒤 다시 시도; FE는 "받을 보상이 남아 있어 지금은 탈퇴할 수 없다"로 안내. 두 409가 겹치면 `OPEN_PAYOUTS`가 먼저), 404 `USER_NOT_FOUND`(이미 탈퇴·정지). 한 트랜잭션: user `WITHDRAWN`+`deleted_at`, `google_id`/`email`에 `deleted:<ms>:` 프리픽스(같은 구글 계정 재가입 = 새 계정), 닉네임 `withdrawn_<8hex>`로 익명화·bio/링크/태그/멤버 플래그 제거, 프로필 사진 제거(media 행 삭제), refresh 세션 전부 폐기(레거시 wallet 행은 건드리지 않는다, 2026-11-10 BE PR2), 소유 에이전트·키 `REVOKED`, PENDING 지원과 심사 전 제출(`SUBMITTED`/`RESUBMITTED`/`IN_REVIEW`/`REVISION_REQUESTED`) `WITHDRAWN`, 감사 `USER_WITHDRAWN`(+에이전트마다 `AGENT_REVOKED`). 승인/반려된 제출·payout·NFT 기록은 남는다. 동시에 들어온 `requestPayout`과는 수령자 유저 행 잠금으로 직렬화된다(탈퇴가 먼저면 404, 지급 요청이 먼저면 409). 쿠키 모드 FE는 이어서 `POST /auth/logout`(204, 멱등)으로 쿠키를 지운다. 5회/분 (2026-10-24) |
 | POST | `/users/me/avatar` | ✅ | **본인 프로필 사진 등록·교체** (2026-11-01, 0022). `multipart/form-data` 파일 파트 `file` 하나, JPEG/PNG/WebP(선언된 MIME의 매직바이트 검사, `POST /admin/media`와 같은 규칙), **최대 2 MiB** → 201 `{avatarUrl: "/media/<uuid>"}`. 400 `MEDIA_FILE_REQUIRED`/`MEDIA_FILE_TOO_LARGE`/`MEDIA_FILE_TYPE_UNSUPPORTED`, 404 `USER_NOT_FOUND`(동시 탈퇴). 온보딩 단계와 무관(프로필 저장과 같은 규칙). 한 트랜잭션: 유저 행 잠금 → 새 이미지 저장 → `avatar_media_id` 교체 → **옛 사진의 media 행 삭제**(옛 `/media/<uuid>`는 404) → 감사 `USER_AVATAR_UPDATED`. 10회/분 |
 | DELETE | `/users/me/avatar` | ✅ | 본인 프로필 사진 삭제 → 200 `{avatarUrl: null}`. 사진이 없어도 200(멱등, 감사 행 없음). 옛 사진의 media 행도 지운다. 감사 `USER_AVATAR_REMOVED`. 404 `USER_NOT_FOUND`(동시 탈퇴). 10회/분. 회원 탈퇴도 같은 정리를 한다 |
 | GET | `/users/:nickname` | - | 공개 프로필(온보딩을 마친 유저만, 아니면 404 `USER_NOT_FOUND`): `avatar_url`(`/media/<uuid>` 또는 `null`, 2026-11-01) + 기본정보 + 완료 바운티 + 에이전트 + 실제 부모/완료 NFT 상태·token ID·mint tx. soft delete된 바운티는 완료 바운티·에이전트 `completed_bounties`에서 빠지고, 그 바운티의 완료 NFT는 남되 `bounty_title`이 `null` |
@@ -246,67 +239,9 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
   `/submissions/me`의 `payment_status`와 **같은 SQL**(`src/rewards/payout-status.ts` `payoutStatusSql`). FE는 `PENDING`/`PARTIALLY_PAID`이면 `rewards`(지급된 것) 옆에 `postedRewards`를 "지급 대기"로 보여준다.
   기존 필드(`id`, `title`, `category`, `completed_at`, `rewards`)는 그대로다.
 
-## 지갑 (온보딩 2단계)
+## 지갑 (제거됨, 2026-11-10 결정, BE PR2)
 
-| Method | Path | Auth | 설명 |
-|---|---|---|---|
-| POST | `/wallets/challenge` | ✅ | `{address}` → `{id, nonce, message, expires_at}` (DB 행 그대로 - snake_case, 5분 만료, 1회용). FE는 `message`만 읽어 서명한다 |
-| POST | `/wallets/verify` | ✅ | Keplr/Leap: `{address, signature, publicKey}` / EVM: `{address, signature}` → 검증 성공 시 지갑 저장 + NFT 민팅 잡 등록 |
-| GET | `/wallets/me` | ✅ | 내 대표 지갑 (없으면 null - 미연결 상태) |
-
-- 검증 실패/스킵 → FE는 그대로 온보딩 진행 (지갑은 null). 에러코드: `INVALID_SIGNATURE`, `CHALLENGE_NOT_FOUND`(challenge 미발급), `CHALLENGE_EXPIRED`(만료/사용됨), `WALLET_LINKED_TO_OTHER_ACCOUNT`(이 주소가 다른 계정에 연결됨), `ACCOUNT_ALREADY_HAS_WALLET`(내 대표 지갑이 이미 다른 주소 - 둘 다 409이고 내 지갑이 이미 **같은 주소**면 재시도로 보고 200과 그 지갑을 돌려준다), `USER_NOT_FOUND`(404 - challenge 뒤에 탈퇴한 계정, 지갑은 저장되지 않는다)
-- Keplr/Leap: challenge의 `message`를 `signArbitrary(chainId, address, message)`로 서명.
-  응답의 `signature`(base64)와 `pub_key.value`(base64)를 그대로 `signature`, `publicKey`로 전송.
-  서버는 ADR-36 sign doc을 재구성해 keccak256/secp256k1로 검증하고 공개키→주소 일치도 확인한다.
-- MetaMask 등 EVM 지갑: challenge의 `message`를 EIP-191 `personal_sign`으로 서명하고
-  0x `address`와 hex `signature`를 전송한다. 서버는 서명자를 복구한 뒤 대응되는 `inj1` 주소로
-  정규화해 저장하므로 CW-721 NFT의 수신 주소로도 사용할 수 있다.
-
-### 대표 수령 지갑 교체 (2026-11-02, migration 0024)
-
-기본 비활성화다. 운영 호환성 확인 뒤 서버가 `WALLET_REPLACEMENT_ENABLED=true`로 켜기 전에는
-아래 두 API 모두 503 `WALLET_CHANGE_DISABLED`이며 기존 최초 연결/지갑 조회에는 영향이 없다.
-
-최초 연결 API와 분리한 **기존 지갑 접근이 가능한 사용자의 수령 지갑 교체**다. 관리자가 주소를 덮어쓰거나
-FE가 주소만 변환해서 교체하는 기능이 아니다. 양쪽 지갑의 서명이 모두 필요하며, 체인 송금은 실행하지 않는다.
-
-| Method | Path | Auth | 요청 → 응답 |
-|---|---|---|---|
-| POST | `/wallets/replacement/challenge` | ✅ | `{currentAddress, newAddress}` → 201 `{id, currentAddress, newAddress, currentMessage, newMessage, expiresAt}` (camelCase, ISO 만료 시각, 5분 유효). 새 발급은 본인의 미완료 교체 요청을 대체한다 |
-| POST | `/wallets/replacement/verify` | ✅ | `{challengeId, currentSignature, newSignature, currentPublicKey?, newPublicKey?}` → 201 `{id, chain, address, verified_at, created_at}` (지갑 행 응답, 주소는 정규 `inj1…`). 양쪽 메시지를 각각 해당 지갑으로 서명한다. ADR-36 주소에는 그쪽 `PublicKey`가 필수, EVM 주소는 EIP-191로 공개키 복구 |
-
-두 경로 모두 세션 인증, 각 IP당 10회/분, `Cache-Control: no-store, private`. 주소는 255자, 서명은 4096자,
-공개키는 256자 이내. 서명 원문은 서버 응답 그대로 사용하고, 양쪽 메시지를 서로 바꾸거나 같은 서명을 재사용하면 안 된다.
-`challengeId`는 UUID다. 이 요청에는 별도의 `address`나 `newAddress`를 다시 보내지 않는다(알 수 없는 필드 400).
-
-- 0x와 inj1 표기가 달라도 같은 계정이면 교체할 수 없다. 현재 주소는 실제 대표 지갑과 일치해야 하고,
-  새 주소는 다른 계정에 연결되어 있거나 본인의 전용 에이전트 지갑이면 안 된다(기존 분리 정책 유지).
-- 본인·소유 에이전트·본인 수령 지갑에 묶인 **미정산 payout 전부**가 없어야 한다.
-  `REQUESTED`, `AWAITING_MULTISIG_APPROVAL`, `APPROVED`, `BROADCASTING`, **`FAILED`**를 차단한다.
-  `FAILED`는 송금 미착지를 뜻하지 않는다. 실제 체인 상태를 운영자가 확인하고 기존 정산 절차로 해결해야 한다.
-- 본인 NFT가 `MINTED`/`ATTACHED`여야 하고, 관련 NFT job도 `SUCCEEDED`/`CANCELLED`여야 한다.
-  실패한 NFT/잡을 포함해 미완료 작업은 먼저 해결한다. 두 조건은 발급 시점과 검증 시점에 모두 재검사한다.
-- 기존 wallet 행은 삭제·주소 변경하지 않고 비대표/연결 해제로 남긴다. 새 wallet 행을 대표로 생성하며,
-  기존 NFT 및 payout FK, 지급 주소, 온보딩 상태는 바꾸지 않는다. 부모 NFT도 재발급하지 않는다.
-- **이후 보상금은 새 대표 지갑**, 부모에 연결되는 **이후 완료 NFT는 기존 부모 NFT의 지갑**을 사용한다.
-  지갑 교체로 NFT 포트폴리오를 옮기거나 기존 지갑에 대한 접근을 복구하지는 않는다.
-- 같은 `challengeId`와 유효한 두 서명으로 재전송하면 동일 지갑을 반환하고 추가 교체/감사를 만들지 않는다.
-  완료 요청은 만료 시각 이후 24시간이 지날 때까지 보존되고, 이후 정기 정리 대상이다. 완료 후에는 원래 5분이
-  지나도 보존 중 재전송할 수 있지만, 다른 교체가 이미 끝났으면 `WALLET_CHANGE_STALE`이다.
-  네트워크 오류 시 새 challenge부터 만들지 말고 기존 verify를 재시도하거나 `/auth/me`로 결과를 확인한다.
-- 지급 요청·탈퇴·에이전트 등록과 유저 행 잠금으로 직렬화한다. 지급 요청이 먼저면 교체를 거부하고,
-  교체가 먼저면 지급 요청이 새 지갑을 선택한다. 중간 DB 오류는 기존 지갑을 포함한 전체 교체를 롤백한다.
-
-FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 지갑 주소로 challenge 발급 → 구 지갑으로
-`currentMessage` 서명 → 신 지갑으로 `newMessage` 서명 → verify → `/auth/me`, `/wallets/me` 재조회 및 캐시 갱신.
-지갑 전환 중 로그인 세션과 challenge를 유지하고, 양쪽 계정이 예상 주소인지 확인한다.
-서명 취소/지갑 연결 실패 시 verify하지 않으면 기존 연결은 그대로다. FE 변경은 이 BE 작업에 포함되지 않는다.
-
-오류 처리: `WALLET_CHANGE_BLOCKED_PAYOUTS`/`WALLET_CHANGE_BLOCKED_NFT_JOBS`(409)는 작업 해결 후 재시도,
-`CHALLENGE_EXPIRED`(400)/`WALLET_CHANGE_NOT_FOUND`(404)는 새 요청 발급,
-`WALLET_CHANGE_STALE`(409)은 `/auth/me` 갱신 후 처음부터 진행,
-`INVALID_SIGNATURE`(401)는 주소·원문·서명을 확인한다. 나머지 코드는 위 오류표 참고.
-**기존 지갑 분실·해킹 복구, 관리자 강제 교체, NFT 이전은 지원하지 않는다.**
+지갑 연결·교체 API(`POST /wallets/challenge`, `POST /wallets/verify`, `GET /wallets/me`, `POST /wallets/replacement/challenge`, `POST /wallets/replacement/verify`)는 없어졌다(404). 보상은 승인된 제출의 제출자가 입력한 지급 주소로 받는다(아래 "지급 주소", `PUT /submissions/:id/payout-address`). `wallet`·`wallet_verification_challenge`·`wallet_replacement_challenge` 테이블과 행은 이력(0029 이전 지갑 기반 payout, NFT 소유)을 위해 남는다. 과거 지갑 교체의 감사 행 `WALLET_REPLACED`는 아래 "감사 action 카탈로그"에 레거시 행으로 남아 있다.
 
 ## 바운티 (공개 읽기)
 
@@ -423,7 +358,7 @@ FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 �
 
 | Method | Path | 설명 |
 |---|---|---|
-| GET | `/admin/users?q=&page=` | 이메일/닉네임 유저 검색 - 30건/페이지(기본 `page=1`), 응답은 배열. `q`가 비면 최신 가입 30명. `%`/`_`는 문자 그대로 검색 |
+| GET | `/admin/users?q=&page=` | 이메일/닉네임 유저 검색 - 30건/페이지(기본 `page=1`), 응답은 배열. `q`가 비면 최신 가입 30명. `%`/`_`는 문자 그대로 검색. 항목: `id, email, nickname, status, is_member, member_role, member_display_order, created_at` (`wallet_address`는 2026-11-10 BE PR2에서 제거, 어드민 전용이라 호환 필드 없음) |
 | POST | `/admin/users/:id/member` | 멤버 지정/해제 `{isMember, role?, displayOrder?}` - `isMember: true`이면 `role`(`CORE`/`DEV`/`DESIGN`/`OPS`) 필수(없으면 400, NULL 역할이 공개 페이지에서 Core로 보이던 것), 해제에는 불필요 |
 | POST | `/admin/media` | JPEG/PNG/WebP 이미지 업로드 (`multipart/form-data`, `file`, 최대 5 MiB) → `{id, url}` |
 | GET | `/admin/bounties` | 삭제되지 않은 전체 바운티 목록 (DRAFT 포함) |
@@ -445,7 +380,7 @@ FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 �
 | POST | `/admin/highlights` | 하이라이트 등록 |
 | PATCH | `/admin/highlights/:id` | 하이라이트 수정/발행 상태 변경 |
 | DELETE | `/admin/highlights/:id` | 하이라이트 삭제 |
-| GET | `/admin/bounties/:id/operations` | 운영 화면 한 번에 필요한 데이터 - 아래 "Admin bounty operations" 참조 (2026-10-24: 신원·수령 지갑·요청자/승인자·`requested_by_me`·`policy`·`lifecycle.blockerDetails`/`allowedTransitions` 추가) |
+| GET | `/admin/bounties/:id/operations` | 운영 화면 한 번에 필요한 데이터 - 아래 "Admin bounty operations" 참조 (2026-10-24: 신원·수령자·요청자/승인자·`requested_by_me`·`policy`·`lifecycle.blockerDetails`/`allowedTransitions` 추가) |
 | GET | `/admin/nft-jobs?status=FAILED\|PENDING\|PROCESSING&page=` | NFT 잡 콘솔 → `{ items, page, pageSize: 30, total }` (기본 `status=FAILED`, `updated_at` 최신순). 항목: `id, nft_id, job_type, status, retry_count, last_error, scheduled_at, started_at, processed_at, created_at, updated_at, nft_type, nft_status, bounty_id, bounty_title, submission_id, owner_user_id, owner_nickname, owner_wallet_address`. 그 밖의 `status`(SUCCEEDED/CANCELLED/소문자)나 `page`<1 → `400` |
 | POST | `/admin/nft-jobs/:id/retry` | 운영자 수동 재시도: `FAILED` 잡만 → `PENDING`, `retry_count = 0`, `scheduled_at = now()`, `started_at`/`processed_at` NULL(`last_error`는 원인 확인용으로 유지). nft는 `FAILED`에서 `minted_at`이 있으면 `MINTED`(attach 실패 - 재민팅하지 않음), 없으면 `PENDING`. 감사 `NFT_JOB_RETRIED`(entity `nft_job`)를 같은 트랜잭션에 → `{ id, nft_id, status: 'PENDING', retry_count: 0 }`. FAILED가 아니거나 없으면 **404 `NFT_JOB_NOT_FOUND_OR_NOT_FAILED`** |
 | GET | `/admin/audit-logs?entityType=&entityId=&page=` | 감사 로그 → `{ items, page, pageSize: 30, total }` (최신순). 항목: `id, actor_user_id, actor_agent_id, actor_nickname, actor_agent_name, action, entity_type, entity_id, created_at, before_data, after_data` (행위자 이름은 사용자/에이전트가 지워지지 않았을 때, 스크립트 행은 null). `page`≥1 정수, `entityType`≤64자, `entityId` UUID - 그 외 `400`. (이전엔 배열을 반환했으나 FE 호출처가 없어 공통 페이지네이션 봉투로 변경) |
@@ -454,7 +389,7 @@ FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 �
 
 ### 감사 action 카탈로그
 
-`audit_log.action`의 전체 목록이다. 서버 코드의 값은 `src/audit/audit-actions.ts`(`AUDIT_ACTIONS`, `AuditService.record()`가 이 키만 받는다), 운영 스크립트·수동 SQL의 값은 같은 파일의 `SCRIPT_AUDIT_ACTIONS`가 단일 출처이고, `src/audit/audit-actions.spec.ts`가 이 표와 양방향으로 대조한다. 값은 운영 DB에 이미 쌓인 문자열이라 이름을 바꾸지 않는다.
+`audit_log.action`의 전체 목록이다. 서버 코드의 값은 `src/audit/audit-actions.ts`(`AUDIT_ACTIONS`, `AuditService.record()`가 이 키만 받는다), 운영 스크립트·수동 SQL의 값은 같은 파일의 `SCRIPT_AUDIT_ACTIONS`, 더 남기지 않지만 과거 행이 있는 값은 `LEGACY_AUDIT_ACTIONS`(계약 `audit.legacyActions`)가 단일 출처이고, `src/audit/audit-actions.spec.ts`가 이 표와 양방향으로 대조한다. 값은 운영 DB에 이미 쌓인 문자열이라 이름을 바꾸지 않는다.
 
 돈 감사 행(`REWARD_DEPOSIT_CONFIRMED`, `PAYOUT_*`, 스크립트 `REWARD_REFUNDED`)의 금액은 토큰 최소 단위 정수 문자열(보상·payout 행과 같은 값), `txHash`는 정규화된 `0x` + 소문자 64자다. 수령 주소는 마스킹(`앞 6자…뒤 4자`)해서만 남긴다(`recipientAddress`, 2026-11-10 이전 행은 wallet id `recipientWalletId`). `before_data`/`after_data`에는 비밀·이메일·사용자 입력 본문(지원 메시지, 제출 URL·설명)을 넣지 않는다. 금액·해시를 붙인 것은 2026-11-02부터이고 그 전 행은 비어 있다(소급하지 않는다).
 
@@ -517,7 +452,6 @@ FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 �
 | `USER_MEMBER_REVOKED` | `user` | 상동 (`isMember: false`) |
 | `USER_AVATAR_UPDATED` | `user` | `POST /users/me/avatar` 프로필 사진 등록·교체 (before/after `avatarMediaId`) |
 | `USER_AVATAR_REMOVED` | `user` | `DELETE /users/me/avatar` 프로필 사진 삭제 (before `avatarMediaId`; 사진이 없던 멱등 호출은 기록 없음) |
-| `WALLET_REPLACED` | `user` | 대표 수령 지갑 교체. before/after `walletId`, 기존 NFT·지급 기록은 유지 |
 | `NFT_JOB_RETRIED` | `nft_job` | `POST /admin/nft-jobs/:id/retry` |
 | `ADMIN_GRANTED` | `user` | 운영 스크립트 `scripts/grant-admin.js` (actor NULL) |
 | `ADMIN_REVOKED` | `user` | 상동 |
@@ -526,6 +460,7 @@ FE 연동 순서: 기존 NFT가 이동하지 않는다는 안내 → 구·신 �
 | `SUBMISSION_AWARD_FORFEITED` | `bounty_submission` | 운영 스크립트 `scripts/forfeit-award.js` (actor = `--admin`) |
 | `PAYOUT_CORRECTED_MANUAL` | `payout` | runbook §7.4 수동 SQL (actor NULL) |
 | `PAYOUT_CANCELLED_MANUAL` | `payout` | 상동 |
+| `WALLET_REPLACED` | `user` | **레거시**(`LEGACY_AUDIT_ACTIONS`): 대표 수령 지갑 교체(2026-11-02~11-10). before/after `walletId`. 지갑 API 제거(BE PR2)로 더 생기지 않으며 과거 행의 라벨용으로만 남는다 |
 
 `AdminGuard`는 JWT의 `isAdmin` 클레임 외에 요청마다 `"user"` 행(`is_admin`, `status='ACTIVE'`, 미삭제)을 다시 확인한다 - 어드민 해제/정지가 토큰 만료 전에 즉시 반영된다 (403 `ADMIN_ONLY`).
 

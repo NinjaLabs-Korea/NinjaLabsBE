@@ -3,7 +3,7 @@ import { describeDb } from '../test-db/describe-db';
 import { E2eApp, multipart, PNG_1x1, Session, startApp } from './support/harness';
 
 /** 공개 읽기(600/min)가 아닌 라우트 - 전역 120/min을 검증할 때 쓴다 (인증 없이 401) */
-const NON_PUBLIC_ROUTE = '/wallets/me';
+const NON_PUBLIC_ROUTE = '/submissions/me'; // 옛 '/wallets/me'는 BE PR2에서 지웠다
 const TOO_MANY = { statusCode: 429, message: 'ThrottlerException: Too Many Requests' };
 
 // c. throttling - in-memory throttler storage per app instance; trust proxy 1 → the last X-Forwarded-For hop is the client
@@ -144,11 +144,12 @@ describeDb('throttling over HTTP (e2e)', () => {
     expect((await e2e.get(NON_PUBLIC_ROUTE, { ip: '203.0.113.31' })).status).toBe(401);
   });
 
-  it('write routes keep 120/min: the 121st POST /wallets/challenge from one IP is 429', async () => {
+  it('write routes keep 120/min: the 121st POST /bounties/:id/submissions from one IP is 429', async () => {
     const ip = '203.0.113.60';
-    const statuses = await burst(120, () => e2e.post('/wallets/challenge', {}, { ip }));
+    const path = '/bounties/00000000-0000-4000-8000-000000000000/submissions';
+    const statuses = await burst(120, () => e2e.post(path, {}, { ip }));
     expect(statuses.every((s) => s !== 429)).toBe(true);
-    expect((await e2e.post('/wallets/challenge', {}, { ip })).status).toBe(429);
+    expect((await e2e.post(path, {}, { ip })).status).toBe(429);
   });
 
   describe('public reads: 600/min per IP (Vercel SSR egress carries many users)', () => {

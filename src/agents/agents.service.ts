@@ -192,7 +192,7 @@ export class AgentsService {
    * 다른 에이전트/유저로의 서명 재사용이 불가능하다.
    */
   static verificationMessage(agentId: string, ownerUserId: string): string {
-    // 소유자가 지갑 서명창에서 직접 읽는 문장이라 영어·한국어·중국어를 함께 싣는다 (지갑 소유권 challenge와 같은 형식 - wallets.service.ts createChallenge).
+    // 소유자가 지갑 서명창에서 직접 읽는 문장이라 영어·한국어·중국어를 함께 싣는다 (2026-11-10에 지운 사람 지갑 소유권 challenge와 같은 형식이었다).
     // 로케일을 모르는 BE가 한 언어만 고를 수 없다. agentId·owner 줄이 서명을 이 에이전트와 이 소유자에 묶는다.
     return [
       'NinjaLabs AI agent registration verification / NinjaLabs AI 에이전트 등록 검증 / NinjaLabs AI 代理注册验证',

@@ -452,6 +452,7 @@ function buildConstants() {
     audit: {
       actions: { ...audit.AUDIT_ACTIONS },
       scriptActions: { ...audit.SCRIPT_AUDIT_ACTIONS },
+      legacyActions: { ...audit.LEGACY_AUDIT_ACTIONS },
     },
     members: { roles: [...members.MEMBER_ROLES] },
     notices: { categories: [...notices.NOTICE_CATEGORIES] },

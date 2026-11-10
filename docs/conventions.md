@@ -9,7 +9,7 @@
   `*-admin.controller.ts` / `*-admin.service.ts`에 있다 (예: `notices/notice-admin.*`, `bounties/admin/*`).
   모든 운영자 컨트롤러는 `@UseGuards(AdminGuard)`를 붙이고 `AuthedRequest`로 `req.user`를 받는다.
 - **사람/에이전트 참여는 `BountyActor`로 표현한다** (`bounties/bounty-actor.ts`). `isAgent ? ... : ...` 분기를 새로 만들지 않는다.
-- **지갑 서명 검증은 `signatureSchemeFor(address).verify()`** (`common/crypto/wallet-signature.ts`). 새 지갑 종류는 구현체를 추가한다.
+- **에이전트 지갑 서명 검증은 `signatureSchemeFor(address).verify()`** (`common/crypto/wallet-signature.ts`). 사람 계정의 지갑 연결은 2026-11-10에 없어졌다.
 - **`process.env`를 직접 읽지 않는다.** 서비스는 `ConfigService`를 주입받고, `main.ts`도 `NestFactory.create()` 뒤 `app.get(ConfigService)`로 읽는다
   (import 시점의 `process.env`는 `ConfigModule.forRoot()`가 `.env`를 읽기 전이다). 예외는 `main.ts`의 기동 실패 catch 하나 - DI가 뜨기 전에
   실패할 수 있어 `alertBootFailure(process.env, …)`가 env를 직접 읽는다(그 시점엔 `ConfigModule.forRoot()`가 `.env`를 이미 올렸다). JWT 시크릿은 `auth/jwt-secret.ts`의 `JWT_SECRET` provider 하나를 JwtModule과 AuthService가 함께 쓴다.
@@ -21,7 +21,7 @@
   SQL의 상태 집합은 helper가 주는 배열을 `= ANY($n::text[])`로 바인딩한다. `src/test-support/status-literals.spec.ts`가 상태 리터럴 집합(`['APPROVED', 'REJECTED']`, `IN ('SUBMITTED', …)`)을 막는다.
   payout 상태 집합과 배정 상한식 `LEAST(amount, deposited_amount)`도 같다 - `rewards/payout-status.ts`의 상수/헬퍼(`OPEN_PAYOUT_STATUSES`, `allocatedPayoutSumSql()`, `rewardCapSql()` 등)를 쓰고,
   다른 쿼리에 끼워 넣는 조각은 `sqlStatusList()`로 렌더링한다. `scripts/record-refund.js`·`scripts/mainnet-preflight.sql`의 사본은 `payout-status.spec.ts`가 대조한다.
-- **자주 쓰는 SQL 조건은 조각 함수로 끼운다**: 활성 유저 `activeUserSql()`(`users/active-user.ts`), 연결된 대표 지갑 `primaryWalletSql()`(`wallets/primary-wallet.ts`), 유저가 소유한 에이전트 id `ownedAgentIdsSql($n, 'live' | 'including-deleted')`와 참여 행의 사람 `participantUserIdSql()`(`agents/owned-agents.ts`). 사본을 새로 쓰면 `common/database/sql-predicates.spec.ts`가 실패한다. 공개 집계의 완료된 수상·완료된 바운티는 `completedWinSql()`/`completedBountySql()`(`bounties/completed-wins.ts`), "지급 요청 가능"은 `payoutRequestableSql()`(`rewards/payout-status.ts`, `requestPayout`의 명령형 검사와 db-spec으로 대조). 탈퇴 여부만 보는 `deleted_at IS NULL`처럼 의도적으로 다른 조건은 각 파일 주석에 적었다.
+- **자주 쓰는 SQL 조건은 조각 함수로 끼운다**: 활성 유저 `activeUserSql()`(`users/active-user.ts`), 유저가 소유한 에이전트 id `ownedAgentIdsSql($n, 'live' | 'including-deleted')`와 참여 행의 사람 `participantUserIdSql()`(`agents/owned-agents.ts`). 사본을 새로 쓰면 `common/database/sql-predicates.spec.ts`가 실패한다. 공개 집계의 완료된 수상·완료된 바운티는 `completedWinSql()`/`completedBountySql()`(`bounties/completed-wins.ts`), "지급 요청 가능"은 `payoutRequestableSql()`(`rewards/payout-status.ts`, `requestPayout`의 명령형 검사와 db-spec으로 대조). 탈퇴 여부만 보는 `deleted_at IS NULL`처럼 의도적으로 다른 조건은 각 파일 주석에 적었다.
 - **SQL에서 같은 `$n`을 두 번 쓰면 캐스트도 같게 쓴다** (`$6::varchar` … `$6::varchar`). 한쪽만 bare/캐스트면 Postgres가 `42P08 inconsistent types deduced for parameter`로 거부한다 -
   mock DB 유닛 테스트는 이를 잡지 못하므로 새 SQL 흐름은 `src/test-db`에 실 DB 테스트를 추가한다.
 - **유니크 충돌 판별은 `isUniqueViolation(err)`** (`common/database/pg-errors.ts`).

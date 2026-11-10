@@ -43,7 +43,7 @@ describe('.railway/railway.ts production origins', () => {
     expect(envValue('OPS_ALERT_WEBHOOK_URL')).toBeUndefined();
   });
 
-  it.each(['WALLET_REPLACEMENT_ENABLED', 'NFT_MINTING_ENABLED'])('%s preserves an operator pause; IaC never forces true', (key) => {
+  it.each(['NFT_MINTING_ENABLED'])('%s preserves an operator pause; IaC never forces true', (key) => {
     expect(source).toMatch(new RegExp(`\\b${key}:\\s*preserve\\(\\)`));
     expect(envValue(key)).toBeUndefined();
   });
@@ -88,6 +88,19 @@ describe('.railway/railway.ts covers every env key the code reads', () => {
   it('every key read by code is declared in railway.ts (value or preserve()) or listed as intentionally absent', () => {
     const missing = [...readKeys].filter((key) => !new RegExp(`\\b${key}:`).test(railway) && !(key in NOT_IN_RAILWAY)).sort();
     expect(missing).toEqual([]);
+  });
+
+  /**
+   * 리더가 사라졌지만 railway.ts 줄은 일부러 남긴 키. 줄을 먼저 지우면 대시보드 값이 `railway config apply` 삭제 대상이 되므로
+   * 운영자가 대시보드에서 지운 뒤(plan "변경 없음") 정리 PR(PR5)에서 지운다. 그때까지 preserve()로 두고 코드가 다시 읽지 않게 막는다.
+   */
+  const RETIRED: Record<string, string> = {
+    WALLET_REPLACEMENT_ENABLED: 'wallet replacement removed in BE PR2 (2026-11-10)',
+  };
+
+  it.each(Object.keys(RETIRED))('%s has no reader any more and stays preserve()d until the cleanup PR', (key) => {
+    expect(readKeys.has(key)).toBe(false);
+    expect(railway).toMatch(new RegExp(`\\b${key}:\\s*preserve\\(\\)`));
   });
 
   it('the intentionally-absent list holds only keys railway.ts really lacks (a stale entry would hide the coverage check for that key)', () => {

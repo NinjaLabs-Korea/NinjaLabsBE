@@ -95,7 +95,8 @@ describeDb('validation over HTTP (e2e)', () => {
       const revoked = await e2e.post(`/admin/users/${user.userId}/member`, setAdminMemberBody({ isMember: false }), asAdmin());
       expect(revoked.body).toMatchObject({ is_member: false, member_role: null });
       const search = await e2e.get(`/admin/users?q=${encodeURIComponent(user.email)}`, asAdmin());
-      expect(search.body).toEqual([expect.objectContaining({ id: user.userId, email: user.email, is_member: false, member_role: null, member_display_order: null, wallet_address: null })]);
+      expect(search.body).toEqual([expect.objectContaining({ id: user.userId, email: user.email, is_member: false, member_role: null, member_display_order: null })]);
+      expect(search.body[0]).not.toHaveProperty('wallet_address'); // dropped in BE PR2 (admin-only, no shim)
     });
 
     it('applications and submissions with optional fields omitted (empty inputs are dropped by the FE)', async () => {
@@ -212,14 +213,12 @@ describeDb('validation over HTTP (e2e)', () => {
       expect(e2e.linesFor('HttpException').slice(errorsBefore)).toEqual([]);
     });
 
-    it('non-string values in auth/wallet/agent bodies → 400 (were TypeError 500s, /auth/refresh and /auth/logout without login)', async () => {
+    it('non-string values in auth/agent bodies → 400 (were TypeError 500s, /auth/refresh and /auth/logout without login)', async () => {
       const U = { token: user.accessToken };
       for (const [path, json, token] of [
         ['/auth/refresh', { refreshToken: 123 }, undefined],
         ['/auth/refresh', { refreshToken: { a: 1 } }, undefined],
         ['/auth/logout', { refreshToken: ['x'] }, undefined],
-        ['/wallets/challenge', { address: 123 }, U.token],
-        ['/wallets/verify', { address: ['0x0000000000000000000000000000000000000001'], signature: '0x00' }, U.token],
         ['/agents', { name: 'n', walletAddress: 123 }, U.token],
         ['/agents', { name: 'n', walletAddress: ['0x0000000000000000000000000000000000000001'] }, U.token],
         ['/agents', { name: 'n', walletAddress: `inj1${'q'.repeat(300)}`, publicKey: 'k' }, U.token],

@@ -8,7 +8,6 @@ import { clearPayoutAddressesOfUser, withdrawOpenParticipationOfUser } from '../
 import { withdrawOpenCohortApplicationsOfUser } from '../cohorts/cohort-withdrawal';
 import { DatabaseService } from '../common/database/database.service';
 import { PAYABLE_REWARD_STATUSES, payoutRequestableSql, TERMINAL_PAYOUT_STATUSES } from '../rewards/payout-status';
-import { disconnectAllWalletsOfUser } from '../wallets/wallet-disconnection';
 import { normalizeNickname, WITHDRAWN_NICKNAME_PREFIX } from './nickname';
 import { ownedAgentIdsSql } from '../agents/owned-agents';
 import { activeUserSql } from './active-user';
@@ -16,7 +15,7 @@ import { clearAvatarOfUser } from './user-avatar';
 
 /**
  * 승인됐지만 아직 payout이 요청되지 않은(그래서 아직 받을 수 있는) 보상 - 하나라도 있으면 탈퇴를 막는다 (409 WITHDRAWAL_BLOCKED_PENDING_REWARDS).
- * 탈퇴하면 수령 지갑이 사라져 requestPayout이 404가 되므로 그 보상은 조용히 사라진다(이전 동작). 조건은 requestPayout이 지금 받아 줄 수 있는 경우와 같다:
+ * 탈퇴하면 제출자가 비활성이 되고 지급 주소도 지워져 requestPayout이 404가 되므로 그 보상은 조용히 사라진다. 조건은 requestPayout이 지금 받아 줄 수 있는 경우와 같다:
  *   - 본인 또는 내 에이전트의 제출이 APPROVED
  *   - 그 바운티가 삭제되지 않았고 진행 상태(OPEN/SUBMISSION_CLOSED/IN_REVIEW - BountyStatusPolicy)
  *   - 그 바운티의 보상이 입금 확인 상태(FUNDED/PARTIALLY_PAID/PAID)이고 배정 상한 LEAST(amount, deposited_amount)가 취소 아닌 payout 합계보다 크다(여유분 있음)
@@ -49,13 +48,15 @@ export function nicknameConfirmed(current: string, typed: string): boolean {
  *
  * 한 트랜잭션에서, 유저 행을 먼저 잠그고(FOR UPDATE):
  *   1. 확인 닉네임 불일치 → 400 CONFIRM_NICKNAME_MISMATCH
- *   2. 본인(또는 내 에이전트) 제출에 걸렸거나 내 지갑으로 가는 payout 중 종료 상태가 아닌 것이 있으면 → 409 WITHDRAWAL_BLOCKED_OPEN_PAYOUTS
+ *   2. 본인(또는 내 에이전트) 제출에 걸린 payout 중 종료 상태가 아닌 것이 있으면 → 409 WITHDRAWAL_BLOCKED_OPEN_PAYOUTS.
+ *      수령자는 제출로 판단한다: 주소 기반 payout(0029 이후)은 그 제출의 제출자가 입력한 주소로, 레거시 지갑 기반 payout(recipient_wallet_id)도
+ *      제출자(또는 에이전트 소유자)의 지갑으로만 만들어졌으므로 제출 조건이 둘 다 덮는다. 지갑 테이블은 보지 않는다(BE PR2)
  *   2b. 승인됐지만 payout이 아직 요청되지 않은, 지급 가능한 보상이 있으면 → 409 WITHDRAWAL_BLOCKED_PENDING_REWARDS (PENDING_REWARD_SQL)
  *   3. user: status WITHDRAWN, deleted_at = now(), google_id/email에 `deleted:<ms>:` 프리픽스(같은 구글 계정 재가입 - 0014 부분 유니크 인덱스가
  *      deleted_at IS NULL 행만 보므로 충돌은 없지만, 원래 식별자로 다시 찾히지 않게 한다), 닉네임은 `withdrawn_<id 앞 8자>`로 익명화,
  *      bio 비움, 멤버/운영자 플래그 해제. user_link/user_tag 삭제
- *   4. auth_session 전부 폐기 (refresh 불가 - auth/auth-sessions.ts revokeAllSessionsOfUser),
- *      지갑 연결 해제(disconnected_at - 같은 주소로 새 계정 연결 가능; payout/NFT FK는 행이 남아 유지 - wallets/wallet-disconnection.ts)
+ *   4. auth_session 전부 폐기 (refresh 불가 - auth/auth-sessions.ts revokeAllSessionsOfUser).
+ *      레거시 wallet 행은 건드리지 않는다(지갑 연결 API가 없어 다시 쓰일 일이 없고, payout/NFT 이력 FK가 가리킨다)
  *   5. 소유 에이전트 전부 REVOKED + 키 REVOKED (각각 감사 AGENT_REVOKED - agents/agent-revocation.ts)
  *   6. 본인/내 에이전트의 심사 전 제출(SUBMITTED/RESUBMITTED/IN_REVIEW/REVISION_REQUESTED)과 PENDING 지원 → WITHDRAWN
  *      (bounties/participation-withdrawal.ts)
@@ -92,8 +93,7 @@ export class AccountWithdrawalService {
            JOIN bounty_submission s ON s.id = p.submission_id
           WHERE p.status <> ALL($2::text[])
             AND (s.submitter_user_id = $1
-                 OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'including-deleted')})
-                 OR p.recipient_wallet_id = ANY(ARRAY(SELECT id FROM wallet WHERE user_id = $1)))`,
+                 OR s.agent_id = ANY(${ownedAgentIdsSql('$1', 'including-deleted')}))`,
         [userId, [...TERMINAL_PAYOUT_STATUSES]],
       );
       if (open.rows[0].n > 0) throw new ConflictException('WITHDRAWAL_BLOCKED_OPEN_PAYOUTS');
@@ -123,7 +123,6 @@ export class AccountWithdrawalService {
       await clearAvatarOfUser(tx, userId);
       // 다른 모듈이 소유한 테이블은 그 모듈의 in-transaction 함수로 정리한다 (순서 유지 - 감사 행 순서가 AGENT_REVOKED… → USER_WITHDRAWN)
       await revokeAllSessionsOfUser(tx, userId);
-      await disconnectAllWalletsOfUser(tx, userId);
       await revokeAllAgentsOfOwner(tx, this.audit, userId, userId);
       await withdrawOpenParticipationOfUser(tx, userId);
       await clearPayoutAddressesOfUser(tx, userId);

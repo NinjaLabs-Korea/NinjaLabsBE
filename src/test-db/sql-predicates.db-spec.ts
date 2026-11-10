@@ -1,14 +1,13 @@
 import { ownedAgentIdsSql, participantUserIdSql } from '../agents/owned-agents';
 import { DatabaseService } from '../common/database/database.service';
 import { activeUserSql } from '../users/active-user';
-import { primaryWalletSql } from '../wallets/primary-wallet';
 import { describeDb } from './describe-db';
 import { createDb, createUser, unique } from './harness';
 
 /**
- * 단일 출처 술어 조각(activeUserSql, primaryWalletSql, ownedAgentIdsSql, participantUserIdSql)을 실제 행에 대어 본다.
+ * 단일 출처 술어 조각(activeUserSql, ownedAgentIdsSql, participantUserIdSql)을 실제 행에 대어 본다.
  * 각 조각은 옮기기 전 호출부의 SQL과 같은 글자로 렌더링되고(sql-predicates.spec.ts), 여기서는 그 조건이 고르는 행을 고정한다:
- * 활성 = ACTIVE + 미삭제(정지·탈퇴 제외), 대표 지갑 = 연결된 is_primary 하나, 소유 에이전트 'live'는 삭제된 에이전트를 빼고
+ * 활성 = ACTIVE + 미삭제(정지·탈퇴 제외), 소유 에이전트 'live'는 삭제된 에이전트를 빼고
  * 'including-deleted'는 넣는다, 참여자의 사람 = 본인 또는 (삭제됐어도) 에이전트 소유자.
  */
 describeDb('SQL predicate fragments on real rows', () => {
@@ -37,20 +36,6 @@ describeDb('SQL predicate fragments on real rows', () => {
     const bare = await db.query<{ id: string }>(`SELECT id FROM "user" WHERE id = ANY($1::uuid[]) AND ${activeUserSql('')}`, [ids]);
     expect(aliased.rows.map((r) => r.id)).toEqual([active]);
     expect(bare.rows.map((r) => r.id)).toEqual([active]);
-  });
-
-  it('primaryWalletSql picks the connected primary wallet only', async () => {
-    const user = await createUser(db);
-    const insert = (primary: boolean, disconnected: boolean) => db.query<{ id: string }>(
-      `INSERT INTO wallet (user_id, chain, address, is_primary, verified_at, disconnected_at)
-       VALUES ($1, 'INJECTIVE', $2, $3, now(), CASE WHEN $4::boolean THEN now() END) RETURNING id`,
-      [user, `inj1${unique()}`, primary, disconnected],
-    ).then((r) => r.rows[0].id);
-    await insert(true, true); // 연결 해제된 옛 대표 지갑
-    await insert(false, false); // 대표가 아닌 지갑
-    const current = await insert(true, false);
-    const r = await db.query<{ id: string }>(`SELECT w.id FROM wallet w WHERE w.user_id = $1 AND ${primaryWalletSql('w')}`, [user]);
-    expect(r.rows.map((row) => row.id)).toEqual([current]);
   });
 
   it("ownedAgentIdsSql: 'live' excludes soft-deleted agents, 'including-deleted' keeps them, other owners never match", async () => {

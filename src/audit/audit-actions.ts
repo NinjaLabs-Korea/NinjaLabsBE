@@ -76,7 +76,6 @@ export const AUDIT_ACTIONS = {
   USER_MEMBER_REVOKED: 'user',
   USER_AVATAR_UPDATED: 'user',
   USER_AVATAR_REMOVED: 'user',
-  WALLET_REPLACED: 'user',
   // NFT 잡 (nft-jobs-admin.service.ts)
   NFT_JOB_RETRIED: 'nft_job',
 } as const;
@@ -95,4 +94,13 @@ export const SCRIPT_AUDIT_ACTIONS = {
   SUBMISSION_AWARD_FORFEITED: 'bounty_submission',
   PAYOUT_CORRECTED_MANUAL: 'payout',
   PAYOUT_CANCELLED_MANUAL: 'payout',
+} as const;
+
+/**
+ * 지금 코드는 더 남기지 않지만 운영 DB에 과거 행이 있는 action. 감사 화면 라벨을 유지하려고 계약(docs/api-contract.md 표, contract/constants.json
+ * `audit.legacyActions`)에 남긴다. `AuditService.record()`의 타입(AuditAction)에는 들어가지 않으므로 새로 남길 수 없다.
+ * - `WALLET_REPLACED`: 대표 수령 지갑 교체(0024~0028). 지갑 모듈 제거(BE PR2, 2026-11-10 결정)로 더 생기지 않는다
+ */
+export const LEGACY_AUDIT_ACTIONS = {
+  WALLET_REPLACED: 'user',
 } as const;

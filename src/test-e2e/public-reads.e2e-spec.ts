@@ -177,7 +177,7 @@ describeDb('public reads over HTTP (e2e)', () => {
     const byTitle = Object.fromEntries(profile.body.completedBounties.map((b: { title: string }) => [b.title, b]));
     expect(byTitle['No reward']).toMatchObject({ id: noReward, category: 'CONTENT', rewards: [], postedRewards: [], payoutStatus: 'NONE' });
     expect(byTitle['With reward']).toMatchObject({ id: withReward, rewards: [], postedRewards: [{ amount: '2500000', symbol: 'USDC' }], payoutStatus: 'PENDING' });
-    expect(profile.body.nfts).toEqual([expect.objectContaining({ nft_type: 'NINJA_PARENT', status: 'PENDING', bounty_title: null })]);
+    expect(profile.body.nfts).toEqual([]); // no wallet step any more (BE PR2) → no parent mint is queued
 
     expect((await e2e.get('/users/nobody-here')).body).toEqual({ statusCode: 404, error: 'Not Found', message: 'USER_NOT_FOUND' });
     await e2e.db.query(`UPDATE "user" SET status = 'SUSPENDED' WHERE id = $1`, [builder.userId]);

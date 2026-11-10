@@ -5,6 +5,7 @@ import { AuthService } from '../auth/auth.service';
 import { encryptGraceToken } from '../auth/refresh-grace';
 import { DatabaseService } from '../common/database/database.service';
 import { describeDb } from './describe-db';
+import { ONBOARDING_STEP } from '../users/onboarding-step';
 import { createDb, createUser, TEST_JWT_SECRET, testConfig, unique } from './harness';
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -53,7 +54,7 @@ describeDb('auth sessions on a real database', () => {
     const googleId = unique('google-');
     const email = `${unique()}@example.test`;
     const user = await auth.upsertGoogleUser(googleId, email);
-    expect(user.onboarding_step).toBe(2);
+    expect(user.onboarding_step).toBe(ONBOARDING_STEP.PROFILE); // 3: the wallet step is gone (BE PR2)
     // second login finds the same active row
     await expect(auth.upsertGoogleUser(googleId, email)).resolves.toMatchObject({ id: user.id });
 
@@ -368,7 +369,7 @@ describeDb('auth sessions on a real database', () => {
     await db.query(`UPDATE "user" SET deleted_at = now() WHERE id = $1`, [x.id]);
     const again = await auth.upsertGoogleUser(googleId, email);
     expect(again.id).not.toBe(x.id);
-    expect(again.onboarding_step).toBe(2);
+    expect(again.onboarding_step).toBe(ONBOARDING_STEP.PROFILE);
   });
 
   it('getMe reflects wallet and parent NFT state', async () => {

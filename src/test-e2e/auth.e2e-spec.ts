@@ -71,7 +71,7 @@ describeDb('auth over HTTP (e2e)', () => {
     expect(Object.keys(me.body).sort()).toEqual(
       ['avatarUrl', 'bio', 'email', 'id', 'isAdmin', 'isMember', 'nft', 'nickname', 'onboardingCompleted', 'onboardingStep', 'tags', 'wallet'].sort());
     expect(me.body).toMatchObject({
-      id: claims(ok.body.accessToken).sub, email: `${sub}@example.test`, bio: '', tags: [], onboardingStep: 2,
+      id: claims(ok.body.accessToken).sub, email: `${sub}@example.test`, bio: '', tags: [], onboardingStep: 3,
       onboardingCompleted: false, isAdmin: false, isMember: false, wallet: null, nft: null,
     });
     expect(me.body.nickname).toMatch(/^user_[0-9a-f]{8}$/);
@@ -266,7 +266,7 @@ describeDb('auth over HTTP (e2e)', () => {
       await expectUserIsMe(noBody.body);
     });
 
-    it('the refresh `user` follows the live profile, wallet and NFT exactly like GET /auth/me (same getMe)', async () => {
+    it('the refresh `user` follows the live profile exactly like GET /auth/me (same getMe); a legacy wallet row no longer shows (wallet: null shim)', async () => {
       const { res, ip } = await cookieLogin();
       const userId = claims(res.body.accessToken).sub as string;
       await e2e.db.query(`UPDATE "user" SET onboarding_step = 4, onboarding_completed_at = now(), bio = 'hello', is_member = true WHERE id = $1`, [userId]);
@@ -277,7 +277,7 @@ describeDb('auth over HTTP (e2e)', () => {
       e2e.trackTokens(rotated.body);
       issuedCookie(rotated);
       const me = await expectUserIsMe(rotated.body);
-      expect(me).toMatchObject({ id: userId, bio: 'hello', onboardingStep: 4, onboardingCompleted: true, isMember: true, wallet: { address: expect.stringMatching(/^inj1refresh/) } });
+      expect(me).toMatchObject({ id: userId, bio: 'hello', onboardingStep: 4, onboardingCompleted: true, isMember: true, wallet: null });
       expect([...(me as unknown as { tags: string[] }).tags].sort()).toEqual(['DESIGN', 'DEV']);
     });
 

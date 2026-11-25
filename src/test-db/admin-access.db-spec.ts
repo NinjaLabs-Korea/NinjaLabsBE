@@ -68,15 +68,17 @@ describeDb('admin access grant/revoke on a real database', () => {
     }
   });
 
-  it('LAST_ADMIN: suspended or deleted admins do not count as remaining admins', async () => {
+  it('suspended, deleted or non-admin actors cannot revoke the only active admin, nothing written', async () => {
     const actor = await createUser(db, { isAdmin: true });
     const suspended = await createUser(db, { isAdmin: true });
     await db.query(`UPDATE "user" SET status = 'SUSPENDED' WHERE id = $1`, [suspended]);
     const gone = await createUser(db, { isAdmin: true });
     await db.query(`UPDATE "user" SET deleted_at = now() WHERE id = $1`, [gone]);
-    // the only ACTIVE admin besides the target is `actor`; revoking `actor` as someone else must fail
+    // `actor` is the only ACTIVE admin. A suspended admin cannot act: the recheck under the lock refuses it (ADMIN_ONLY),
+    // so LAST_ADMIN stays a defensive guard that an ACTIVE acting admin (who is never the target) cannot reach
+    await expect(service.setAdmin(actor, false, suspended)).rejects.toMatchObject({ message: 'ADMIN_ONLY' });
     const other = await createUser(db);
-    await expect(service.setAdmin(actor, false, other)).rejects.toMatchObject({ message: 'LAST_ADMIN' });
+    await expect(service.setAdmin(actor, false, other)).rejects.toMatchObject({ message: 'ADMIN_ONLY' });
     expect(await state(actor)).toBe(true);
     expect(await audit(actor)).toEqual([]);
   });
@@ -87,7 +89,8 @@ describeDb('admin access grant/revoke on a real database', () => {
     const results = await Promise.allSettled([service.setAdmin(b, false, a), service.setAdmin(a, false, b)]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
-    expect(rejected.reason).toMatchObject({ message: 'LAST_ADMIN' });
+    // the loser waited on the admin-row lock and then finds it is no longer an admin itself
+    expect(rejected.reason).toMatchObject({ message: 'ADMIN_ONLY' });
     const remaining = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM "user" WHERE is_admin = true AND status = 'ACTIVE' AND deleted_at IS NULL`);
     expect(remaining.rows[0].n).toBe(1);
     expect(await audit(a)).toHaveLength(Number(!(await state(a))));

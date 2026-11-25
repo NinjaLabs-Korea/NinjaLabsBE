@@ -47,6 +47,7 @@ export class AdminAccessService {
           `SELECT count(*)::int AS n FROM "user" WHERE is_admin = true AND ${activeUserSql('')} AND id <> $1::uuid`,
           [userId],
         );
+        // 요청자는 위에서 활성 운영자로 확인됐고 대상이 아니므로 보통은 도달하지 않는다. 확인 규칙이 바뀌어도 운영자 0명을 막는 방어선이다
         if (others.rows[0].n === 0) throw new ConflictException('LAST_ADMIN');
       }
       await tx.query(`UPDATE "user" SET is_admin = $2::boolean WHERE id = $1::uuid`, [userId, isAdmin]);

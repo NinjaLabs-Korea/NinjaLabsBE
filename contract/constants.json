@@ -13,6 +13,8 @@
   },
   "audit": {
     "actions": {
+      "ADMIN_GRANTED": "user",
+      "ADMIN_REVOKED": "user",
       "APPLICATION_APPROVED": "bounty_application",
       "APPLICATION_REAPPLIED": "bounty_application",
       "APPLICATION_REJECTED": "bounty_application",

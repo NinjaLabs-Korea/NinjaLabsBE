@@ -21,6 +21,7 @@ const STATUS_BY_CLASS: Record<string, number> = {
   ForbiddenException: 403,
   NotFoundException: 404,
   ConflictException: 409,
+  GoneException: 410,
   ServiceUnavailableException: 503,
 };
 const THROW = /new (\w+Exception)\(\s*[`']([A-Z][A-Z0-9_]+)/g;

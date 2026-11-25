@@ -15,7 +15,7 @@ import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, uniq
 
 /**
  * 2026-11-02 감사 공백 보강을 실 Postgres 행으로 고정한다:
- * - 지원·제출(사람과 Agent API 키)의 감사 행이 같은 트랜잭션에서 생기고, 그 뒤 실패하면 본 작업과 함께 롤백된다
+ * - 지원·제출의 감사 행이 같은 트랜잭션에서 생기고, 그 뒤 실패하면 본 작업과 함께 롤백된다
  * - 돈 감사 행(입금 확인, 지급 요청·승인·지급)의 after_data에 금액·해시가 들어간다
  * - ip_address는 요청 컨텍스트(req.ip)가 있을 때만 채워진다
  *
@@ -38,10 +38,6 @@ describeDb('audit trail rows on a real database', () => {
   class FailAfterInsertAudit extends AuditService {
     override async record(...args: Parameters<AuditService['record']>): Promise<void> {
       await super.record(...args);
-      throw new Error('fail after audit insert');
-    }
-    override async recordAgentAction(...args: Parameters<AuditService['recordAgentAction']>): Promise<void> {
-      await super.recordAgentAction(...args);
       throw new Error('fail after audit insert');
     }
   }
@@ -74,37 +70,19 @@ describeDb('audit trail rows on a real database', () => {
   const auditCountFor = async (action: string, bountyId: string) =>
     (await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM audit_log WHERE action = $1 AND after_data->>'bountyId' = $2`, [action, bountyId])).rows[0].n;
 
-  async function bounty(options: { applicationRequired?: boolean; mode?: 'DIRECT' | 'AGENT' | 'BOTH'; reward?: string } = {}) {
+  async function bounty(options: { applicationRequired?: boolean; reward?: string } = {}) {
     const { id } = await bounties.create(adminId, {
       title: unique('audit-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
-      category: 'DEV', applicationRequired: options.applicationRequired ?? false, submissionMode: options.mode ?? 'DIRECT', maxWinners: 1,
+      category: 'DEV', applicationRequired: options.applicationRequired ?? false, maxWinners: 1,
       submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
       ...(options.reward ? { reward: { tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount: options.reward } } : {}),
     });
     if (!options.reward) await db.query(`UPDATE bounty SET status = 'OPEN' WHERE id = $1`, [id]);
     return id;
   }
-  async function agentOf(ownerId: string) {
-    const r = await db.query<{ id: string }>(
-      `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at)
-       VALUES ($1, 'bot', $2, $3, 'ACTIVE', now()) RETURNING id`,
-      [ownerId, unique('pk-'), `0x${unique()}`],
-    );
-    return r.rows[0].id;
-  }
   const work = (n: number) => ({ submissionUrl: `https://x.test/work/${n}`, description: `revision ${n}` });
 
   describe('applications', () => {
-    it('an agent key application leaves APPLICATION_SUBMITTED with actor_agent_id only, bountyId and no message/URL', async () => {
-      const bountyId = await bounty({ applicationRequired: true, mode: 'AGENT' });
-      const agentId = await agentOf(await createUser(db));
-      const app = await applications.applyAsAgent(bountyId, agentId, 'secret plan', 'https://portfolio.test');
-      expect(await auditRows('bounty_application', app.id)).toEqual([{
-        action: 'APPLICATION_SUBMITTED', actor_user_id: null, actor_agent_id: agentId,
-        before_data: null, after_data: { status: 'PENDING', bountyId }, ip: null,
-      }]);
-    });
-
     it('a person application is audited with actor_user_id, and the request IP when it came through HTTP', async () => {
       const bountyId = await bounty({ applicationRequired: true });
       const userId = await createUser(db);
@@ -114,20 +92,19 @@ describeDb('audit trail rows on a real database', () => {
       ]);
     });
 
-    it.each(['person', 'agent-key'] as const)('a %s application rolls back together with its audit row when the transaction fails after the insert', async (kind) => {
-      const bountyId = await bounty({ applicationRequired: true, mode: kind === 'agent-key' ? 'AGENT' : 'DIRECT' });
+    it('an application rolls back together with its audit row when the transaction fails after the insert', async () => {
+      const bountyId = await bounty({ applicationRequired: true });
       const userId = await createUser(db);
       const failing = new ApplicationsService(db, new FailAfterInsertAudit(db));
-      const call = kind === 'agent-key' ? failing.applyAsAgent(bountyId, await agentOf(userId), 'hi') : failing.apply(bountyId, userId, 'hi');
-      await expect(call).rejects.toThrow('fail after audit insert');
+      await expect(failing.apply(bountyId, userId, 'hi')).rejects.toThrow('fail after audit insert');
       expect((await db.query(`SELECT 1 FROM bounty_application WHERE bounty_id = $1`, [bountyId])).rowCount).toBe(0);
       expect(await auditCountFor('APPLICATION_SUBMITTED', bountyId)).toBe(0);
     });
 
-    it('withdrawing (the owner, for an agent application) audits APPLICATION_WITHDRAWN as the person, and a failure keeps the application PENDING', async () => {
-      const bountyId = await bounty({ applicationRequired: true, mode: 'AGENT' });
+    it('withdrawing audits APPLICATION_WITHDRAWN as the person, and a failure keeps the application PENDING', async () => {
+      const bountyId = await bounty({ applicationRequired: true });
       const ownerId = await createUser(db);
-      const app = await applications.applyAsAgent(bountyId, await agentOf(ownerId), 'hi');
+      const app = await applications.apply(bountyId, ownerId, 'hi');
       await expect(new ApplicationsService(db, new FailAfterInsertAudit(db)).withdraw(app.id, ownerId)).rejects.toThrow('fail after audit insert');
       expect((await db.query(`SELECT status FROM bounty_application WHERE id = $1`, [app.id])).rows[0].status).toBe('PENDING');
       expect((await auditRows('bounty_application', app.id)).map((row) => row.action)).toEqual(['APPLICATION_SUBMITTED']);
@@ -141,26 +118,26 @@ describeDb('audit trail rows on a real database', () => {
   });
 
   describe('submissions', () => {
-    it('an agent key submission and resubmission leave SUBMISSION_SUBMITTED / SUBMISSION_RESUBMITTED with actor_agent_id and revision numbers, no URL or description', async () => {
-      const bountyId = await bounty({ applicationRequired: true, mode: 'AGENT' });
-      const agentId = await agentOf(await createUser(db));
-      const app = await applications.applyAsAgent(bountyId, agentId, 'hi');
+    it('a submission and resubmission leave SUBMISSION_SUBMITTED / SUBMISSION_RESUBMITTED with actor_user_id and revision numbers, no URL or description', async () => {
+      const bountyId = await bounty({ applicationRequired: true });
+      const userId = await createUser(db);
+      const app = await applications.apply(bountyId, userId, 'hi');
       await applicationReview.review(app.id, 'APPROVED', undefined, adminId);
-      const first = await submissions.submitAsAgent(bountyId, agentId, work(1));
-      await submissions.submitAsAgent(bountyId, agentId, work(2));
+      const first = await submissions.submit(bountyId, userId, work(1));
+      await submissions.submit(bountyId, userId, work(2));
       const rows = await auditRows('bounty_submission', first.id);
       expect(rows).toEqual([
-        { action: 'SUBMISSION_SUBMITTED', actor_user_id: null, actor_agent_id: agentId, before_data: null, after_data: { status: 'SUBMITTED', revisionNo: 1, bountyId }, ip: null },
-        { action: 'SUBMISSION_RESUBMITTED', actor_user_id: null, actor_agent_id: agentId,
+        { action: 'SUBMISSION_SUBMITTED', actor_user_id: userId, actor_agent_id: null, before_data: null, after_data: { status: 'SUBMITTED', revisionNo: 1, bountyId }, ip: null },
+        { action: 'SUBMISSION_RESUBMITTED', actor_user_id: userId, actor_agent_id: null,
           before_data: { status: 'SUBMITTED', revisionNo: 1 }, after_data: { status: 'RESUBMITTED', revisionNo: 2, bountyId }, ip: null },
       ]);
       expect(JSON.stringify(rows)).not.toContain('x.test');
     });
 
     it('a failure after the audit insert rolls back the first submission and its revision', async () => {
-      const bountyId = await bounty({ mode: 'AGENT' });
-      const agentId = await agentOf(await createUser(db));
-      await expect(new SubmissionsService(db, new FailAfterInsertAudit(db)).submitAsAgent(bountyId, agentId, work(1))).rejects.toThrow('fail after audit insert');
+      const bountyId = await bounty();
+      const userId = await createUser(db);
+      await expect(new SubmissionsService(db, new FailAfterInsertAudit(db)).submit(bountyId, userId, work(1))).rejects.toThrow('fail after audit insert');
       expect((await db.query(`SELECT 1 FROM bounty_submission WHERE bounty_id = $1`, [bountyId])).rowCount).toBe(0);
       expect(await auditCountFor('SUBMISSION_SUBMITTED', bountyId)).toBe(0);
     });

@@ -47,7 +47,7 @@ const ERROR_LOG_INTERVAL_MS = 60_000;
 
 /**
  * Postgres 공유 throttler 저장소 (THROTTLER_STORAGE=postgres, production 기본) - throttler-options.ts가 세 throttler 모듈
- * (전역 IP, agent-api, auth-token)에 넣는다. 저장 키는 `<throttlerName>:<guard 키>` (guard 키는 이미 해시/agentId라 원문 자격 증명이 없다).
+ * (전역 IP, auth-token)에 넣는다. 저장 키는 `<throttlerName>:<guard 키>` (guard 키는 이미 해시라 원문 자격 증명이 없다).
  *
  * **fail-open**: DB 오류면 그 요청은 통과시키고(카운트 없음) error 로그를 분당 1회까지만 남긴다. DB가 죽으면 인증·바운티 등 본 기능이
  * 어차피 실패하므로, 한도 저장소 때문에 `/health`와 DB를 안 쓰는 경로까지 500으로 만들지 않는다 (docs/security.md).

@@ -25,7 +25,7 @@ export function throttlerModuleOptions(throttlers: ThrottlerOptions[], mode: Thr
 }
 
 /**
- * 모든 `ThrottlerModule.forRoot` 자리(app.module 전역, agents.module agent-api, auth.module auth-token)에 이걸 쓴다 -
+ * 모든 `ThrottlerModule.forRoot` 자리(app.module 전역, auth.module auth-token)에 이걸 쓴다 -
  * 저장소 선택이 한곳에 있어야 하나만 인스턴스별로 남는 일이 없다 (docs/security.md).
  */
 export function throttlerModule(throttlers: ThrottlerOptions[]): DynamicModule {

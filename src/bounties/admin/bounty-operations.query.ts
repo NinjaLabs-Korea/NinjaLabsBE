@@ -18,7 +18,7 @@ export class BountyOperationsQuery {
 
   /**
    * 운영 화면(FE /admin/operations) 한 번에 필요한 데이터 - Admin-only; never expose review notes or wallets publicly.
-   *   applications / submissions: 신원(actor_kind USER|AGENT, user_id = 지원자 또는 에이전트 소유자, nickname, agent_id/agent_name),
+   *   applications / submissions: 신원(actor_kind 항상 'USER', user_id = 지원자, nickname, agent_id/agent_name은 항상 null: 에이전트 제거 후 FE 계약 호환 shim),
    *     submissions는 수상자가 입력한 지급 주소(payout_address 소문자 inj1, payout_address_evm 같은 바이트의 EIP-55 0x, payout_address_updated_at;
    *     없으면 null → payout 요청이 409 PAYOUT_ADDRESS_NOT_SET), recipient_wallet_address(= payout_address 별칭, deprecated: 옛 FE 운영 화면용, PR5에서 제거),
    *     email(APPROVED이고 소유자가 탈퇴하지 않은 제출만, 수상자 연락용. 나머지는 null),
@@ -38,20 +38,18 @@ export class BountyOperationsQuery {
     const [applications, submissions, rewards, payouts] = await Promise.all([
       this.db.query(
         `SELECT ap.id, ap.status, ap.message, ap.portfolio_url, ap.review_note, ap.applied_at, ap.reviewed_at,
-                COALESCE(a.name, u.nickname) AS actor_name,
-                CASE WHEN ap.agent_id IS NULL THEN 'USER' ELSE 'AGENT' END AS actor_kind,
-                owner.id AS user_id, owner.nickname, ap.agent_id, a.name AS agent_name
+                owner.nickname AS actor_name,
+                'USER' AS actor_kind,
+                owner.id AS user_id, owner.nickname, NULL::uuid AS agent_id, NULL::text AS agent_name
            FROM bounty_application ap
-           LEFT JOIN "user" u ON u.id = ap.applicant_user_id
-           LEFT JOIN agent a ON a.id = ap.agent_id
-           LEFT JOIN "user" owner ON owner.id = COALESCE(ap.applicant_user_id, a.owner_user_id)
+           LEFT JOIN "user" owner ON owner.id = ap.applicant_user_id
           WHERE ap.bounty_id = $1 ORDER BY ap.applied_at DESC`, [bountyId]),
       this.db.query(
         `SELECT s.id, s.status, s.submission_url, s.description, s.repository_url, s.commit_sha,
                 s.current_revision_no, s.submitted_at, s.last_resubmitted_at, s.reviewed_at,
-                COALESCE(a.name, u.nickname) AS actor_name,
-                CASE WHEN s.agent_id IS NULL THEN 'USER' ELSE 'AGENT' END AS actor_kind,
-                owner.id AS user_id, owner.nickname, s.agent_id, a.name AS agent_name,
+                owner.nickname AS actor_name,
+                'USER' AS actor_kind,
+                owner.id AS user_id, owner.nickname, NULL::uuid AS agent_id, NULL::text AS agent_name,
                 s.payout_address, s.payout_address_updated_at, s.payout_address AS recipient_wallet_address,
                 CASE WHEN s.status = 'APPROVED' AND owner.deleted_at IS NULL THEN owner.email END AS email,
                 review.comment AS review_comment,
@@ -64,9 +62,7 @@ export class BountyOperationsQuery {
                   ORDER BY v.created_at DESC) FROM submission_review v LEFT JOIN submission_revision r ON r.id = v.revision_id
                   WHERE v.submission_id = s.id), '[]') AS reviews
            FROM bounty_submission s
-           LEFT JOIN "user" u ON u.id = s.submitter_user_id
-           LEFT JOIN agent a ON a.id = s.agent_id
-           LEFT JOIN "user" owner ON owner.id = COALESCE(s.submitter_user_id, a.owner_user_id)
+           LEFT JOIN "user" owner ON owner.id = s.submitter_user_id
            LEFT JOIN LATERAL (SELECT comment FROM submission_review WHERE submission_id = s.id
                               ORDER BY created_at DESC LIMIT 1) review ON true
           WHERE s.bounty_id = $1 ORDER BY s.submitted_at DESC`, [bountyId]),

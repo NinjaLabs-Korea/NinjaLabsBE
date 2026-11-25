@@ -10,7 +10,6 @@ import { isUniqueViolation } from '../../common/database/pg-errors';
 import { ApplicationStatusPolicy } from '../application-status';
 import { BountyActor } from '../bounty-actor';
 import { BountyStatus } from '../bounty-status';
-import { ownedAgentIdsSql } from '../../agents/owned-agents';
 
 /**
  * 지원형 바운티(application_required = true) 참가 신청
@@ -25,34 +24,18 @@ export class ApplicationsService {
   ) {}
 
   async apply(bountyId: string, userId: string, message: string, portfolioUrl?: string) {
-    return this.applyForActor(bountyId, BountyActor.user(userId), message, portfolioUrl);
-  }
-
-  async applyAsAgent(bountyId: string, agentId: string, message: string, portfolioUrl?: string) {
-    return this.applyForActor(bountyId, BountyActor.agent(agentId), message, portfolioUrl);
-  }
-
-  private async applyForActor(
-    bountyId: string,
-    actor: BountyActor,
-    message: string,
-    portfolioUrl?: string,
-  ) {
+    const actor = BountyActor.user(userId);
     return this.db.tx(async (tx) => {
       const bounty = await tx.query<{
         application_required: boolean;
-        submission_mode: string;
         status: string; submission_deadline: string; application_deadline: string | null;
       }>(
-        `SELECT application_required, submission_mode, status, submission_deadline, application_deadline FROM bounty
+        `SELECT application_required, status, submission_deadline, application_deadline FROM bounty
           WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
         [bountyId],
       );
       if (!bounty.rowCount) throw new NotFoundException('BOUNTY_NOT_FOUND');
-      // 검사 순서가 응답을 정한다: 제출 방식(주체 허용) -> 상태 -> 지원 불필요 -> 마감. 방식이 먼저여야 DIRECT 바운티가 에이전트에게 항상
-      // DIRECT_SUBMISSION_REQUIRED로 답한다 - 지원이 필요 없는 DIRECT 바운티에 SUBMISSION_TYPE_BOUNTY("바로 제출하라")를 주면, 그대로 따른
-      // 에이전트가 제출에서 DIRECT_SUBMISSION_REQUIRED를 만난다. 상태도 지원 불필요보다 먼저: 열리지 않은 바운티에는 상태 오류가 맞다.
-      actor.assertAllowedBy(bounty.rows[0].submission_mode);
+      // 검사 순서가 응답을 정한다: 상태 -> 지원 불필요 -> 마감. 열리지 않은 바운티에는 지원 불필요보다 상태 오류가 맞다.
       if (bounty.rows[0].status !== BountyStatus.OPEN) {
         throw new BadRequestException('BOUNTY_NOT_OPEN');
       }
@@ -65,7 +48,7 @@ export class ApplicationsService {
       // 바운티 행 잠금(FOR UPDATE) 아래라 같은 주체의 동시 지원은 여기서 직렬화된다
       const existing = await tx.query<{ id: string; status: string }>(
         `SELECT id, status FROM bounty_application
-          WHERE bounty_id = $1 AND ${actor.applicationColumn} = $2 FOR UPDATE`,
+          WHERE bounty_id = $1 AND applicant_user_id = $2 FOR UPDATE`,
         [bountyId, actor.id],
       );
       if (existing.rowCount) {
@@ -78,7 +61,6 @@ export class ApplicationsService {
           RETURNING id, status, applied_at`,
           [existing.rows[0].id, message, portfolioUrl ?? null],
         );
-        // 에이전트 키로 낸 재지원은 유저 id가 없다 - 행위자 없는 행은 운영 스크립트 기록으로 읽히므로 에이전트 id를 남긴다(recordAudit).
         // change를 붙이지 않는다: 이 행은 before/after 없이 쌓여 왔고, 바운티는 지원 행에서 찾는다
         await actor.recordAudit(this.audit, 'APPLICATION_REAPPLIED', 'bounty_application', existing.rows[0].id, tx);
         return reopened.rows[0];
@@ -88,16 +70,15 @@ export class ApplicationsService {
       try {
         const r = await tx.query<{ id: string; status: string; applied_at: string }>(
           `INSERT INTO bounty_application
-             (bounty_id, applicant_user_id, agent_id, message, portfolio_url)
-           VALUES ($1, $2, $3, $4, $5)
+             (bounty_id, applicant_user_id, message, portfolio_url)
+           VALUES ($1, $2, $3, $4)
            RETURNING id, status, applied_at`,
-          [bountyId, actor.userId, actor.agentId,
-           message, portfolioUrl ?? null],
+          [bountyId, actor.id, message, portfolioUrl ?? null],
         );
         created = r.rows[0];
       } catch (err: unknown) {
-        // 같은 주체의 동시 첫 지원만 409로 바꾼다. 다른 유니크 충돌(예: 나중에 생길 인덱스)은 그대로 던져 500으로 드러나게 한다
-        if (isUniqueViolation(err, actor.applicationUniqueIndex)) {
+        // 같은 사람의 동시 첫 지원만 409로 바꾼다(부분 유니크 인덱스 0004_bounties.sql). 다른 유니크 충돌은 그대로 던져 500으로 드러나게 한다
+        if (isUniqueViolation(err, 'uq_application_user')) {
           throw new ConflictException('ALREADY_APPLIED');
         }
         throw err;
@@ -110,36 +91,29 @@ export class ApplicationsService {
     });
   }
 
-  /** 내 지원 내역 - 본인이 낸 것 + 내가 소유한 에이전트가 낸 것. 각 행에 agent {id, name} | null */
+  /** 내 지원 내역. 각 행의 `agent`는 항상 null(에이전트 제거 후에도 FE 계약 호환용 shim, 다음 정리 PR에서 제거) */
   async myApplications(userId: string) {
     const r = await this.db.query(
       `SELECT a.id, a.status, a.message, a.applied_at, a.reviewed_at, a.review_note,
               b.id AS bounty_id, b.title AS bounty_title, b.category,
               b.status AS bounty_status, b.submission_deadline, b.application_deadline,
-              CASE WHEN ag.id IS NULL THEN NULL
-                   ELSE json_build_object('id', ag.id, 'name', ag.name) END AS agent
+              NULL::json AS agent
          FROM bounty_application a
          JOIN bounty b ON b.id = a.bounty_id AND b.deleted_at IS NULL -- 삭제된 바운티는 없는 것으로 본다 (링크가 404가 된다)
-         LEFT JOIN agent ag ON ag.id = a.agent_id
         WHERE a.applicant_user_id = $1
-           OR a.agent_id = ANY(${ownedAgentIdsSql('$1', 'live')})
         ORDER BY a.applied_at DESC`,
       [userId],
     );
     return r.rows;
   }
 
-  /**
-   * 지원 철회 - 본인 지원 또는 내 에이전트의 지원 (PENDING만). 감사 `APPLICATION_WITHDRAWN`은 같은 tx이고 행위자는 철회한 유저다
-   * (에이전트 지원을 소유자가 철회해도 사람 행위 - 철회는 Agent API에 없다).
-   */
+  /** 지원 철회 - 본인 지원만 (PENDING만). 감사 `APPLICATION_WITHDRAWN`은 같은 tx이고 행위자는 철회한 유저다. */
   async withdraw(applicationId: string, userId: string) {
     return this.db.tx(async (tx) => {
       const r = await tx.query<{ id: string; status: string; bounty_id: string }>(
         `UPDATE bounty_application SET status = 'WITHDRAWN'
           WHERE id = $1 AND status = 'PENDING'
-            AND (applicant_user_id = $2
-                 OR agent_id = ANY(${ownedAgentIdsSql('$2', 'live')}))
+            AND applicant_user_id = $2
           RETURNING id, status, bounty_id`,
         [applicationId, userId],
       );

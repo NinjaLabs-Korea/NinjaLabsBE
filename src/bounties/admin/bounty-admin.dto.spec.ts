@@ -25,6 +25,17 @@ describe('bounty admin DTOs', () => {
     expect(await failedFields(CreateBountyDto, validCreate)).toEqual([]);
   });
 
+  it('submissionMode is optional on create and only DIRECT is accepted (AGENT and anything else is rejected, agents were removed)', async () => {
+    const { submissionMode: _omitted, ...withoutMode } = validCreate;
+    expect(await failedFields(CreateBountyDto, withoutMode)).toEqual([]);
+    for (const submissionMode of ['AGENT', 'agent', 'BOTH', '']) {
+      expect(await failedFields(CreateBountyDto, { ...validCreate, submissionMode })).toEqual(['submissionMode']);
+      expect(await failedFields(UpdateBountyDto, { submissionMode })).toEqual(['submissionMode']);
+    }
+    expect(await failedFields(UpdateBountyDto, { submissionMode: 'DIRECT' })).toEqual([]);
+    expect(await failedFields(UpdateBountyDto, { submissionMode: null })).toEqual(['submissionMode']);
+  });
+
   it('rejects whitespace-only required text and a malformed deadline on create', async () => {
     expect(
       await failedFields(CreateBountyDto, { ...validCreate, title: '   ', sponsorName: '', submissionDeadline: 'soon' }),

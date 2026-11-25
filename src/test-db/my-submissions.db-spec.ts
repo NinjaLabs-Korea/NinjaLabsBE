@@ -26,10 +26,10 @@ describeDb('GET /submissions/me current-revision fields on a real database', () 
   });
   afterAll(async () => db.onApplicationShutdown());
 
-  async function openBounty(submissionMode: string) {
+  async function openBounty() {
     const { id } = await bounties.create(adminId, {
       title: unique('bounty-'), sponsorName: 'Sponsor', summary: 's', description: 'd', requirements: 'r', evaluationCriteria: 'e',
-      category: 'DEV', applicationRequired: false, submissionMode, maxWinners: 1,
+      category: 'DEV', applicationRequired: false, maxWinners: 1,
       submissionDeadline: new Date(Date.now() + 7 * 86_400_000).toISOString(),
       reward: { tokenType: 'NATIVE', tokenDenom: 'inj', displaySymbol: 'INJ', amount: '1000' },
     });
@@ -39,37 +39,23 @@ describeDb('GET /submissions/me current-revision fields on a real database', () 
     return id;
   }
 
-  async function activeAgent(ownerId: string) {
-    const agent = await db.query<{ id: string }>(
-      `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at)
-       VALUES ($1, 'bot', $2, $3, 'ACTIVE', now()) RETURNING id`,
-      [ownerId, unique('pk-'), `0x${unique()}`],
-    );
-    return agent.rows[0].id;
-  }
-
-  it('returns submission_url, repository_url and commit_sha of the latest revision for own and own-agent submissions only', async () => {
+  it('returns submission_url, repository_url and commit_sha of the latest revision for own submissions only, with the agent shim null', async () => {
     const user = await createUser(db);
     const stranger = await createUser(db);
     await createPrimaryWallet(db, user);
-    const agentId = await activeAgent(user);
 
-    const direct = await openBounty('DIRECT');
+    const direct = await openBounty();
     const mine = await submissions.submit(direct, user, {
       submissionUrl: 'https://x.test/v1', description: 'v1', repositoryUrl: 'https://github.com/x/y', commitSha: 'a'.repeat(40),
     });
-    const agentBounty = await openBounty('AGENT');
-    const viaAgent = await submissions.submitAsAgent(agentBounty, agentId, {
-      submissionUrl: 'https://x.test/agent', description: 'by agent', repositoryUrl: 'https://github.com/x/agent', commitSha: 'b'.repeat(40),
-    });
-    const strangerBounty = await openBounty('DIRECT');
+    const strangerBounty = await openBounty();
     const theirs = await submissions.submit(strangerBounty, stranger, {
       submissionUrl: 'https://x.test/other', description: 'other', repositoryUrl: 'https://github.com/x/other', commitSha: 'c'.repeat(40),
     });
 
     const rows = new Map((await submissions.mySubmissions(user)).map((r) => [r.id, r]));
     expect(rows.get(mine.id)).toMatchObject({ submission_url: 'https://x.test/v1', repository_url: 'https://github.com/x/y', commit_sha: 'a'.repeat(40) });
-    expect(rows.get(viaAgent.id)).toMatchObject({ submission_url: 'https://x.test/agent', repository_url: 'https://github.com/x/agent', commit_sha: 'b'.repeat(40) });
+    expect(rows.get(mine.id)).toMatchObject({ agent: null });
     expect(rows.has(theirs.id)).toBe(false);
 
     // a resubmission replaces the current revision, and the endpoint shows the new one

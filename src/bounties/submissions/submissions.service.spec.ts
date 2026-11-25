@@ -17,7 +17,7 @@ describe('SubmissionsService check order', () => {
       handlers: [{
         match: bountyLock,
         reply: () => (bounty
-          ? { rowCount: 1, rows: [{ application_required: false, submission_mode: 'DIRECT', status: 'OPEN', submission_deadline: '2999-01-01', ...bounty }] }
+          ? { rowCount: 1, rows: [{ application_required: false, status: 'OPEN', submission_deadline: '2999-01-01', ...bounty }] }
           : { rowCount: 0, rows: [] }),
       }],
     });
@@ -32,42 +32,22 @@ describe('SubmissionsService check order', () => {
     expect(mock.db.query).not.toHaveBeenCalled();
   });
 
-  it.each(['DRAFT', 'FUNDING_PENDING', 'COMPLETED', 'CANCELLED'])('a %s bounty is BOUNTY_NOT_OPEN before the mode, onboarding and application checks', async (status) => {
-    const { service } = setup({ status, submission_mode: 'AGENT' });
+  it.each(['DRAFT', 'FUNDING_PENDING', 'COMPLETED', 'CANCELLED'])('a %s bounty is BOUNTY_NOT_OPEN before the onboarding and application checks', async (status) => {
+    const { service } = setup({ status });
     await expect(service.submit('bounty', 'user', input)).rejects.toMatchObject({ status: 400, message: 'BOUNTY_NOT_OPEN' });
-  });
-
-  it('a browser user on an agent-only bounty and an agent on a direct bounty are refused before the onboarding lookup', async () => {
-    await expect(setup({ submission_mode: 'AGENT' }).service.submit('bounty', 'user', input))
-      .rejects.toMatchObject({ status: 400, message: 'AGENT_SUBMISSION_REQUIRED' });
-    await expect(setup({ submission_mode: 'DIRECT' }).service.submitAsAgent('bounty', 'agent', input))
-      .rejects.toMatchObject({ status: 400, message: 'DIRECT_SUBMISSION_REQUIRED' });
   });
 
   it('the onboarding lookup runs before the application lookup and the existing-submission lock: an unfinished profile stops there (409 PROFILE_REQUIRED)', async () => {
     const mock = createMockDb({
       strict: true,
       handlers: [
-        { match: /FROM bounty WHERE id = \$1/, reply: () => ({ rowCount: 1, rows: [{ application_required: true, submission_mode: 'DIRECT', status: 'OPEN', submission_deadline: '2999-01-01' }] }) },
+        { match: /FROM bounty WHERE id = \$1/, reply: () => ({ rowCount: 1, rows: [{ application_required: true, status: 'OPEN', submission_deadline: '2999-01-01' }] }) },
         { match: /onboarding_completed_at IS NOT NULL AS done FROM "user"/, reply: () => ({ rowCount: 1, rows: [{ done: false }] }) },
       ],
     });
     await expect(new SubmissionsService(mock.database, new AuditService(mock.database)).submit('bounty', 'user', input))
       .rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
     expect(mock.txStatements(/onboarding_completed_at/)[0].params).toEqual(['user']);
-  });
-
-  it('an agent\'s onboarding check follows its owner and is bound to the agent id', async () => {
-    const mock = createMockDb({
-      strict: true,
-      handlers: [
-        { match: /FROM bounty WHERE id = \$1/, reply: () => ({ rowCount: 1, rows: [{ application_required: false, submission_mode: 'AGENT', status: 'OPEN', submission_deadline: '2999-01-01' }] }) },
-        { match: /onboarding_completed_at IS NOT NULL AS done\s*FROM agent a JOIN "user" u/, reply: () => ({ rowCount: 1, rows: [{ done: false }] }) },
-      ],
-    });
-    await expect(new SubmissionsService(mock.database, new AuditService(mock.database)).submitAsAgent('bounty', 'agent', input))
-      .rejects.toMatchObject({ status: 409, message: 'PROFILE_REQUIRED' });
-    expect(mock.txStatements(/FROM agent a JOIN "user" u/)[0].params).toEqual(['agent']);
   });
 });
 

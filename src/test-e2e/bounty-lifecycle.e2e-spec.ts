@@ -1,4 +1,3 @@
-import { HDNodeWallet, Wallet } from 'ethers';
 import { describeDb } from '../test-db/describe-db';
 import { AdminBountyForm, applyBody, payoutAddressBody, saveAdminBountyBody, submitBody } from './support/fe-payloads';
 import { DAY, E2eApp, isoIn, payoutEvmAddress, Session, startApp, txHash, UUID } from './support/harness';
@@ -14,7 +13,7 @@ function bountyForm(overrides: Partial<AdminBountyForm> = {}): AdminBountyForm {
   };
 }
 
-// g. bounty lifecycle (admin + user + agent) · h. admin guard
+// g. bounty lifecycle (admin + user) · h. admin guard
 describeDb('bounty lifecycle over HTTP (e2e)', () => {
   let e2e: E2eApp;
   let admin: Session;
@@ -365,135 +364,60 @@ describeDb('bounty lifecycle over HTTP (e2e)', () => {
     expect((await e2e.post(`/admin/submissions/${submissions[2]}/review`, { decision: 'REQUEST_REVISION' }, asAdmin)).body).toEqual(badRequest('REVISION_COMMENT_REQUIRED'));
   });
 
-  describe('agent-mode bounty', () => {
-    async function registerAgent(owner: Session, name: string, signer: HDNodeWallet = Wallet.createRandom()) {
-      // FE AgentRegisterForm: { name, description? , walletAddress }
-      const registered = await e2e.post('/agents', { name, walletAddress: signer.address }, { token: owner.accessToken });
-      expect(registered.status).toBe(201);
-      expect(registered.body).toEqual({ agentId: expect.stringMatching(UUID), status: 'PENDING_VERIFICATION', verificationMessage: expect.stringContaining(registered.body.agentId) });
-      const verified = await e2e.post(`/agents/${registered.body.agentId}/verify`, { signature: await signer.signMessage(registered.body.verificationMessage) }, { token: owner.accessToken });
-      expect(verified.status).toBe(201);
-      expect(verified.body).toEqual({ agentId: registered.body.agentId, status: 'ACTIVE', apiKey: expect.stringMatching(/^nj_[A-Za-z0-9_-]{43}$/), expiresAt: expect.any(String) });
-      e2e.trackTokens(verified.body);
-      return { agentId: registered.body.agentId as string, apiKey: verified.body.apiKey as string };
-    }
+  describe('retired agent API', () => {
+    const gone = { statusCode: 410, error: 'Gone', message: 'AGENT_API_RETIRED' };
 
-    it('agents apply/submit with their key via /agent-api/v1; the owner sees those rows with `agent`, can withdraw them, and rotate/revoke keys', async () => {
-      const owner = await e2e.loginOnboarded();
-      await e2e.onboard(owner);
-      const id = await createBounty(bountyForm({ submissionMode: 'agent', reward: { amount: 0, currency: 'INJ' } }));
-      expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
-      const a = await registerAgent(owner, 'alpha-bot');
-      const b = await registerAgent(owner, 'beta-bot');
-
-      const human = await e2e.post(`/bounties/${id}/applications`, applyBody('me'), { token: owner.accessToken });
-      expect(human.body).toEqual(badRequest('AGENT_SUBMISSION_REQUIRED'));
-
-      const appA = await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'alpha applies' }, { token: a.apiKey });
-      expect(appA.status).toBe(201);
-      const appB = await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'beta applies', portfolioUrl: 'https://beta.example' }, { token: b.apiKey });
-      expect(appB.status).toBe(201);
-
-      const mine = await e2e.get('/applications/me', { token: owner.accessToken });
-      expect(mine.body.map((r: { agent: unknown }) => r.agent)).toEqual(expect.arrayContaining([{ id: a.agentId, name: 'alpha-bot' }, { id: b.agentId, name: 'beta-bot' }]));
-
-      // the owner withdraws an agent's application
-      expect((await e2e.post(`/applications/${appA.body.id}/withdraw`, undefined, { token: owner.accessToken })).body).toEqual({ id: appA.body.id, status: 'WITHDRAWN' });
-      const stranger = await e2e.loginOnboarded();
-      expect((await e2e.post(`/applications/${appB.body.id}/withdraw`, undefined, { token: stranger.accessToken })).status).toBe(404);
-
-      expect((await e2e.post(`/admin/applications/${appB.body.id}/review`, { decision: 'APPROVED' }, asAdmin)).body.status).toBe('APPROVED');
-      const sub = await e2e.post(`/agent-api/v1/bounties/${id}/submissions`, { submissionUrl: 'https://beta.example/out', description: 'beta result', commitSha: 'deadbeef' }, { token: b.apiKey });
-      expect(sub.status).toBe(201);
-      expect(sub.body).toEqual({ id: expect.stringMatching(UUID), revisionNo: 1, status: 'SUBMITTED' });
-      const subs = await e2e.get('/submissions/me', { token: owner.accessToken });
-      expect(subs.body).toEqual([expect.objectContaining({ id: sub.body.id, bounty_id: id, agent: { id: b.agentId, name: 'beta-bot' }, payment_status: 'NONE' })]);
-
-      const agents = await e2e.get('/agents/me', { token: owner.accessToken });
-      expect(agents.body).toHaveLength(2);
-      expect(Object.keys(agents.body[0]).sort()).toEqual(
-        ['completed_bounties', 'created_at', 'description', 'id', 'key_expires_at', 'key_prefix', 'key_status', 'name', 'status', 'verified_at', 'wallet_address'].sort());
-
-      const rotated = await e2e.post(`/agents/${b.agentId}/keys/rotate`, undefined, { token: owner.accessToken });
-      expect(rotated.status).toBe(201);
-      expect(rotated.body).toEqual({ agentId: b.agentId, apiKey: expect.stringMatching(/^nj_/), expiresAt: expect.any(String) });
-      e2e.trackTokens(rotated.body);
-      expect((await e2e.get('/agent-api/v1/me', { token: b.apiKey })).status).toBe(401);
-      expect((await e2e.get('/agent-api/v1/me', { token: rotated.body.apiKey })).status).toBe(200);
-
-      expect((await e2e.post(`/agents/${b.agentId}/revoke`, undefined, { token: owner.accessToken })).body).toEqual({ agentId: b.agentId, status: 'REVOKED' });
-      expect((await e2e.get('/agent-api/v1/me', { token: rotated.body.apiKey })).status).toBe(401);
-      expect((await e2e.post(`/agents/${b.agentId}/keys/rotate`, undefined, { token: stranger.accessToken })).status).toBe(404);
+    it('every method on /agent-api/v1 and below is 410 AGENT_API_RETIRED, with or without credentials or a body', async () => {
+      const id = '11111111-1111-4111-8111-111111111111';
+      for (const [method, path] of [
+        ['GET', '/agent-api/v1/me'], ['GET', '/agent-api/v1'],
+        ['POST', `/agent-api/v1/bounties/${id}/applications`], ['POST', `/agent-api/v1/bounties/${id}/submissions`],
+        ['PUT', '/agent-api/v1/anything/else'], ['PATCH', '/agent-api/v1/me'], ['DELETE', '/agent-api/v1/me'],
+      ] as const) {
+        const res = await e2e.request(method, path, { json: method === 'GET' || method === 'DELETE' ? undefined : { message: 'x' } });
+        expect([method, path, res.status, res.body]).toEqual([method, path, 410, gone]);
+      }
+      const withKey = await e2e.get('/agent-api/v1/me', { token: 'nj_not-a-real-key-at-all' });
+      expect([withKey.status, withKey.body]).toEqual([410, gone]);
     });
 
-    it('an agent re-applies via /agent-api/v1 after its owner withdrew the application: same row reopened as PENDING', async () => {
+    it('the agent management routes are gone (404), not retired stubs', async () => {
+      // 의도된 동작: 410 shim은 외부 계약인 /agent-api/v1에만 둔다. FE 내부 호출 /agents/*는 FE-3이 먼저 나가므로 404로 둔다
       const owner = await e2e.loginOnboarded();
-      const id = await createBounty(bountyForm({ submissionMode: 'agent', reward: { amount: 0, currency: 'INJ' } }));
+      expect((await e2e.get('/agents/me', { token: owner.accessToken })).status).toBe(404);
+      expect((await e2e.post('/agents', { name: 'bot', walletAddress: '0x0000000000000000000000000000000000000001' }, { token: owner.accessToken })).status).toBe(404);
+    });
+
+    it('creating a bounty with submissionMode AGENT is 400, and omitting submissionMode defaults to DIRECT', async () => {
+      const rejected = await e2e.post('/admin/bounties', saveAdminBountyBody(bountyForm({ submissionMode: 'agent' }), true), { token: admin.accessToken });
+      expect(rejected.status).toBe(400);
+      expect(JSON.stringify(rejected.body.message)).toContain('submissionMode');
+
+      const body = saveAdminBountyBody(bountyForm({ reward: { amount: 0, currency: 'INJ' } }), true);
+      delete body.submissionMode;
+      const created = await e2e.post('/admin/bounties', body, { token: admin.accessToken });
+      expect(created.status).toBe(201);
+      const row = await e2e.db.query(`SELECT submission_mode FROM bounty WHERE id = $1`, [created.body.id]);
+      expect(row.rows[0].submission_mode).toBe('DIRECT');
+    });
+
+    it('a person application and submission are audited as the person with the request IP, in the same transaction as the row', async () => {
+      const owner = await e2e.loginOnboarded();
+      const id = await createBounty(bountyForm({ reward: { amount: 0, currency: 'INJ' } }));
       expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
-      const bot = await registerAgent(owner, 'gamma-bot');
-      const applied = await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'gamma applies' }, { token: bot.apiKey, ip: '198.51.100.71' });
+      const applied = await e2e.post(`/bounties/${id}/applications`, applyBody('apply'), { token: owner.accessToken, ip: '198.51.100.71' });
       expect(applied.status).toBe(201);
       await e2e.post(`/applications/${applied.body.id}/withdraw`, undefined, { token: owner.accessToken, ip: '198.51.100.72' });
-      const again = await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'gamma again', portfolioUrl: 'https://gamma.example' }, { token: bot.apiKey });
-      expect(again.status).toBe(201);
-      expect(again.body).toMatchObject({ id: applied.body.id, status: 'PENDING' });
-      expect((await e2e.post(`/agent-api/v1/bounties/${id}/applications`, { message: 'dup' }, { token: bot.apiKey })).status).toBe(409);
-      const row = await e2e.db.query(`SELECT status, message, portfolio_url FROM bounty_application WHERE id = $1`, [applied.body.id]);
-      expect(row.rows[0]).toEqual({ status: 'PENDING', message: 'gamma again', portfolio_url: 'https://gamma.example' });
       const audit = await e2e.get(`/admin/audit-logs?entityType=bounty_application&entityId=${applied.body.id}`, asAdmin);
-      // newest first: the agent's first application and re-application, the owner's withdrawal in between
-      expect(audit.body.items.map((i: { action: string }) => i.action).sort()).toEqual(['APPLICATION_REAPPLIED', 'APPLICATION_SUBMITTED', 'APPLICATION_WITHDRAWN']);
+      expect(audit.body.items.map((i: { action: string }) => i.action).sort()).toEqual(['APPLICATION_SUBMITTED', 'APPLICATION_WITHDRAWN']);
       const byAction = (action: string) => audit.body.items.find((i: { action: string }) => i.action === action);
-      // no user id on an Agent API call - the row must still say who acted (an empty actor reads as an ops-script row)
-      expect(byAction('APPLICATION_REAPPLIED')).toMatchObject({ actor_user_id: null, actor_agent_id: bot.agentId });
-      expect(byAction('APPLICATION_SUBMITTED')).toMatchObject({ actor_user_id: null, actor_agent_id: bot.agentId, after_data: { status: 'PENDING', bountyId: id } });
-      expect(byAction('APPLICATION_WITHDRAWN')).toMatchObject({ actor_user_id: owner.userId, actor_agent_id: null });
+      expect(byAction('APPLICATION_SUBMITTED')).toMatchObject({ actor_user_id: owner.userId, actor_agent_id: null, after_data: { status: 'PENDING', bountyId: id } });
       // ip_address = req.ip under trust proxy 1 (the X-Forwarded-For client), not in the API response
       expect(byAction('APPLICATION_SUBMITTED')).not.toHaveProperty('ip_address');
       const ips = await e2e.db.query<{ action: string; ip: string }>(
         `SELECT action, host(ip_address) AS ip FROM audit_log WHERE entity_id = $1 AND action IN ('APPLICATION_SUBMITTED', 'APPLICATION_WITHDRAWN') ORDER BY action`, [applied.body.id]);
       expect(ips.rows).toEqual([{ action: 'APPLICATION_SUBMITTED', ip: '198.51.100.71' }, { action: 'APPLICATION_WITHDRAWN', ip: '198.51.100.72' }]);
     });
-
-    it('an agent submission and resubmission via /agent-api/v1 are audited as the agent, in the same transaction as the submission', async () => {
-      const owner = await e2e.loginOnboarded();
-      const id = await createBounty(bountyForm({ submissionMode: 'agent', intakeEnabled: false, reward: { amount: 0, currency: 'INJ' } }));
-      expect((await transition(id, 'OPEN')).body.status).toBe('OPEN');
-      const bot = await registerAgent(owner, 'delta-bot');
-      const first = await e2e.post(`/agent-api/v1/bounties/${id}/submissions`, { submissionUrl: 'https://delta.example/1', description: 'v1' }, { token: bot.apiKey, ip: '198.51.100.81' });
-      expect(first.status).toBe(201);
-      expect((await e2e.post(`/agent-api/v1/bounties/${id}/submissions`, { submissionUrl: 'https://delta.example/2', description: 'v2' }, { token: bot.apiKey })).status).toBe(201);
-      const audit = await e2e.get(`/admin/audit-logs?entityType=bounty_submission&entityId=${first.body.id}`, asAdmin);
-      expect(audit.body.items).toEqual([
-        expect.objectContaining({ action: 'SUBMISSION_RESUBMITTED', actor_user_id: null, actor_agent_id: bot.agentId, actor_agent_name: 'delta-bot',
-          before_data: { status: 'SUBMITTED', revisionNo: 1 }, after_data: { status: 'RESUBMITTED', revisionNo: 2, bountyId: id } }),
-        expect.objectContaining({ action: 'SUBMISSION_SUBMITTED', actor_user_id: null, actor_agent_id: bot.agentId,
-          before_data: null, after_data: { status: 'SUBMITTED', revisionNo: 1, bountyId: id } }),
-      ]);
-      expect(JSON.stringify(audit.body.items)).not.toContain('delta.example');
-      const ip = await e2e.db.query<{ ip: string }>(`SELECT host(ip_address) AS ip FROM audit_log WHERE entity_id = $1 AND action = 'SUBMISSION_SUBMITTED'`, [first.body.id]);
-      expect(ip.rows[0].ip).toBe('198.51.100.81');
-    });
-  });
-
-  it('an agent whose owner is suspended or deleted can no longer use its API key (401 INVALID_AGENT_API_KEY)', async () => {
-    const owner = await e2e.loginOnboarded();
-    const signer = Wallet.createRandom();
-    const registered = await e2e.post('/agents', { name: 'orphan-bot', walletAddress: signer.address }, { token: owner.accessToken });
-    const verified = await e2e.post(`/agents/${registered.body.agentId}/verify`, { signature: await signer.signMessage(registered.body.verificationMessage) }, { token: owner.accessToken });
-    e2e.trackTokens(verified.body);
-    expect((await e2e.get('/agent-api/v1/me', { token: verified.body.apiKey })).status).toBe(200);
-
-    // the owner's own refresh is refused once suspended (auth.service refresh); their agents must stop too
-    await e2e.db.query(`UPDATE "user" SET status = 'SUSPENDED' WHERE id = $1`, [owner.userId]);
-    const suspended = await e2e.get('/agent-api/v1/me', { token: verified.body.apiKey });
-    expect(suspended.status).toBe(401);
-    expect(suspended.body).toEqual({ statusCode: 401, error: 'Unauthorized', message: 'INVALID_AGENT_API_KEY' });
-
-    await e2e.db.query(`UPDATE "user" SET status = 'ACTIVE' WHERE id = $1`, [owner.userId]);
-    expect((await e2e.get('/agent-api/v1/me', { token: verified.body.apiKey })).status).toBe(200);
-    await e2e.db.query(`UPDATE "user" SET deleted_at = now() WHERE id = $1`, [owner.userId]);
-    expect((await e2e.get('/agent-api/v1/me', { token: verified.body.apiKey })).status).toBe(401);
   });
 
   it('re-applying after withdrawal reopens the same application (201 PENDING, same id, review cleared, APPLICATION_REAPPLIED); PENDING stays 409; closed bounty refuses', async () => {

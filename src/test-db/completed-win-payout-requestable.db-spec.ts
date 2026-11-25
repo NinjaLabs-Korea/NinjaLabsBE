@@ -1,4 +1,3 @@
-import { AgentsService } from '../agents/agents.service';
 import { AuditService } from '../audit/audit.service';
 import { BountyAdminService } from '../bounties/admin/bounty-admin.service';
 import { BountyLifecycleService } from '../bounties/admin/bounty-lifecycle.service';
@@ -15,15 +14,11 @@ import { BountyStatusPolicy } from '../bounties/bounty-status';
 import { describeDb } from './describe-db';
 import { createDb, createPrimaryWallet, createUser, fakeTxHash, testConfig, unique, withPayoutAddresses } from './harness';
 
-// AgentsService가 끌어오는 ESM 전용 SDK는 e2e 스텁으로 바꾼다 (agents.db-spec.ts와 같다). 여기서는 myAgents 조회만 쓴다.
-jest.mock('@injectivelabs/sdk-ts', () => jest.requireActual('../test-e2e/support/injective-sdk.stub'));
-jest.mock('../common/crypto/adr36', () => ({ verifyAdr36Signature: jest.fn(() => false) }));
-
 /**
  * 돈·공개 집계 경로의 단일 출처 조각이 이전 SQL과 같은 결과를 내는지 실제 행으로 고정한다.
  *
  * 1. 완료된 수상(completedWinSql)/완료된 바운티(completedBountySql): 옮기기 전 문장(아래 OLD_*, 이 PR 직전 main의 SQL 사본)과
- *    지금 서비스가 같은 결과를 낸다. 본인·에이전트 x APPROVED/REJECTED/SUBMITTED x 삭제/미삭제 x OPEN/COMPLETED x PAID 유무 조합.
+ *    지금 서비스가 같은 결과를 낸다. 본인 제출 x APPROVED/REJECTED/SUBMITTED x 삭제/미삭제 x OPEN/COMPLETED x PAID 유무 조합.
  *    사본은 이 비교를 위해서만 둔다: 규칙을 일부러 바꿀 때는 이 사본을 지운다.
  * 2. 지급 요청 가능(payoutRequestableSql): SQL 술어가 참인 것과 requestPayout(금액 1)이 받아 주는 것이 시나리오마다 같고,
  *    탈퇴 차단 PENDING_REWARD_SQL과 지급 상태 payoutStatusSql도 같은 답을 낸다.
@@ -62,27 +57,13 @@ describeDb('completed wins and payout requestability single sources on a real da
          LEFT JOIN payout p ON p.submission_id = s.id AND p.status = 'PAID'
          LEFT JOIN bounty_reward r ON r.id = p.bounty_reward_id
         WHERE s.status = 'APPROVED' AND b.deleted_at IS NULL
-          AND (s.submitter_user_id = $1
-               OR s.agent_id = ANY(ARRAY(SELECT id FROM agent WHERE owner_user_id = $1 AND deleted_at IS NULL)))
+          AND s.submitter_user_id = $1
         GROUP BY s.id, b.id
         ORDER BY s.reviewed_at DESC, s.id`;
-    const OLD_PROFILE_AGENTS = `SELECT a.id, a.name, a.description, a.status, a.wallet_address,
-              COALESCE(json_agg(json_build_object('id', b.id, 'title', b.title) ORDER BY s.reviewed_at DESC, b.id)
-                       FILTER (WHERE b.id IS NOT NULL), '[]') AS completed_bounties
-         FROM agent a
-         LEFT JOIN bounty_submission s ON s.agent_id = a.id AND s.status = 'APPROVED'
-         LEFT JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL
-        WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL AND a.status = 'ACTIVE'
-        GROUP BY a.id
-        ORDER BY a.created_at, a.id`;
-    const OLD_MY_AGENT_COUNT = `SELECT a.id, (SELECT count(*)::int FROM bounty_submission s
-                 JOIN bounty b ON b.id = s.bounty_id AND b.deleted_at IS NULL
-                WHERE s.agent_id = a.id AND s.status = 'APPROVED') AS completed_bounties
-         FROM agent a WHERE a.owner_user_id = $1 AND a.deleted_at IS NULL ORDER BY a.created_at`;
     const OLD_HOF_COUNTS = `SELECT
          (SELECT count(*) FROM bounty
            WHERE status = 'COMPLETED' AND deleted_at IS NULL) AS completed_bounties,
-         (SELECT count(DISTINCT COALESCE(s.submitter_user_id, s.agent_id)) FROM bounty_submission s
+         (SELECT count(DISTINCT s.submitter_user_id) FROM bounty_submission s
             JOIN bounty b ON b.id = s.bounty_id
            WHERE s.status = 'APPROVED' AND b.deleted_at IS NULL
              AND (b.status = 'COMPLETED'
@@ -90,18 +71,13 @@ describeDb('completed wins and payout requestability single sources on a real da
          (SELECT count(DISTINCT lower(btrim(sponsor_name))) FROM bounty
            WHERE status = 'COMPLETED' AND deleted_at IS NULL) AS sponsors`;
 
-    it('public profile, my agents and hall-of-fame counts match the old SQL across every status / deletion / payment combination', async () => {
+    it('public profile and hall-of-fame counts match the old SQL across every status / deletion / payment combination', async () => {
       const nickname = unique('cw').slice(0, 20);
       const owner = await createUser(db, { nickname });
       const wallet = await createPrimaryWallet(db, owner);
-      const agentIds: string[] = [];
-      for (const status of ['ACTIVE', 'ACTIVE']) {
-        agentIds.push((await db.query<{ id: string }>(
-          `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status, verified_at)
-           VALUES ($1, $2, $3, $4, $5, now()) RETURNING id`,
-          [owner, unique('bot-'), `pk-${unique()}`, `inj1${unique()}`, status])).rows[0].id);
-      }
-      const actors: Array<{ user?: string; agent?: string }> = [{ user: owner }, { agent: agentIds[0] }, { agent: agentIds[1] }];
+      // 에이전트 제거(BE PR4) 뒤 제출은 사람 것만 있다. 다른 사람의 제출이 섞여도 프로필에는 본인 것만 나온다
+      const stranger = await createUser(db);
+      const actors: Array<{ user: string }> = [{ user: owner }, { user: stranger }];
       let n = 0;
       for (const actor of actors) {
         for (const subStatus of ['APPROVED', 'REJECTED', 'SUBMITTED']) {
@@ -117,9 +93,9 @@ describeDb('completed wins and payout requestability single sources on a real da
                   `INSERT INTO bounty_reward (bounty_id, token_type, token_denom, display_symbol, amount, deposited_amount, status, custody_address)
                    VALUES ($1, 'NATIVE', 'inj', 'INJ', 1000, 1000, 'FUNDED', 'inj1custody') RETURNING id`, [bountyId])).rows[0].id;
                 const submissionId = (await db.query<{ id: string }>(
-                  `INSERT INTO bounty_submission (bounty_id, submitter_user_id, agent_id, submission_url, description, status, reviewed_at)
-                   VALUES ($1, $2, $3, 'https://example.test', 'd', $4, now() - make_interval(secs => $5::int)) RETURNING id`,
-                  [bountyId, actor.user ?? null, actor.agent ?? null, subStatus, n])).rows[0].id;
+                  `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status, reviewed_at)
+                   VALUES ($1, $2, 'https://example.test', 'd', $3, now() - make_interval(secs => $4::int)) RETURNING id`,
+                  [bountyId, actor.user, subStatus, n])).rows[0].id;
                 if (paid) {
                   await db.query(
                     `INSERT INTO payout (bounty_reward_id, submission_id, recipient_wallet_id, amount, status, idempotency_key, requested_by, payout_tx_hash, paid_at)
@@ -134,15 +110,9 @@ describeDb('completed wins and payout requestability single sources on a real da
 
       const profile = await new UsersService(db, new AuditService(db)).publicProfile(nickname);
       const oldCompleted = (await db.query(OLD_PROFILE_COMPLETED, [owner])).rows;
-      const oldAgents = (await db.query(OLD_PROFILE_AGENTS, [owner])).rows;
       expect(profile.completedBounties).toEqual(oldCompleted);
-      expect(profile.completedBounties).toHaveLength(3 * 2 * 2); // 행위자 3 x APPROVED x 미삭제 x (OPEN, COMPLETED) x (미지급, 지급)
-      expect(profile.agents).toEqual(oldAgents);
-      expect(profile.agents.map((a: { completed_bounties: unknown[] }) => a.completed_bounties.length)).toEqual([4, 4]);
-
-      const mine = await new AgentsService(db, new AuditService(db)).myAgents(owner);
-      const oldCounts = (await db.query<{ id: string; completed_bounties: number }>(OLD_MY_AGENT_COUNT, [owner])).rows;
-      expect(mine.map((a: { id: string; completed_bounties: number }) => ({ id: a.id, completed_bounties: a.completed_bounties }))).toEqual(oldCounts);
+      expect(profile.completedBounties).toHaveLength(2 * 2); // 본인 x APPROVED x 미삭제 x (OPEN, COMPLETED) x (미지급, 지급)
+      expect(profile.agents).toEqual([]); // 옛 FE 호환 shim
 
       const counts = await (new HighlightsService(db) as unknown as { computeCounts(): Promise<Record<string, number>> }).computeCounts();
       const old = (await db.query<Record<string, string>>(OLD_HOF_COUNTS)).rows[0];

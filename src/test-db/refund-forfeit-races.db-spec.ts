@@ -8,7 +8,7 @@ import { RewardTokenResolver } from '../bounties/admin/reward-token.resolver';
 import { SubmissionsService } from '../bounties/submissions/submissions.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { describeDb } from './describe-db';
-import { createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_DB_URL_ENV, testConfig, unique, waitForLockWaiter, withPayoutAddresses } from './harness';
+import { createDb, createPrimaryWallet, createUser, fakeTxHash, TEST_DB_URL_ENV, testConfig, waitForLockWaiter, withPayoutAddresses } from './harness';
 
 /**
  * 2026-10-25 삭제 가드(입금액 전체) · record-refund(PAID 포함) · scripts/forfeit-award.js의 교차 검증 -
@@ -46,21 +46,15 @@ describeDb('refund / delete / forfeit across rules and races', () => {
     }
     return { bountyId: b.rows[0].id, rewardIds, adminId, admin2 };
   }
-  async function winner(bountyId: string, opts: { wallet?: boolean; agent?: boolean } = {}) {
+  async function winner(bountyId: string, opts: { wallet?: boolean } = {}) {
     const userId = await createUser(db);
     if (opts.wallet !== false) await createPrimaryWallet(db, userId);
-    let agentId: string | null = null;
-    if (opts.agent) {
-      agentId = (await db.query<{ id: string }>(
-        `INSERT INTO agent (owner_user_id, name, public_key, wallet_address, status) VALUES ($1, 'a', $2, $3, 'ACTIVE') RETURNING id`,
-        [userId, unique('pk-'), unique('aw-')])).rows[0].id;
-    }
     const sid = (await db.query<{ id: string }>(
-      `INSERT INTO bounty_submission (bounty_id, submitter_user_id, agent_id, submission_url, description, status)
-       VALUES ($1, $2, $3, 'https://example.test/s', 'd', 'APPROVED') RETURNING id`, [bountyId, agentId ? null : userId, agentId])).rows[0].id;
-    await db.query(`INSERT INTO submission_revision (submission_id, revision_no, submission_url, description, created_by_user_id, created_by_agent_id)
-                    VALUES ($1, 1, 'https://example.test/s', 'd', $2, $3)`, [sid, agentId ? null : userId, agentId]);
-    return { userId, sid, agentId };
+      `INSERT INTO bounty_submission (bounty_id, submitter_user_id, submission_url, description, status)
+       VALUES ($1, $2, 'https://example.test/s', 'd', 'APPROVED') RETURNING id`, [bountyId, userId])).rows[0].id;
+    await db.query(`INSERT INTO submission_revision (submission_id, revision_no, submission_url, description, created_by_user_id)
+                    VALUES ($1, 1, 'https://example.test/s', 'd', $2)`, [sid, userId]);
+    return { userId, sid };
   }
   async function pay(rewardId: string, sid: string, amount: string, requester: string, approver: string) {
     const p = await rewards.requestPayout(rewardId, sid, amount, requester);
@@ -99,19 +93,6 @@ describeDb('refund / delete / forfeit across rules and races', () => {
     const mine = await subs.mySubmissions(w.userId);
     expect(mine[0]).toMatchObject({ status: 'REJECTED', review_comment: 'forfeited: gone' });
     expect(mine[0].payment_status).toBe('NONE');
-    await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).resolves.toMatchObject({ status: 'COMPLETED' });
-  });
-
-  it('forfeit on an agent-owned submission unblocks COMPLETED; the owner sees REJECTED / NONE', async () => {
-    const { bountyId, rewardIds: [r1], adminId } = await seed(1, [{ amount: 100, deposited: 100 }]);
-    const w = await winner(bountyId, { wallet: false, agent: true });
-    await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).rejects.toMatchObject({ status: 400 });
-    const res = await run(forfeitAward, [w.sid, '--reason', 'agent owner unreachable', '--admin', adminId, '--yes']);
-    expect(res.code).toBe(0);
-    await createPrimaryWallet(db, w.userId);
-    await expect(rewards.requestPayout(r1, w.sid, '100', adminId)).rejects.toMatchObject({ status: 404 });
-    const mine = await subs.mySubmissions(w.userId);
-    expect(mine[0]).toMatchObject({ status: 'REJECTED', payment_status: 'NONE' });
     await expect(bounties.transition(bountyId, 'COMPLETED', adminId)).resolves.toMatchObject({ status: 'COMPLETED' });
   });
 

@@ -314,7 +314,7 @@ describeDb('bounty rules on a real database', () => {
     expect((await submissions.mySubmissions(other)).find((r) => r.id === untouched.id)).toMatchObject({ has_review: false });
   });
 
-  it('withdrawal is limited to the applicant and their own agents, and only while PENDING', async () => {
+  it('withdrawal is limited to the applicant, and only while PENDING', async () => {
     const id = await createBounty({ applicationRequired: true });
     await bounties.transition(id, 'OPEN', adminId);
     const owner = await createUser(db);

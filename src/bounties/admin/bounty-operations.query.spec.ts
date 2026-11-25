@@ -29,7 +29,9 @@ describe('BountyOperationsQuery', () => {
     expect(payoutCall[1]).toEqual(['b', 'viewer']);
     const submissionSql = query.mock.calls.find(([sql]) => (sql as string).includes('FROM bounty_submission s'))![0] as string;
     expect(submissionSql).toContain('AS recipient_wallet_address');
-    expect(submissionSql).toContain("CASE WHEN s.agent_id IS NULL THEN 'USER' ELSE 'AGENT' END AS actor_kind");
+    expect(submissionSql).toContain("'USER' AS actor_kind");
+    expect(submissionSql).toContain('NULL::uuid AS agent_id, NULL::text AS agent_name');
+    expect(submissionSql).not.toContain('JOIN agent');
   });
 
   it('reports payoutSelfApprovalAllowed only for PAYOUT_ALLOW_SELF_APPROVAL=true', async () => {

@@ -7,9 +7,10 @@ describe('AdminAccessService', () => {
   const actorId = '22222222-2222-4222-8222-222222222222';
 
   type Target = { is_admin: boolean; status: string; onboarded: boolean };
-  function setup(target: Target | null, otherAdmins = 1) {
+  function setup(target: Target | null, otherAdmins = 1, actorStillAdmin = true) {
     const txQuery = jest.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('WHERE is_admin = true ORDER BY id FOR UPDATE')) return { rowCount: 0, rows: [] };
+      if (sql.startsWith('SELECT 1 FROM "user"')) return actorStillAdmin ? { rowCount: 1, rows: [{}] } : { rowCount: 0, rows: [] };
       if (sql.includes('FOR UPDATE') && sql.includes('onboarded')) {
         return target
           ? { rowCount: 1, rows: [{ id: targetId, email: 'a@x.test', nickname: 'nin', ...target }] }
@@ -31,6 +32,13 @@ describe('AdminAccessService', () => {
     expect(db.tx).not.toHaveBeenCalled();
   });
 
+  it('403 ADMIN_ONLY when the acting admin lost admin rights before the lock was taken, nothing written', async () => {
+    const { service, txQuery } = setup(plain, 1, false);
+    await expect(service.setAdmin(targetId, true, actorId)).rejects.toMatchObject({ message: 'ADMIN_ONLY', status: 403 });
+    expect(txQuery.mock.calls[1][1]).toEqual([actorId]);
+    expect(writes(txQuery)).toEqual([]);
+  });
+
   it('404 USER_NOT_FOUND for a missing or deleted user, nothing written', async () => {
     const { service, txQuery } = setup(null);
     await expect(service.setAdmin(targetId, true, actorId)).rejects.toMatchObject({ message: 'USER_NOT_FOUND', status: 404 });
@@ -41,8 +49,9 @@ describe('AdminAccessService', () => {
     const { service, txQuery } = setup(plain);
     await service.setAdmin(targetId, true, actorId);
     expect(txQuery.mock.calls[0][0]).toContain('WHERE is_admin = true ORDER BY id FOR UPDATE');
-    expect(txQuery.mock.calls[1][0]).toContain('deleted_at IS NULL FOR UPDATE');
-    expect(txQuery.mock.calls[1][1]).toEqual([targetId]);
+    expect(txQuery.mock.calls[1][1]).toEqual([actorId]);
+    expect(txQuery.mock.calls[2][0]).toContain('deleted_at IS NULL FOR UPDATE');
+    expect(txQuery.mock.calls[2][1]).toEqual([targetId]);
   });
 
   it('409 USER_NOT_ACTIVE when granting to a non-ACTIVE user', async () => {

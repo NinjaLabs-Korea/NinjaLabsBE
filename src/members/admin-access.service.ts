@@ -23,6 +23,12 @@ export class AdminAccessService {
     if (userId === actorId) throw new ForbiddenException('ADMIN_SELF_CHANGE');
     return this.db.tx(async (tx) => {
       await tx.query(`SELECT id FROM "user" WHERE is_admin = true ORDER BY id FOR UPDATE`);
+      // AdminGuard는 트랜잭션 밖에서 통과했다: 그 사이 다른 운영자가 요청자의 권한을 회수했으면(잠금을 기다리는 동안 포함) 여기서 막는다
+      const actor = await tx.query(
+        `SELECT 1 FROM "user" WHERE id = $1::uuid AND is_admin = true AND ${activeUserSql('')}`,
+        [actorId],
+      );
+      if (!actor.rowCount) throw new ForbiddenException('ADMIN_ONLY');
       const found = await tx.query<AdminAccessRow & { status: string; onboarded: boolean }>(
         `SELECT id, email, nickname, is_admin, status, onboarding_completed_at IS NOT NULL AS onboarded
            FROM "user" WHERE id = $1::uuid AND deleted_at IS NULL FOR UPDATE`,

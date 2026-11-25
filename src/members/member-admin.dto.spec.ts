@@ -1,7 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CreateHighlightDto } from '../highlights/highlight-admin.controller';
-import { SearchUsersQueryDto, SetMemberDto } from './member-admin.controller';
+import { SearchUsersQueryDto, SetAdminDto, SetMemberDto } from './member-admin.controller';
 
 const failedFields = async (cls: new () => object, body: object) =>
   (await validate(plainToInstance(cls, body))).map((error) => error.property);
@@ -36,5 +36,15 @@ describe('admin user search validation', () => {
   it('trims the search term so a pasted trailing space still matches', () => {
     expect(plainToInstance(SearchUsersQueryDto, { q: '  ninja@x.com ' }).q).toBe('ninja@x.com');
     expect(plainToInstance(SearchUsersQueryDto, { q: '   ' }).q).toBe('');
+  });
+});
+
+describe('admin access validation', () => {
+  it('requires isAdmin to be a real boolean', async () => {
+    expect(await failedFields(SetAdminDto, { isAdmin: true })).toEqual([]);
+    expect(await failedFields(SetAdminDto, { isAdmin: false })).toEqual([]);
+    expect(await failedFields(SetAdminDto, {})).toEqual(['isAdmin']);
+    expect(await failedFields(SetAdminDto, { isAdmin: 'true' })).toEqual(['isAdmin']);
+    expect(await failedFields(SetAdminDto, { isAdmin: 1 })).toEqual(['isAdmin']);
   });
 });

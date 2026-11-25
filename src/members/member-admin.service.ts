@@ -21,7 +21,7 @@ export class MemberAdminService {
   async searchUsers(q: string, page = 1) {
     const pageSize = MemberAdminService.PAGE_SIZE;
     const r = await this.db.query(
-      `SELECT u.id, u.email, u.nickname, u.status, u.is_member, u.member_role,
+      `SELECT u.id, u.email, u.nickname, u.status, u.is_admin, u.is_member, u.member_role,
               u.member_display_order, u.created_at
          FROM "user" u
         WHERE u.deleted_at IS NULL

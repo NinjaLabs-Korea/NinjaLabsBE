@@ -848,6 +848,17 @@
         ],
         "type": "object"
       },
+      "SetAdminDto": {
+        "properties": {
+          "isAdmin": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "isAdmin"
+        ],
+        "type": "object"
+      },
       "SetMemberDto": {
         "properties": {
           "displayOrder": {
@@ -2356,6 +2367,39 @@
         ],
         "responses": {
           "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "MemberAdmin"
+        ]
+      }
+    },
+    "/admin/users/{id}/admin": {
+      "post": {
+        "operationId": "MemberAdminController_setAdmin",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetAdminDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
             "description": ""
           }
         },

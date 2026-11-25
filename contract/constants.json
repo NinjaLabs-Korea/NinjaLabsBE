@@ -13,6 +13,8 @@
   },
   "audit": {
     "actions": {
+      "ADMIN_GRANTED": "user",
+      "ADMIN_REVOKED": "user",
       "AGENT_KEY_ROTATED": "agent",
       "AGENT_REVOKED": "agent",
       "AGENT_VERIFIED": "agent",
@@ -75,8 +77,6 @@
       "WALLET_REPLACED": "user"
     },
     "scriptActions": {
-      "ADMIN_GRANTED": "user",
-      "ADMIN_REVOKED": "user",
       "PAYOUT_CANCELLED_MANUAL": "payout",
       "PAYOUT_CORRECTED_MANUAL": "payout",
       "REWARD_REFUNDED": "bounty_reward",

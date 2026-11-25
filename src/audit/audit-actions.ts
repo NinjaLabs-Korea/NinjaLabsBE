@@ -69,13 +69,16 @@ export const AUDIT_ACTIONS = {
   HIGHLIGHT_CREATED: 'platform_highlight',
   HIGHLIGHT_UPDATED: 'platform_highlight',
   HIGHLIGHT_DELETED: 'platform_highlight',
-  // 사용자 (account-withdrawal.service.ts, users.service.ts, member-admin.service.ts, user-avatar.service.ts)
+  // 사용자 (account-withdrawal.service.ts, users.service.ts, member-admin.service.ts, user-avatar.service.ts, admin-access.service.ts)
   USER_WITHDRAWN: 'user',
   USER_NICKNAME_CHANGED: 'user',
   USER_MEMBER_GRANTED: 'user',
   USER_MEMBER_REVOKED: 'user',
   USER_AVATAR_UPDATED: 'user',
   USER_AVATAR_REMOVED: 'user',
+  // 운영자 권한 (admin-access.service.ts). 같은 이름을 scripts/grant-admin.js도 쓴다(actor NULL) - 감사 화면이 두 출처를 같은 action으로 본다
+  ADMIN_GRANTED: 'user',
+  ADMIN_REVOKED: 'user',
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
@@ -85,8 +88,6 @@ export type AuditAction = keyof typeof AUDIT_ACTIONS;
  * (audit-actions.spec.ts가 각 값이 그 파일에 실제로 있는지 본다). 감사 화면은 이 action을 "운영 스크립트"로 표시한다(docs/api-contract.md).
  */
 export const SCRIPT_AUDIT_ACTIONS = {
-  ADMIN_GRANTED: 'user',
-  ADMIN_REVOKED: 'user',
   REWARD_REFUNDED: 'bounty_reward',
   SUBMISSION_AWARD_FORFEITED: 'bounty_submission',
   PAYOUT_CORRECTED_MANUAL: 'payout',

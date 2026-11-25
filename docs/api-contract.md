@@ -41,6 +41,9 @@ DTO 검증 실패(class-validator 영어 문장), 429(throttler), `blockers` 전
 | `TURNSTILE_FAILED` | 400 | Turnstile 봇 검증 토큰이 없거나 거부됐다 |
 | `TURNSTILE_UNAVAILABLE` | 503 | Turnstile 검증 서버에 닿지 못했다 |
 | `USER_NOT_FOUND` | 404 | 대상 유저가 없다 (탈퇴 포함) |
+| `ADMIN_SELF_CHANGE` | 403 | 운영자가 자기 자신의 운영자 권한을 부여·회수하려 했다 (스스로 잠그는 것을 막는다. 다른 운영자가 바꿔야 한다) |
+| `USER_NOT_ACTIVE` | 409 | 정지(SUSPENDED) 등 ACTIVE가 아닌 유저에게는 운영자 권한을 부여할 수 없다 (회수는 가능) |
+| `LAST_ADMIN` | 409 | 이 회수로 활성(ACTIVE, 미탈퇴) 운영자가 한 명도 남지 않는다 |
 | `PROFILE_REQUIRED` | 409 | 프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람(과 그 사람이 소유한 에이전트)은 에이전트 등록·바운티 지원·제출도 같은 코드로 막힌다 |
 | `NICKNAME_CHANGE_COOLDOWN` | 409 | 닉네임을 이미 정한 유저가 24시간 안에 또 바꾸려 했다 (변경은 감사 USER_NICKNAME_CHANGED로 남고 마지막 변경 24시간 뒤에 다시 가능) |
 | `NICKNAME_TAKEN` | 409 | 이미 사용 중인 닉네임이다 |
@@ -357,8 +360,9 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 
 | Method | Path | 설명 |
 |---|---|---|
-| GET | `/admin/users?q=&page=` | 이메일/닉네임 유저 검색 - 30건/페이지(기본 `page=1`), 응답은 배열. `q`가 비면 최신 가입 30명. `%`/`_`는 문자 그대로 검색. 항목: `id, email, nickname, status, is_member, member_role, member_display_order, created_at` (`wallet_address`는 2026-11-10 BE PR2에서 제거, 어드민 전용이라 호환 필드 없음) |
+| GET | `/admin/users?q=&page=` | 이메일/닉네임 유저 검색 - 30건/페이지(기본 `page=1`), 응답은 배열. `q`가 비면 최신 가입 30명. `%`/`_`는 문자 그대로 검색. 항목: `id, email, nickname, status, is_admin, is_member, member_role, member_display_order, created_at` (`wallet_address`는 2026-11-10 BE PR2에서 제거, 어드민 전용이라 호환 필드 없음) |
 | POST | `/admin/users/:id/member` | 멤버 지정/해제 `{isMember, role?, displayOrder?}` - `isMember: true`이면 `role`(`CORE`/`DEV`/`DESIGN`/`OPS`) 필수(없으면 400, NULL 역할이 공개 페이지에서 Core로 보이던 것), 해제에는 불필요 |
+| POST | `/admin/users/:id/admin` | 운영자 권한 부여/회수 `{isAdmin: boolean}` -> 201 `{id, email, nickname, is_admin}`. 403 `ADMIN_SELF_CHANGE`(대상이 호출한 운영자 본인, 부여·회수 둘 다), 404 `USER_NOT_FOUND`(없음/탈퇴), 부여만 409 `USER_NOT_ACTIVE`(status가 ACTIVE 아님)와 409 `PROFILE_REQUIRED`(온보딩 미완료), 회수만 409 `LAST_ADMIN`(다른 활성 운영자가 없음, 잠금 아래에서 확인). 이미 원하는 상태면 현재 행을 그대로 돌려주고 UPDATE도 감사 행도 없다. 한 트랜잭션: 운영자 행 전체 `FOR UPDATE`(id순) -> 대상 행 잠금 -> 검사 -> UPDATE -> 감사 `ADMIN_GRANTED`/`ADMIN_REVOKED`(actor = 호출한 운영자, before/after `{is_admin}`). AdminGuard가 요청마다 DB를 다시 보므로 회수는 즉시, 부여는 대상자의 다음 토큰 갱신 또는 재로그인 없이도 `/admin/*`이 열린다. 첫 운영자는 여전히 `scripts/grant-admin.js`가 필요하다 |
 | POST | `/admin/media` | JPEG/PNG/WebP 이미지 업로드 (`multipart/form-data`, `file`, 최대 5 MiB) → `{id, url}` |
 | GET | `/admin/bounties` | 삭제되지 않은 전체 바운티 목록 (DRAFT 포함) |
 | POST | `/admin/bounties` | 바운티 등록 (`submissionMode`, `coverImageUrl?`; 보상 포함 시 FUNDING_PENDING으로). `applicationDeadline`이 `submissionDeadline`보다 1분 이상 늦으면 400 `APPLICATION_DEADLINE_AFTER_SUBMISSION_DEADLINE`(PATCH도 두 마감 중 하나라도 보내면 새 값 ?? 저장값 쌍으로 검사). 보상 심볼은 토큰에서 정해진다: NATIVE는 denom `inj` + `INJ`만(대소문자 정규화), 그 밖은 400 `REWARD_SYMBOL_DENOM_MISMATCH` |
@@ -382,7 +386,7 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | GET | `/admin/bounties/:id/operations` | 운영 화면 한 번에 필요한 데이터 - 아래 "Admin bounty operations" 참조 (2026-10-24: 신원·수령자·요청자/승인자·`requested_by_me`·`policy`·`lifecycle.blockerDetails`/`allowedTransitions` 추가) |
 | GET | `/admin/audit-logs?entityType=&entityId=&page=` | 감사 로그 → `{ items, page, pageSize: 30, total }` (최신순). 항목: `id, actor_user_id, actor_agent_id, actor_nickname, actor_agent_name, action, entity_type, entity_id, created_at, before_data, after_data` (행위자 이름은 사용자/에이전트가 지워지지 않았을 때, 스크립트 행은 null). `page`≥1 정수, `entityType`≤64자, `entityId` UUID - 그 외 `400`. (이전엔 배열을 반환했으나 FE 호출처가 없어 공통 페이지네이션 봉투로 변경) |
 
-운영자 지정(`is_admin`)은 API가 없다 - `scripts/grant-admin.js`로만 바꾼다([runbook.md](runbook.md) §3). 그 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/record-refund.js`는 `REWARD_REFUNDED`(entity `bounty_reward`, `after_data` `{txHash, refundedAmount}`)를, runbook §7.4의 수동 SQL은 `PAYOUT_CORRECTED_MANUAL`/`PAYOUT_CANCELLED_MANUAL`(entity `payout`)을 남긴다 - 감사 로그 화면은 actor가 비어 있고 action이 위 다섯 가지 중 하나인 행을 "운영 스크립트"로 표시하면 된다. 여섯 번째 운영 스크립트 action `SUBMISSION_AWARD_FORFEITED`(entity `bounty_submission`, `scripts/forfeit-award.js`, runbook §7.4 "지급할 수 없는 수상")는 **actor가 채워진다**(`--admin`으로 받은 결정 운영자 id) - action 이름만으로 "운영 스크립트"로 표시한다. `before_data` `{status: "APPROVED"}`, `after_data` `{status: "REJECTED", reason, bountyId, source}`. 같은 트랜잭션에 `submission_review`(decision `REJECT`, comment `forfeited: <사유>`) 행이 남으므로 제출자의 `GET /submissions/me` `review_comment`에 그 코멘트가 보인다. `POST /admin/submissions/:id/review`의 `comment`는 `forfeited:`(대소문자·앞 공백 무관)로 시작할 수 없다(400) - 이 접두사는 이 스크립트가 남긴 보상 미지급 표식이라 일반 반려 코멘트가 쓰면 제출자 화면이 "승인됐지만 보상 미지급"으로 오해한다. 보이는 글자가 없는 `comment`/`note`는 `null`로 취급되어 수정 요청에서는 400 `REVISION_COMMENT_REQUIRED`다. 에이전트 키로 한 행위는 `actor_user_id`가 비는 대신 `actor_agent_id`가 채워진다(`AuditService.recordAgentAction` - 지원 `APPLICATION_SUBMITTED`/`APPLICATION_REAPPLIED`, 제출 `SUBMISSION_SUBMITTED`/`SUBMISSION_RESUBMITTED`). 다만 이 수정 이전에 쌓인 에이전트 `APPLICATION_REAPPLIED` 행은 actor가 둘 다 비어 있으므로, 표시는 action 이름으로 판단하고 "actor가 비었다"만으로 운영 스크립트로 단정하지 말 것.
+운영자 지정(`is_admin`)은 `POST /admin/users/:id/admin`(운영자 콘솔, 감사 행의 actor = 호출한 운영자)과 `scripts/grant-admin.js`(DB 접속 권한자, 첫 운영자 부트스트랩, [runbook.md](runbook.md) §3) 두 경로다. 같은 action 이름을 쓴다. 스크립트가 남기는 감사 행은 `actor_user_id`가 `null`이고 `action`이 `ADMIN_GRANTED`/`ADMIN_REVOKED`(entity `user`)이며, `scripts/record-refund.js`는 `REWARD_REFUNDED`(entity `bounty_reward`, `after_data` `{txHash, refundedAmount}`)를, runbook §7.4의 수동 SQL은 `PAYOUT_CORRECTED_MANUAL`/`PAYOUT_CANCELLED_MANUAL`(entity `payout`)을 남긴다 - 감사 로그 화면은 actor가 비어 있고 action이 위 다섯 가지 중 하나인 행을 "운영 스크립트"로 표시하면 된다. 여섯 번째 운영 스크립트 action `SUBMISSION_AWARD_FORFEITED`(entity `bounty_submission`, `scripts/forfeit-award.js`, runbook §7.4 "지급할 수 없는 수상")는 **actor가 채워진다**(`--admin`으로 받은 결정 운영자 id) - action 이름만으로 "운영 스크립트"로 표시한다. `before_data` `{status: "APPROVED"}`, `after_data` `{status: "REJECTED", reason, bountyId, source}`. 같은 트랜잭션에 `submission_review`(decision `REJECT`, comment `forfeited: <사유>`) 행이 남으므로 제출자의 `GET /submissions/me` `review_comment`에 그 코멘트가 보인다. `POST /admin/submissions/:id/review`의 `comment`는 `forfeited:`(대소문자·앞 공백 무관)로 시작할 수 없다(400) - 이 접두사는 이 스크립트가 남긴 보상 미지급 표식이라 일반 반려 코멘트가 쓰면 제출자 화면이 "승인됐지만 보상 미지급"으로 오해한다. 보이는 글자가 없는 `comment`/`note`는 `null`로 취급되어 수정 요청에서는 400 `REVISION_COMMENT_REQUIRED`다. 에이전트 키로 한 행위는 `actor_user_id`가 비는 대신 `actor_agent_id`가 채워진다(`AuditService.recordAgentAction` - 지원 `APPLICATION_SUBMITTED`/`APPLICATION_REAPPLIED`, 제출 `SUBMISSION_SUBMITTED`/`SUBMISSION_RESUBMITTED`). 다만 이 수정 이전에 쌓인 에이전트 `APPLICATION_REAPPLIED` 행은 actor가 둘 다 비어 있으므로, 표시는 action 이름으로 판단하고 "actor가 비었다"만으로 운영 스크립트로 단정하지 말 것.
 
 ### 감사 action 카탈로그
 
@@ -449,8 +453,8 @@ state 발급 **전에** `POST https://challenges.cloudflare.com/turnstile/v0/sit
 | `USER_MEMBER_REVOKED` | `user` | 상동 (`isMember: false`) |
 | `USER_AVATAR_UPDATED` | `user` | `POST /users/me/avatar` 프로필 사진 등록·교체 (before/after `avatarMediaId`) |
 | `USER_AVATAR_REMOVED` | `user` | `DELETE /users/me/avatar` 프로필 사진 삭제 (before `avatarMediaId`; 사진이 없던 멱등 호출은 기록 없음) |
-| `ADMIN_GRANTED` | `user` | 운영 스크립트 `scripts/grant-admin.js` (actor NULL) |
-| `ADMIN_REVOKED` | `user` | 상동 |
+| `ADMIN_GRANTED` | `user` | `POST /admin/users/:id/admin` (`isAdmin: true`, actor = 호출한 운영자) 또는 운영 스크립트 `scripts/grant-admin.js` (actor NULL). 감사 화면은 actor가 비었으면 "운영 스크립트" |
+| `ADMIN_REVOKED` | `user` | 상동 (`isAdmin: false`) |
 | `REWARD_REFUNDED` | `bounty_reward` | 운영 스크립트 `scripts/record-refund.js` (actor NULL) |
 | `SUBMISSION_AWARD_FORFEITED` | `bounty_submission` | 운영 스크립트 `scripts/forfeit-award.js` (actor = `--admin`) |
 | `PAYOUT_CORRECTED_MANUAL` | `payout` | runbook §7.4 수동 SQL (actor NULL) |

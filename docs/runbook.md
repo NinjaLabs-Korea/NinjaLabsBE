@@ -97,7 +97,9 @@
 
 ## 3. 어드민 부트스트랩
 
-어드민 권한은 API로 줄 수 없다(권한 상승 경로를 만들지 않기 위해). 권한자는 **DB 접속 권한이 있는 사람**(Railway 프로젝트 멤버 또는 Supabase 프로젝트 owner)이며, 부여/회수는 이 스크립트로만 한다 - 직접 `UPDATE`하면 감사 행이 남지 않는다.
+**첫 운영자는 반드시 이 스크립트로 만든다**(운영자가 한 명도 없으면 API를 부를 사람이 없다). 권한자는 **DB 접속 권한이 있는 사람**(Railway 프로젝트 멤버 또는 Supabase 프로젝트 owner)이다. 직접 `UPDATE`하면 감사 행이 남지 않으니 하지 않는다.
+
+**이후 운영자는 운영자 콘솔에서** 부여/회수할 수 있다 (`POST /admin/users/:id/admin` `{isAdmin}`, 어드민 유저 목록). 대상은 ACTIVE이고 온보딩을 마친 유저여야 하고(`USER_NOT_ACTIVE`, `PROFILE_REQUIRED`), 본인 권한은 바꿀 수 없으며(`ADMIN_SELF_CHANGE`), 마지막 활성 운영자는 회수할 수 없다(`LAST_ADMIN`). 감사 행(`ADMIN_GRANTED`/`ADMIN_REVOKED`)의 actor는 호출한 운영자다. 스크립트는 DB 접속 권한자의 비상 경로(첫 운영자, 모든 운영자가 잠겼을 때, `--force`)로 남는다. 아래 절차는 스크립트 기준이다.
 
 1. 대상자가 FE에서 **Google 로그인을 한 번** 마친다 (`"user"` 행이 생긴다. 온보딩 완료는 필요 없다).
 2. 미리 보기:
@@ -108,7 +110,7 @@
 3. 실행: `railway run node scripts/grant-admin.js grant ops@example.com` → `yes`.
 4. 반영 시점: JWT의 `adm` 클레임이 필요하므로 대상자의 **다음 토큰 갱신(최대 15분) 또는 재로그인**부터 `/admin`이 열린다.
 5. 회수: `… revoke ops@example.com`. AdminGuard가 요청마다 DB를 다시 보므로 **즉시** 403 `ADMIN_ONLY`. 마지막 활성 운영자는 `--force` 없이 회수할 수 없다(`LAST_ADMIN` - `--dry-run`과 확인 프롬프트 전에 이미 알린다).
-6. 기록: `GET /admin/audit-logs?entityType=user&entityId=<user id>`에 `ADMIN_GRANTED`/`ADMIN_REVOKED`(actor 비어 있음 = 스크립트)가 보인다. 누가 실행했는지는 이 표 아래 "어드민 변경 기록"에 사람이 남긴다.
+6. 기록: `GET /admin/audit-logs?entityType=user&entityId=<user id>`에 `ADMIN_GRANTED`/`ADMIN_REVOKED`(actor 비어 있음 = 스크립트, 운영자 콘솔에서 바꾼 행은 actor = 그 운영자)가 보인다. 누가 실행했는지는 이 표 아래 "어드민 변경 기록"에 사람이 남긴다.
 
 > 어드민 변경 기록 (운영 레포 밖 비공개 문서에 유지 권장): 날짜 · 대상 이메일 · grant/revoke · 실행자 · 사유
 

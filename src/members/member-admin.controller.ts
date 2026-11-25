@@ -4,6 +4,7 @@ import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } fr
 import { MAX_PAGE } from '../common/pagination.dto';
 import { AdminGuard } from '../auth/admin.guard';
 import { AuthedRequest } from '../auth/authed-request';
+import { AdminAccessService } from './admin-access.service';
 import { MemberAdminService } from './member-admin.service';
 import { MaxPgInt } from '../common/validation/optional-not-null';
 import { MaxChars } from '../common/validation/max-chars';
@@ -30,6 +31,11 @@ export class SetMemberDto {
   displayOrder?: number;
 }
 
+export class SetAdminDto {
+  @IsBoolean()
+  isAdmin!: boolean;
+}
+
 export class SearchUsersQueryDto {
   // 이메일(320)·닉네임(50)보다 긴 검색어는 어떤 행과도 맞지 않는다 - 쿼리스트링으로 들어오는 수 KB짜리 ILIKE 패턴을 DB에 넘기지 않는다
   // 앞뒤 공백은 지운다 - 복사해 붙인 "ninja@x.com "이 어떤 이메일과도 안 맞아 빈 목록이 되던 것 (공백만 있으면 빈 검색어 = 최신 가입순)
@@ -43,7 +49,10 @@ export class SearchUsersQueryDto {
 @Controller('admin/users')
 @UseGuards(AdminGuard)
 export class MemberAdminController {
-  constructor(private readonly members: MemberAdminService) {}
+  constructor(
+    private readonly members: MemberAdminService,
+    private readonly adminAccess: AdminAccessService,
+  ) {}
 
   /** GET /admin/users?q=&page= - 30건/페이지, 응답은 배열 (FE 계약 유지) */
   @Get()
@@ -58,5 +67,15 @@ export class MemberAdminController {
     @Body() dto: SetMemberDto,
   ) {
     return this.members.setMember(userId, dto.isMember, dto.role, dto.displayOrder, req.user.userId);
+  }
+
+  /** POST /admin/users/:id/admin - 운영자 권한 부여/회수 (본인 대상은 403 ADMIN_SELF_CHANGE) */
+  @Post(':id/admin')
+  setAdmin(
+    @Param('id', ParseUUIDPipe) userId: string,
+    @Req() req: AuthedRequest,
+    @Body() dto: SetAdminDto,
+  ) {
+    return this.adminAccess.setAdmin(userId, dto.isAdmin, req.user.userId);
   }
 }

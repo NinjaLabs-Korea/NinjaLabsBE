@@ -44,6 +44,9 @@ export const ERROR_CODES = {
 
   // ── 유저 / 탈퇴 ──
   USER_NOT_FOUND: { statuses: [404], ko: '대상 유저가 없다 (탈퇴 포함)' },
+  ADMIN_SELF_CHANGE: { statuses: [403], ko: '운영자가 자기 자신의 운영자 권한을 부여·회수하려 했다 (스스로 잠그는 것을 막는다. 다른 운영자가 바꿔야 한다)' },
+  USER_NOT_ACTIVE: { statuses: [409], ko: '정지(SUSPENDED) 등 ACTIVE가 아닌 유저에게는 운영자 권한을 부여할 수 없다 (회수는 가능)' },
+  LAST_ADMIN: { statuses: [409], ko: '이 회수로 활성(ACTIVE, 미탈퇴) 운영자가 한 명도 남지 않는다' },
   PROFILE_REQUIRED: { statuses: [409], ko: '프로필(닉네임·자기소개·태그)을 저장하기 전에는 온보딩을 완료할 수 없다. 온보딩을 마치지 않은 사람(과 그 사람이 소유한 에이전트)은 에이전트 등록·바운티 지원·제출도 같은 코드로 막힌다' },
   NICKNAME_CHANGE_COOLDOWN: { statuses: [409], ko: '닉네임을 이미 정한 유저가 24시간 안에 또 바꾸려 했다 (변경은 감사 USER_NICKNAME_CHANGED로 남고 마지막 변경 24시간 뒤에 다시 가능)' },
   NICKNAME_TAKEN: { statuses: [409], ko: '이미 사용 중인 닉네임이다' },

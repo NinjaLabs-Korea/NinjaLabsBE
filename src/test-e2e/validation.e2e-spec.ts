@@ -52,6 +52,34 @@ describeDb('validation over HTTP (e2e)', () => {
       expect(saveAdminBountyBody(form, false)).not.toHaveProperty('reward');
     });
 
+    it('admin access: grant makes the target a working admin at once, revoke closes it, strict body, self change 403, listing shows is_admin', async () => {
+      const target = await e2e.loginOnboarded();
+      const path = `/admin/users/${target.userId}/admin`;
+      expect((await e2e.get('/admin/users', { token: target.accessToken })).status).toBe(403);
+      expect((await e2e.post(path, { isAdmin: 'yes' }, asAdmin())).status).toBe(400);
+      expect((await e2e.post(path, { isAdmin: true, extra: 1 }, asAdmin())).status).toBe(400);
+      expect((await e2e.post('/admin/users/not-a-uuid/admin', { isAdmin: true }, asAdmin())).status).toBe(400);
+      expect((await e2e.post(path, { isAdmin: true }, { token: user.accessToken })).status).toBe(403);
+
+      const granted = await e2e.post(path, { isAdmin: true }, asAdmin());
+      expect(granted.status).toBe(201);
+      expect(granted.body).toEqual({ id: target.userId, email: target.email, nickname: expect.any(String), is_admin: true });
+      expect((await e2e.get('/admin/users', { token: target.accessToken })).status).toBe(200);
+      const listed = await e2e.get(`/admin/users?q=${encodeURIComponent(target.email)}`, asAdmin());
+      expect(listed.body).toEqual([expect.objectContaining({ id: target.userId, is_admin: true })]);
+      expect((await e2e.post(path, { isAdmin: true }, asAdmin())).body).toMatchObject({ is_admin: true }); // no-op
+
+      expect((await e2e.post(`/admin/users/${admin.userId}/admin`, { isAdmin: false }, asAdmin())).body).toMatchObject({ statusCode: 403, message: 'ADMIN_SELF_CHANGE' });
+      const missing = await e2e.post('/admin/users/00000000-0000-4000-8000-000000000000/admin', { isAdmin: true }, asAdmin());
+      expect(missing.body).toMatchObject({ statusCode: 404, message: 'USER_NOT_FOUND' });
+
+      const revoked = await e2e.post(path, { isAdmin: false }, asAdmin());
+      expect(revoked.body).toMatchObject({ id: target.userId, is_admin: false });
+      expect((await e2e.get('/admin/users', { token: target.accessToken })).status).toBe(403);
+      const audit = await e2e.db.query(`SELECT action, actor_user_id FROM audit_log WHERE entity_id = $1 AND action LIKE 'ADMIN_%' ORDER BY created_at`, [target.userId]);
+      expect(audit.rows).toEqual([{ action: 'ADMIN_GRANTED', actor_user_id: admin.userId }, { action: 'ADMIN_REVOKED', actor_user_id: admin.userId }]);
+    });
+
     it('notices: create (published) with thumbnail/external URL, update clearing both with null, toggling publish', async () => {
       await e2e.db.query(`INSERT INTO media_asset (id, created_by, file_name, mime_type, file_size, sha256, data) VALUES ('12345678-0000-4000-8000-0000000000aa', $1, 'a.png', 'image/png', 1, repeat('0', 64), '\\x00')`, [admin.userId]);
       const post = { slug: '', title: 'Launch', bodyMarkdown: '# Hello\n'.repeat(50), category: 'EVENT', status: 'published' as const, thumbnail: '/media/12345678-0000-4000-8000-0000000000aa', externalUrl: 'https://ninjalabs.xyz/launch' };
